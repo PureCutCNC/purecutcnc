@@ -19,11 +19,19 @@ function createOrbitControls(
   domElement: HTMLElement,
   onChange: () => void
 ) {
-  let isPointerDown = false
+  let dragMode: 'rotate' | 'pan' | null = null
   let lastX = 0
   let lastY = 0
   let spherical = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 }
   const target = new THREE.Vector3(50, 0, 40)
+  const pointerNdc = new THREE.Vector2()
+  const raycaster = new THREE.Raycaster()
+  const designPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  const beforeZoomPoint = new THREE.Vector3()
+  const afterZoomPoint = new THREE.Vector3()
+  const panRight = new THREE.Vector3()
+  const panUp = new THREE.Vector3()
+  const cameraDirection = new THREE.Vector3()
 
   function updateCamera() {
     camera.position.set(
@@ -32,43 +40,111 @@ function createOrbitControls(
       target.z + spherical.radius * Math.sin(spherical.phi) * Math.cos(spherical.theta)
     )
     camera.lookAt(target)
+    camera.updateMatrixWorld()
     onChange()
   }
 
-  function onPointerDown(e: PointerEvent) {
-    e.preventDefault()
-    isPointerDown = true
-    lastX = e.clientX
-    lastY = e.clientY
+  function getPointerDesignPlanePoint(clientX: number, clientY: number, out: THREE.Vector3) {
+    const bounds = domElement.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return false
+    }
+
+    pointerNdc.x = ((clientX - bounds.left) / bounds.width) * 2 - 1
+    pointerNdc.y = -(((clientY - bounds.top) / bounds.height) * 2 - 1)
+    raycaster.setFromCamera(pointerNdc, camera)
+    return raycaster.ray.intersectPlane(designPlane, out) !== null
   }
 
-  function onPointerUp() {
-    isPointerDown = false
+  function panByPixels(deltaX: number, deltaY: number) {
+    const bounds = domElement.getBoundingClientRect()
+    if (bounds.height <= 0) {
+      return
+    }
+
+    const worldUnitsPerPixel =
+      (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * spherical.radius) / bounds.height
+
+    camera.getWorldDirection(cameraDirection)
+    panRight.crossVectors(cameraDirection, camera.up).normalize()
+    panUp.crossVectors(panRight, cameraDirection).normalize()
+
+    target.addScaledVector(panRight, -deltaX * worldUnitsPerPixel)
+    target.addScaledVector(panUp, deltaY * worldUnitsPerPixel)
+  }
+
+  function onContextMenu(e: MouseEvent) {
+    e.preventDefault()
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    const nextDragMode =
+      e.button === 0 && !e.shiftKey ? 'rotate'
+      : e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey) ? 'pan'
+      : null
+
+    if (!nextDragMode) {
+      return
+    }
+
+    e.preventDefault()
+    dragMode = nextDragMode
+    lastX = e.clientX
+    lastY = e.clientY
+    domElement.setPointerCapture?.(e.pointerId)
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    dragMode = null
+    if (domElement.hasPointerCapture?.(e.pointerId)) {
+      domElement.releasePointerCapture(e.pointerId)
+    }
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (!isPointerDown) return
+    if (!dragMode) return
     e.preventDefault()
     const dx = e.clientX - lastX
     const dy = e.clientY - lastY
     lastX = e.clientX
     lastY = e.clientY
-    spherical.theta -= dx * 0.01
-    spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi + dy * 0.01))
+
+    if (dragMode === 'rotate') {
+      spherical.theta -= dx * 0.01
+      spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi + dy * 0.01))
+    } else {
+      panByPixels(dx, dy)
+    }
+
     updateCamera()
   }
 
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     e.stopPropagation()
-    spherical.radius = Math.max(50, Math.min(800, spherical.radius + e.deltaY * 0.3))
+
+    const hadAnchor = getPointerDesignPlanePoint(e.clientX, e.clientY, beforeZoomPoint)
+    const nextRadius = Math.max(50, Math.min(800, spherical.radius * Math.exp(e.deltaY * 0.0015)))
+    if (Math.abs(nextRadius - spherical.radius) < 0.001) {
+      return
+    }
+
+    spherical.radius = nextRadius
+    updateCamera()
+
+    if (hadAnchor && getPointerDesignPlanePoint(e.clientX, e.clientY, afterZoomPoint)) {
+      target.add(beforeZoomPoint).sub(afterZoomPoint)
+    }
+
     updateCamera()
   }
 
   domElement.addEventListener('pointerdown', onPointerDown)
   domElement.addEventListener('pointerup', onPointerUp)
+  domElement.addEventListener('pointercancel', onPointerUp)
   domElement.addEventListener('pointermove', onPointerMove)
   domElement.addEventListener('wheel', onWheel, { passive: false })
+  domElement.addEventListener('contextmenu', onContextMenu)
 
   updateCamera()
 
@@ -76,8 +152,10 @@ function createOrbitControls(
     dispose: () => {
       domElement.removeEventListener('pointerdown', onPointerDown)
       domElement.removeEventListener('pointerup', onPointerUp)
+      domElement.removeEventListener('pointercancel', onPointerUp)
       domElement.removeEventListener('pointermove', onPointerMove)
       domElement.removeEventListener('wheel', onWheel)
+      domElement.removeEventListener('contextmenu', onContextMenu)
     },
     reset: () => {
       spherical = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 }
