@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'save' | 'open' | 'rect' | 'circle' | 'polygon' | 'spline'
+type ToolbarIconName = 'save' | 'open' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline'
 
 function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   switch (name) {
@@ -18,6 +18,19 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 8h5l2 2h9" />
           <path d="M4 10.5h16l-2.1 7H6.1z" />
+        </svg>
+      )
+    case 'fit':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 4H4v5" />
+          <path d="M15 4h5v5" />
+          <path d="M20 15v5h-5" />
+          <path d="M4 15v5h5" />
+          <path d="M4 9l6-6" />
+          <path d="M20 9l-6-6" />
+          <path d="M20 15l-6 6" />
+          <path d="M4 15l6 6" />
         </svg>
       )
     case 'rect':
@@ -58,6 +71,10 @@ interface ToolbarActionButtonProps {
   onClick: () => void
 }
 
+interface ToolbarProps {
+  onZoomToModel: () => void
+}
+
 function ToolbarActionButton({ icon, label, active = false, onClick }: ToolbarActionButtonProps) {
   return (
     <div className="toolbar-action">
@@ -76,7 +93,7 @@ function ToolbarActionButton({ icon, label, active = false, onClick }: ToolbarAc
   )
 }
 
-export function Toolbar() {
+export function Toolbar({ onZoomToModel }: ToolbarProps) {
   const {
     project,
     pendingAdd,
@@ -178,6 +195,7 @@ export function Toolbar() {
       <div className="toolbar-group">
         <ToolbarActionButton icon="open" label="Open Project" onClick={handleLoad} />
         <ToolbarActionButton icon="save" label="Save Project" onClick={handleSave} />
+        <ToolbarActionButton icon="fit" label="Zoom to Model" onClick={onZoomToModel} />
       </div>
 
       <div className="toolbar-group">

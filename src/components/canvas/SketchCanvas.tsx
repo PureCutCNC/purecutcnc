@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { SketchControlRef } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
@@ -43,6 +43,10 @@ interface SketchViewState {
   panY: number
 }
 
+export interface SketchCanvasHandle {
+  zoomToModel: () => void
+}
+
 function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
   return {
     cx: vt.offsetX + point.x * vt.scale,
@@ -85,6 +89,62 @@ function computeViewTransform(
     scale: base.scale * viewState.zoom,
     offsetX: base.offsetX + viewState.panX,
     offsetY: base.offsetY + viewState.panY,
+  }
+}
+
+function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getState>['project']) {
+  const profiles: SketchProfile[] = []
+
+  if (project.stock.visible) {
+    profiles.push(project.stock.profile)
+  }
+
+  for (const feature of project.features) {
+    if (feature.visible) {
+      profiles.push(feature.sketch.profile)
+    }
+  }
+
+  if (profiles.length === 0) {
+    profiles.push(project.stock.profile)
+  }
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+
+  for (const profile of profiles) {
+    const bounds = getProfileBounds(profile)
+    minX = Math.min(minX, bounds.minX)
+    maxX = Math.max(maxX, bounds.maxX)
+    minY = Math.min(minY, bounds.minY)
+    maxY = Math.max(maxY, bounds.maxY)
+  }
+
+  return { minX, maxX, minY, maxY }
+}
+
+function computeFitViewState(
+  project: ReturnType<typeof useProjectStore.getState>['project'],
+  canvasW: number,
+  canvasH: number,
+): SketchViewState {
+  const base = computeBaseViewTransform(project.stock, canvasW, canvasH)
+  const bounds = getVisibleSceneBounds2D(project)
+  const contentW = Math.max(bounds.maxX - bounds.minX, 1)
+  const contentH = Math.max(bounds.maxY - bounds.minY, 1)
+  const desiredScale = Math.min(
+    (canvasW - PADDING * 2) / contentW,
+    (canvasH - PADDING * 2) / contentH,
+  )
+  const desiredOffsetX = (canvasW - contentW * desiredScale) / 2 - bounds.minX * desiredScale
+  const desiredOffsetY = (canvasH - contentH * desiredScale) / 2 - bounds.minY * desiredScale
+
+  return {
+    zoom: desiredScale / base.scale,
+    panX: desiredOffsetX - base.offsetX,
+    panY: desiredOffsetY - base.offsetY,
   }
 }
 
@@ -576,7 +636,7 @@ function isLoopCloseCandidate(
   return distance2(point, start) <= POLYGON_CLOSE_RADIUS * POLYGON_CLOSE_RADIUS
 }
 
-export function SketchCanvas() {
+export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas(_props, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDraggingNodeRef = useRef(false)
@@ -682,6 +742,14 @@ export function SketchCanvas() {
   useEffect(() => {
     draw()
   }, [draw])
+
+  useImperativeHandle(ref, () => ({
+    zoomToModel: () => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      setViewState(computeFitViewState(project, canvas.width, canvas.height))
+    },
+  }), [project])
 
   useEffect(() => {
     const container = containerRef.current
@@ -1003,4 +1071,4 @@ export function SketchCanvas() {
       )}
     </div>
   )
-}
+})

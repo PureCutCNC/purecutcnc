@@ -659,6 +659,9 @@
   position: absolute;
   top: 10px;
   right: 10px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .preset-btn {
@@ -666,12 +669,21 @@
   border-radius: 7px;
   background: rgba(10, 18, 27, 0.85);
   color: var(--text);
-  width: 30px;
+  min-width: 30px;
   height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
 }
 
 .preset-btn:hover {
   border-color: var(--accent);
+}
+
+.preset-btn--icon {
+  width: 30px;
+  padding: 0;
 }
 
 .app-statusbar {

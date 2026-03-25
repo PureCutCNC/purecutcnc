@@ -12,6 +12,8 @@ interface AppShellProps {
   viewport3d: ReactNode
   aiPanel: ReactNode
   operationsPanel?: ReactNode
+  centerTab: 'sketch' | 'preview3d'
+  onCenterTabChange: (tab: 'sketch' | 'preview3d') => void
 }
 
 export function AppShell({
@@ -22,10 +24,11 @@ export function AppShell({
   viewport3d,
   aiPanel,
   operationsPanel,
+  centerTab,
+  onCenterTabChange,
 }: AppShellProps) {
   const { project } = useProjectStore()
   const [rightTab, setRightTab] = useState<'operations' | 'ai'>('operations')
-  const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = Math.round(stockBounds.maxX - stockBounds.minX)
   const stockHeight = Math.round(stockBounds.maxY - stockBounds.minY)
@@ -60,14 +63,14 @@ export function AppShell({
             <div className="panel-tabs-header">
               <button
                 className={`panel-tab ${centerTab === 'sketch' ? 'panel-tab--active' : ''}`}
-                onClick={() => setCenterTab('sketch')}
+                onClick={() => onCenterTabChange('sketch')}
                 type="button"
               >
                 Sketch
               </button>
               <button
                 className={`panel-tab ${centerTab === 'preview3d' ? 'panel-tab--active' : ''}`}
-                onClick={() => setCenterTab('preview3d')}
+                onClick={() => onCenterTabChange('preview3d')}
                 type="button"
               >
                 3D View

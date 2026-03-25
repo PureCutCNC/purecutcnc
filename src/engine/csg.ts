@@ -144,7 +144,9 @@ export function buildStockMesh(stock: Stock): THREE.Mesh {
     opacity: 0.35,
     side: THREE.DoubleSide,
   })
-  return new THREE.Mesh(geometry, material)
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.scale.z = -1
+  return mesh
 }
 
 // ── Feature mesh ─────────────────────────────────────────────────────────────
@@ -180,7 +182,9 @@ export function buildFeatureMesh(
     side: THREE.FrontSide,
   })
 
-  return new THREE.Mesh(geometry, material)
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.scale.z = -1
+  return mesh
 }
 
 function manifoldMeshToGeometry(mesh: ManifoldMesh): THREE.BufferGeometry {
@@ -280,7 +284,9 @@ async function buildBooleanModel(
       side: THREE.FrontSide,
     })
 
-    return new THREE.Mesh(geometry, material)
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.scale.z = -1
+    return mesh
   } finally {
     current?.delete()
   }
@@ -300,7 +306,9 @@ export function buildStockWireframe(stock: Stock): THREE.LineSegments {
     color: new THREE.Color(stock.color ?? '#aabbcc'),
     linewidth: 1,
   })
-  return new THREE.LineSegments(edges, material)
+  const lines = new THREE.LineSegments(edges, material)
+  lines.scale.z = -1
+  return lines
 }
 
 // ── Full scene builder ───────────────────────────────────────────────────────
@@ -332,11 +340,7 @@ export async function buildScene(
     }
   }
 
-  const showStockReference =
-    (project.stock.visible ?? true)
-    && visibleFeatures.length === 0
-    && !modelMesh
-    && featureMeshes.size === 0
+  const showStockReference = project.stock.visible ?? true
 
   stockMesh.visible = showStockReference
   stockWireframe.visible = showStockReference

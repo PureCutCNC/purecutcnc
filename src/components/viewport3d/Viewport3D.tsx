@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import * as THREE from 'three'
 import { useProjectStore } from '../../store/projectStore'
 import { buildScene } from '../../engine/csg'
@@ -14,15 +14,67 @@ function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   }
 }
 
+const DEFAULT_CAMERA_SPHERICAL = {
+  theta: Math.PI / 4,
+  phi: Math.PI / 3,
+  radius: 250,
+}
+
+type ViewPreset = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'right' | 'left'
+
+const VIEW_PRESETS: Record<ViewPreset, { theta: number; phi: number; up: THREE.Vector3Tuple }> = {
+  iso: {
+    theta: DEFAULT_CAMERA_SPHERICAL.theta,
+    phi: DEFAULT_CAMERA_SPHERICAL.phi,
+    up: [0, 1, 0],
+  },
+  top: {
+    theta: 0,
+    phi: 0.05,
+    up: [0, 0, -1],
+  },
+  bottom: {
+    theta: 0,
+    phi: Math.PI - 0.05,
+    up: [0, 0, 1],
+  },
+  front: {
+    theta: 0,
+    phi: Math.PI / 2,
+    up: [0, 1, 0],
+  },
+  back: {
+    theta: Math.PI,
+    phi: Math.PI / 2,
+    up: [0, 1, 0],
+  },
+  right: {
+    theta: Math.PI / 2,
+    phi: Math.PI / 2,
+    up: [0, 1, 0],
+  },
+  left: {
+    theta: (3 * Math.PI) / 2,
+    phi: Math.PI / 2,
+    up: [0, 1, 0],
+  },
+}
+
+export interface Viewport3DHandle {
+  zoomToModel: () => void
+}
+
 function createOrbitControls(
   camera: THREE.PerspectiveCamera,
   domElement: HTMLElement,
-  onChange: () => void
+  onChange: () => void,
+  onPresetChange: (preset: ViewPreset | null) => void
 ) {
   let dragMode: 'rotate' | 'pan' | null = null
   let lastX = 0
   let lastY = 0
-  let spherical = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 }
+  let spherical = { ...DEFAULT_CAMERA_SPHERICAL }
+  let cameraUp: THREE.Vector3Tuple = [...VIEW_PRESETS.iso.up]
   const target = new THREE.Vector3(50, 0, 40)
   const pointerNdc = new THREE.Vector2()
   const raycaster = new THREE.Raycaster()
@@ -33,7 +85,26 @@ function createOrbitControls(
   const panUp = new THREE.Vector3()
   const cameraDirection = new THREE.Vector3()
 
+  function applyDefaultOrientation(preserveRadius = true) {
+    applyPreset('iso', preserveRadius, false)
+  }
+
+  function applyPreset(preset: ViewPreset, preserveRadius = true, render = true) {
+    const presetState = VIEW_PRESETS[preset]
+    spherical = {
+      theta: presetState.theta,
+      phi: presetState.phi,
+      radius: preserveRadius ? spherical.radius : DEFAULT_CAMERA_SPHERICAL.radius,
+    }
+    cameraUp = [...presetState.up]
+    onPresetChange(preset)
+    if (render) {
+      updateCamera()
+    }
+  }
+
   function updateCamera() {
+    camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2])
     camera.position.set(
       target.x + spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta),
       target.y + spherical.radius * Math.cos(spherical.phi),
@@ -110,9 +181,11 @@ function createOrbitControls(
     lastY = e.clientY
 
     if (dragMode === 'rotate') {
+      onPresetChange(null)
       spherical.theta -= dx * 0.01
       spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi + dy * 0.01))
     } else {
+      onPresetChange(null)
       panByPixels(dx, dy)
     }
 
@@ -122,6 +195,7 @@ function createOrbitControls(
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     e.stopPropagation()
+    onPresetChange(null)
 
     const hadAnchor = getPointerDesignPlanePoint(e.clientX, e.clientY, beforeZoomPoint)
     const nextRadius = Math.max(50, Math.min(800, spherical.radius * Math.exp(e.deltaY * 0.0015)))
@@ -158,17 +232,36 @@ function createOrbitControls(
       domElement.removeEventListener('contextmenu', onContextMenu)
     },
     reset: () => {
-      spherical = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 }
-      updateCamera()
+      applyDefaultOrientation(false)
+    },
+    setPreset: (preset: ViewPreset) => {
+      applyPreset(preset, true)
     },
     setTarget: (x: number, y: number, z: number) => {
       target.set(x, y, z)
       updateCamera()
     },
+    fitToBounds: (bounds: THREE.Box3, alignToDefault = false) => {
+      const size = bounds.getSize(new THREE.Vector3())
+      const center = bounds.getCenter(new THREE.Vector3())
+      const radius = Math.max(size.length() / 2, 1)
+      const aspect = Math.max(camera.aspect, 1e-3)
+      const verticalDistance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2)
+      const horizontalFov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect)
+      const horizontalDistance = radius / Math.sin(horizontalFov / 2)
+
+      if (alignToDefault) {
+        applyDefaultOrientation(true)
+      }
+
+      spherical.radius = Math.max(50, Math.min(800, Math.max(verticalDistance, horizontalDistance) * 1.15))
+      target.copy(center)
+      updateCamera()
+    },
   }
 }
 
-export function Viewport3D() {
+export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_props, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -178,8 +271,32 @@ export function Viewport3D() {
   const frameRef = useRef<number>(0)
   const objectsRef = useRef<THREE.Object3D[]>([])
   const buildRequestRef = useRef(0)
+  const activePresetRef = useRef<ViewPreset | null>('iso')
 
   const { project } = useProjectStore()
+
+  const syncGridVisibility = useCallback(() => {
+    const gridGroup = gridRef.current
+    if (!gridGroup) return
+    gridGroup.visible = project.grid.visible
+  }, [project.grid.visible])
+
+  const zoomToModel = useCallback(() => {
+    const controls = controlsRef.current
+    if (!controls || objectsRef.current.length === 0) return
+
+    const bounds = new THREE.Box3()
+    let hasRenderableObject = false
+
+    for (const object of objectsRef.current) {
+      if (!object.visible) continue
+      bounds.expandByObject(object)
+      hasRenderableObject = true
+    }
+
+    if (!hasRenderableObject || bounds.isEmpty()) return
+    controls.fitToBounds(bounds, true)
+  }, [])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -225,6 +342,9 @@ export function Viewport3D() {
 
     const controls = createOrbitControls(camera, renderer.domElement, () => {
       renderer.render(scene, camera)
+    }, (preset) => {
+      activePresetRef.current = preset
+      syncGridVisibility()
     })
     controlsRef.current = controls
 
@@ -249,7 +369,7 @@ export function Viewport3D() {
       renderer.dispose()
       mount.removeChild(renderer.domElement)
     }
-  }, [])
+  }, [syncGridVisibility])
 
   const disposeObjectMaterial = useCallback((material: THREE.Material | THREE.Material[]) => {
     if (Array.isArray(material)) {
@@ -273,7 +393,7 @@ export function Viewport3D() {
     }
 
     gridGroup.position.set(centerX, -0.05, centerZ)
-    gridGroup.visible = project.grid.visible
+    syncGridVisibility()
     if (!project.grid.visible) return
 
     const extent = Math.max(project.grid.extent, project.grid.minorSpacing)
@@ -288,7 +408,7 @@ export function Viewport3D() {
 
     gridGroup.add(minorGrid)
     gridGroup.add(majorGrid)
-  }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible])
+  }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible, syncGridVisibility])
 
   const clearRenderedObjects = useCallback((scene: THREE.Scene) => {
     for (const object of objectsRef.current) {
@@ -362,8 +482,8 @@ export function Viewport3D() {
 
           const minX = Math.min(...points.map((point) => point.x))
           const maxX = Math.max(...points.map((point) => point.x))
-          const minWorldZ = Math.min(...points.map((point) => -point.y))
-          const maxWorldZ = Math.max(...points.map((point) => -point.y))
+          const minWorldZ = Math.min(...points.map((point) => point.y))
+          const maxWorldZ = Math.max(...points.map((point) => point.y))
           const verticalValues =
             visibleFeatures.length > 0
               ? visibleFeatures.flatMap((feature) => {
@@ -394,14 +514,36 @@ export function Viewport3D() {
     }
   }, [clearRenderedObjects, disposeObjectMaterial, project, rebuildGridHelpers])
 
+  useImperativeHandle(ref, () => ({
+    zoomToModel,
+  }), [zoomToModel])
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <div className="viewport-presets">
-        <button className="preset-btn" onClick={() => controlsRef.current?.reset()} title="Reset view">
-          ⟳
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">
+          Top
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">
+          Bottom
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">
+          Front
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">
+          Back
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">
+          Right
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">
+          Left
+        </button>
+        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">
+          Iso
         </button>
       </div>
     </div>
   )
-}
+})
