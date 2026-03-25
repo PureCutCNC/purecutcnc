@@ -49,6 +49,11 @@ export function FeatureTree() {
     dragOverId.current = null
   }
 
+  // Warn if first feature is not 'add' — this should not normally happen
+  // since the store enforces it, but a loaded file could be malformed.
+  const firstFeatureInvalid =
+    project.features.length > 0 && project.features[0].operation !== 'add'
+
   return (
     <div className="feature-tree-panel">
       <div className="tree-root-label">Project</div>
@@ -88,31 +93,39 @@ export function FeatureTree() {
         {project.features.length === 0 ? (
           <div className="feature-tree-empty">No feature nodes yet.</div>
         ) : (
-          project.features.map((feature) => (
-            <TreeRow
-              key={feature.id}
-              label={feature.name}
-              kind="feature"
-              isSelected={selection.selectedNode?.type === 'feature' && selection.selectedNode.featureId === feature.id}
-              isDragging={dragId === feature.id}
-              visible={feature.visible}
-              operation={feature.operation}
-              onClick={() => selectFeature(feature.id)}
-              onMouseEnter={() => hoverFeature(feature.id)}
-              onMouseLeave={() => hoverFeature(null)}
-              onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
-              onToggleOperation={() =>
-                updateFeature(feature.id, {
-                  operation: feature.operation === 'add' ? 'subtract' : 'add',
-                })
-              }
-              draggable
-              onDragStart={() => handleDragStart(feature.id)}
-              onDragEnd={() => setDragId(null)}
-              onDragOver={(event) => handleDragOver(event, feature.id)}
-              onDrop={handleDrop}
-            />
-          ))
+          <>
+            {firstFeatureInvalid && (
+              <div className="feature-tree-warning" role="alert">
+                ⚠ First feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
+              </div>
+            )}
+            {project.features.map((feature, index) => (
+              <TreeRow
+                key={feature.id}
+                label={feature.name}
+                kind="feature"
+                isSelected={selection.selectedNode?.type === 'feature' && selection.selectedNode.featureId === feature.id}
+                isDragging={dragId === feature.id}
+                visible={feature.visible}
+                operation={feature.operation}
+                isFirstFeature={index === 0}
+                onClick={() => selectFeature(feature.id)}
+                onMouseEnter={() => hoverFeature(feature.id)}
+                onMouseLeave={() => hoverFeature(null)}
+                onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
+                onToggleOperation={() =>
+                  updateFeature(feature.id, {
+                    operation: feature.operation === 'add' ? 'subtract' : 'add',
+                  })
+                }
+                draggable
+                onDragStart={() => handleDragStart(feature.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(event) => handleDragOver(event, feature.id)}
+                onDrop={handleDrop}
+              />
+            ))}
+          </>
         )}
       </div>
     </div>
@@ -126,6 +139,7 @@ interface TreeRowProps {
   isDragging: boolean
   visible: boolean
   operation?: 'add' | 'subtract'
+  isFirstFeature?: boolean
   onClick: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -145,6 +159,7 @@ function TreeRow({
   isDragging,
   visible,
   operation,
+  isFirstFeature = false,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -156,6 +171,9 @@ function TreeRow({
   onDragOver,
   onDrop,
 }: TreeRowProps) {
+  // First feature's operation toggle is locked to 'add' — disable it
+  const operationLocked = isFirstFeature && operation === 'add'
+
   return (
     <div
       className={[
@@ -181,15 +199,33 @@ function TreeRow({
         {kind === 'feature' && onToggleOperation ? (
           <button
             type="button"
-            className={`tree-action-btn tree-action-btn--operation tree-action-btn--${operation}`}
+            className={[
+              'tree-action-btn',
+              'tree-action-btn--operation',
+              `tree-action-btn--${operation}`,
+              operationLocked ? 'tree-action-btn--locked' : '',
+            ].join(' ')}
             onClick={(event) => {
               event.stopPropagation()
-              onToggleOperation()
+              if (!operationLocked) onToggleOperation()
             }}
-            title={operation === 'add' ? 'Feature adds material' : 'Feature subtracts material'}
-            aria-label={operation === 'add' ? 'Toggle to subtract' : 'Toggle to add'}
+            title={
+              operationLocked
+                ? 'First feature must always be Add (base solid)'
+                : operation === 'add'
+                ? 'Feature adds material — click to toggle'
+                : 'Feature subtracts material — click to toggle'
+            }
+            aria-label={
+              operationLocked
+                ? 'Operation locked to Add'
+                : operation === 'add'
+                ? 'Toggle to subtract'
+                : 'Toggle to add'
+            }
+            aria-disabled={operationLocked}
           >
-            {operation === 'add' ? '+' : '-'}
+            {operation === 'add' ? '+' : '−'}
           </button>
         ) : null}
         <button

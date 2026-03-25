@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
+import { bezierPoint } from '../types/project'
 import type { DimensionRef, Project, SketchFeature, SketchProfile, Segment, Stock } from '../types/project'
 
 const ARC_STEP_RADIANS = Math.PI / 18
@@ -43,6 +44,15 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
   for (const seg of profile.segments) {
     if (seg.type === 'line') {
       shape.lineTo(seg.to.x, seg.to.y)
+    } else if (seg.type === 'bezier') {
+      shape.bezierCurveTo(
+        seg.control1.x,
+        seg.control1.y,
+        seg.control2.x,
+        seg.control2.y,
+        seg.to.x,
+        seg.to.y,
+      )
     } else {
       // Arc segment
       const { to, center, clockwise } = seg as Extract<Segment, { type: 'arc' }>
@@ -70,6 +80,16 @@ function profileToPolygon(profile: SketchProfile): [number, number][] {
   for (const seg of profile.segments) {
     if (seg.type === 'line') {
       points.push([seg.to.x, seg.to.y])
+      current = seg.to
+      continue
+    }
+
+    if (seg.type === 'bezier') {
+      const segmentCount = 18
+      for (let index = 1; index <= segmentCount; index += 1) {
+        const point = bezierPoint(current, seg.control1, seg.control2, seg.to, index / segmentCount)
+        points.push([point.x, point.y])
+      }
       current = seg.to
       continue
     }

@@ -1,6 +1,81 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 
+type ToolbarIconName = 'save' | 'open' | 'rect' | 'circle' | 'polygon' | 'spline'
+
+function ToolbarIcon({ name }: { name: ToolbarIconName }) {
+  switch (name) {
+    case 'save':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 4.5h11l3 3v12H5z" />
+          <path d="M8 4.5h7v4.5H8z" />
+          <path d="M8 14.5h8v4H8z" />
+        </svg>
+      )
+    case 'open':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 8h5l2 2h9" />
+          <path d="M4 10.5h16l-2.1 7H6.1z" />
+        </svg>
+      )
+    case 'rect':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="5" y="7" width="14" height="10" rx="1.5" />
+        </svg>
+      )
+    case 'circle':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="6.5" />
+        </svg>
+      )
+    case 'polygon':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 6h10l4 6-6 6H7L3 10z" />
+        </svg>
+      )
+    case 'spline':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 15c2.5 0 2.5-6 5-6s2.5 8 5 8 2.5-5 6-5" />
+          <circle cx="4" cy="15" r="1.2" />
+          <circle cx="9" cy="9" r="1.2" />
+          <circle cx="14" cy="17" r="1.2" />
+          <circle cx="20" cy="12" r="1.2" />
+        </svg>
+      )
+  }
+}
+
+interface ToolbarActionButtonProps {
+  icon: ToolbarIconName
+  label: string
+  active?: boolean
+  onClick: () => void
+}
+
+function ToolbarActionButton({ icon, label, active = false, onClick }: ToolbarActionButtonProps) {
+  return (
+    <div className="toolbar-action">
+      <button
+        className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''}`}
+        onClick={onClick}
+        aria-label={label}
+        type="button"
+      >
+        <ToolbarIcon name={icon} />
+      </button>
+      <span className="toolbar-tooltip" role="tooltip">
+        {label}
+      </span>
+    </div>
+  )
+}
+
 export function Toolbar() {
   const {
     project,
@@ -11,6 +86,7 @@ export function Toolbar() {
     startAddRectPlacement,
     startAddCirclePlacement,
     startAddPolygonPlacement,
+    startAddSplinePlacement,
     cancelPendingAdd,
   } = useProjectStore()
 
@@ -50,33 +126,19 @@ export function Toolbar() {
     input.click()
   }
 
-  function handleAddRect() {
-    if (pendingAdd?.shape === 'rect') {
+  function togglePlacement(shape: 'rect' | 'circle' | 'polygon' | 'spline', start: () => void) {
+    if (pendingAdd?.shape === shape) {
       cancelPendingAdd()
       return
     }
-    startAddRectPlacement()
-  }
 
-  function handleAddCircle() {
-    if (pendingAdd?.shape === 'circle') {
-      cancelPendingAdd()
-      return
-    }
-    startAddCirclePlacement()
-  }
-
-  function handleAddPolygon() {
-    if (pendingAdd?.shape === 'polygon') {
-      cancelPendingAdd()
-      return
-    }
-    startAddPolygonPlacement()
+    start()
   }
 
   return (
     <div className="toolbar">
-      <div className="toolbar-group">
+      <div className="toolbar-project-block">
+        <span className="toolbar-project-label">Project</span>
         {editingName ? (
           <input
             className="toolbar-name-input"
@@ -106,6 +168,7 @@ export function Toolbar() {
               setEditingName(true)
             }}
             title="Rename project"
+            type="button"
           >
             {project.meta.name}
           </button>
@@ -113,29 +176,35 @@ export function Toolbar() {
       </div>
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" onClick={handleSave}>Save</button>
-        <button className="toolbar-btn" onClick={handleLoad}>Open</button>
+        <ToolbarActionButton icon="open" label="Open Project" onClick={handleLoad} />
+        <ToolbarActionButton icon="save" label="Save Project" onClick={handleSave} />
       </div>
 
       <div className="toolbar-group">
-        <button
-          className={`toolbar-btn ${pendingAdd?.shape === 'rect' ? 'toolbar-btn--active' : ''}`}
-          onClick={handleAddRect}
-        >
-          {pendingAdd?.shape === 'rect' ? 'Cancel Rect' : 'Add Rect'}
-        </button>
-        <button
-          className={`toolbar-btn ${pendingAdd?.shape === 'circle' ? 'toolbar-btn--active' : ''}`}
-          onClick={handleAddCircle}
-        >
-          {pendingAdd?.shape === 'circle' ? 'Cancel Circle' : 'Add Circle'}
-        </button>
-        <button
-          className={`toolbar-btn ${pendingAdd?.shape === 'polygon' ? 'toolbar-btn--active' : ''}`}
-          onClick={handleAddPolygon}
-        >
-          {pendingAdd?.shape === 'polygon' ? 'Cancel Polygon' : 'Add Polygon'}
-        </button>
+        <ToolbarActionButton
+          icon="rect"
+          label={pendingAdd?.shape === 'rect' ? 'Cancel Rectangle Tool' : 'Add Rectangle'}
+          active={pendingAdd?.shape === 'rect'}
+          onClick={() => togglePlacement('rect', startAddRectPlacement)}
+        />
+        <ToolbarActionButton
+          icon="circle"
+          label={pendingAdd?.shape === 'circle' ? 'Cancel Circle Tool' : 'Add Circle'}
+          active={pendingAdd?.shape === 'circle'}
+          onClick={() => togglePlacement('circle', startAddCirclePlacement)}
+        />
+        <ToolbarActionButton
+          icon="polygon"
+          label={pendingAdd?.shape === 'polygon' ? 'Cancel Polygon Tool' : 'Add Polygon'}
+          active={pendingAdd?.shape === 'polygon'}
+          onClick={() => togglePlacement('polygon', startAddPolygonPlacement)}
+        />
+        <ToolbarActionButton
+          icon="spline"
+          label={pendingAdd?.shape === 'spline' ? 'Cancel Spline Tool' : 'Add Spline'}
+          active={pendingAdd?.shape === 'spline'}
+          onClick={() => togglePlacement('spline', startAddSplinePlacement)}
+        />
       </div>
     </div>
   )

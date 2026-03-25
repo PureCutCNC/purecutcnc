@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  type Segment,
   defaultStock,
   defaultGrid,
   getStockBounds,
@@ -7,6 +8,7 @@ import {
   rectProfile,
   circleProfile,
   polygonProfile,
+  splineProfile,
 } from '../types/project'
 import type { GridSettings, Point, Project, SketchFeature, Stock } from '../types/project'
 
@@ -21,8 +23,13 @@ export interface SelectionState {
   selectedFeatureId: string | null
   selectedNode: SelectedNode
   hoveredFeatureId: string | null
-  // sketch edit mode — which node is being dragged
-  activeNodeIndex: number | null
+  // sketch edit mode — which anchor/handle is being dragged
+  activeControl: SketchControlRef | null
+}
+
+export interface SketchControlRef {
+  kind: 'anchor' | 'in_handle' | 'out_handle'
+  index: number
 }
 
 export type SelectedNode =
@@ -63,13 +70,14 @@ export interface ProjectStore {
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
   exitSketchEdit: () => void
-  setActiveNodeIndex: (index: number | null) => void
-  moveFeatureNode: (featureId: string, nodeIndex: number, point: Point) => void
+  setActiveControl: (control: SketchControlRef | null) => void
+  moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
 
   // Feature placement flow
   startAddRectPlacement: () => void
   startAddCirclePlacement: () => void
   startAddPolygonPlacement: () => void
+  startAddSplinePlacement: () => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -80,12 +88,14 @@ export interface ProjectStore {
   addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
   addCircleFeature: (name: string, cx: number, cy: number, r: number, depth: number) => void
   addPolygonFeature: (name: string, points: Point[], depth: number) => void
+  addSplineFeature: (name: string, points: Point[], depth: number) => void
 }
 
 export type PendingAddTool =
   | { shape: 'rect'; anchor: Point | null; session: number }
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
+  | { shape: 'spline'; points: Point[]; session: number }
 
 // ============================================================
 // ID generator
@@ -101,6 +111,50 @@ function nextPlacementSession(): number {
   return _placementSessionCounter++
 }
 
+function clonePoint(point: Point): Point {
+  return { ...point }
+}
+
+function cloneSegment(segment: Segment): Segment {
+  if (segment.type === 'arc') {
+    return {
+      ...segment,
+      to: clonePoint(segment.to),
+      center: clonePoint(segment.center),
+    }
+  }
+
+  if (segment.type === 'bezier') {
+    return {
+      ...segment,
+      to: clonePoint(segment.to),
+      control1: clonePoint(segment.control1),
+      control2: clonePoint(segment.control2),
+    }
+  }
+
+  return {
+    ...segment,
+    to: clonePoint(segment.to),
+  }
+}
+
+function translatePoint(point: Point, dx: number, dy: number): Point {
+  return { x: point.x + dx, y: point.y + dy }
+}
+
+// ============================================================
+// Rule: first feature must always be 'add'
+// The part model is built from the first 'add' solid — subsequent
+// features add or subtract from it. Stock is a separate concept
+// used only during CAM operation generation.
+// ============================================================
+
+export function isFirstFeatureValid(features: SketchFeature[]): boolean {
+  if (features.length === 0) return true
+  return features[0].operation === 'add'
+}
+
 // ============================================================
 // Store implementation
 // ============================================================
@@ -114,7 +168,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     selectedFeatureId: null,
     selectedNode: null,
     hoveredFeatureId: null,
-    activeNodeIndex: null,
+    activeControl: null,
   },
 
   // ── Project ──────────────────────────────────────────────
@@ -151,7 +205,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           selectedFeatureId: null,
           selectedNode: null,
           hoveredFeatureId: null,
-          activeNodeIndex: null,
+          activeControl: null,
         },
       }
     }),
@@ -196,30 +250,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // ── Features ─────────────────────────────────────────────
 
   addFeature: (feature) =>
-    set((s) => ({
-      project: {
-        ...s.project,
-        features: [...s.project.features, feature],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-      selection: {
-        ...s.selection,
-        selectedFeatureId: feature.id,
-        selectedNode: { type: 'feature', featureId: feature.id },
-        mode: 'feature',
-      },
-    })),
+    set((s) => {
+      // First feature must always be 'add' — it is the base solid of the part model.
+      const isFirst = s.project.features.length === 0
+      const safeFeature: SketchFeature = isFirst
+        ? { ...feature, operation: 'add' }
+        : feature
+      return {
+        project: {
+          ...s.project,
+          features: [...s.project.features, safeFeature],
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: safeFeature.id,
+          selectedNode: { type: 'feature', featureId: safeFeature.id },
+          mode: 'feature',
+          activeControl: null,
+        },
+      }
+    }),
 
   updateFeature: (id, patch) =>
-    set((s) => ({
-      project: {
-        ...s.project,
-        features: s.project.features.map((f) =>
-          f.id === id ? { ...f, ...patch } : f
-        ),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-    })),
+    set((s) => {
+      const features = s.project.features
+      const isFirst = features.length > 0 && features[0].id === id
+      // Prevent changing the first feature's operation away from 'add'
+      const safePatch: Partial<SketchFeature> =
+        isFirst && patch.operation !== undefined && patch.operation !== 'add'
+          ? { ...patch, operation: 'add' }
+          : patch
+      return {
+        project: {
+          ...s.project,
+          features: features.map((f) =>
+            f.id === id ? { ...f, ...safePatch } : f
+          ),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+      }
+    }),
 
   deleteFeature: (id) =>
     set((s) => ({
@@ -245,6 +316,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => {
       const map = new Map(s.project.features.map((f) => [f.id, f]))
       const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
+      // If reorder would put a subtract feature first, silently promote it to add.
+      // This is safer than blocking the reorder or showing an error mid-drag.
+      if (reordered.length > 0 && reordered[0].operation !== 'add') {
+        reordered[0] = { ...reordered[0], operation: 'add' }
+      }
       return {
         project: {
           ...s.project,
@@ -298,21 +374,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: id,
         selectedNode: { type: 'feature', featureId: id },
         mode: 'sketch_edit',
-        activeNodeIndex: null,
+        activeControl: null,
       },
     })),
 
   exitSketchEdit: () =>
     set((s) => ({
-      selection: { ...s.selection, mode: 'feature', activeNodeIndex: null },
+      selection: { ...s.selection, mode: 'feature', activeControl: null },
     })),
 
-  setActiveNodeIndex: (index) =>
+  setActiveControl: (control) =>
     set((s) => ({
-      selection: { ...s.selection, activeNodeIndex: index },
+      selection: { ...s.selection, activeControl: control },
     })),
 
-  moveFeatureNode: (featureId, nodeIndex, point) =>
+  moveFeatureControl: (featureId, control, point) =>
     set((s) => ({
       project: {
         ...s.project,
@@ -322,17 +398,59 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           const { profile } = feature.sketch
           const nextProfile = {
             ...profile,
-            segments: profile.segments.map((segment) => ({ ...segment })),
+            start: clonePoint(profile.start),
+            segments: profile.segments.map(cloneSegment),
           }
 
-          if (nodeIndex === 0) {
-            nextProfile.start = point
-            const closingSegment = nextProfile.segments[nextProfile.segments.length - 1]
-            if (closingSegment) {
-              closingSegment.to = point
+          const anchorCount = nextProfile.segments.length
+          if (anchorCount === 0) {
+            return feature
+          }
+
+          if (control.kind === 'anchor') {
+            const currentAnchor =
+              control.index === 0
+                ? nextProfile.start
+                : nextProfile.segments[control.index - 1]?.to
+
+            if (!currentAnchor) {
+              return feature
             }
-          } else if (nodeIndex <= nextProfile.segments.length) {
-            nextProfile.segments[nodeIndex - 1].to = point
+
+            const dx = point.x - currentAnchor.x
+            const dy = point.y - currentAnchor.y
+
+            if (control.index === 0) {
+              nextProfile.start = point
+              const closingSegment = nextProfile.segments[anchorCount - 1]
+              if (closingSegment) {
+                closingSegment.to = point
+                if (closingSegment.type === 'bezier') {
+                  closingSegment.control2 = translatePoint(closingSegment.control2, dx, dy)
+                }
+              }
+            } else {
+              nextProfile.segments[control.index - 1].to = point
+              const incomingSegment = nextProfile.segments[control.index - 1]
+              if (incomingSegment.type === 'bezier') {
+                incomingSegment.control2 = translatePoint(incomingSegment.control2, dx, dy)
+              }
+            }
+
+            const outgoingSegment = nextProfile.segments[control.index % anchorCount]
+            if (outgoingSegment?.type === 'bezier') {
+              outgoingSegment.control1 = translatePoint(outgoingSegment.control1, dx, dy)
+            }
+          } else if (control.kind === 'out_handle') {
+            const outgoingSegment = nextProfile.segments[control.index % anchorCount]
+            if (outgoingSegment?.type === 'bezier') {
+              outgoingSegment.control1 = point
+            }
+          } else {
+            const incomingSegment = nextProfile.segments[(control.index - 1 + anchorCount) % anchorCount]
+            if (incomingSegment?.type === 'bezier') {
+              incomingSegment.control2 = point
+            }
           }
 
           return {
@@ -355,7 +473,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: null,
         selectedNode: null,
         hoveredFeatureId: null,
-        activeNodeIndex: null,
+        activeControl: null,
       },
     })),
 
@@ -367,7 +485,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: null,
         selectedNode: null,
         hoveredFeatureId: null,
-        activeNodeIndex: null,
+        activeControl: null,
       },
     })),
 
@@ -379,7 +497,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: null,
         selectedNode: null,
         hoveredFeatureId: null,
-        activeNodeIndex: null,
+        activeControl: null,
+      },
+    })),
+
+  startAddSplinePlacement: () =>
+    set(() => ({
+      pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
+      selection: {
+        mode: 'feature',
+        selectedFeatureId: null,
+        selectedNode: null,
+        hoveredFeatureId: null,
+        activeControl: null,
       },
     })),
 
@@ -435,21 +565,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   addPendingPolygonPoint: (point) =>
     set((s) => ({
       pendingAdd:
-        s.pendingAdd?.shape === 'polygon'
+        s.pendingAdd && ('points' in s.pendingAdd)
           ? { ...s.pendingAdd, points: [...s.pendingAdd.points, point] }
           : s.pendingAdd,
     })),
 
   completePendingPolygon: () => {
     const state = get()
-    if (state.pendingAdd?.shape !== 'polygon' || state.pendingAdd.points.length < 3) return
+    if (!state.pendingAdd || !('points' in state.pendingAdd) || state.pendingAdd.points.length < 3) return
 
     const depth = Math.min(state.project.stock.thickness, 10)
-    state.addPolygonFeature(
-      `Polygon ${state.project.features.length + 1}`,
-      state.pendingAdd.points,
-      depth,
-    )
+    if (state.pendingAdd.shape === 'spline') {
+      state.addSplineFeature(
+        `Spline ${state.project.features.length + 1}`,
+        state.pendingAdd.points,
+        depth,
+      )
+    } else {
+      state.addPolygonFeature(
+        `Polygon ${state.project.features.length + 1}`,
+        state.pendingAdd.points,
+        depth,
+      )
+    }
     set({ pendingAdd: null })
   },
 
@@ -502,6 +640,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       name,
       sketch: {
         profile: polygonProfile(points),
+        origin: { x: 0, y: 0 },
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'subtract',
+      z_top: 0,
+      z_bottom: depth,
+      visible: true,
+      locked: false,
+    }
+    get().addFeature(feature)
+  },
+
+  addSplineFeature: (name, points, depth) => {
+    const id = genId('f')
+    const feature: SketchFeature = {
+      id,
+      name,
+      sketch: {
+        profile: splineProfile(points),
         origin: { x: 0, y: 0 },
         dimensions: [],
         constraints: [],

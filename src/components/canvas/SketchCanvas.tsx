@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
+import type { SketchControlRef } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
 import {
   circleProfile,
@@ -7,13 +8,17 @@ import {
   getStockBounds,
   polygonProfile,
   profileVertices,
+  sampleProfilePoints,
   rectProfile,
+  splineProfile,
 } from '../../types/project'
 import type { GridSettings, Point, SketchFeature, SketchProfile, Stock } from '../../types/project'
 
 const PADDING = 42
 const NODE_RADIUS = 5
 const NODE_HIT_RADIUS = 9
+const HANDLE_RADIUS = 4
+const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 
 interface ViewTransform {
@@ -103,6 +108,14 @@ function traceProfilePath(
       continue
     }
 
+    if (segment.type === 'bezier') {
+      const control1 = worldToCanvas(segment.control1, vt)
+      const control2 = worldToCanvas(segment.control2, vt)
+      ctx.bezierCurveTo(control1.cx, control1.cy, control2.cx, control2.cy, to.cx, to.cy)
+      current = segment.to
+      continue
+    }
+
     const center = worldToCanvas(segment.center, vt)
     const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
@@ -113,6 +126,99 @@ function traceProfilePath(
   }
 
   ctx.closePath()
+}
+
+function isBezierProfile(profile: SketchProfile): boolean {
+  return profile.segments.length > 0 && profile.segments.every((segment) => segment.type === 'bezier')
+}
+
+function anchorPointForIndex(profile: SketchProfile, index: number): Point {
+  return index === 0 ? profile.start : profile.segments[index - 1].to
+}
+
+function drawSketchControls(
+  ctx: CanvasRenderingContext2D,
+  profile: SketchProfile,
+  vt: ViewTransform,
+  activeControl: SketchControlRef | null,
+): void {
+  const vertices = profileVertices(profile)
+  const bezier = isBezierProfile(profile)
+
+  if (bezier) {
+    for (let index = 0; index < profile.segments.length; index += 1) {
+      const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
+      const outgoingSegment = profile.segments[index]
+      const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+
+      if (outgoingSegment.type === 'bezier') {
+        const handle = worldToCanvas(outgoingSegment.control1, vt)
+        ctx.beginPath()
+        ctx.moveTo(anchor.cx, anchor.cy)
+        ctx.lineTo(handle.cx, handle.cy)
+        ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+
+      if (incomingSegment.type === 'bezier') {
+        const handle = worldToCanvas(incomingSegment.control2, vt)
+        ctx.beginPath()
+        ctx.moveTo(anchor.cx, anchor.cy)
+        ctx.lineTo(handle.cx, handle.cy)
+        ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+    }
+  }
+
+  for (let index = 0; index < vertices.length; index += 1) {
+    const vertex = vertices[index]
+    const { cx, cy } = worldToCanvas(vertex, vt)
+    const active = activeControl?.kind === 'anchor' && activeControl.index === index
+
+    ctx.beginPath()
+    ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
+    ctx.fillStyle = active ? '#f2b95c' : '#d2dde6'
+    ctx.fill()
+    ctx.strokeStyle = active ? '#f7d394' : '#3f708f'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  if (!bezier) {
+    return
+  }
+
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const outgoingSegment = profile.segments[index]
+    const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+
+    if (outgoingSegment.type === 'bezier') {
+      const point = worldToCanvas(outgoingSegment.control1, vt)
+      const active = activeControl?.kind === 'out_handle' && activeControl.index === index
+      ctx.beginPath()
+      ctx.arc(point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS, 0, Math.PI * 2)
+      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+      ctx.fill()
+      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+
+    if (incomingSegment.type === 'bezier') {
+      const point = worldToCanvas(incomingSegment.control2, vt)
+      const active = activeControl?.kind === 'in_handle' && activeControl.index === index
+      ctx.beginPath()
+      ctx.arc(point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS, 0, Math.PI * 2)
+      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+      ctx.fill()
+      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+  }
 }
 
 function drawGrid(
@@ -164,29 +270,6 @@ function drawGrid(
     ctx.lineTo(canvasW, p1.cy)
     ctx.strokeStyle = isMajor ? 'rgba(104, 132, 154, 0.34)' : 'rgba(88, 112, 130, 0.18)'
     ctx.lineWidth = isMajor ? 1.2 : 1
-    ctx.stroke()
-  }
-}
-
-function drawNodes(
-  ctx: CanvasRenderingContext2D,
-  profile: SketchProfile,
-  vt: ViewTransform,
-  activeIndex: number | null,
-): void {
-  const vertices = profileVertices(profile)
-
-  for (let index = 0; index < vertices.length; index += 1) {
-    const vertex = vertices[index]
-    const { cx, cy } = worldToCanvas(vertex, vt)
-    const active = index === activeIndex
-
-    ctx.beginPath()
-    ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
-    ctx.fillStyle = active ? '#f2b95c' : '#d2dde6'
-    ctx.fill()
-    ctx.strokeStyle = active ? '#f7d394' : '#3f708f'
-    ctx.lineWidth = 2
     ctx.stroke()
   }
 }
@@ -308,12 +391,14 @@ function drawPendingPoint(
   ctx.stroke()
 }
 
-function drawPendingPolygon(
+function drawPendingPathLoop(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   previewPoint: Point | null,
   vt: ViewTransform,
   closePreview: boolean,
+  previewProfileFactory: (points: Point[]) => SketchProfile,
+  label: string,
 ): void {
   if (points.length === 0) return
 
@@ -349,10 +434,10 @@ function drawPendingPolygon(
   }
 
   if (points.length >= 3 && previewPoint && closePreview) {
-    const profile = polygonProfile(points)
+    const profile = previewProfileFactory(points)
     ctx.save()
     ctx.globalAlpha = 0.85
-    drawPreviewProfile(ctx, profile, vt, 'Pending polygon')
+    drawPreviewProfile(ctx, profile, vt, label)
     ctx.restore()
   }
 
@@ -393,7 +478,7 @@ function drawDepthLegend(ctx: CanvasRenderingContext2D, canvasW: number, canvasH
 }
 
 function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
-  const points = profileVertices(profile)
+  const points = sampleProfilePoints(profile)
   if (points.length < 3) return false
 
   let inside = false
@@ -481,13 +566,13 @@ function buildPendingProfile(
   return circleProfile(anchor.x, anchor.y, Math.min(radius, maxRadius))
 }
 
-function isPolygonCloseCandidate(
+function isLoopCloseCandidate(
   point: CanvasPoint,
-  polygonPoints: Point[],
+  loopPoints: Point[],
   vt: ViewTransform,
 ): boolean {
-  if (polygonPoints.length < 3) return false
-  const start = worldToCanvas(polygonPoints[0], vt)
+  if (loopPoints.length < 3) return false
+  const start = worldToCanvas(loopPoints[0], vt)
   return distance2(point, start) <= POLYGON_CLOSE_RADIUS * POLYGON_CLOSE_RADIUS
 }
 
@@ -509,8 +594,8 @@ export function SketchCanvas() {
     hoverFeature,
     enterSketchEdit,
     exitSketchEdit,
-    setActiveNodeIndex,
-    moveFeatureNode,
+    setActiveControl,
+    moveFeatureControl,
     setPendingAddAnchor,
     placePendingAddAt,
     addPendingPolygonPoint,
@@ -558,7 +643,7 @@ export function SketchCanvas() {
       drawFeature(ctx, feature, vt, selected, hovered, editing)
 
       if (editing) {
-        drawNodes(ctx, feature.sketch.profile, vt, selection.activeNodeIndex)
+        drawSketchControls(ctx, feature.sketch.profile, vt, selection.activeControl)
       }
     }
 
@@ -567,11 +652,19 @@ export function SketchCanvas() {
         ? pendingPreviewPoint.point
         : null
 
-    if (pendingAdd?.shape === 'polygon') {
+    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
       const closePreview =
-        currentPreviewPoint ? isPolygonCloseCandidate(worldToCanvas(currentPreviewPoint, vt), pendingAdd.points, vt) : false
+        currentPreviewPoint ? isLoopCloseCandidate(worldToCanvas(currentPreviewPoint, vt), pendingAdd.points, vt) : false
       if (pendingAdd.points.length > 0) {
-        drawPendingPolygon(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview)
+        drawPendingPathLoop(
+          ctx,
+          pendingAdd.points,
+          currentPreviewPoint,
+          vt,
+          closePreview,
+          pendingAdd.shape === 'spline' ? splineProfile : polygonProfile,
+          pendingAdd.shape === 'spline' ? 'Pending spline' : 'Pending polygon',
+        )
       } else if (currentPreviewPoint) {
         drawPendingPoint(ctx, currentPreviewPoint, vt)
       }
@@ -620,15 +713,14 @@ export function SketchCanvas() {
     return project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
   }
 
-  function hitEditableNodeIndex(point: CanvasPoint): number | null {
+  function hitEditableControl(point: CanvasPoint): SketchControlRef | null {
     const feature = editableFeature()
     const canvas = canvasRef.current
     if (!feature || !canvas || feature.locked) return null
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const vertices = profileVertices(feature.sketch.profile)
-
-    let bestIndex: number | null = null
+    let bestControl: SketchControlRef | null = null
     let bestDistanceSq = NODE_HIT_RADIUS * NODE_HIT_RADIUS
 
     for (let index = 0; index < vertices.length; index += 1) {
@@ -636,11 +728,39 @@ export function SketchCanvas() {
       const d2 = distance2(point, nodeCanvas)
       if (d2 <= bestDistanceSq) {
         bestDistanceSq = d2
-        bestIndex = index
+        bestControl = { kind: 'anchor', index }
       }
     }
 
-    return bestIndex
+    if (isBezierProfile(feature.sketch.profile)) {
+      for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
+        const outgoingSegment = feature.sketch.profile.segments[index]
+        const incomingSegment =
+          feature.sketch.profile.segments[
+            (index - 1 + feature.sketch.profile.segments.length) % feature.sketch.profile.segments.length
+          ]
+
+        if (outgoingSegment.type === 'bezier') {
+          const handleCanvas = worldToCanvas(outgoingSegment.control1, vt)
+          const d2 = distance2(point, handleCanvas)
+          if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+            bestDistanceSq = d2
+            bestControl = { kind: 'out_handle', index }
+          }
+        }
+
+        if (incomingSegment.type === 'bezier') {
+          const handleCanvas = worldToCanvas(incomingSegment.control2, vt)
+          const d2 = distance2(point, handleCanvas)
+          if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+            bestDistanceSq = d2
+            bestControl = { kind: 'in_handle', index }
+          }
+        }
+      }
+    }
+
+    return bestControl
   }
 
   function handleMouseDown(event: MouseEvent<HTMLCanvasElement>) {
@@ -651,10 +771,10 @@ export function SketchCanvas() {
       return
     }
 
-    const nodeIndex = hitEditableNodeIndex(canvasCoordinates(event))
-    if (nodeIndex === null) return
+    const control = hitEditableControl(canvasCoordinates(event))
+    if (!control) return
 
-    setActiveNodeIndex(nodeIndex)
+    setActiveControl(control)
     isDraggingNodeRef.current = true
   }
 
@@ -693,8 +813,8 @@ export function SketchCanvas() {
       return
     }
 
-    if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeNodeIndex !== null) {
-      moveFeatureNode(selection.selectedFeatureId, selection.activeNodeIndex, snapped)
+    if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
+      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, snapped)
       return
     }
 
@@ -703,9 +823,9 @@ export function SketchCanvas() {
   }
 
   function stopNodeDrag() {
-    if (!isDraggingNodeRef.current && selection.activeNodeIndex === null) return
+    if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
-    setActiveNodeIndex(null)
+    setActiveControl(null)
   }
 
   function stopPan() {
@@ -722,7 +842,7 @@ export function SketchCanvas() {
     stopNodeDrag()
     stopPan()
     hoverFeature(null)
-    if (pendingAdd?.shape === 'polygon') {
+    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
       setPendingPreviewPoint(null)
     } else if (pendingAdd?.anchor) {
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
@@ -752,9 +872,9 @@ export function SketchCanvas() {
         y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
       }
 
-      if (pendingAdd.shape === 'polygon') {
+      if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
         const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        if (isPolygonCloseCandidate(point, pendingAdd.points, vt)) {
+        if (isLoopCloseCandidate(point, pendingAdd.points, vt)) {
           completePendingPolygon()
           setPendingPreviewPoint(null)
           return
@@ -799,7 +919,7 @@ export function SketchCanvas() {
 
   function handleDoubleClick(event: MouseEvent<HTMLCanvasElement>) {
     if (pendingAdd) {
-      if (pendingAdd.shape === 'polygon' && pendingAdd.points.length >= 3) {
+      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 3) {
         event.preventDefault()
         completePendingPolygon()
         setPendingPreviewPoint(null)
@@ -818,7 +938,11 @@ export function SketchCanvas() {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
-    if (event.key === 'Enter' && pendingAdd?.shape === 'polygon' && pendingAdd.points.length >= 3) {
+    if (
+      event.key === 'Enter'
+      && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
+      && pendingAdd.points.length >= 3
+    ) {
       completePendingPolygon()
       setPendingPreviewPoint(null)
       return
@@ -859,12 +983,14 @@ export function SketchCanvas() {
       )}
       {pendingAdd && (
         <div className="sketch-place-banner">
-          {pendingAdd.shape === 'polygon'
+          {pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline'
             ? pendingAdd.points.length === 0
-              ? 'Click to place the first polygon vertex.'
+              ? `Click to place the first ${pendingAdd.shape} control point.`
               : pendingAdd.points.length < 3
-                ? 'Click to add more vertices. You need at least three points.'
-                : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
+                ? `Click to add more control points. You need at least three for a closed ${pendingAdd.shape}.`
+                : pendingAdd.shape === 'spline'
+                  ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
+                  : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
             : pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner.'

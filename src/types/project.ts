@@ -19,7 +19,14 @@ export type ArcSegment = {
   clockwise: boolean
 }
 
-export type Segment = LineSegment | ArcSegment
+export type BezierSegment = {
+  type: 'bezier'
+  to: Point
+  control1: Point
+  control2: Point
+}
+
+export type Segment = LineSegment | ArcSegment | BezierSegment
 
 // A closed profile — last segment implicitly closes back to first point
 export interface SketchProfile {
@@ -273,6 +280,62 @@ export function polygonProfile(points: Point[]): SketchProfile {
   }
 }
 
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+  }
+}
+
+export function bezierPoint(
+  start: Point,
+  control1: Point,
+  control2: Point,
+  end: Point,
+  t: number,
+): Point {
+  const ab = lerpPoint(start, control1, t)
+  const bc = lerpPoint(control1, control2, t)
+  const cd = lerpPoint(control2, end, t)
+  const abbc = lerpPoint(ab, bc, t)
+  const bccd = lerpPoint(bc, cd, t)
+  return lerpPoint(abbc, bccd, t)
+}
+
+export function splineProfile(points: Point[]): SketchProfile {
+  if (points.length < 3) {
+    return polygonProfile(points)
+  }
+
+  const start = points[0]
+  const segments: BezierSegment[] = []
+
+  for (let index = 0; index < points.length; index += 1) {
+    const p0 = points[(index - 1 + points.length) % points.length]
+    const p1 = points[index]
+    const p2 = points[(index + 1) % points.length]
+    const p3 = points[(index + 2) % points.length]
+
+    segments.push({
+      type: 'bezier',
+      control1: {
+        x: p1.x + (p2.x - p0.x) / 6,
+        y: p1.y + (p2.y - p0.y) / 6,
+      },
+      control2: {
+        x: p2.x - (p3.x - p1.x) / 6,
+        y: p2.y - (p3.y - p1.y) / 6,
+      },
+      to: p2,
+    })
+  }
+
+  return {
+    start,
+    segments,
+  }
+}
+
 export function defaultStock(w = 100, h = 80, thickness = 20): Stock {
   return {
     profile: rectProfile(0, 0, w, h),
@@ -315,8 +378,64 @@ export function profileVertices(profile: SketchProfile): Point[] {
   return points
 }
 
+export function sampleProfilePoints(
+  profile: SketchProfile,
+  curveSamples = 16,
+  arcStepRadians = Math.PI / 18,
+): Point[] {
+  const points: Point[] = [profile.start]
+  let current = profile.start
+
+  for (const segment of profile.segments) {
+    if (segment.type === 'line') {
+      points.push(segment.to)
+      current = segment.to
+      continue
+    }
+
+    if (segment.type === 'bezier') {
+      for (let sample = 1; sample <= curveSamples; sample += 1) {
+        points.push(
+          bezierPoint(current, segment.control1, segment.control2, segment.to, sample / curveSamples),
+        )
+      }
+      current = segment.to
+      continue
+    }
+
+    const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
+    const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+    const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y)
+
+    let sweep = endAngle - startAngle
+    if (segment.clockwise && sweep > 0) {
+      sweep -= Math.PI * 2
+    } else if (!segment.clockwise && sweep < 0) {
+      sweep += Math.PI * 2
+    }
+
+    const segmentCount = Math.max(8, Math.ceil(Math.abs(sweep) / arcStepRadians))
+    for (let index = 1; index <= segmentCount; index += 1) {
+      const angle = startAngle + (sweep * index) / segmentCount
+      points.push({
+        x: segment.center.x + Math.cos(angle) * radius,
+        y: segment.center.y + Math.sin(angle) * radius,
+      })
+    }
+    current = segment.to
+  }
+
+  const first = points[0]
+  const last = points[points.length - 1]
+  if (first && last && first.x === last.x && first.y === last.y) {
+    points.pop()
+  }
+
+  return points
+}
+
 export function getProfileBounds(profile: SketchProfile): Bounds2D {
-  const points = profileVertices(profile)
+  const points = sampleProfilePoints(profile)
   let minX = points[0]?.x ?? 0
   let maxX = points[0]?.x ?? 0
   let minY = points[0]?.y ?? 0

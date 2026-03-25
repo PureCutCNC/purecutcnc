@@ -220,6 +220,10 @@ export function PropertiesPanel() {
   const zTop = typeof selectedFeature.z_top === 'number' ? selectedFeature.z_top : 0
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
 
+  // First feature in the tree must always be 'add' — lock the operation field
+  const isFirstFeature =
+    project.features.length > 0 && project.features[0].id === selectedFeature.id
+
   return (
     <div className="properties-panel">
       <div className="properties-group">
@@ -233,16 +237,23 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          <select
-            value={selectedFeature.operation}
-            onChange={(event) =>
-              updateFeature(selectedFeature.id, {
-                operation: event.target.value as 'add' | 'subtract',
-              })}
-          >
-            <option value="subtract">Subtract</option>
-            <option value="add">Add</option>
-          </select>
+          {isFirstFeature ? (
+            <div className="properties-locked-field" title="The first feature must always be Add — it defines the base solid of the part model">
+              <span>Add</span>
+              <span className="properties-locked-hint">🔒 Base solid</span>
+            </div>
+          ) : (
+            <select
+              value={selectedFeature.operation}
+              onChange={(event) =>
+                updateFeature(selectedFeature.id, {
+                  operation: event.target.value as 'add' | 'subtract',
+                })}
+            >
+              <option value="subtract">Subtract</option>
+              <option value="add">Add</option>
+            </select>
+          )}
         </label>
         <label className="properties-field">
           <span>Z Top</span>
