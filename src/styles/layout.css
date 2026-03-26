@@ -954,6 +954,14 @@
   gap: 8px;
 }
 
+.cam-field-message {
+  color: #f0bbb6;
+  font-size: 11px;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .cam-section-content {
   min-height: 0;
   overflow: auto;

@@ -214,7 +214,25 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
   if (kind === 'surface_clean') {
-    return { source: 'stock' }
+    if (selection.selectedNode?.type === 'stock') {
+      return { source: 'stock' }
+    }
+
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    return features.every((feature) => feature.operation === 'add')
+      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+      : null
   }
 
   if (selection.selectedFeatureIds.length === 0) {
@@ -240,7 +258,21 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
 function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
   if (kind === 'surface_clean') {
-    return null
+    if (selection.selectedNode?.type === 'stock') {
+      return null
+    }
+
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select stock or one or more add features first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    return features.every((feature) => feature.operation === 'add')
+      ? null
+      : 'Surface clean only accepts stock or add features'
   }
 
   if (selection.selectedFeatureIds.length === 0) {
@@ -284,6 +316,11 @@ export function CAMPanel({ mode }: CAMPanelProps) {
   const [selectedOperationIdState, setSelectedOperationId] = useState<string | null>(null)
   const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
+  const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
+    operationId: string
+    selectionKey: string
+    text: string
+  } | null>(null)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
   const addOperationMenuRef = useRef<HTMLDivElement>(null)
   const dragOverOperationId = useRef<string | null>(null)
@@ -320,6 +357,7 @@ export function CAMPanel({ mode }: CAMPanelProps) {
   const selectedOperation = selectedOperationId
     ? project.operations.find((operation) => operation.id === selectedOperationId) ?? null
     : null
+  const selectionKey = `${selection.selectedNode?.type ?? 'none'}:${selection.selectedFeatureIds.join(',')}`
 
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
     () => ([
@@ -507,10 +545,20 @@ export function CAMPanel({ mode }: CAMPanelProps) {
 
     const target = getValidOperationTarget(project, selection, selectedOperation.kind)
     if (!target) {
+      setTargetUpdateMessage(
+        {
+          operationId: selectedOperation.id,
+          selectionKey,
+          text:
+            getOperationTargetUpdateHint(project, selection, selectedOperation)
+            ?? 'Current selection is not compatible with this operation',
+        }
+      )
       return
     }
 
     updateOperation(selectedOperation.id, { target })
+    setTargetUpdateMessage(null)
   }
 
   return (
@@ -666,12 +714,16 @@ export function CAMPanel({ mode }: CAMPanelProps) {
                     <button
                       className="feat-btn"
                       type="button"
-                      disabled={!getValidOperationTarget(project, selection, selectedOperation.kind)}
                       title={getOperationTargetUpdateHint(project, selection, selectedOperation) ?? undefined}
                       onClick={handleApplySelectionToOperation}
                     >
-                      {selectedOperation.kind === 'surface_clean' ? 'Use Stock' : 'Use Current Selection'}
+                      Use current selection
                     </button>
+                    {targetUpdateMessage
+                    && targetUpdateMessage.operationId === selectedOperation.id
+                    && targetUpdateMessage.selectionKey === selectionKey ? (
+                      <span className="cam-field-message">{targetUpdateMessage.text}</span>
+                    ) : null}
                   </div>
                   <label className="properties-field">
                     <span>Tool</span>

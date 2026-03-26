@@ -287,7 +287,23 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
 
 function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
   if (kind === 'surface_clean') {
-    return target.source === 'stock'
+    if (target.source === 'stock') {
+      return true
+    }
+
+    if (target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    return features.every((feature) => feature.operation === 'add')
   }
 
   if (target.source !== 'features' || target.featureIds.length === 0) {
