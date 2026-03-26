@@ -13,6 +13,7 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
     setGrid,
     setStock,
     updateFeature,
+    selectProject,
     selectGrid,
     selectFeature,
     selectStock,
@@ -60,8 +61,17 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
 
   return (
     <div className="feature-tree-panel">
-      <div className="tree-root-label">Project</div>
+      <div className="tree-root-label">Project Tree</div>
       <div className="tree-list">
+        <TreeRow
+          label="Project"
+          kind="project"
+          isSelected={selection.selectedNode?.type === 'project'}
+          isDragging={false}
+          onClick={selectProject}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+        />
         <TreeRow
           label="Grid"
           kind="grid"
@@ -145,16 +155,16 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
 
 interface TreeRowProps {
   label: string
-  kind: 'grid' | 'stock' | 'feature'
+  kind: 'project' | 'grid' | 'stock' | 'feature'
   isSelected: boolean
   isDragging: boolean
-  visible: boolean
+  visible?: boolean
   operation?: 'add' | 'subtract'
   isFirstFeature?: boolean
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
-  onToggleVisible: () => void
+  onToggleVisible?: () => void
   onToggleOperation?: () => void
   onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
   draggable?: boolean
@@ -206,7 +216,7 @@ function TreeRow({
       onContextMenu={onContextMenu}
     >
       <span className="tree-branch" aria-hidden="true">
-        {kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : 'node'}
+        {kind === 'project' ? 'proj' : kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : 'node'}
       </span>
       <span className="tree-label" title={label}>{label}</span>
       <div className="tree-row-actions">
@@ -242,18 +252,20 @@ function TreeRow({
             {operation === 'add' ? '+' : '−'}
           </button>
         ) : null}
-        <button
-          type="button"
-          className={`tree-action-btn tree-action-btn--visibility ${visible ? '' : 'tree-action-btn--muted'}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggleVisible()
-          }}
-          title={visible ? 'Hide entry' : 'Show entry'}
-          aria-label={visible ? 'Hide entry' : 'Show entry'}
-        >
-          {visible ? '◉' : '○'}
-        </button>
+        {onToggleVisible ? (
+          <button
+            type="button"
+            className={`tree-action-btn tree-action-btn--visibility ${visible ? '' : 'tree-action-btn--muted'}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleVisible()
+            }}
+            title={visible ? 'Hide entry' : 'Show entry'}
+            aria-label={visible ? 'Hide entry' : 'Show entry'}
+          >
+            {visible ? '◉' : '○'}
+          </button>
+        ) : null}
       </div>
     </div>
   )

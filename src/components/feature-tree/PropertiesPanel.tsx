@@ -1,5 +1,6 @@
 import { defaultStock, getStockBounds } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
 interface DraftTextInputProps {
   value: string
@@ -49,6 +50,7 @@ function DraftTextInput({ value, disabled = false, onCommit }: DraftTextInputPro
 
 interface DraftNumberInputProps {
   value: number
+  units: 'mm' | 'inch'
   min?: number
   max?: number
   onCommit: (value: number) => void
@@ -57,13 +59,14 @@ interface DraftNumberInputProps {
 
 function DraftNumberInput({
   value,
+  units,
   min,
   max,
   onCommit,
   validate,
 }: DraftNumberInputProps) {
   function reset(element: HTMLInputElement) {
-    element.value = String(value)
+    element.value = formatLength(value, units)
   }
 
   function isValid(next: number) {
@@ -75,8 +78,8 @@ function DraftNumberInput({
   }
 
   function commit(element: HTMLInputElement) {
-    const next = Number(element.value)
-    if (!isValid(next)) {
+    const next = parseLengthInput(element.value, units)
+    if (next === null || !isValid(next)) {
       reset(element)
       return
     }
@@ -92,7 +95,7 @@ function DraftNumberInput({
     <input
       type="text"
       inputMode="decimal"
-      defaultValue={String(value)}
+      defaultValue={formatLength(value, units)}
       spellCheck={false}
       data-numeric-entry="true"
       onBlur={(event) => commit(event.currentTarget)}
@@ -115,6 +118,7 @@ export function PropertiesPanel() {
   const {
     project,
     selection,
+    setProjectName,
     setGrid,
     setStock,
     setUnits,
@@ -126,18 +130,26 @@ export function PropertiesPanel() {
 
   const selectedFeatureIds = selection.selectedFeatureIds
   const selectedFeatureId = selectedFeatureIds.length === 1 ? selectedFeatureIds[0] : null
+  const units = project.meta.units
+  const minimumLength = convertLength(1, 'mm', units)
+  const minimumPanelSpan = convertLength(20, 'mm', units)
+  const minimumSnap = convertLength(0.0001, 'mm', units)
 
   const selectedFeature = selectedFeatureId
     ? project.features.find((feature) => feature.id === selectedFeatureId) ?? null
     : null
 
-  if (selection.selectedNode?.type === 'grid') {
+  if (selection.selectedNode?.type === 'project') {
     return (
       <div className="properties-panel">
         <div className="properties-group">
           <label className="properties-field">
             <span>Name</span>
-            <DraftTextInput value="Grid" disabled />
+            <DraftTextInput
+              key={`project-name-${project.meta.name}`}
+              value={project.meta.name}
+              onCommit={setProjectName}
+            />
           </label>
           <label className="properties-field">
             <span>Units</span>
@@ -149,12 +161,26 @@ export function PropertiesPanel() {
               <option value="inch">Inches</option>
             </select>
           </label>
+        </div>
+      </div>
+    )
+  }
+
+  if (selection.selectedNode?.type === 'grid') {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput value="Grid" disabled />
+          </label>
           <label className="properties-field">
             <span>Grid Extent</span>
             <DraftNumberInput
               key={`grid-extent-${project.grid.extent}`}
               value={project.grid.extent}
-              min={20}
+              units={units}
+              min={minimumPanelSpan}
               onCommit={(next) => setGrid({ ...project.grid, extent: next })}
             />
           </label>
@@ -163,7 +189,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`grid-major-${project.grid.majorSpacing}-${project.grid.minorSpacing}`}
               value={project.grid.majorSpacing}
-              min={1}
+              units={units}
+              min={minimumLength}
               validate={(next) => next >= project.grid.minorSpacing}
               onCommit={(next) => setGrid({ ...project.grid, majorSpacing: next })}
             />
@@ -173,7 +200,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`grid-minor-${project.grid.minorSpacing}-${project.grid.majorSpacing}`}
               value={project.grid.minorSpacing}
-              min={1}
+              units={units}
+              min={minimumLength}
               validate={(next) => next <= project.grid.majorSpacing}
               onCommit={(next) => setGrid({ ...project.grid, minorSpacing: next })}
             />
@@ -183,7 +211,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`grid-snap-${project.grid.snapIncrement}-${project.meta.units}`}
               value={project.grid.snapIncrement}
-              min={0.0001}
+              units={units}
+              min={minimumSnap}
               onCommit={(next) => setGrid({ ...project.grid, snapIncrement: next })}
             />
           </label>
@@ -210,8 +239,8 @@ export function PropertiesPanel() {
 
   if (selection.selectedNode?.type === 'stock') {
     const bounds = getStockBounds(project.stock)
-    const width = Math.round(bounds.maxX - bounds.minX)
-    const height = Math.round(bounds.maxY - bounds.minY)
+    const width = bounds.maxX - bounds.minX
+    const height = bounds.maxY - bounds.minY
 
     return (
       <div className="properties-panel">
@@ -225,7 +254,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`stock-width-${width}-${height}-${project.stock.thickness}`}
               value={width}
-              min={20}
+              units={units}
+              min={minimumPanelSpan}
               onCommit={(next) => {
                 const stock = defaultStock(next, height, project.stock.thickness)
                 stock.material = project.stock.material
@@ -240,7 +270,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`stock-height-${width}-${height}-${project.stock.thickness}`}
               value={height}
-              min={20}
+              units={units}
+              min={minimumPanelSpan}
               onCommit={(next) => {
                 const stock = defaultStock(width, next, project.stock.thickness)
                 stock.material = project.stock.material
@@ -255,7 +286,8 @@ export function PropertiesPanel() {
             <DraftNumberInput
               key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
               value={project.stock.thickness}
-              min={1}
+              units={units}
+              min={minimumLength}
               onCommit={(next) => {
                 const stock = defaultStock(width, height, next)
                 stock.material = project.stock.material
@@ -326,7 +358,7 @@ export function PropertiesPanel() {
 
     return (
       <div className="panel-empty">
-        Select Grid, Stock, or a feature in the tree to edit its properties.
+        Select Project, Grid, Stock, or a feature in the tree to edit its properties.
       </div>
     )
   }
@@ -373,20 +405,22 @@ export function PropertiesPanel() {
           <span>Z Top</span>
           <DraftNumberInput
             key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
-            value={zTop}
-            min={0}
-            validate={(next) => next >= zBottom}
-            onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+              value={zTop}
+              units={units}
+              min={0}
+              validate={(next) => next >= zBottom}
+              onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
           />
         </label>
         <label className="properties-field">
           <span>Z Bottom</span>
           <DraftNumberInput
             key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
-            value={zBottom}
-            min={0}
-            validate={(next) => next <= zTop}
-            onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+              value={zBottom}
+              units={units}
+              min={0}
+              validate={(next) => next <= zTop}
+              onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
           />
         </label>
         <label className="properties-check">

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
+import { formatLength } from '../../utils/units'
 import '../../styles/layout.css'
 
 interface AppShellProps {
@@ -30,8 +31,8 @@ export function AppShell({
   const { project } = useProjectStore()
   const [rightTab, setRightTab] = useState<'operations' | 'ai'>('operations')
   const stockBounds = getStockBounds(project.stock)
-  const stockWidth = Math.round(stockBounds.maxX - stockBounds.minX)
-  const stockHeight = Math.round(stockBounds.maxY - stockBounds.minY)
+  const stockWidth = stockBounds.maxX - stockBounds.minX
+  const stockHeight = stockBounds.maxY - stockBounds.minY
 
   return (
     <div className="app-shell">
@@ -131,7 +132,7 @@ export function AppShell({
         <span>{project.meta.name}</span>
         <span>{project.meta.units.toUpperCase()}</span>
         <span>
-          Stock: {stockWidth} × {stockHeight} × {project.stock.thickness} {project.meta.units}
+          Stock: {formatLength(stockWidth, project.meta.units)} × {formatLength(stockHeight, project.meta.units)} × {formatLength(project.stock.thickness, project.meta.units)} {project.meta.units}
         </span>
         <span>{project.grid.visible ? 'Grid Visible' : 'Grid Hidden'}</span>
         <span>{project.stock.visible ? 'Stock Visible' : 'Stock Hidden'}</span>

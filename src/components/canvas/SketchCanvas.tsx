@@ -13,6 +13,7 @@ import {
   splineProfile,
 } from '../../types/project'
 import type { GridSettings, Point, SketchFeature, SketchProfile, Stock } from '../../types/project'
+import { convertLength, formatLength } from '../../utils/units'
 
 const PADDING = 42
 const NODE_RADIUS = 5
@@ -368,6 +369,7 @@ function drawFeature(
   ctx: CanvasRenderingContext2D,
   feature: SketchFeature,
   vt: ViewTransform,
+  units: 'mm' | 'inch',
   selected: boolean,
   hovered: boolean,
   editing: boolean,
@@ -424,7 +426,7 @@ function drawFeature(
   ctx.textAlign = 'center'
   ctx.fillText(feature.name, center.cx, center.cy - 5)
   ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
-  ctx.fillText(`z ${feature.z_top} → ${feature.z_bottom}`, center.cx, center.cy + 10)
+  ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
 }
 
 function drawPreviewProfile(
@@ -648,9 +650,11 @@ function buildPendingProfile(
   pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' }>,
   previewPoint: Point,
   stock: Stock,
+  units: 'mm' | 'inch',
 ): SketchProfile {
   const bounds = getStockBounds(stock)
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+  const minSize = convertLength(0.01, 'mm', units)
   const anchor = {
     x: clamp(pendingAdd.anchor?.x ?? previewPoint.x, bounds.minX, bounds.maxX),
     y: clamp(pendingAdd.anchor?.y ?? previewPoint.y, bounds.minY, bounds.maxY),
@@ -663,10 +667,15 @@ function buildPendingProfile(
   if (pendingAdd.shape === 'rect') {
     const x = Math.min(anchor.x, current.x)
     const y = Math.min(anchor.y, current.y)
-    return rectProfile(x, y, Math.max(Math.abs(current.x - anchor.x), 1), Math.max(Math.abs(current.y - anchor.y), 1))
+    return rectProfile(
+      x,
+      y,
+      Math.max(Math.abs(current.x - anchor.x), minSize),
+      Math.max(Math.abs(current.y - anchor.y), minSize),
+    )
   }
 
-  const radius = Math.max(Math.hypot(current.x - anchor.x, current.y - anchor.y), 1)
+  const radius = Math.max(Math.hypot(current.x - anchor.x, current.y - anchor.y), minSize)
   const maxRadius = Math.min(
     Math.abs(bounds.minX - anchor.x),
     Math.abs(bounds.maxX - anchor.x),
@@ -768,7 +777,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const hovered = feature.id === selection.hoveredFeatureId
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
 
-      drawFeature(ctx, feature, vt, selected, hovered, editing)
+      drawFeature(ctx, feature, vt, project.meta.units, selected, hovered, editing)
 
       if (editing) {
         drawSketchControls(ctx, feature.sketch.profile, vt, selection.activeControl)
@@ -797,9 +806,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawPendingPoint(ctx, currentPreviewPoint, vt)
       }
     } else if (pendingAdd?.anchor && currentPreviewPoint) {
-      const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.stock)
+      const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.stock, project.meta.units)
       const label = pendingAdd.shape === 'rect' ? 'Pending rectangle' : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
+      drawPendingPoint(ctx, pendingAdd.anchor, vt)
+      drawPendingPoint(ctx, currentPreviewPoint, vt)
     } else if (pendingAdd && currentPreviewPoint) {
       drawPendingPoint(ctx, currentPreviewPoint, vt)
     }

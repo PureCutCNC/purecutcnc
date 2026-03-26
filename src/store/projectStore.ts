@@ -11,6 +11,8 @@ import {
   splineProfile,
 } from '../types/project'
 import type { GridSettings, Point, Project, SketchFeature, Stock } from '../types/project'
+import { convertProjectUnits } from '../utils/units'
+import { convertLength } from '../utils/units'
 
 // ============================================================
 // Selection state
@@ -34,6 +36,7 @@ export interface SketchControlRef {
 }
 
 export type SelectedNode =
+  | { type: 'project' }
   | { type: 'grid' }
   | { type: 'stock' }
   | { type: 'feature'; featureId: string }
@@ -75,6 +78,7 @@ export interface ProjectStore {
 
   // Selection
   selectFeature: (id: string | null, additive?: boolean) => void
+  selectProject: () => void
   selectGrid: () => void
   selectStock: () => void
   hoverFeature: (id: string | null) => void
@@ -319,7 +323,12 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
         : 'feature',
     selectedFeatureId,
     selectedFeatureIds,
-    selectedNode: selectedFeatureId ? { type: 'feature', featureId: selectedFeatureId } : selection.selectedNode,
+    selectedNode:
+      selectedFeatureId
+        ? { type: 'feature', featureId: selectedFeatureId }
+        : selection.selectedNode?.type === 'feature'
+          ? null
+          : selection.selectedNode,
     hoveredFeatureId,
     activeControl: null,
   }
@@ -578,9 +587,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setUnits: (units) =>
     set((s) => {
+      if (s.project.meta.units === units) {
+        return {}
+      }
+
+      const convertedProject = convertProjectUnits(s.project, units)
       const nextProject = {
-        ...s.project,
-        meta: { ...s.project.meta, units, modified: new Date().toISOString() },
+        ...convertedProject,
+        meta: { ...convertedProject.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
         return {}
@@ -755,6 +769,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               selectedFeatureIds: [],
               selectedNode: null,
             }),
+        mode: 'feature',
+        activeControl: null,
+      },
+    })),
+
+  selectProject: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'project' },
         mode: 'feature',
         activeControl: null,
       },
@@ -965,7 +991,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const bounds = getStockBounds(state.project.stock)
     const anchor = state.pendingAdd.anchor
     const depth = Math.min(state.project.stock.thickness, 10)
-    const minSize = 1
+    const minSize = convertLength(0.01, 'mm', state.project.meta.units)
     const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
     if (state.pendingAdd.shape === 'rect') {

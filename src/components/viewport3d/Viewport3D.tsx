@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import * as THREE from 'three'
 import { useProjectStore } from '../../store/projectStore'
 import { buildScene } from '../../engine/csg'
+import { getStockBounds } from '../../types/project'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -19,6 +20,9 @@ const DEFAULT_CAMERA_SPHERICAL = {
   phi: Math.PI / 3,
   radius: 250,
 }
+
+const MIN_CAMERA_RADIUS = 0.1
+const MAX_CAMERA_RADIUS = 10000
 
 type ViewPreset = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'right' | 'left'
 
@@ -198,7 +202,7 @@ function createOrbitControls(
     onPresetChange(null)
 
     const hadAnchor = getPointerDesignPlanePoint(e.clientX, e.clientY, beforeZoomPoint)
-    const nextRadius = Math.max(50, Math.min(800, spherical.radius * Math.exp(e.deltaY * 0.0015)))
+    const nextRadius = Math.max(MIN_CAMERA_RADIUS, Math.min(MAX_CAMERA_RADIUS, spherical.radius * Math.exp(e.deltaY * 0.0015)))
     if (Math.abs(nextRadius - spherical.radius) < 0.001) {
       return
     }
@@ -254,7 +258,10 @@ function createOrbitControls(
         applyDefaultOrientation(true)
       }
 
-      spherical.radius = Math.max(50, Math.min(800, Math.max(verticalDistance, horizontalDistance) * 1.15))
+      spherical.radius = Math.max(
+        MIN_CAMERA_RADIUS,
+        Math.min(MAX_CAMERA_RADIUS, Math.max(verticalDistance, horizontalDistance) * 1.15),
+      )
       target.copy(center)
       updateCamera()
     },
@@ -380,7 +387,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
     material.dispose()
   }, [])
 
-  const rebuildGridHelpers = useCallback((centerX: number, centerZ: number) => {
+  const rebuildGridHelpers = useCallback(() => {
     const gridGroup = gridRef.current
     if (!gridGroup) return
 
@@ -391,6 +398,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
         disposeObjectMaterial(child.material)
       }
     }
+
+    const stockBounds = getStockBounds(project.stock)
+    const centerX = stockBounds.minX + (stockBounds.maxX - stockBounds.minX) / 2
+    const centerZ = stockBounds.minY + (stockBounds.maxY - stockBounds.minY) / 2
 
     gridGroup.position.set(centerX, -0.05, centerZ)
     syncGridVisibility()
@@ -408,7 +419,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
 
     gridGroup.add(minorGrid)
     gridGroup.add(majorGrid)
-  }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible, syncGridVisibility])
+  }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible, project.stock, syncGridVisibility])
 
   const clearRenderedObjects = useCallback((scene: THREE.Scene) => {
     for (const object of objectsRef.current) {
@@ -503,7 +514,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
           const centerZ = minWorldZ + (maxWorldZ - minWorldZ) / 2
 
           controls.setTarget(centerX, centerY, centerZ)
-          rebuildGridHelpers(centerX, centerZ)
+          rebuildGridHelpers()
         }
       })()
     }, 150)
