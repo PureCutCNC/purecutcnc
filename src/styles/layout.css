@@ -98,6 +98,18 @@
   color: #fff;
 }
 
+.toolbar-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  border-color: var(--line-strong);
+  color: var(--text-dim);
+}
+
+.toolbar-icon-btn:disabled:hover {
+  border-color: var(--line-strong);
+  color: var(--text-dim);
+}
+
 .toolbar-btn--active {
   border-color: var(--accent);
   color: #fff;

@@ -342,8 +342,9 @@ function drawFeature(
   hovered: boolean,
   editing: boolean,
 ): void {
-  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 5
-  const depthWeight = Math.min(Math.max(zBottom / 30, 0), 1)
+  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
+  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  const depthWeight = Math.min(Math.max(Math.abs(zTop - zBottom) / 30, 0), 1)
 
   let fill = 'rgba(78, 126, 170, 0.42)'
   let stroke = '#4e8dc1'
@@ -655,6 +656,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
     enterSketchEdit,
     exitSketchEdit,
     setActiveControl,
+    beginHistoryTransaction,
+    commitHistoryTransaction,
     moveFeatureControl,
     setPendingAddAnchor,
     placePendingAddAt,
@@ -842,6 +845,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
     const control = hitEditableControl(canvasCoordinates(event))
     if (!control) return
 
+    beginHistoryTransaction()
     setActiveControl(control)
     isDraggingNodeRef.current = true
   }
@@ -894,6 +898,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
     if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
     setActiveControl(null)
+    commitHistoryTransaction()
   }
 
   function stopPan() {

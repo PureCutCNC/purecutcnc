@@ -1,6 +1,116 @@
 import { defaultStock, getStockBounds } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 
+interface DraftTextInputProps {
+  value: string
+  disabled?: boolean
+  onCommit?: (value: string) => void
+}
+
+function DraftTextInput({ value, disabled = false, onCommit }: DraftTextInputProps) {
+  function reset(element: HTMLInputElement) {
+    element.value = value
+  }
+
+  function commit(element: HTMLInputElement) {
+    if (!onCommit) {
+      reset(element)
+      return
+    }
+
+    if (element.value !== value) {
+      onCommit(element.value)
+    } else {
+      reset(element)
+    }
+  }
+
+  return (
+    <input
+      type="text"
+      defaultValue={value}
+      disabled={disabled}
+      spellCheck={false}
+      onBlur={(event) => commit(event.currentTarget)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur()
+          return
+        }
+
+        if (event.key === 'Escape') {
+          reset(event.currentTarget)
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
+interface DraftNumberInputProps {
+  value: number
+  min?: number
+  max?: number
+  onCommit: (value: number) => void
+  validate?: (value: number) => boolean
+}
+
+function DraftNumberInput({
+  value,
+  min,
+  max,
+  onCommit,
+  validate,
+}: DraftNumberInputProps) {
+  function reset(element: HTMLInputElement) {
+    element.value = String(value)
+  }
+
+  function isValid(next: number) {
+    if (!Number.isFinite(next)) return false
+    if (min !== undefined && next < min) return false
+    if (max !== undefined && next > max) return false
+    if (validate && !validate(next)) return false
+    return true
+  }
+
+  function commit(element: HTMLInputElement) {
+    const next = Number(element.value)
+    if (!isValid(next)) {
+      reset(element)
+      return
+    }
+
+    if (next !== value) {
+      onCommit(next)
+    } else {
+      reset(element)
+    }
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      defaultValue={String(value)}
+      spellCheck={false}
+      data-numeric-entry="true"
+      onBlur={(event) => commit(event.currentTarget)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur()
+          return
+        }
+
+        if (event.key === 'Escape') {
+          reset(event.currentTarget)
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
 export function PropertiesPanel() {
   const {
     project,
@@ -27,7 +137,7 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>Name</span>
-            <input type="text" value="Grid" disabled />
+            <DraftTextInput value="Grid" disabled />
           </label>
           <label className="properties-field">
             <span>Units</span>
@@ -41,55 +151,40 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Grid Extent</span>
-            <input
-              type="number"
-              min={20}
+            <DraftNumberInput
+              key={`grid-extent-${project.grid.extent}`}
               value={project.grid.extent}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 20) return
-                setGrid({ ...project.grid, extent: next })
-              }}
+              min={20}
+              onCommit={(next) => setGrid({ ...project.grid, extent: next })}
             />
           </label>
           <label className="properties-field">
             <span>Major Lines</span>
-            <input
-              type="number"
-              min={1}
+            <DraftNumberInput
+              key={`grid-major-${project.grid.majorSpacing}-${project.grid.minorSpacing}`}
               value={project.grid.majorSpacing}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 1 || next < project.grid.minorSpacing) return
-                setGrid({ ...project.grid, majorSpacing: next })
-              }}
+              min={1}
+              validate={(next) => next >= project.grid.minorSpacing}
+              onCommit={(next) => setGrid({ ...project.grid, majorSpacing: next })}
             />
           </label>
           <label className="properties-field">
             <span>Minor Lines</span>
-            <input
-              type="number"
-              min={1}
+            <DraftNumberInput
+              key={`grid-minor-${project.grid.minorSpacing}-${project.grid.majorSpacing}`}
               value={project.grid.minorSpacing}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 1 || next > project.grid.majorSpacing) return
-                setGrid({ ...project.grid, minorSpacing: next })
-              }}
+              min={1}
+              validate={(next) => next <= project.grid.majorSpacing}
+              onCommit={(next) => setGrid({ ...project.grid, minorSpacing: next })}
             />
           </label>
           <label className="properties-field">
             <span>Snap Increment</span>
-            <input
-              type="number"
-              min={0.1}
-              step={project.meta.units === 'inch' ? 0.001 : 0.1}
+            <DraftNumberInput
+              key={`grid-snap-${project.grid.snapIncrement}-${project.meta.units}`}
               value={project.grid.snapIncrement}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next <= 0) return
-                setGrid({ ...project.grid, snapIncrement: next })
-              }}
+              min={0.0001}
+              onCommit={(next) => setGrid({ ...project.grid, snapIncrement: next })}
             />
           </label>
           <label className="properties-check">
@@ -123,17 +218,15 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>Name</span>
-            <input type="text" value="Stock" disabled />
+            <DraftTextInput value="Stock" disabled />
           </label>
           <label className="properties-field">
             <span>Width</span>
-            <input
-              type="number"
-              min={20}
+            <DraftNumberInput
+              key={`stock-width-${width}-${height}-${project.stock.thickness}`}
               value={width}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 20) return
+              min={20}
+              onCommit={(next) => {
                 const stock = defaultStock(next, height, project.stock.thickness)
                 stock.material = project.stock.material
                 stock.color = project.stock.color
@@ -144,13 +237,11 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Height</span>
-            <input
-              type="number"
-              min={20}
+            <DraftNumberInput
+              key={`stock-height-${width}-${height}-${project.stock.thickness}`}
               value={height}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 20) return
+              min={20}
+              onCommit={(next) => {
                 const stock = defaultStock(width, next, project.stock.thickness)
                 stock.material = project.stock.material
                 stock.color = project.stock.color
@@ -161,13 +252,11 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Thickness</span>
-            <input
-              type="number"
-              min={1}
+            <DraftNumberInput
+              key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
               value={project.stock.thickness}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                if (!Number.isFinite(next) || next < 1) return
+              min={1}
+              onCommit={(next) => {
                 const stock = defaultStock(width, height, next)
                 stock.material = project.stock.material
                 stock.color = project.stock.color
@@ -229,10 +318,10 @@ export function PropertiesPanel() {
       <div className="properties-group">
         <label className="properties-field">
           <span>Name</span>
-          <input
-            type="text"
+          <DraftTextInput
+            key={`feature-name-${selectedFeature.id}-${selectedFeature.name}`}
             value={selectedFeature.name}
-            onChange={(event) => updateFeature(selectedFeature.id, { name: event.target.value })}
+            onCommit={(next) => updateFeature(selectedFeature.id, { name: next })}
           />
         </label>
         <label className="properties-field">
@@ -257,26 +346,22 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Z Top</span>
-          <input
-            type="number"
+          <DraftNumberInput
+            key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
             value={zTop}
-            onChange={(event) => {
-              const next = Number(event.target.value)
-              if (!Number.isFinite(next) || next < 0 || next > zBottom) return
-              updateFeature(selectedFeature.id, { z_top: next })
-            }}
+            min={0}
+            validate={(next) => next >= zBottom}
+            onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
           />
         </label>
         <label className="properties-field">
           <span>Z Bottom</span>
-          <input
-            type="number"
+          <DraftNumberInput
+            key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
             value={zBottom}
-            onChange={(event) => {
-              const next = Number(event.target.value)
-              if (!Number.isFinite(next) || next < zTop) return
-              updateFeature(selectedFeature.id, { z_bottom: next })
-            }}
+            min={0}
+            validate={(next) => next <= zTop}
+            onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
           />
         </label>
         <label className="properties-check">

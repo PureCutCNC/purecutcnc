@@ -46,6 +46,30 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current implementation treats features as CSG volumes spanning `z_top..z_bottom`.
   - Stock is currently reference-only for semantics.
 
+### Undo / Redo
+- Status: Open
+- Priority: High
+- Summary: Add undo and redo across project edits, including feature creation, deletion, reorder, property changes, and sketch edits.
+- Notes:
+  - Needs to cover both model edits and sketch control-point edits.
+  - Should integrate cleanly with toolbar shortcuts and future menu actions.
+
+### Copy / Duplicate
+- Status: Open
+- Priority: High
+- Summary: Add copy/duplicate support for features so users can quickly reuse and reposition existing geometry.
+- Notes:
+  - Should preserve sketch geometry, operation, and Z range on duplicate.
+  - Likely needs both toolbar/menu action and keyboard shortcut support.
+
+### Move / Translate
+- Status: Open
+- Priority: High
+- Summary: Add a move/translate tool so users can reposition existing features without entering low-level sketch point editing.
+- Notes:
+  - Should support precise numeric offsets and direct manipulation in the sketch view.
+  - Needs to move the whole feature profile while preserving its Z range and operation.
+
 ## Done
 
 ### Ordered 3D boolean evaluation
@@ -59,4 +83,3 @@ This file tracks follow-up work, open issues, and design questions that come up 
 ### Left tree / properties / right tabs layout
 - Status: Done
 - Summary: Feature tree moved left, properties panel added below, right panel now uses `Operations` and `AI Chat` tabs.
-

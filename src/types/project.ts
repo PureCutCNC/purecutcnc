@@ -113,8 +113,8 @@ export interface SketchFeature {
   name: string
   sketch: Sketch
   operation: FeatureOperation
-  z_top: DimensionRef         // 0 = stock top surface
-  z_bottom: DimensionRef      // positive = deeper into stock
+  z_top: DimensionRef
+  z_bottom: DimensionRef
   visible: boolean
   locked: boolean
 }

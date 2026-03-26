@@ -1,10 +1,19 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'save' | 'open' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline'
+type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline'
 
 function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   switch (name) {
+    case 'new':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 4.5h7l5 5V19.5H7z" />
+          <path d="M14 4.5v5h5" />
+          <path d="M12 10v6" />
+          <path d="M9 13h6" />
+        </svg>
+      )
     case 'save':
       return (
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -18,6 +27,20 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 8h5l2 2h9" />
           <path d="M4 10.5h16l-2.1 7H6.1z" />
+        </svg>
+      )
+    case 'undo':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 8 5 12l4 4" />
+          <path d="M6 12h8a5 5 0 1 1 0 10h-2" />
+        </svg>
+      )
+    case 'redo':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m15 8 4 4-4 4" />
+          <path d="M18 12h-8a5 5 0 1 0 0 10h2" />
         </svg>
       )
     case 'fit':
@@ -68,6 +91,7 @@ interface ToolbarActionButtonProps {
   icon: ToolbarIconName
   label: string
   active?: boolean
+  disabled?: boolean
   onClick: () => void
 }
 
@@ -75,7 +99,7 @@ interface ToolbarProps {
   onZoomToModel: () => void
 }
 
-function ToolbarActionButton({ icon, label, active = false, onClick }: ToolbarActionButtonProps) {
+function ToolbarActionButton({ icon, label, active = false, disabled = false, onClick }: ToolbarActionButtonProps) {
   return (
     <div className="toolbar-action">
       <button
@@ -83,6 +107,7 @@ function ToolbarActionButton({ icon, label, active = false, onClick }: ToolbarAc
         onClick={onClick}
         aria-label={label}
         type="button"
+        disabled={disabled}
       >
         <ToolbarIcon name={icon} />
       </button>
@@ -97,9 +122,13 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
   const {
     project,
     pendingAdd,
+    createNewProject,
+    history,
     setProjectName,
     saveProject,
     loadProject,
+    undo,
+    redo,
     startAddRectPlacement,
     startAddCirclePlacement,
     startAddPolygonPlacement,
@@ -109,6 +138,12 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
 
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
+
+  function handleNewProject() {
+    createNewProject()
+    setNameVal('Untitled')
+    setEditingName(false)
+  }
 
   function handleSave() {
     const json = saveProject()
@@ -193,8 +228,21 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
       </div>
 
       <div className="toolbar-group">
+        <ToolbarActionButton icon="new" label="New Project" onClick={handleNewProject} />
         <ToolbarActionButton icon="open" label="Open Project" onClick={handleLoad} />
         <ToolbarActionButton icon="save" label="Save Project" onClick={handleSave} />
+        <ToolbarActionButton
+          icon="undo"
+          label="Undo"
+          onClick={undo}
+          disabled={history.past.length === 0}
+        />
+        <ToolbarActionButton
+          icon="redo"
+          label="Redo"
+          onClick={redo}
+          disabled={history.future.length === 0}
+        />
         <ToolbarActionButton icon="fit" label="Zoom to Model" onClick={onZoomToModel} />
       </div>
 

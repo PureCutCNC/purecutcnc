@@ -46,11 +46,18 @@ export interface ProjectStore {
   project: Project
   selection: SelectionState
   pendingAdd: PendingAddTool | null
+  history: ProjectHistory
 
   // Project ops
+  createNewProject: () => void
   setProjectName: (name: string) => void
   loadProject: (p: Project) => void
   saveProject: () => string   // returns JSON string
+  undo: () => void
+  redo: () => void
+  beginHistoryTransaction: () => void
+  commitHistoryTransaction: () => void
+  cancelHistoryTransaction: () => void
 
   // Stock
   setStock: (stock: Stock) => void
@@ -96,6 +103,12 @@ export type PendingAddTool =
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
+
+export interface ProjectHistory {
+  past: Project[]
+  future: Project[]
+  transactionStart: Project | null
+}
 
 // ============================================================
 // ID generator
@@ -143,6 +156,74 @@ function translatePoint(point: Point, dx: number, dy: number): Point {
   return { x: point.x + dx, y: point.y + dy }
 }
 
+function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
+  const { z_top, z_bottom } = feature
+  if (typeof z_top === 'number' && typeof z_bottom === 'number' && z_top < z_bottom) {
+    return {
+      ...feature,
+      z_top: z_bottom,
+      z_bottom: z_top,
+    }
+  }
+
+  return feature
+}
+
+function normalizeProject(project: Project): Project {
+  return {
+    ...project,
+    features: project.features.map(normalizeFeatureZRange),
+  }
+}
+
+function cloneProject(project: Project): Project {
+  return structuredClone(project)
+}
+
+function projectsEqual(a: Project, b: Project): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function emptySelection(): SelectionState {
+  return {
+    mode: 'feature',
+    selectedFeatureId: null,
+    selectedNode: null,
+    hoveredFeatureId: null,
+    activeControl: null,
+  }
+}
+
+function sanitizeSelection(project: Project, selection: SelectionState): SelectionState {
+  const selectedNode = selection.selectedNode
+
+  if (selectedNode?.type === 'feature') {
+    const exists = project.features.some((feature) => feature.id === selectedNode.featureId)
+    if (!exists) {
+      return {
+        ...selection,
+        mode: 'feature',
+        selectedFeatureId: null,
+        selectedNode: null,
+        hoveredFeatureId: null,
+        activeControl: null,
+      }
+    }
+  }
+
+  const hoveredFeatureId =
+    selection.hoveredFeatureId && project.features.some((feature) => feature.id === selection.hoveredFeatureId)
+      ? selection.hoveredFeatureId
+      : null
+
+  return {
+    ...selection,
+    mode: selection.selectedNode?.type === 'feature' ? selection.mode : 'feature',
+    hoveredFeatureId,
+    activeControl: null,
+  }
+}
+
 // ============================================================
 // Rule: first feature must always be 'add'
 // The part model is built from the first 'add' solid — subsequent
@@ -160,52 +241,81 @@ export function isFirstFeatureValid(features: SketchFeature[]): boolean {
 // ============================================================
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
-  project: newProject(),
+  project: normalizeProject(newProject()),
   pendingAdd: null,
-
-  selection: {
-    mode: 'feature',
-    selectedFeatureId: null,
-    selectedNode: null,
-    hoveredFeatureId: null,
-    activeControl: null,
+  history: {
+    past: [],
+    future: [],
+    transactionStart: null,
   },
+
+  selection: emptySelection(),
 
   // ── Project ──────────────────────────────────────────────
 
+  createNewProject: () =>
+    set((state) => {
+      const nextProject = normalizeProject(newProject())
+      return {
+        project: nextProject,
+        pendingAdd: null,
+        selection: emptySelection(),
+        history: {
+          past: [...state.history.past, cloneProject(state.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   setProjectName: (name) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         meta: { ...s.project.meta, name, modified: new Date().toISOString() },
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   loadProject: (p) =>
-    set(() => {
+    set((state) => {
       const stockDefaults = defaultStock()
       const gridDefaults = defaultGrid()
-      return {
-        project: {
-          ...p,
-          grid: {
-            ...gridDefaults,
-            ...p.grid,
-          },
-          stock: {
-            ...stockDefaults,
-            ...p.stock,
-            origin: p.stock?.origin ?? stockDefaults.origin,
-            profile: p.stock?.profile ?? stockDefaults.profile,
-          },
+      const normalizedProject = normalizeProject(p)
+      const nextProject = {
+        ...normalizedProject,
+        grid: {
+          ...gridDefaults,
+          ...normalizedProject.grid,
         },
+        stock: {
+          ...stockDefaults,
+          ...normalizedProject.stock,
+          origin: normalizedProject.stock?.origin ?? stockDefaults.origin,
+          profile: normalizedProject.stock?.profile ?? stockDefaults.profile,
+        },
+      }
+      return {
+        project: nextProject,
         pendingAdd: null,
-        selection: {
-          mode: 'feature',
-          selectedFeatureId: null,
-          selectedNode: null,
-          hoveredFeatureId: null,
-          activeControl: null,
+        selection: emptySelection(),
+        history: {
+          past: [...state.history.past, cloneProject(state.project)].slice(-100),
+          future: [],
+          transactionStart: null,
         },
       }
     }),
@@ -219,33 +329,167 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return JSON.stringify(updated, null, 2)
   },
 
+  undo: () =>
+    set((state) => {
+      const previous = state.history.past.at(-1)
+      if (!previous) {
+        return {}
+      }
+      const restored = normalizeProject(cloneProject(previous))
+      return {
+        project: restored,
+        pendingAdd: null,
+        selection: sanitizeSelection(restored, state.selection),
+        history: {
+          past: state.history.past.slice(0, -1),
+          future: [cloneProject(state.project), ...state.history.future].slice(0, 100),
+          transactionStart: null,
+        },
+      }
+    }),
+
+  redo: () =>
+    set((state) => {
+      const next = state.history.future[0]
+      if (!next) {
+        return {}
+      }
+      const restored = normalizeProject(cloneProject(next))
+      return {
+        project: restored,
+        pendingAdd: null,
+        selection: sanitizeSelection(restored, state.selection),
+        history: {
+          past: [...state.history.past, cloneProject(state.project)].slice(-100),
+          future: state.history.future.slice(1),
+          transactionStart: null,
+        },
+      }
+    }),
+
+  beginHistoryTransaction: () =>
+    set((state) => {
+      if (state.history.transactionStart) {
+        return {}
+      }
+      return {
+        history: {
+          ...state.history,
+          transactionStart: cloneProject(state.project),
+        },
+      }
+    }),
+
+  commitHistoryTransaction: () =>
+    set((state) => {
+      const { transactionStart } = state.history
+      if (!transactionStart) {
+        return {}
+      }
+      if (projectsEqual(transactionStart, state.project)) {
+        return {
+          history: {
+            ...state.history,
+            transactionStart: null,
+          },
+        }
+      }
+      return {
+        history: {
+          past: [...state.history.past, cloneProject(transactionStart)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  cancelHistoryTransaction: () =>
+    set((state) => {
+      const { transactionStart } = state.history
+      if (!transactionStart) {
+        return {}
+      }
+      const restored = normalizeProject(cloneProject(transactionStart))
+      return {
+        project: restored,
+        pendingAdd: null,
+        selection: sanitizeSelection(restored, state.selection),
+        history: {
+          ...state.history,
+          transactionStart: null,
+        },
+      }
+    }),
+
   // ── Stock ────────────────────────────────────────────────
 
   setStock: (stock) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         stock,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   setGrid: (grid) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         grid,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   setUnits: (units) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         meta: { ...s.project.meta, units, modified: new Date().toISOString() },
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   // ── Features ─────────────────────────────────────────────
 
@@ -254,8 +498,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
       const safeFeature: SketchFeature = isFirst
-        ? { ...feature, operation: 'add' }
-        : feature
+        ? normalizeFeatureZRange({ ...feature, operation: 'add' })
+        : normalizeFeatureZRange(feature)
       return {
         project: {
           ...s.project,
@@ -269,6 +513,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           mode: 'feature',
           activeControl: null,
         },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
       }
     }),
 
@@ -281,36 +530,59 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         isFirst && patch.operation !== undefined && patch.operation !== 'add'
           ? { ...patch, operation: 'add' }
           : patch
+      const nextProject = {
+        ...s.project,
+        features: features.map((f) =>
+          f.id === id ? normalizeFeatureZRange({ ...f, ...safePatch }) : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
       return {
-        project: {
-          ...s.project,
-          features: features.map((f) =>
-            f.id === id ? { ...f, ...safePatch } : f
-          ),
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
         },
       }
     }),
 
   deleteFeature: (id) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         features: s.project.features.filter((f) => f.id !== id),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-      selection: {
-        ...s.selection,
-        selectedFeatureId:
-          s.selection.selectedFeatureId === id
-            ? null
-            : s.selection.selectedFeatureId,
-        selectedNode:
-          s.selection.selectedNode?.type === 'feature' && s.selection.selectedNode.featureId === id
-            ? null
-            : s.selection.selectedNode,
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId:
+            s.selection.selectedFeatureId === id
+              ? null
+              : s.selection.selectedFeatureId,
+          selectedNode:
+            s.selection.selectedNode?.type === 'feature' && s.selection.selectedNode.featureId === id
+              ? null
+              : s.selection.selectedNode,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   reorderFeatures: (ids) =>
     set((s) => {
@@ -326,6 +598,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...s.project,
           features: reordered,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
         },
       }
     }),
@@ -389,8 +666,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     })),
 
   moveFeatureControl: (featureId, control, point) =>
-    set((s) => ({
-      project: {
+    set((s) => {
+      const nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) return feature
@@ -462,52 +739,62 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-    })),
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   startAddRectPlacement: () =>
-    set(() => ({
+    set((s) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
       selection: {
+        ...s.selection,
         mode: 'feature',
-        selectedFeatureId: null,
-        selectedNode: null,
         hoveredFeatureId: null,
         activeControl: null,
       },
     })),
 
   startAddCirclePlacement: () =>
-    set(() => ({
+    set((s) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
       selection: {
+        ...s.selection,
         mode: 'feature',
-        selectedFeatureId: null,
-        selectedNode: null,
         hoveredFeatureId: null,
         activeControl: null,
       },
     })),
 
   startAddPolygonPlacement: () =>
-    set(() => ({
+    set((s) => ({
       pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
       selection: {
+        ...s.selection,
         mode: 'feature',
-        selectedFeatureId: null,
-        selectedNode: null,
         hoveredFeatureId: null,
         activeControl: null,
       },
     })),
 
   startAddSplinePlacement: () =>
-    set(() => ({
+    set((s) => ({
       pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
       selection: {
+        ...s.selection,
         mode: 'feature',
-        selectedFeatureId: null,
-        selectedNode: null,
         hoveredFeatureId: null,
         activeControl: null,
       },
@@ -605,8 +892,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         constraints: [],
       },
       operation: 'subtract',
-      z_top: 0,
-      z_bottom: depth,
+      z_top: depth,
+      z_bottom: 0,
       visible: true,
       locked: false,
     }
@@ -625,8 +912,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         constraints: [],
       },
       operation: 'subtract',
-      z_top: 0,
-      z_bottom: depth,
+      z_top: depth,
+      z_bottom: 0,
       visible: true,
       locked: false,
     }
@@ -645,8 +932,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         constraints: [],
       },
       operation: 'subtract',
-      z_top: 0,
-      z_bottom: depth,
+      z_top: depth,
+      z_bottom: 0,
       visible: true,
       locked: false,
     }
@@ -665,8 +952,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         constraints: [],
       },
       operation: 'subtract',
-      z_top: 0,
-      z_bottom: depth,
+      z_top: depth,
+      z_bottom: 0,
       visible: true,
       locked: false,
     }
