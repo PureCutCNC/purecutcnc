@@ -1,6 +1,6 @@
 # Toolpath Implementation Plan
 
-Status: Draft  
+Status: In Progress  
 Scope: 2.5D toolpath generation and visualization  
 Last updated: 2026-03-26
 
@@ -318,7 +318,7 @@ Show these warnings on the operation properties panel.
 
 ## Proposed Phases
 
-## Phase T1: Toolpath Engine Foundations
+## Phase T1: Toolpath Engine Foundations [x]
 
 Deliverables:
 - toolpath transient types
@@ -329,7 +329,7 @@ Deliverables:
 Acceptance:
 - any operation target can be resolved into normalized 2D polygon input
 
-## Phase T2: Pocket Region Resolver
+## Phase T2: Pocket Region Resolver [x]
 
 Deliverables:
 - resolve selected subtract targets into pocket regions
@@ -342,7 +342,7 @@ Acceptance:
   - pocket with island
   - multiple pockets
 
-## Phase T3: Pocket Rough Toolpath
+## Phase T3: Pocket Rough Toolpath [x]
 
 Deliverables:
 - offset-based ring clearing
@@ -353,7 +353,7 @@ Deliverables:
 Acceptance:
 - selected pocket operation produces a visible path in sketch and 3D
 
-## Phase T4: Pocket Finish Toolpath
+## Phase T4: Pocket Finish Toolpath [ ]
 
 Deliverables:
 - finish contour pass
@@ -362,7 +362,7 @@ Deliverables:
 Acceptance:
 - rough and finish can be visualized separately and together
 
-## Phase T5: UI Integration
+## Phase T5: UI Integration [~]
 
 Deliverables:
 - selected operation generates path automatically
@@ -373,7 +373,12 @@ Deliverables:
 Acceptance:
 - user can select an operation and inspect the result without leaving the existing views
 
-## Phase T6: Extend to Edge Route
+Current note:
+- pocket preview is wired in sketch and 3D for the selected operation
+- warnings are shown in properties
+- multi-operation show/hide preview and richer preview controls are still pending
+
+## Phase T6: Extend to Edge Route [ ]
 
 Deliverables:
 - inside contour path
@@ -384,7 +389,7 @@ Deliverables:
 Acceptance:
 - edge-route operations produce correct contour centerlines
 
-## Phase T7: Extend to Surface Clean
+## Phase T7: Extend to Surface Clean [ ]
 
 Deliverables:
 - stock-facing path

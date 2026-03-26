@@ -14,6 +14,10 @@ import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/un
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
+  selectedOperationId: string | null
+  onSelectedOperationIdChange: (operationId: string | null) => void
+  toolpathWarnings?: string[] | null
+  onRegenerateOperation?: (operationId: string) => void
 }
 
 type NewOperationMode = OperationPass | 'pair'
@@ -311,9 +315,14 @@ function getOperationTargetUpdateHint(project: Project, selection: SelectionStat
   return getOperationAddHint(project, selection, operation.kind)
 }
 
-export function CAMPanel({ mode }: CAMPanelProps) {
+export function CAMPanel({
+  mode,
+  selectedOperationId: selectedOperationIdProp,
+  onSelectedOperationIdChange,
+  toolpathWarnings,
+  onRegenerateOperation,
+}: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
-  const [selectedOperationIdState, setSelectedOperationId] = useState<string | null>(null)
   const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
@@ -350,14 +359,20 @@ export function CAMPanel({ mode }: CAMPanelProps) {
     : null
 
   const selectedOperationId =
-    selectedOperationIdState && project.operations.some((operation) => operation.id === selectedOperationIdState)
-      ? selectedOperationIdState
+    selectedOperationIdProp && project.operations.some((operation) => operation.id === selectedOperationIdProp)
+      ? selectedOperationIdProp
       : project.operations[0]?.id ?? null
 
   const selectedOperation = selectedOperationId
     ? project.operations.find((operation) => operation.id === selectedOperationId) ?? null
     : null
   const selectionKey = `${selection.selectedNode?.type ?? 'none'}:${selection.selectedFeatureIds.join(',')}`
+
+  useEffect(() => {
+    if (selectedOperationId !== selectedOperationIdProp) {
+      onSelectedOperationIdChange(selectedOperationId)
+    }
+  }, [onSelectedOperationIdChange, selectedOperationId, selectedOperationIdProp])
 
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
     () => ([
@@ -454,7 +469,7 @@ export function CAMPanel({ mode }: CAMPanelProps) {
       const finishId = addOperation(kind, 'finish', target)
       const nextSelectedId = finishId ?? roughId
       if (nextSelectedId) {
-        setSelectedOperationId(nextSelectedId)
+        onSelectedOperationIdChange(nextSelectedId)
         setShowAddOperationMenu(false)
       }
       return
@@ -462,7 +477,7 @@ export function CAMPanel({ mode }: CAMPanelProps) {
 
     const operationId = addOperation(kind, newOperationMode, target)
     if (operationId) {
-      setSelectedOperationId(operationId)
+      onSelectedOperationIdChange(operationId)
       setShowAddOperationMenu(false)
     }
   }
@@ -474,7 +489,7 @@ export function CAMPanel({ mode }: CAMPanelProps) {
 
     const operationId = duplicateOperation(selectedOperation.id)
     if (operationId) {
-      setSelectedOperationId(operationId)
+      onSelectedOperationIdChange(operationId)
     }
   }
 
@@ -486,11 +501,11 @@ export function CAMPanel({ mode }: CAMPanelProps) {
     const currentIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
     const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
     deleteOperation(selectedOperation.id)
-    setSelectedOperationId(fallback)
+    onSelectedOperationIdChange(fallback)
   }
 
   function handleSelectOperation(operationId: string) {
-    setSelectedOperationId(operationId)
+    onSelectedOperationIdChange(operationId)
     const operation = project.operations.find((item) => item.id === operationId)
     if (!operation) {
       return
@@ -633,7 +648,7 @@ export function CAMPanel({ mode }: CAMPanelProps) {
                 {project.operations.length === 0 ? (
                   <div className="panel-empty">
                     Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
-                    Outside route requires add features. Surface clean always targets stock.
+                    Outside route requires add features. Surface clean accepts stock or add features.
                   </div>
                 ) : (
                   <div className="feature-tree-panel cam-operation-tree">
@@ -661,6 +676,18 @@ export function CAMPanel({ mode }: CAMPanelProps) {
                             {operation.name}
                           </span>
                           <span className="tree-row-actions">
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title="Regenerate toolpath"
+                              aria-label={`Regenerate toolpath for ${operation.name}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onRegenerateOperation?.(operation.id)
+                              }}
+                            >
+                              ↻
+                            </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
                           </span>
                         </button>
@@ -725,6 +752,18 @@ export function CAMPanel({ mode }: CAMPanelProps) {
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
+                  {selectedOperation.kind === 'pocket' && toolpathWarnings && toolpathWarnings.length > 0 ? (
+                    <div className="properties-field">
+                      <span>Toolpath warnings</span>
+                      <div className="cam-field-note-list">
+                        {toolpathWarnings.map((warning, index) => (
+                          <div key={`${selectedOperation.id}-warning-${index}`} className="cam-field-note">
+                            {warning}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <label className="properties-field">
                     <span>Tool</span>
                     <select

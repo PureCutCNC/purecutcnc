@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
+import { generatePocketToolpath } from './engine/toolpaths'
+import type { PocketToolpathResult } from './engine/toolpaths'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
@@ -20,6 +22,8 @@ function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
   const [featureContextMenu, setFeatureContextMenu] = useState<FeatureContextMenuState | null>(null)
+  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+  const [toolpathRefreshToken, setToolpathRefreshToken] = useState(0)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -32,6 +36,25 @@ function App() {
         : null,
     [featureContextMenu, project.features]
   )
+
+  const effectiveSelectedOperationId =
+    selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
+      ? selectedOperationId
+      : project.operations[0]?.id ?? null
+
+  const selectedOperation = useMemo(
+    () => project.operations.find((operation) => operation.id === effectiveSelectedOperationId) ?? null,
+    [effectiveSelectedOperationId, project.operations]
+  )
+
+  const selectedToolpath = useMemo<PocketToolpathResult | null>(() => {
+    void toolpathRefreshToken
+    if (!selectedOperation || selectedOperation.kind !== 'pocket') {
+      return null
+    }
+
+    return generatePocketToolpath(project, selectedOperation)
+  }, [project, selectedOperation, toolpathRefreshToken])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -159,11 +182,28 @@ function App() {
       <AppShell
         toolbar={<Toolbar onZoomToModel={handleZoomToModel} />}
         aiPanel={<AIPanel />}
-        sketchCanvas={<SketchCanvas ref={sketchCanvasRef} onFeatureContextMenu={openFeatureContextMenu} />}
-        viewport3d={<Viewport3D ref={viewport3dRef} />}
+        sketchCanvas={
+          <SketchCanvas
+            ref={sketchCanvasRef}
+            onFeatureContextMenu={openFeatureContextMenu}
+            toolpath={selectedToolpath}
+          />
+        }
+        viewport3d={<Viewport3D ref={viewport3dRef} toolpath={selectedToolpath} />}
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
-        camPanel={<CAMPanel mode={rightTab === 'tools' ? 'tools' : 'operations'} />}
+        camPanel={
+          <CAMPanel
+            mode={rightTab === 'tools' ? 'tools' : 'operations'}
+            selectedOperationId={effectiveSelectedOperationId}
+            onSelectedOperationIdChange={setSelectedOperationId}
+            toolpathWarnings={selectedToolpath?.warnings ?? null}
+            onRegenerateOperation={(operationId) => {
+              setSelectedOperationId(operationId)
+              setToolpathRefreshToken((value) => value + 1)
+            }}
+          />
+        }
         centerTab={centerTab}
         onCenterTabChange={setCenterTab}
         rightTab={rightTab}

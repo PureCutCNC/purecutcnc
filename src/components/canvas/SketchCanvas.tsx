@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
+import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SketchControlRef } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
 import {
@@ -589,6 +590,44 @@ function drawDepthLegend(ctx: CanvasRenderingContext2D, canvasW: number, canvasH
   }
 }
 
+function drawToolpath(
+  ctx: CanvasRenderingContext2D,
+  toolpath: ToolpathResult,
+  vt: ViewTransform,
+): void {
+  const layers: Array<{
+    kinds: ToolpathResult['moves'][number]['kind'][]
+    stroke: string
+    lineWidth: number
+    dash: number[]
+  }> = [
+    { kinds: ['rapid'], stroke: 'rgba(124, 184, 222, 0.8)', lineWidth: 1.3, dash: [8, 6] },
+    { kinds: ['plunge'], stroke: 'rgba(213, 131, 223, 0.95)', lineWidth: 1.5, dash: [3, 4] },
+    { kinds: ['lead_in', 'lead_out'], stroke: 'rgba(255, 177, 92, 0.95)', lineWidth: 1.7, dash: [6, 4] },
+    { kinds: ['cut'], stroke: 'rgba(255, 115, 92, 0.96)', lineWidth: 2.1, dash: [] },
+  ]
+
+  for (const layer of layers) {
+    const moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+    if (moves.length === 0) {
+      continue
+    }
+
+    ctx.beginPath()
+    for (const move of moves) {
+      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
+      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
+      ctx.moveTo(from.cx, from.cy)
+      ctx.lineTo(to.cx, to.cy)
+    }
+    ctx.strokeStyle = layer.stroke
+    ctx.lineWidth = layer.lineWidth
+    ctx.setLineDash(layer.dash)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+}
+
 function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
   const points = sampleProfilePoints(profile)
   if (points.length < 3) return false
@@ -697,10 +736,11 @@ function isLoopCloseCandidate(
 
 interface SketchCanvasProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+  toolpath?: ToolpathResult | null
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu },
+  { onFeatureContextMenu, toolpath = null },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -784,6 +824,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    if (toolpath && toolpath.moves.length > 0) {
+      drawToolpath(ctx, toolpath, vt)
+    }
+
     const currentPreviewPoint =
       pendingAdd && pendingPreviewPoint?.session === pendingAdd.session
         ? pendingPreviewPoint.point
@@ -858,7 +902,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     drawDepthLegend(ctx, width, height)
-  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, viewState])
+  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, toolpath, viewState])
 
   useEffect(() => {
     draw()

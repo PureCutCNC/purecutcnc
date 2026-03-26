@@ -34,8 +34,7 @@ function getChildren(node: PolyTreeNode): PolyTreeNode[] {
 
 function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
   const flattened = flattenProfile(feature.sketch.profile)
-  const clockwise = feature.operation === 'subtract'
-  return toClipperPath(normalizeWinding(flattened.points, clockwise), scale)
+  return toClipperPath(normalizeWinding(flattened.points, false), scale)
 }
 
 function uniqueSortedDepths(features: FeatureWithSpan[]): number[] {
@@ -69,6 +68,29 @@ function executeClip(
   return polyTree as PolyTreeNode
 }
 
+function executeClipPaths(
+  subjectPaths: ClipperPath[],
+  clipPaths: ClipperPath[],
+  clipType: number,
+): ClipperPath[] {
+  const clipper = new ClipperLib.Clipper()
+  if (subjectPaths.length > 0) {
+    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
+  }
+  if (clipPaths.length > 0) {
+    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
+  }
+
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    clipType,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
+}
+
 function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   if (paths.length === 0) {
     return []
@@ -85,6 +107,18 @@ function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   )
 
   return solution as ClipperPath[]
+}
+
+function differencePaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
+  if (subjectPaths.length === 0) {
+    return []
+  }
+
+  if (clipPaths.length === 0) {
+    return subjectPaths
+  }
+
+  return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
 }
 
 function polyTreeToRegions(
@@ -146,7 +180,10 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
     .filter((feature) => feature.operation === 'subtract')
-    .map((feature) => ({ feature, span: resolveFeatureZSpan(project, feature) }))
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
 
   if (targetFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing or are not subtract features')
@@ -163,10 +200,14 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
 
   const candidateIslands = project.features
     .filter((feature) => feature.operation === 'add')
-    .map((feature) => ({ feature, span: resolveFeatureZSpan(project, feature) }))
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
 
   const depths = uniqueSortedDepths(targetFeatures)
   const bands: ResolvedPocketBand[] = []
+  const targetIdSet = new Set(targetFeatures.map(({ feature }) => feature.id))
 
   for (let index = 0; index < depths.length - 1; index += 1) {
     const topZ = depths[index]
@@ -181,18 +222,34 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     }
 
     const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
-    const subjectPaths = activeTargets.map(({ feature }) => flattenFeatureToClipperPath(feature))
-    const islandPaths = activeIslands.map(({ feature }) => flattenFeatureToClipperPath(feature))
-    const unitedSubjectPaths = unionPaths(subjectPaths)
+    const activeBandFeatureIds = new Set([
+      ...activeTargets.map(({ feature }) => feature.id),
+      ...activeIslands.map(({ feature }) => feature.id),
+    ])
+    let resolvedPaths: ClipperPath[] = []
 
-    if (unitedSubjectPaths.length === 0) {
+    for (const feature of project.features) {
+      if (!activeBandFeatureIds.has(feature.id)) {
+        continue
+      }
+
+      const featurePath = flattenFeatureToClipperPath(feature)
+      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
+        resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+        continue
+      }
+
+      if (feature.operation === 'add' && resolvedPaths.length > 0) {
+        resolvedPaths = differencePaths(resolvedPaths, [featurePath])
+      }
+    }
+
+    if (resolvedPaths.length === 0) {
       warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty subject geometry`)
       continue
     }
 
-    const polyTree = islandPaths.length > 0
-      ? executeClip(unitedSubjectPaths, islandPaths, ClipperLib.ClipType.ctDifference)
-      : executeClip(unitedSubjectPaths, [], ClipperLib.ClipType.ctUnion)
+    const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
 
     const regions = polyTreeToRegions(
       polyTree,

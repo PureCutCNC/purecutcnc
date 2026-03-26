@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import * as THREE from 'three'
+import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { buildScene } from '../../engine/csg'
 import { getStockBounds } from '../../types/project'
@@ -66,6 +67,65 @@ const VIEW_PRESETS: Record<ViewPreset, { theta: number; phi: number; up: THREE.V
 
 export interface Viewport3DHandle {
   zoomToModel: () => void
+}
+
+interface Viewport3DProps {
+  toolpath?: ToolpathResult | null
+}
+
+function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): THREE.Vector3 {
+  return new THREE.Vector3(point.x, point.z, point.y)
+}
+
+function buildToolpathOverlay(toolpath: ToolpathResult): THREE.Object3D[] {
+  const layers: Array<{
+    kinds: ToolpathResult['moves'][number]['kind'][]
+    color: number
+    opacity: number
+  }> = [
+    { kinds: ['rapid'], color: 0x78b8de, opacity: 0.75 },
+    { kinds: ['plunge'], color: 0xd583df, opacity: 0.9 },
+    { kinds: ['lead_in', 'lead_out'], color: 0xffb15c, opacity: 0.92 },
+    { kinds: ['cut'], color: 0xff735c, opacity: 0.98 },
+  ]
+
+  const objects: THREE.Object3D[] = []
+  for (const layer of layers) {
+    const moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+    if (moves.length === 0) {
+      continue
+    }
+
+    const positions = new Float32Array(moves.length * 2 * 3)
+    let offset = 0
+    for (const move of moves) {
+      const from = toolpathPointToWorld(move.from)
+      const to = toolpathPointToWorld(move.to)
+      positions[offset] = from.x
+      positions[offset + 1] = from.y
+      positions[offset + 2] = from.z
+      positions[offset + 3] = to.x
+      positions[offset + 4] = to.y
+      positions[offset + 5] = to.z
+      offset += 6
+    }
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.computeBoundingSphere()
+
+    const material = new THREE.LineBasicMaterial({
+      color: layer.color,
+      transparent: true,
+      opacity: layer.opacity,
+      depthWrite: false,
+      depthTest: false,
+    })
+
+    objects.push(new THREE.LineSegments(geometry, material))
+  }
+
+  return objects
 }
 
 function createOrbitControls(
@@ -268,7 +328,7 @@ function createOrbitControls(
   }
 }
 
-export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_props, ref) {
+export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({ toolpath = null }, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -277,6 +337,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
   const controlsRef = useRef<ReturnType<typeof createOrbitControls> | null>(null)
   const frameRef = useRef<number>(0)
   const objectsRef = useRef<THREE.Object3D[]>([])
+  const toolpathObjectsRef = useRef<THREE.Object3D[]>([])
   const buildRequestRef = useRef(0)
   const activePresetRef = useRef<ViewPreset | null>('iso')
 
@@ -436,6 +497,17 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
     objectsRef.current = []
   }, [disposeObjectMaterial])
 
+  const clearToolpathObjects = useCallback((scene: THREE.Scene) => {
+    for (const object of toolpathObjectsRef.current) {
+      scene.remove(object)
+      if (object instanceof THREE.LineSegments) {
+        object.geometry.dispose()
+        disposeObjectMaterial(object.material)
+      }
+    }
+    toolpathObjectsRef.current = []
+  }, [disposeObjectMaterial])
+
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -524,6 +596,29 @@ export const Viewport3D = forwardRef<Viewport3DHandle>(function Viewport3D(_prop
       window.clearTimeout(timeout)
     }
   }, [clearRenderedObjects, disposeObjectMaterial, project, rebuildGridHelpers])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) {
+      return
+    }
+
+    clearToolpathObjects(scene)
+
+    if (!toolpath || toolpath.moves.length === 0) {
+      return
+    }
+
+    const nextObjects = buildToolpathOverlay(toolpath)
+    for (const object of nextObjects) {
+      scene.add(object)
+    }
+    toolpathObjectsRef.current = nextObjects
+
+    return () => {
+      clearToolpathObjects(scene)
+    }
+  }, [clearToolpathObjects, toolpath])
 
   useImperativeHandle(ref, () => ({
     zoomToModel,

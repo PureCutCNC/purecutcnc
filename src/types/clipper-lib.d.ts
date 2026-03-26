@@ -20,6 +20,15 @@ declare module 'clipper-lib' {
     new (): ClipperLike
   }
 
+  interface ClipperOffsetLike {
+    AddPaths(paths: IntPoint[][], joinType: number, endType: number): void
+    Execute(solution: IntPoint[][], delta: number): void
+  }
+
+  interface ClipperOffsetStatic {
+    new (): ClipperOffsetLike
+  }
+
   interface PolyTreeStatic {
     new (): PolyNodeLike
   }
@@ -30,6 +39,7 @@ declare module 'clipper-lib' {
 
   interface ClipperLibShape {
     Clipper: ClipperStatic
+    ClipperOffset: ClipperOffsetStatic
     PolyTree: PolyTreeStatic
     Paths: PathsStatic
     PolyType: {
@@ -42,6 +52,14 @@ declare module 'clipper-lib' {
     }
     PolyFillType: {
       pftNonZero: number
+    }
+    JoinType: {
+      jtMiter: number
+      jtRound: number
+      jtSquare: number
+    }
+    EndType: {
+      etClosedPolygon: number
     }
   }
 

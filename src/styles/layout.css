@@ -963,6 +963,23 @@
   letter-spacing: normal;
 }
 
+.cam-field-note-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cam-field-note {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(170, 92, 84, 0.45);
+  background: rgba(61, 27, 24, 0.24);
+  color: #f0bbb6;
+  font-size: 11px;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .cam-section-content {
   min-height: 0;
   overflow: auto;

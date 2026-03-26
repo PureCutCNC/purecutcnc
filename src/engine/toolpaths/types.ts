@@ -31,6 +31,10 @@ export interface ToolpathResult {
   bounds: ToolpathBounds | null
 }
 
+export interface PocketToolpathResult extends ToolpathResult {
+  stepLevels: number[]
+}
+
 export interface NormalizedTool {
   id: string
   name: string
