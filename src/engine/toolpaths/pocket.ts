@@ -378,11 +378,7 @@ function generateFinishBandMoves(
   const floorContours = operation.finishFloor
     ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
     : []
-  const finishContours = [
-    ...wallContours.map((contour) => ({ contour, floor: false })),
-    ...floorContours.map((contour) => ({ contour, floor: true })),
-  ]
-  if (finishContours.length === 0) {
+  if (wallContours.length === 0 && floorContours.length === 0) {
     return {
       moves,
       stepLevels: [],
@@ -390,27 +386,39 @@ function generateFinishBandMoves(
     }
   }
 
-  const stepLevels = operation.finishFloor
-    ? [effectiveBottom]
-    : generateStepLevels(band.topZ, effectiveBottom, stepdown)
+  const wallStepLevels = operation.finishWalls
+    ? generateStepLevels(band.topZ, effectiveBottom, stepdown)
+    : []
+  const floorStepLevels = operation.finishFloor ? [effectiveBottom] : []
   let currentPosition: ToolpathPoint | null = null
 
-  for (const z of stepLevels) {
-    for (const entry of finishContours) {
-      if (entry.floor && z !== effectiveBottom) {
-        continue
-      }
-
-      const entryPoint = contourStartPoint(entry.contour, z)
+  for (const z of wallStepLevels) {
+    for (const contour of wallContours) {
+      const entryPoint = contourStartPoint(contour, z)
       currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
-      const cutMoves = toClosedCutMoves(entry.contour, z)
+      const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
   }
 
-  return { moves, stepLevels, warnings }
+  for (const z of floorStepLevels) {
+    for (const contour of floorContours) {
+      const entryPoint = contourStartPoint(contour, z)
+      currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+      const cutMoves = toClosedCutMoves(contour, z)
+      moves.push(...cutMoves)
+      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+    }
+  }
+
+  return {
+    moves,
+    stepLevels: [...new Set([...wallStepLevels, ...floorStepLevels])].sort((a, b) => b - a),
+    warnings,
+  }
 }
 
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
