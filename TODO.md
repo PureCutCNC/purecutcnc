@@ -118,6 +118,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current finish supports separate wall and floor toggles.
   - Future improvements include smarter floor-finish patterns, better finish ordering, and richer finish linking.
 
+### Operation-specific cleanup strategies
+- Status: Open
+- Priority: Medium
+- Summary: Add different cleanup pattern strategies for `Pocket` and `Surface Clean` instead of using the same concentric-offset style for both.
+- Notes:
+  - Pocket will likely want offset, raster, morph, and rest-machining options later.
+  - Surface clean will likely want raster, zig-zag, one-way, and contour-parallel options.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

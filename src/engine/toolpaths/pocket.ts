@@ -42,7 +42,7 @@ function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   return solution as ClipperPath[]
 }
 
-function executeDifference(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): PolyTreeNode {
+export function executeDifference(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): PolyTreeNode {
   const clipper = new ClipperLib.Clipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
@@ -62,7 +62,7 @@ function executeDifference(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]
   return polyTree as PolyTreeNode
 }
 
-function polyTreeToRegions(
+export function polyTreeToRegions(
   node: PolyTreeNode,
   targetFeatureIds: string[],
   islandFeatureIds: string[],
@@ -92,12 +92,12 @@ function polyTreeToRegions(
   return regions
 }
 
-function contourStartPoint(points: Point[], z: number): ToolpathPoint {
+export function contourStartPoint(points: Point[], z: number): ToolpathPoint {
   const first = points[0] ?? { x: 0, y: 0 }
   return { x: first.x, y: first.y, z }
 }
 
-function toClosedCutMoves(points: Point[], z: number): ToolpathMove[] {
+export function toClosedCutMoves(points: Point[], z: number): ToolpathMove[] {
   if (points.length < 2) {
     return []
   }
@@ -124,7 +124,7 @@ function toClosedCutMoves(points: Point[], z: number): ToolpathMove[] {
   return moves
 }
 
-function pushRapidAndPlunge(
+export function pushRapidAndPlunge(
   moves: ToolpathMove[],
   from: ToolpathPoint | null,
   toXY: ToolpathPoint,
@@ -149,7 +149,7 @@ function pushRapidAndPlunge(
   return toXY
 }
 
-function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null, safeZ: number): ToolpathPoint | null {
+export function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null, safeZ: number): ToolpathPoint | null {
   if (!from) {
     return null
   }
@@ -165,7 +165,7 @@ function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null, safeZ:
   return safePoint
 }
 
-function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
+export function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
   if (!(stepdown > 0)) {
     return [bottomZ]
   }
@@ -185,7 +185,7 @@ function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): nu
   return levels
 }
 
-function resolveBandBottomZ(band: ResolvedPocketBand, operation: Operation): number | null {
+export function resolveBandBottomZ(band: ResolvedPocketBand, operation: Operation): number | null {
   const descending = band.bottomZ < band.topZ
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
   const effectiveBottom = descending
@@ -203,7 +203,7 @@ function resolveBandBottomZ(band: ResolvedPocketBand, operation: Operation): num
   return effectiveBottom
 }
 
-function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
+export function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
     return {
       minX: point.x,
@@ -225,7 +225,7 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
   }
 }
 
-function buildInsetRegions(region: ResolvedPocketRegion, delta: number): ResolvedPocketRegion[] {
+export function buildInsetRegions(region: ResolvedPocketRegion, delta: number): ResolvedPocketRegion[] {
   const scale = DEFAULT_CLIPPER_SCALE
   const outerPath = toClipperPath(normalizeWinding(region.outer, false), scale)
   const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
@@ -241,7 +241,7 @@ function buildInsetRegions(region: ResolvedPocketRegion, delta: number): Resolve
     .filter((nextRegion) => nextRegion.outer.length >= 3)
 }
 
-function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
+export function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   const contours: Point[][] = []
 
   for (const region of regions) {
@@ -259,13 +259,13 @@ function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   return contours
 }
 
-function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
+export function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
   return regions
     .map((region) => region.outer)
     .filter((contour) => contour.length >= 3)
 }
 
-function buildPocketFloorContours(
+export function buildPocketFloorContours(
   regions: ResolvedPocketRegion[],
   initialInset: number,
   stepoverDistance: number,

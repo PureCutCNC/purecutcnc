@@ -218,10 +218,6 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
   if (kind === 'surface_clean') {
-    if (selection.selectedNode?.type === 'stock') {
-      return { source: 'stock' }
-    }
-
     if (selection.selectedFeatureIds.length === 0) {
       return null
     }
@@ -262,12 +258,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
 function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
   if (kind === 'surface_clean') {
-    if (selection.selectedNode?.type === 'stock') {
-      return null
-    }
-
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select stock or one or more add features first'
+      return 'Select one or more add features first'
     }
 
     const features = selection.selectedFeatureIds
@@ -276,7 +268,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
     return features.every((feature) => feature.operation === 'add')
       ? null
-      : 'Surface clean only accepts stock or add features'
+      : 'Surface clean only accepts add features'
   }
 
   if (selection.selectedFeatureIds.length === 0) {
@@ -301,10 +293,6 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 function getOperationTargetUpdateHint(project: Project, selection: SelectionState, operation: Project['operations'][number]): string | null {
   const nextTarget = getValidOperationTarget(project, selection, operation.kind)
   if (nextTarget) {
-    return null
-  }
-
-  if (operation.kind === 'surface_clean') {
     return null
   }
 
@@ -648,7 +636,7 @@ export function CAMPanel({
                 {project.operations.length === 0 ? (
                   <div className="panel-empty">
                     Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
-                    Outside route requires add features. Surface clean accepts stock or add features.
+                    Outside route requires add features. Surface clean accepts add features.
                   </div>
                 ) : (
                   <div className="feature-tree-panel cam-operation-tree">
@@ -732,7 +720,7 @@ export function CAMPanel({
                       <option value="finish">Finish</option>
                     </select>
                   </label>
-                  {selectedOperation.kind === 'pocket' && selectedOperation.pass === 'finish' ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish' ? (
                     <>
                       <label className="properties-check">
                         <input

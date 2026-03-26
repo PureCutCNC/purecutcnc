@@ -51,7 +51,7 @@ Operation creation should be operation-first, not feature-first:
 This is important because applicability is operation-dependent:
 - Pocket applies only to subtract features
 - Edge Route applies to profile boundaries
-- Surface Clean initially applies to stock
+- Surface Clean applies only to add features that represent the intended finished surface
 
 ### Edge Routing Semantics
 
@@ -170,13 +170,11 @@ Reason:
 ### Surface Clean
 
 Valid targets:
-- stock
+- add features
 
-First pass:
-- stock only
-
-Later:
-- optionally support selected local regions
+Reason:
+- surface clean is stock-relative surfacing down to the top Z of selected add features
+- stock remains reference material, not the selectable target
 
 ## UI Plan
 

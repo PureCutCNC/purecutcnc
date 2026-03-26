@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
-import { generateEdgeRouteToolpath, generatePocketToolpath } from './engine/toolpaths'
+import { generateEdgeRouteToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
 import type { ToolpathResult } from './engine/toolpaths'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
@@ -59,6 +59,10 @@ function App() {
 
     if (selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') {
       return generateEdgeRouteToolpath(project, selectedOperation)
+    }
+
+    if (selectedOperation.kind === 'surface_clean') {
+      return generateSurfaceCleanToolpath(project, selectedOperation)
     }
 
     return null

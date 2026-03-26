@@ -166,6 +166,35 @@ export function genId(prefix = 'f'): string {
   return `${prefix}${String(_idCounter++).padStart(4, '0')}`
 }
 
+function idNumericSuffix(id: string): number {
+  const match = id.match(/(\d+)$/)
+  return match ? Number.parseInt(match[1], 10) : 0
+}
+
+function syncIdCounter(project: Project): void {
+  const usedIds = [
+    ...project.features.map((feature) => feature.id),
+    ...project.tools.map((tool) => tool.id),
+    ...project.operations.map((operation) => operation.id),
+  ]
+  const maxSuffix = usedIds.reduce((max, id) => Math.max(max, idNumericSuffix(id)), 0)
+  _idCounter = Math.max(_idCounter, maxSuffix + 1)
+}
+
+function nextUniqueGeneratedId(project: Project, prefix: string): string {
+  const usedIds = new Set([
+    ...project.features.map((feature) => feature.id),
+    ...project.tools.map((tool) => tool.id),
+    ...project.operations.map((operation) => operation.id),
+  ])
+
+  let nextId = genId(prefix)
+  while (usedIds.has(nextId)) {
+    nextId = genId(prefix)
+  }
+  return nextId
+}
+
 let _placementSessionCounter = 1
 function nextPlacementSession(): number {
   return _placementSessionCounter++
@@ -287,11 +316,7 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
 
 function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
   if (kind === 'surface_clean') {
-    if (target.source === 'stock') {
-      return true
-    }
-
-    if (target.featureIds.length === 0) {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
 
@@ -368,6 +393,27 @@ function defaultOperationForTarget(
   }
 }
 
+function fallbackOperationTarget(project: Project, kind: OperationKind): OperationTarget {
+  if (kind === 'surface_clean' || kind === 'edge_route_outside') {
+    const firstAddFeature = project.features.find((feature) => feature.operation === 'add')
+    if (firstAddFeature) {
+      return { source: 'features', featureIds: [firstAddFeature.id] }
+    }
+  }
+
+  if (kind === 'pocket' || kind === 'edge_route_inside') {
+    const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract')
+    if (firstSubtractFeature) {
+      return { source: 'features', featureIds: [firstSubtractFeature.id] }
+    }
+  }
+
+  const firstFeature = project.features[0]
+  return firstFeature
+    ? { source: 'features', featureIds: [firstFeature.id] }
+    : { source: 'stock' }
+}
+
 function buildCopiedFeatures(
   sourceFeatures: SketchFeature[],
   existingFeatures: SketchFeature[],
@@ -376,12 +422,25 @@ function buildCopiedFeatures(
   count: number,
 ): SketchFeature[] {
   const created: SketchFeature[] = []
+  const projectLike: Project = {
+    ...newProject(),
+    features: existingFeatures,
+    tools: [],
+    operations: [],
+  }
 
   for (let step = 1; step <= count; step += 1) {
     for (const sourceFeature of sourceFeatures) {
+      const nextId = nextUniqueGeneratedId(
+        {
+          ...projectLike,
+          features: [...existingFeatures, ...created],
+        },
+        'f',
+      )
       created.push({
         ...sourceFeature,
-        id: genId('f'),
+        id: nextId,
         name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created]),
         sketch: {
           ...sourceFeature.sketch,
@@ -416,11 +475,70 @@ function normalizeTool(tool: Tool, units: Project['meta']['units'], index: numbe
   }
 }
 
+function dedupeProjectIds(project: Project): Project {
+  let localCounter = [
+    ...project.features.map((feature) => idNumericSuffix(feature.id)),
+    ...project.tools.map((tool) => idNumericSuffix(tool.id)),
+    ...project.operations.map((operation) => idNumericSuffix(operation.id)),
+  ].reduce((max, value) => Math.max(max, value), 0) + 1
+
+  const nextLocalId = (prefix: string) => `${prefix}${String(localCounter++).padStart(4, '0')}`
+
+  const seenFeatureIds = new Set<string>()
+  const features = project.features.map((feature) => {
+    if (!seenFeatureIds.has(feature.id)) {
+      seenFeatureIds.add(feature.id)
+      return feature
+    }
+
+    const nextId = nextLocalId('f')
+    return {
+      ...feature,
+      id: nextId,
+    }
+  })
+
+  const seenToolIds = new Set<string>()
+  const tools = project.tools.map((tool) => {
+    if (!seenToolIds.has(tool.id)) {
+      seenToolIds.add(tool.id)
+      return tool
+    }
+
+    const nextId = nextLocalId('t')
+    return {
+      ...tool,
+      id: nextId,
+    }
+  })
+
+  const seenOperationIds = new Set<string>()
+  const operations = project.operations.map((operation) => {
+    if (!seenOperationIds.has(operation.id)) {
+      seenOperationIds.add(operation.id)
+      return {
+        ...operation,
+      }
+    }
+
+    const nextId = nextLocalId('op')
+    return {
+      ...operation,
+      id: nextId,
+    }
+  })
+
+  return {
+    ...project,
+    features,
+    tools,
+    operations,
+  }
+}
+
 function normalizeOperation(operation: Operation, project: Project, index: number): Operation {
-  const fallbackTarget: OperationTarget = project.features.length > 0
-    ? { source: 'features', featureIds: [project.features[0].id] }
-    : { source: 'stock' }
-  const defaults = defaultOperationForTarget(project, 'surface_clean', 'rough', fallbackTarget, index)
+  const fallbackTarget = fallbackOperationTarget(project, operation.kind)
+  const defaults = defaultOperationForTarget(project, operation.kind, 'rough', fallbackTarget, index)
   const normalized = {
     ...defaults,
     ...operation,
@@ -437,16 +555,19 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
 }
 
 function normalizeProject(project: Project): Project {
-  const normalizedBase = {
+  const normalizedBase = dedupeProjectIds({
     ...project,
     features: project.features.map(normalizeFeatureZRange),
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
-  }
+  })
 
-  return {
+  const normalizedProject = {
     ...normalizedBase,
     operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
   }
+
+  syncIdCounter(normalizedProject)
+  return normalizedProject
 }
 
 function cloneProject(project: Project): Project {
@@ -795,8 +916,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }),
 
   addTool: () => {
-    const nextId = genId('t')
     const state = get()
+    const nextId = nextUniqueGeneratedId(state.project, 't')
     const template = defaultTool(state.project.meta.units, state.project.tools.length + 1)
     const tool: Tool = {
       ...template,
@@ -875,7 +996,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return null
     }
 
-    const nextId = genId('t')
+    const nextId = nextUniqueGeneratedId(state.project, 't')
     const duplicate: Tool = {
       ...sourceTool,
       id: nextId,
@@ -904,7 +1025,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return null
     }
 
-    const nextId = genId('op')
+    const nextId = nextUniqueGeneratedId(state.project, 'op')
     const template = defaultOperationForTarget(state.project, kind, pass, target, state.project.operations.length)
     const operation: Operation = {
       ...template,
@@ -983,7 +1104,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return null
     }
 
-    const nextId = genId('op')
+    const nextId = nextUniqueGeneratedId(state.project, 'op')
     const duplicate: Operation = {
       ...sourceOperation,
       id: nextId,
@@ -1037,11 +1158,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addFeature: (feature) =>
     set((s) => {
+      const safeId = s.project.features.some((existing) => existing.id === feature.id)
+        ? nextUniqueGeneratedId(s.project, 'f')
+        : feature.id
       // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
       const safeFeature: SketchFeature = isFirst
-        ? normalizeFeatureZRange({ ...feature, operation: 'add' })
-        : normalizeFeatureZRange(feature)
+        ? normalizeFeatureZRange({ ...feature, id: safeId, operation: 'add' })
+        : normalizeFeatureZRange({ ...feature, id: safeId })
       return {
         project: {
           ...s.project,
@@ -1638,7 +1762,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // ── Convenience constructors ─────────────────────────────
 
   addRectFeature: (name, x, y, w, h, depth) => {
-    const id = genId('f')
+    const id = nextUniqueGeneratedId(get().project, 'f')
     const feature: SketchFeature = {
       id,
       name,
@@ -1658,7 +1782,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   addCircleFeature: (name, cx, cy, r, depth) => {
-    const id = genId('f')
+    const id = nextUniqueGeneratedId(get().project, 'f')
     const feature: SketchFeature = {
       id,
       name,
@@ -1678,7 +1802,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   addPolygonFeature: (name, points, depth) => {
-    const id = genId('f')
+    const id = nextUniqueGeneratedId(get().project, 'f')
     const feature: SketchFeature = {
       id,
       name,
@@ -1698,7 +1822,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   addSplineFeature: (name, points, depth) => {
-    const id = genId('f')
+    const id = nextUniqueGeneratedId(get().project, 'f')
     const feature: SketchFeature = {
       id,
       name,
@@ -1717,3 +1841,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().addFeature(feature)
   },
 }))
+
+const repairedInitialProject = normalizeProject(useProjectStore.getState().project)
+if (!projectsEqual(repairedInitialProject, useProjectStore.getState().project)) {
+  useProjectStore.setState((state) => ({
+    project: repairedInitialProject,
+    selection: sanitizeSelection(repairedInitialProject, state.selection),
+  }))
+}

@@ -398,14 +398,19 @@ Current note:
 - rough/finish differentiation exists at a first-pass level through leave settings and operation semantics
 - remaining work is path-quality and UI refinement, not missing core contour routing
 
-## Phase T7: Extend to Surface Clean [ ]
+## Phase T7: Extend to Surface Clean [x]
 
 Deliverables:
-- stock-facing path
-- local add-feature facing path
+- stock-relative surfacing path derived from selected add-feature targets
 
 Acceptance:
-- stock and local surfacing both generate visible facing passes
+- selected add-feature surfacing generates visible facing passes in sketch and 3D
+
+Current note:
+- `Surface Clean` now targets selected `add` features only
+- stock is reference material only for top/safe-Z context
+- local surfacing paths are generated and previewed in sketch and 3D
+- remaining work is strategy variety and path-quality refinement, not missing core surfacing behavior
 
 ## Open Questions
 
@@ -459,4 +464,4 @@ That gets you the first real pocket path on screen, which is the main milestone.
 - [x] Phase T4: Pocket finish toolpath
 - [~] Phase T5: UI integration
 - [x] Phase T6: Edge route toolpaths
-- [ ] Phase T7: Surface clean toolpaths
+- [x] Phase T7: Surface clean toolpaths
