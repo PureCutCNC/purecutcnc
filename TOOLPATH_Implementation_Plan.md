@@ -446,8 +446,8 @@ That gets you the first real pocket path on screen, which is the main milestone.
 
 - [x] Phase T1: Toolpath engine foundations
 - [x] Phase T2: Pocket region resolver
-- [ ] Phase T3: Pocket rough toolpath
+- [x] Phase T3: Pocket rough toolpath
 - [ ] Phase T4: Pocket finish toolpath
-- [ ] Phase T5: UI integration
+- [~] Phase T5: UI integration
 - [ ] Phase T6: Edge route toolpaths
 - [ ] Phase T7: Surface clean toolpaths
