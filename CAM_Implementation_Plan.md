@@ -400,4 +400,4 @@ Recommendation:
 - [x] Phase 2: Tool library
 - [x] Phase 3: Operations schema and store
 - [x] Phase 4: Operations UI
-- [ ] Phase 5: Boundary preview
+- [x] Phase 5: Boundary preview

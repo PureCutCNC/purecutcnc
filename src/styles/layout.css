@@ -871,10 +871,11 @@
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(17, 25, 34, 0.72);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .cam-section-header {
+  position: relative;
   border-bottom: 1px solid var(--line);
   padding: 10px 12px;
   font-size: 12px;
@@ -965,6 +966,7 @@
 .cam-section-content {
   min-height: 0;
   overflow: auto;
+  border-radius: 0 0 12px 12px;
 }
 
 .cam-operation-tree {
