@@ -365,6 +365,7 @@
   height: 100%;
   display: block;
   cursor: crosshair;
+  outline: none;
 }
 
 .sketch-canvas--placing {
@@ -696,6 +697,54 @@
 .preset-btn--icon {
   width: 30px;
   padding: 0;
+}
+
+.feature-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 168px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(94, 121, 142, 0.72);
+  background: rgba(12, 18, 26, 0.96);
+  box-shadow:
+    0 12px 26px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  display: grid;
+  gap: 4px;
+}
+
+.feature-context-menu__item {
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.feature-context-menu__item:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.feature-context-menu__item:disabled {
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.feature-context-menu__item:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+.feature-context-menu__item--danger:hover {
+  border-color: rgba(201, 109, 101, 0.75);
+  background: rgba(201, 109, 101, 0.12);
+  color: #f5b3ad;
 }
 
 .app-statusbar {

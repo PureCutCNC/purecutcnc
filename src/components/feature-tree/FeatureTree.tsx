@@ -1,8 +1,12 @@
 import { useRef, useState } from 'react'
-import type { DragEvent } from 'react'
+import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 
-export function FeatureTree() {
+interface FeatureTreeProps {
+  onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+}
+
+export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
   const {
     project,
     selection,
@@ -118,6 +122,11 @@ export function FeatureTree() {
                     operation: feature.operation === 'add' ? 'subtract' : 'add',
                   })
                 }
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  selectFeature(feature.id)
+                  onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
+                }}
                 draggable
                 onDragStart={() => handleDragStart(feature.id)}
                 onDragEnd={() => setDragId(null)}
@@ -145,6 +154,7 @@ interface TreeRowProps {
   onMouseLeave: () => void
   onToggleVisible: () => void
   onToggleOperation?: () => void
+  onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
@@ -165,6 +175,7 @@ function TreeRow({
   onMouseLeave,
   onToggleVisible,
   onToggleOperation,
+  onContextMenu,
   draggable,
   onDragStart,
   onDragEnd,
@@ -190,6 +201,7 @@ function TreeRow({
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      onContextMenu={onContextMenu}
     >
       <span className="tree-branch" aria-hidden="true">
         {kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : 'node'}

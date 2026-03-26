@@ -637,7 +637,14 @@ function isLoopCloseCandidate(
   return distance2(point, start) <= POLYGON_CLOSE_RADIUS * POLYGON_CLOSE_RADIUS
 }
 
-export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas(_props, ref) {
+interface SketchCanvasProps {
+  onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+}
+
+export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
+  { onFeatureContextMenu },
+  ref
+) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDraggingNodeRef = useRef(false)
@@ -772,6 +779,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
 
     return () => resizeObserver.disconnect()
   }, [draw])
+
+  useEffect(() => {
+    if (selection.mode !== 'sketch_edit') {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      canvasRef.current?.focus({ preventScroll: true })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [selection.mode, selection.selectedFeatureId])
 
   function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>): CanvasPoint {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -1010,6 +1029,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
     if (hitId) enterSketchEdit(hitId)
   }
 
+  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
+    event.preventDefault()
+
+    if (didPanRef.current) {
+      didPanRef.current = false
+      return
+    }
+
+    if (pendingAdd) {
+      return
+    }
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const point = canvasCoordinates(event)
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const world = canvasToWorld(point.cx, point.cy, vt)
+    const hitId = findHitFeatureId(world, project.features)
+    if (!hitId) {
+      return
+    }
+
+    selectFeature(hitId)
+    onFeatureContextMenu?.(hitId, event.clientX, event.clientY)
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     if (
       event.key === 'Enter'
@@ -1046,7 +1092,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle>(function SketchCanvas
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}
-        onContextMenu={(event) => event.preventDefault()}
+        onContextMenu={handleContextMenu}
         tabIndex={0}
       />
       {selection.mode === 'sketch_edit' && (

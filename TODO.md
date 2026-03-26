@@ -20,6 +20,22 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Flat shading fixed the worst artifacts.
   - The final look likely still needs another pass once the modeling flow stabilizes.
 
+### 3D grid alignment does not match sketch view
+- Status: Open
+- Priority: Medium
+- Summary: Align the 3D viewport grid orientation and positioning with the sketch view so both views share the same spatial reference.
+- Notes:
+  - Current 3D grid reference still feels inconsistent relative to the sketch plane.
+  - Recheck this after the recent sketch-to-3D axis mapping changes.
+
+### Sketch legend review / removal
+- Status: Open
+- Priority: Low
+- Summary: Remove or redesign the sketch depth legend, which is no longer useful in its current form.
+- Notes:
+  - Current legend text overlaps visually and adds little value.
+  - Revisit whether feature coloring/labels already communicate enough without a legend.
+
 ## Backlog
 
 ### Per-feature display color
