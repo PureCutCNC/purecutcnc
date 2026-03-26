@@ -398,6 +398,6 @@ Recommendation:
 
 - [x] Phase 1: Units foundation
 - [x] Phase 2: Tool library
-- [ ] Phase 3: Operations schema and store
+- [x] Phase 3: Operations schema and store
 - [ ] Phase 4: Operations UI
 - [ ] Phase 5: Boundary preview

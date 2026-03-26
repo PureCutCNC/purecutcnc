@@ -285,33 +285,42 @@
 
 .panel-tabs-header {
   display: flex;
-  gap: 6px;
-  padding: 8px;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 8px 8px 0;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.015);
 }
 
 .panel-tab {
   appearance: none;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  border: 1px solid var(--line);
+  border-bottom-color: transparent;
+  border-radius: 10px 10px 0 0;
+  background: rgba(18, 25, 34, 0.72);
   color: var(--text-dim);
   height: 34px;
-  padding: 0 12px;
+  padding: 0 14px;
   cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
 .panel-tab:hover {
   color: var(--text);
   border-color: var(--line-strong);
+  border-bottom-color: transparent;
+  background: rgba(23, 31, 42, 0.86);
 }
 
 .panel-tab--active {
   color: var(--text);
-  border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(220, 165, 106, 0.18), rgba(220, 165, 106, 0.06));
+  border-color: rgba(220, 165, 106, 0.75);
+  border-bottom-color: rgba(15, 22, 31, 0.96);
+  background: rgba(15, 22, 31, 0.96);
   min-height: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .ai-panel {
@@ -775,8 +784,10 @@
 
 .cam-panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+  height: 100%;
 }
 
 .cam-subtabs {
@@ -809,6 +820,14 @@
 
 .cam-tools {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.cam-operations-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -819,11 +838,178 @@
   flex-wrap: wrap;
 }
 
+.cam-toolbar--stack {
+  display: grid;
+  gap: 8px;
+}
+
+.cam-pass-toggle {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .cam-tools-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+}
+
+.cam-operations-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+
+.cam-section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(17, 25, 34, 0.72);
+  overflow: hidden;
+}
+
+.cam-section-header {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cam-section-header-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cam-header-action {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
+  background: rgba(18, 25, 34, 0.86);
+  color: var(--text);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+}
+
+.cam-header-action:hover:not(:disabled) {
+  border-color: var(--line-bright);
+}
+
+.cam-header-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cam-header-action--danger {
+  color: #f0bbb6;
+  border-color: rgba(170, 92, 84, 0.6);
+  background: rgba(61, 27, 24, 0.42);
+}
+
+.cam-add-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 10;
+  width: 220px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(14, 20, 28, 0.98);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+}
+
+.cam-add-menu__section {
+  display: grid;
+  gap: 8px;
+}
+
+.cam-add-menu__label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cam-add-menu__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cam-section-content {
+  min-height: 0;
+  overflow: auto;
+}
+
+.cam-operation-tree {
+  padding-top: 8px;
+  min-height: 0;
+}
+
+.cam-operation-tree .tree-row {
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  outline: none;
+  box-shadow: none;
+}
+
+.cam-operation-tree .tree-row:hover {
+  background: rgba(220, 165, 106, 0.06);
+}
+
+.cam-operation-tree .tree-row:focus-visible {
+  background: rgba(220, 165, 106, 0.12);
+}
+
+.cam-operation-tree .tree-row--selected,
+.cam-operation-tree .tree-row--selected:hover,
+.cam-operation-tree .tree-row--selected:focus-visible,
+.cam-operation-tree .tree-row--selected:active {
+  background: rgba(220, 165, 106, 0.12);
+}
+
+.cam-operation-tree .tree-row--selected .tree-label {
+  color: #fff;
+}
+
+.cam-operation-tree .tree-row:not(.tree-row--selected) .tree-label {
+  color: var(--text);
+}
+
+.cam-operation-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .cam-tool-list {

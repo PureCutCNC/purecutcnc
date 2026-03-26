@@ -1,7 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
+import type { SelectionState } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
-import type { Tool, ToolType } from '../../types/project'
+import type {
+  OperationKind,
+  OperationPass,
+  OperationTarget,
+  Project,
+  Tool,
+  ToolType,
+} from '../../types/project'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
+
+interface CAMPanelProps {
+  mode: 'operations' | 'tools'
+}
+
+type NewOperationMode = OperationPass | 'pair'
 
 interface DraftTextInputProps {
   value: string
@@ -172,10 +187,121 @@ function toolUnitsLabel(units: Tool['units']): string {
   return units === 'inch' ? 'in' : 'mm'
 }
 
-export function CAMPanel() {
-  const [tab, setTab] = useState<'operations' | 'tools'>('tools')
+function operationKindLabel(kind: OperationKind): string {
+  switch (kind) {
+    case 'pocket':
+      return 'Pocket'
+    case 'edge_route_inside':
+      return 'Edge Route Inside'
+    case 'edge_route_outside':
+      return 'Edge Route Outside'
+    case 'surface_clean':
+      return 'Surface Clean'
+  }
+}
+
+function operationTargetSummary(project: Project, target: OperationTarget): string {
+  if (target.source === 'stock') {
+    return 'Stock'
+  }
+
+  const names = target.featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId)?.name ?? null)
+    .filter((name): name is string => Boolean(name))
+
+  return names.length > 0 ? names.join(', ') : 'No features'
+}
+
+function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
+  if (kind === 'surface_clean') {
+    return { source: 'stock' }
+  }
+
+  if (selection.selectedFeatureIds.length === 0) {
+    return null
+  }
+
+  const features = selection.selectedFeatureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is Project['features'][number] => feature !== null)
+
+  if (features.length !== selection.selectedFeatureIds.length) {
+    return null
+  }
+
+  const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
+  const expectedOperation = wantsSubtract ? 'subtract' : 'add'
+  if (!features.every((feature) => feature.operation === expectedOperation)) {
+    return null
+  }
+
+  return { source: 'features', featureIds: features.map((feature) => feature.id) }
+}
+
+function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
+  if (kind === 'surface_clean') {
+    return null
+  }
+
+  if (selection.selectedFeatureIds.length === 0) {
+    return 'Select one or more compatible features first'
+  }
+
+  const features = selection.selectedFeatureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is Project['features'][number] => feature !== null)
+
+  const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
+  const expectedOperation = wantsSubtract ? 'subtract' : 'add'
+  if (!features.every((feature) => feature.operation === expectedOperation)) {
+    return wantsSubtract
+      ? 'This operation only accepts subtract features'
+      : 'This operation only accepts add features'
+  }
+
+  return null
+}
+
+function getOperationTargetUpdateHint(project: Project, selection: SelectionState, operation: Project['operations'][number]): string | null {
+  const nextTarget = getValidOperationTarget(project, selection, operation.kind)
+  if (nextTarget) {
+    return null
+  }
+
+  if (operation.kind === 'surface_clean') {
+    return null
+  }
+
+  if (selection.selectedFeatureIds.length === 0) {
+    return 'Select one or more compatible features in the tree or sketch'
+  }
+
+  return getOperationAddHint(project, selection, operation.kind)
+}
+
+export function CAMPanel({ mode }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
-  const { project, addTool, updateTool, deleteTool, duplicateTool } = useProjectStore()
+  const [selectedOperationIdState, setSelectedOperationId] = useState<string | null>(null)
+  const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
+  const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
+  const [dragOperationId, setDragOperationId] = useState<string | null>(null)
+  const addOperationMenuRef = useRef<HTMLDivElement>(null)
+  const dragOverOperationId = useRef<string | null>(null)
+  const {
+    project,
+    selection,
+    selectFeatures,
+    selectStock,
+    addTool,
+    updateTool,
+    deleteTool,
+    duplicateTool,
+    addOperation,
+    updateOperation,
+    deleteOperation,
+    duplicateOperation,
+    reorderOperations,
+  } = useProjectStore()
 
   const selectedToolId =
     selectedToolIdState && project.tools.some((tool) => tool.id === selectedToolIdState)
@@ -186,10 +312,75 @@ export function CAMPanel() {
     ? project.tools.find((tool) => tool.id === selectedToolId) ?? null
     : null
 
+  const selectedOperationId =
+    selectedOperationIdState && project.operations.some((operation) => operation.id === selectedOperationIdState)
+      ? selectedOperationIdState
+      : project.operations[0]?.id ?? null
+
+  const selectedOperation = selectedOperationId
+    ? project.operations.find((operation) => operation.id === selectedOperationId) ?? null
+    : null
+
+  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
+    () => ([
+      {
+        kind: 'pocket',
+        label: 'Pocket',
+        hint: getOperationAddHint(project, selection, 'pocket') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'pocket') === null,
+      },
+      {
+        kind: 'edge_route_inside',
+        label: 'Edge In',
+        hint: getOperationAddHint(project, selection, 'edge_route_inside') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'edge_route_inside') === null,
+      },
+      {
+        kind: 'edge_route_outside',
+        label: 'Edge Out',
+        hint: getOperationAddHint(project, selection, 'edge_route_outside') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'edge_route_outside') === null,
+      },
+      {
+        kind: 'surface_clean',
+        label: 'Surface',
+        hint: getOperationAddHint(project, selection, 'surface_clean') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'surface_clean') === null,
+      },
+    ]),
+    [project, selection]
+  )
+
+  useEffect(() => {
+    if (!showAddOperationMenu) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node | null
+      if (addOperationMenuRef.current?.contains(target)) {
+        return
+      }
+      setShowAddOperationMenu(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setShowAddOperationMenu(false)
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showAddOperationMenu])
+
   function handleAddTool() {
     const toolId = addTool()
     setSelectedToolId(toolId)
-    setTab('tools')
   }
 
   function handleDuplicateTool() {
@@ -200,7 +391,6 @@ export function CAMPanel() {
     const toolId = duplicateTool(selectedTool.id)
     if (toolId) {
       setSelectedToolId(toolId)
-      setTab('tools')
     }
   }
 
@@ -215,28 +405,370 @@ export function CAMPanel() {
     setSelectedToolId(fallback)
   }
 
+  function handleAddOperation(kind: OperationKind) {
+    const target = getValidOperationTarget(project, selection, kind)
+    if (!target) {
+      return
+    }
+
+    if (newOperationMode === 'pair') {
+      const roughId = addOperation(kind, 'rough', target)
+      const finishId = addOperation(kind, 'finish', target)
+      const nextSelectedId = finishId ?? roughId
+      if (nextSelectedId) {
+        setSelectedOperationId(nextSelectedId)
+        setShowAddOperationMenu(false)
+      }
+      return
+    }
+
+    const operationId = addOperation(kind, newOperationMode, target)
+    if (operationId) {
+      setSelectedOperationId(operationId)
+      setShowAddOperationMenu(false)
+    }
+  }
+
+  function handleDuplicateOperation() {
+    if (!selectedOperation) {
+      return
+    }
+
+    const operationId = duplicateOperation(selectedOperation.id)
+    if (operationId) {
+      setSelectedOperationId(operationId)
+    }
+  }
+
+  function handleDeleteOperation() {
+    if (!selectedOperation) {
+      return
+    }
+
+    const currentIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
+    const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
+    deleteOperation(selectedOperation.id)
+    setSelectedOperationId(fallback)
+  }
+
+  function handleSelectOperation(operationId: string) {
+    setSelectedOperationId(operationId)
+    const operation = project.operations.find((item) => item.id === operationId)
+    if (!operation) {
+      return
+    }
+
+    if (operation.target.source === 'stock') {
+      selectStock()
+      return
+    }
+
+    selectFeatures(operation.target.featureIds)
+  }
+
+  function handleOperationDragStart(operationId: string) {
+    setDragOperationId(operationId)
+  }
+
+  function handleOperationDragOver(event: DragEvent, operationId: string) {
+    event.preventDefault()
+    dragOverOperationId.current = operationId
+  }
+
+  function handleOperationDrop() {
+    if (!dragOperationId || !dragOverOperationId.current || dragOperationId === dragOverOperationId.current) {
+      setDragOperationId(null)
+      dragOverOperationId.current = null
+      return
+    }
+
+    const ids = project.operations.map((operation) => operation.id)
+    const fromIndex = ids.indexOf(dragOperationId)
+    const toIndex = ids.indexOf(dragOverOperationId.current)
+    if (fromIndex === -1 || toIndex === -1) {
+      setDragOperationId(null)
+      dragOverOperationId.current = null
+      return
+    }
+
+    const nextIds = [...ids]
+    nextIds.splice(fromIndex, 1)
+    nextIds.splice(toIndex, 0, dragOperationId)
+    reorderOperations(nextIds)
+
+    setDragOperationId(null)
+    dragOverOperationId.current = null
+  }
+
+  function handleApplySelectionToOperation() {
+    if (!selectedOperation) {
+      return
+    }
+
+    const target = getValidOperationTarget(project, selection, selectedOperation.kind)
+    if (!target) {
+      return
+    }
+
+    updateOperation(selectedOperation.id, { target })
+  }
+
   return (
     <div className="cam-panel">
-      <div className="cam-subtabs">
-        <button
-          className={`cam-subtab ${tab === 'operations' ? 'cam-subtab--active' : ''}`}
-          type="button"
-          onClick={() => setTab('operations')}
-        >
-          Operations
-        </button>
-        <button
-          className={`cam-subtab ${tab === 'tools' ? 'cam-subtab--active' : ''}`}
-          type="button"
-          onClick={() => setTab('tools')}
-        >
-          Tools
-        </button>
-      </div>
+      {mode === 'operations' ? (
+        <div className="cam-operations-shell">
+          <div className="cam-operations-layout">
+            <section className="cam-section cam-section--tree">
+              <div className="cam-section-header">
+                <span>Operations</span>
+                <div className="cam-section-header-actions" ref={addOperationMenuRef}>
+                  <span className="feature-count">{project.operations.length}</span>
+                  <button
+                    className="cam-header-action"
+                    type="button"
+                    aria-expanded={showAddOperationMenu}
+                    aria-haspopup="dialog"
+                    onClick={() => setShowAddOperationMenu((value) => !value)}
+                  >
+                    Add
+                  </button>
+                  {showAddOperationMenu ? (
+                    <div className="cam-add-menu" role="dialog" aria-label="Add operation">
+                      <div className="cam-add-menu__section">
+                        <span className="cam-add-menu__label">Pass</span>
+                        <div className="cam-pass-toggle">
+                          <button
+                            className={`cam-subtab ${newOperationMode === 'rough' ? 'cam-subtab--active' : ''}`}
+                            type="button"
+                            onClick={() => setNewOperationMode('rough')}
+                          >
+                            Rough
+                          </button>
+                          <button
+                            className={`cam-subtab ${newOperationMode === 'finish' ? 'cam-subtab--active' : ''}`}
+                            type="button"
+                            onClick={() => setNewOperationMode('finish')}
+                          >
+                            Finish
+                          </button>
+                          <button
+                            className={`cam-subtab ${newOperationMode === 'pair' ? 'cam-subtab--active' : ''}`}
+                            type="button"
+                            onClick={() => setNewOperationMode('pair')}
+                          >
+                            Rough + Finish
+                          </button>
+                        </div>
+                      </div>
+                      <div className="cam-add-menu__section">
+                        <span className="cam-add-menu__label">Operation</span>
+                        <div className="cam-add-menu__buttons">
+                          {operationButtons.map((button) => (
+                            <button
+                              key={button.kind}
+                              className="feat-btn"
+                              type="button"
+                              disabled={button.disabled}
+                              title={button.hint}
+                              onClick={() => handleAddOperation(button.kind)}
+                            >
+                              {button.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="cam-section-content">
+                {project.operations.length === 0 ? (
+                  <div className="panel-empty">
+                    Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
+                    Outside route requires add features. Surface clean always targets stock.
+                  </div>
+                ) : (
+                  <div className="feature-tree-panel cam-operation-tree">
+                    <div className="tree-root-label">CAM</div>
+                    <div className="tree-list">
+                      {project.operations.map((operation) => (
+                        <button
+                          key={operation.id}
+                          className={[
+                            'tree-row',
+                            'tree-row--feature',
+                            operation.id === selectedOperationId ? 'tree-row--selected' : '',
+                            dragOperationId === operation.id ? 'tree-row--dragging' : '',
+                          ].join(' ')}
+                          type="button"
+                          onClick={() => handleSelectOperation(operation.id)}
+                          draggable
+                          onDragStart={() => handleOperationDragStart(operation.id)}
+                          onDragEnd={() => setDragOperationId(null)}
+                          onDragOver={(event) => handleOperationDragOver(event, operation.id)}
+                          onDrop={handleOperationDrop}
+                        >
+                          <span className="tree-branch" aria-hidden="true" />
+                          <span className="tree-label">
+                            {operation.name}
+                          </span>
+                          <span className="tree-row-actions">
+                            {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
 
-      {tab === 'operations' ? (
-        <div className="panel-empty">
-          Operations schema and target selection are planned next. The tool library is ready in the `Tools` tab.
+            <section className="cam-section cam-section--properties">
+              <div className="cam-section-header">
+                <span>Properties</span>
+                <div className="cam-section-header-actions">
+                  <button className="cam-header-action" type="button" onClick={handleDuplicateOperation} disabled={!selectedOperation}>
+                    Duplicate
+                  </button>
+                  <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteOperation} disabled={!selectedOperation}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <div className="cam-section-content">
+                {selectedOperation ? (
+                  <div key={selectedOperation.id} className="properties-panel cam-tool-properties">
+                    <div className="properties-group">
+                  <label className="properties-field">
+                    <span>Name</span>
+                    <DraftTextInput value={selectedOperation.name} onCommit={(value) => updateOperation(selectedOperation.id, { name: value })} />
+                  </label>
+                  <label className="properties-field">
+                    <span>Kind</span>
+                    <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
+                  </label>
+                  <label className="properties-field">
+                    <span>Pass</span>
+                    <select
+                      value={selectedOperation.pass}
+                      onChange={(event) => updateOperation(selectedOperation.id, { pass: event.target.value as OperationPass })}
+                    >
+                      <option value="rough">Rough</option>
+                      <option value="finish">Finish</option>
+                    </select>
+                  </label>
+                  <label className="properties-field">
+                    <span>Target</span>
+                    <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />
+                  </label>
+                  <div className="properties-field">
+                    <span>Target Source</span>
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      disabled={!getValidOperationTarget(project, selection, selectedOperation.kind)}
+                      title={getOperationTargetUpdateHint(project, selection, selectedOperation) ?? undefined}
+                      onClick={handleApplySelectionToOperation}
+                    >
+                      {selectedOperation.kind === 'surface_clean' ? 'Use Stock' : 'Use Current Selection'}
+                    </button>
+                  </div>
+                  <label className="properties-field">
+                    <span>Tool</span>
+                    <select
+                      value={selectedOperation.toolRef ?? ''}
+                      onChange={(event) =>
+                        updateOperation(selectedOperation.id, {
+                          toolRef: event.target.value || null,
+                        })
+                      }
+                    >
+                      <option value="">No Tool</option>
+                      {project.tools.map((tool) => (
+                        <option key={tool.id} value={tool.id}>
+                          {tool.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="properties-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedOperation.enabled}
+                      onChange={(event) => updateOperation(selectedOperation.id, { enabled: event.target.checked })}
+                    />
+                    <span>Enabled</span>
+                  </label>
+                  <label className="properties-field">
+                    <span>Stepdown</span>
+                    <DraftLengthInput
+                      value={selectedOperation.stepdown}
+                      units={project.meta.units}
+                      min={0.0001}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>Stepover Ratio</span>
+                    <DraftNumberInput
+                      value={selectedOperation.stepover}
+                      min={0.01}
+                      max={1}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>Feed</span>
+                    <DraftLengthInput
+                      value={selectedOperation.feed}
+                      units={project.meta.units}
+                      min={0.0001}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { feed: value })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>Plunge Feed</span>
+                    <DraftLengthInput
+                      value={selectedOperation.plungeFeed}
+                      units={project.meta.units}
+                      min={0.0001}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { plungeFeed: value })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>RPM</span>
+                    <DraftNumberInput
+                      value={selectedOperation.rpm}
+                      min={1}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { rpm: Math.round(value) })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>Stock To Leave Radial</span>
+                    <DraftLengthInput
+                      value={selectedOperation.stockToLeaveRadial}
+                      units={project.meta.units}
+                      min={0}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
+                    />
+                  </label>
+                  <label className="properties-field">
+                    <span>Stock To Leave Axial</span>
+                    <DraftLengthInput
+                      value={selectedOperation.stockToLeaveAxial}
+                      units={project.meta.units}
+                      min={0}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
+                    />
+                  </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="panel-empty">Select an operation to edit its parameters.</div>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
       ) : (
         <div className="cam-tools">

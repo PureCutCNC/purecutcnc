@@ -164,36 +164,36 @@ export interface Tool {
 }
 
 // ============================================================
-// Machining operations (POC: schema only, no execution yet)
+// Machining operations (Phase 3: schema and editing only)
 // ============================================================
 
-export type OperationType =
-  | 'profile'
+export type OperationKind =
   | 'pocket'
-  | 'drill'
-  | 'facing'
-  | 'engrave'
+  | 'edge_route_inside'
+  | 'edge_route_outside'
+  | 'surface_clean'
 
-export type OperationStrategy = '2.5d' | '3d_contour'  // future-proofed
+export type OperationPass = 'rough' | 'finish'
 
-export interface Tab {
-  position: number   // 0–1 along perimeter
-  width: number
-  height: number
-}
+export type OperationTarget =
+  | { source: 'features'; featureIds: string[] }
+  | { source: 'stock' }
 
 export interface Operation {
   id: string
-  type: OperationType
-  feature_ref: string
-  tool_ref: string
-  depth: DimensionRef
+  name: string
+  kind: OperationKind
+  pass: OperationPass
+  enabled: boolean
+  target: OperationTarget
+  toolRef: string | null
   stepdown: number
   stepover: number
   feed: number
+  plungeFeed: number
   rpm: number
-  strategy: OperationStrategy
-  tabs: Tab[]
+  stockToLeaveRadial: number
+  stockToLeaveAxial: number
 }
 
 // ============================================================

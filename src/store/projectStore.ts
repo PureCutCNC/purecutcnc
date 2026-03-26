@@ -11,7 +11,18 @@ import {
   polygonProfile,
   splineProfile,
 } from '../types/project'
-import type { GridSettings, Point, Project, SketchFeature, Stock, Tool } from '../types/project'
+import type {
+  GridSettings,
+  Operation,
+  OperationKind,
+  OperationPass,
+  OperationTarget,
+  Point,
+  Project,
+  SketchFeature,
+  Stock,
+  Tool,
+} from '../types/project'
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
 
@@ -83,8 +94,16 @@ export interface ProjectStore {
   deleteTool: (id: string) => void
   duplicateTool: (id: string) => string | null
 
+  // Operations
+  addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
+  updateOperation: (id: string, patch: Partial<Operation>) => void
+  deleteOperation: (id: string) => void
+  duplicateOperation: (id: string) => string | null
+  reorderOperations: (ids: string[]) => void
+
   // Selection
   selectFeature: (id: string | null, additive?: boolean) => void
+  selectFeatures: (ids: string[]) => void
   selectProject: () => void
   selectGrid: () => void
   selectStock: () => void
@@ -240,6 +259,97 @@ function duplicateToolName(name: string, tools: Tool[]): string {
   return `${baseName} ${index}`
 }
 
+function operationKindLabel(kind: OperationKind): string {
+  switch (kind) {
+    case 'pocket':
+      return 'Pocket'
+    case 'edge_route_inside':
+      return 'Edge Route Inside'
+    case 'edge_route_outside':
+      return 'Edge Route Outside'
+    case 'surface_clean':
+      return 'Surface Clean'
+  }
+}
+
+function duplicateOperationName(name: string, operations: Operation[]): string {
+  const baseName = `${name} Copy`
+  if (!operations.some((operation) => operation.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (operations.some((operation) => operation.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
+function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
+  if (kind === 'surface_clean') {
+    return target.source === 'stock'
+  }
+
+  if (target.source !== 'features' || target.featureIds.length === 0) {
+    return false
+  }
+
+  const features = target.featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is SketchFeature => feature !== null)
+
+  if (features.length !== target.featureIds.length) {
+    return false
+  }
+
+  if (kind === 'pocket' || kind === 'edge_route_inside') {
+    return features.every((feature) => feature.operation === 'subtract')
+  }
+
+  return features.every((feature) => feature.operation === 'add')
+}
+
+function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
+  const baseName = `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
+  if (!operations.some((operation) => operation.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (operations.some((operation) => operation.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
+function defaultOperationForTarget(
+  project: Project,
+  kind: OperationKind,
+  pass: OperationPass,
+  target: OperationTarget,
+  index: number,
+): Operation {
+  const tool = project.tools[0] ?? defaultTool(project.meta.units, 1)
+  const toolRef = project.tools[0]?.id ?? null
+
+  return {
+    id: `op${index + 1}`,
+    name: defaultOperationName(kind, pass, project.operations),
+    kind,
+    pass,
+    enabled: true,
+    target,
+    toolRef,
+    stepdown: tool.defaultStepdown,
+    stepover: tool.defaultStepover,
+    feed: tool.defaultFeed,
+    plungeFeed: tool.defaultPlungeFeed,
+    rpm: tool.defaultRpm,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+  }
+}
+
 function buildCopiedFeatures(
   sourceFeatures: SketchFeature[],
   existingFeatures: SketchFeature[],
@@ -288,11 +398,36 @@ function normalizeTool(tool: Tool, units: Project['meta']['units'], index: numbe
   }
 }
 
+function normalizeOperation(operation: Operation, project: Project, index: number): Operation {
+  const fallbackTarget: OperationTarget = project.features.length > 0
+    ? { source: 'features', featureIds: [project.features[0].id] }
+    : { source: 'stock' }
+  const defaults = defaultOperationForTarget(project, 'surface_clean', 'rough', fallbackTarget, index)
+  const normalized = {
+    ...defaults,
+    ...operation,
+  }
+
+  if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {
+    return {
+      ...normalized,
+      target: fallbackTarget,
+    }
+  }
+
+  return normalized
+}
+
 function normalizeProject(project: Project): Project {
-  return {
+  const normalizedBase = {
     ...project,
     features: project.features.map(normalizeFeatureZRange),
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
+  }
+
+  return {
+    ...normalizedBase,
+    operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
   }
 }
 
@@ -698,7 +833,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ...s.project,
         tools: s.project.tools.filter((tool) => tool.id !== id),
         operations: s.project.operations.map((operation) =>
-          operation.tool_ref === id ? { ...operation, tool_ref: '' } : operation
+          operation.toolRef === id ? { ...operation, toolRef: null } : operation
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -744,6 +879,141 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     return nextId
   },
+
+  addOperation: (kind, pass, target) => {
+    const state = get()
+    if (!isOperationTargetValid(state.project, kind, target)) {
+      return null
+    }
+
+    const nextId = genId('op')
+    const template = defaultOperationForTarget(state.project, kind, pass, target, state.project.operations.length)
+    const operation: Operation = {
+      ...template,
+      id: nextId,
+    }
+
+    set((s) => ({
+      project: {
+        ...s.project,
+        operations: [...s.project.operations, operation],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      },
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return nextId
+  },
+
+  updateOperation: (id, patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        operations: s.project.operations.map((operation) => {
+          if (operation.id !== id) {
+            return operation
+          }
+
+          const nextOperation = { ...operation, ...patch }
+          return isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)
+            ? nextOperation
+            : operation
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteOperation: (id) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        operations: s.project.operations.filter((operation) => operation.id !== id),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  duplicateOperation: (id) => {
+    const state = get()
+    const sourceOperation = state.project.operations.find((operation) => operation.id === id)
+    if (!sourceOperation) {
+      return null
+    }
+
+    const nextId = genId('op')
+    const duplicate: Operation = {
+      ...sourceOperation,
+      id: nextId,
+      name: duplicateOperationName(sourceOperation.name, state.project.operations),
+    }
+
+    set((s) => ({
+      project: {
+        ...s.project,
+        operations: [...s.project.operations, duplicate],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      },
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return nextId
+  },
+
+  reorderOperations: (ids) =>
+    set((s) => {
+      const byId = new Map(s.project.operations.map((operation) => [operation.id, operation]))
+      const reordered = ids
+        .map((id) => byId.get(id))
+        .filter((operation): operation is Operation => Boolean(operation))
+
+      const untouched = s.project.operations.filter((operation) => !ids.includes(operation.id))
+      const nextOperations = [...reordered, ...untouched]
+      const nextProject = {
+        ...s.project,
+        operations: nextOperations,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   // ── Features ─────────────────────────────────────────────
 
@@ -906,6 +1176,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activeControl: null,
       },
     })),
+
+  selectFeatures: (ids) =>
+    set((s) => {
+      const nextIds = ids.filter((id, index) =>
+        s.project.features.some((feature) => feature.id === id) && ids.indexOf(id) === index
+      )
+      const nextPrimaryId = nextIds.at(-1) ?? null
+
+      return {
+        selection: {
+          ...s.selection,
+          selectedFeatureId: nextPrimaryId,
+          selectedFeatureIds: nextIds,
+          selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+      }
+    }),
 
   selectProject: () =>
     set((s) => ({

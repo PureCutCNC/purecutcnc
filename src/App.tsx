@@ -18,6 +18,7 @@ interface FeatureContextMenuState {
 
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
+  const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
   const [featureContextMenu, setFeatureContextMenu] = useState<FeatureContextMenuState | null>(null)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
@@ -162,9 +163,11 @@ function App() {
         viewport3d={<Viewport3D ref={viewport3dRef} />}
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
-        operationsPanel={<CAMPanel />}
+        camPanel={<CAMPanel mode={rightTab === 'tools' ? 'tools' : 'operations'} />}
         centerTab={centerTab}
         onCenterTabChange={setCenterTab}
+        rightTab={rightTab}
+        onRightTabChange={setRightTab}
       />
       {featureContextMenu && menuFeature && menuPosition ? (
         <div

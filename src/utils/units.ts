@@ -197,14 +197,11 @@ export function convertToolUnits(tool: Tool, toUnits: Units): Tool {
 function convertOperation(operation: Operation, from: Units, to: Units): Operation {
   return {
     ...operation,
-    depth: convertDimensionRef(operation.depth, from, to),
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
-    tabs: operation.tabs.map((tab) => ({
-      ...tab,
-      width: convertLength(tab.width, from, to),
-      height: convertLength(tab.height, from, to),
-    })),
+    plungeFeed: convertLength(operation.plungeFeed, from, to),
+    stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
+    stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
   }
 }
 
