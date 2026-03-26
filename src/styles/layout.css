@@ -412,6 +412,21 @@
   background: #0f161f;
 }
 
+.sketch-place-count {
+  width: 56px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #0f1820;
+  color: var(--text);
+  padding: 0 8px;
+  outline: none;
+}
+
+.sketch-place-count:focus {
+  border-color: var(--accent);
+}
+
 .feature-tree-panel {
   padding: 10px 12px 14px;
 }

@@ -21,6 +21,7 @@ export type SelectionMode = 'feature' | 'sketch_edit'
 export interface SelectionState {
   mode: SelectionMode
   selectedFeatureId: string | null
+  selectedFeatureIds: string[]
   selectedNode: SelectedNode
   hoveredFeatureId: string | null
   // sketch edit mode — which anchor/handle is being dragged
@@ -46,6 +47,7 @@ export interface ProjectStore {
   project: Project
   selection: SelectionState
   pendingAdd: PendingAddTool | null
+  pendingMove: PendingMoveTool | null
   history: ProjectHistory
 
   // Project ops
@@ -68,10 +70,11 @@ export interface ProjectStore {
   addFeature: (feature: SketchFeature) => void
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
+  deleteFeatures: (ids: string[]) => void
   reorderFeatures: (ids: string[]) => void
 
   // Selection
-  selectFeature: (id: string | null) => void
+  selectFeature: (id: string | null, additive?: boolean) => void
   selectGrid: () => void
   selectStock: () => void
   hoverFeature: (id: string | null) => void
@@ -90,6 +93,12 @@ export interface ProjectStore {
   placePendingAddAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
   completePendingPolygon: () => void
+  startMoveFeature: (featureId: string) => void
+  startCopyFeature: (featureId: string) => void
+  cancelPendingMove: () => void
+  setPendingMoveFrom: (point: Point) => void
+  setPendingMoveTo: (point: Point) => void
+  completePendingMove: (toPoint: Point, copyCount?: number) => void
 
   // Convenience: add primitive features
   addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
@@ -103,6 +112,14 @@ export type PendingAddTool =
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
+
+export interface PendingMoveTool {
+  mode: 'move' | 'copy'
+  featureIds: string[]
+  fromPoint: Point | null
+  toPoint: Point | null
+  session: number
+}
 
 export interface ProjectHistory {
   past: Project[]
@@ -156,6 +173,76 @@ function translatePoint(point: Point, dx: number, dy: number): Point {
   return { x: point.x + dx, y: point.y + dy }
 }
 
+function translateProfile(profile: SketchFeature['sketch']['profile'], dx: number, dy: number): SketchFeature['sketch']['profile'] {
+  return {
+    ...profile,
+    start: translatePoint(profile.start, dx, dy),
+    segments: profile.segments.map((segment) => {
+      if (segment.type === 'arc') {
+        return {
+          ...segment,
+          to: translatePoint(segment.to, dx, dy),
+          center: translatePoint(segment.center, dx, dy),
+        }
+      }
+
+      if (segment.type === 'bezier') {
+        return {
+          ...segment,
+          to: translatePoint(segment.to, dx, dy),
+          control1: translatePoint(segment.control1, dx, dy),
+          control2: translatePoint(segment.control2, dx, dy),
+        }
+      }
+
+      return {
+        ...segment,
+        to: translatePoint(segment.to, dx, dy),
+      }
+    }),
+  }
+}
+
+function duplicateFeatureName(name: string, features: SketchFeature[]): string {
+  const baseName = `${name} Copy`
+  if (!features.some((feature) => feature.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (features.some((feature) => feature.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
+function buildCopiedFeatures(
+  sourceFeatures: SketchFeature[],
+  existingFeatures: SketchFeature[],
+  dx: number,
+  dy: number,
+  count: number,
+): SketchFeature[] {
+  const created: SketchFeature[] = []
+
+  for (let step = 1; step <= count; step += 1) {
+    for (const sourceFeature of sourceFeatures) {
+      created.push({
+        ...sourceFeature,
+        id: genId('f'),
+        name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created]),
+        sketch: {
+          ...sourceFeature.sketch,
+          profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
+        },
+        locked: false,
+      })
+    }
+  }
+
+  return created
+}
+
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const { z_top, z_bottom } = feature
   if (typeof z_top === 'number' && typeof z_bottom === 'number' && z_top < z_bottom) {
@@ -188,6 +275,7 @@ function emptySelection(): SelectionState {
   return {
     mode: 'feature',
     selectedFeatureId: null,
+    selectedFeatureIds: [],
     selectedNode: null,
     hoveredFeatureId: null,
     activeControl: null,
@@ -196,14 +284,21 @@ function emptySelection(): SelectionState {
 
 function sanitizeSelection(project: Project, selection: SelectionState): SelectionState {
   const selectedNode = selection.selectedNode
+  const selectedFeatureIds = selection.selectedFeatureIds.filter((featureId) =>
+    project.features.some((feature) => feature.id === featureId)
+  )
+  const selectedFeatureId =
+    selection.selectedFeatureId && selectedFeatureIds.includes(selection.selectedFeatureId)
+      ? selection.selectedFeatureId
+      : selectedFeatureIds.at(-1) ?? null
 
   if (selectedNode?.type === 'feature') {
-    const exists = project.features.some((feature) => feature.id === selectedNode.featureId)
-    if (!exists) {
+    if (selectedFeatureIds.length === 0 || !selectedFeatureId) {
       return {
         ...selection,
         mode: 'feature',
         selectedFeatureId: null,
+        selectedFeatureIds: [],
         selectedNode: null,
         hoveredFeatureId: null,
         activeControl: null,
@@ -218,7 +313,13 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
 
   return {
     ...selection,
-    mode: selection.selectedNode?.type === 'feature' ? selection.mode : 'feature',
+    mode:
+      selectedFeatureIds.length === 1 && selection.selectedNode?.type === 'feature'
+        ? selection.mode
+        : 'feature',
+    selectedFeatureId,
+    selectedFeatureIds,
+    selectedNode: selectedFeatureId ? { type: 'feature', featureId: selectedFeatureId } : selection.selectedNode,
     hoveredFeatureId,
     activeControl: null,
   }
@@ -243,6 +344,7 @@ export function isFirstFeatureValid(features: SketchFeature[]): boolean {
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: normalizeProject(newProject()),
   pendingAdd: null,
+  pendingMove: null,
   history: {
     past: [],
     future: [],
@@ -259,6 +361,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: nextProject,
         pendingAdd: null,
+        pendingMove: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -311,6 +414,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: nextProject,
         pendingAdd: null,
+        pendingMove: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -339,6 +443,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: restored,
         pendingAdd: null,
+        pendingMove: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: state.history.past.slice(0, -1),
@@ -358,6 +463,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: restored,
         pendingAdd: null,
+        pendingMove: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -413,6 +519,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: restored,
         pendingAdd: null,
+        pendingMove: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           ...state.history,
@@ -509,6 +616,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selection: {
           ...s.selection,
           selectedFeatureId: safeFeature.id,
+          selectedFeatureIds: [safeFeature.id],
           selectedNode: { type: 'feature', featureId: safeFeature.id },
           mode: 'feature',
           activeControl: null,
@@ -554,27 +662,33 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }),
 
   deleteFeature: (id) =>
+    get().deleteFeatures([id]),
+
+  deleteFeatures: (ids) =>
     set((s) => {
+      const idsToDelete = new Set(ids)
       const nextProject = {
         ...s.project,
-        features: s.project.features.filter((f) => f.id !== id),
+        features: s.project.features.filter((feature) => !idsToDelete.has(feature.id)),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
+      const remainingSelectedIds = s.selection.selectedFeatureIds.filter((featureId) => !idsToDelete.has(featureId))
+      const nextPrimaryId =
+        s.selection.selectedFeatureId && !idsToDelete.has(s.selection.selectedFeatureId)
+          ? s.selection.selectedFeatureId
+          : remainingSelectedIds.at(-1) ?? null
       return {
         project: nextProject,
         selection: {
           ...s.selection,
-          selectedFeatureId:
-            s.selection.selectedFeatureId === id
-              ? null
-              : s.selection.selectedFeatureId,
-          selectedNode:
-            s.selection.selectedNode?.type === 'feature' && s.selection.selectedNode.featureId === id
-              ? null
-              : s.selection.selectedNode,
+          selectedFeatureId: nextPrimaryId,
+          selectedFeatureIds: remainingSelectedIds,
+          selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+          mode: nextPrimaryId && remainingSelectedIds.length === 1 ? s.selection.mode : 'feature',
+          activeControl: nextPrimaryId && remainingSelectedIds.length === 1 ? s.selection.activeControl : null,
         },
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
@@ -609,13 +723,40 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // ── Selection ────────────────────────────────────────────
 
-  selectFeature: (id) =>
+  selectFeature: (id, additive = false) =>
     set((s) => ({
       selection: {
         ...s.selection,
-        selectedFeatureId: id,
-        selectedNode: id ? { type: 'feature', featureId: id } : null,
+        ...(id
+          ? additive
+            ? (() => {
+                const nextIds = s.selection.selectedFeatureIds.includes(id)
+                  ? s.selection.selectedFeatureIds.filter((featureId) => featureId !== id)
+                  : [...s.selection.selectedFeatureIds, id]
+                const nextPrimaryId =
+                  nextIds.length === 0
+                    ? null
+                    : s.selection.selectedFeatureId === id && s.selection.selectedFeatureIds.includes(id)
+                      ? nextIds.at(-1) ?? null
+                      : id
+                return {
+                  selectedFeatureId: nextPrimaryId,
+                  selectedFeatureIds: nextIds,
+                  selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+                }
+              })()
+            : {
+                selectedFeatureId: id,
+                selectedFeatureIds: [id],
+                selectedNode: { type: 'feature', featureId: id },
+              }
+          : {
+              selectedFeatureId: null,
+              selectedFeatureIds: [],
+              selectedNode: null,
+            }),
         mode: 'feature',
+        activeControl: null,
       },
     })),
 
@@ -624,6 +765,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       selection: {
         ...s.selection,
         selectedFeatureId: null,
+        selectedFeatureIds: [],
         selectedNode: { type: 'grid' },
         mode: 'feature',
       },
@@ -634,6 +776,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       selection: {
         ...s.selection,
         selectedFeatureId: null,
+        selectedFeatureIds: [],
         selectedNode: { type: 'stock' },
         mode: 'feature',
       },
@@ -649,6 +792,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       selection: {
         ...s.selection,
         selectedFeatureId: id,
+        selectedFeatureIds: [id],
         selectedNode: { type: 'feature', featureId: id },
         mode: 'sketch_edit',
         activeControl: null,
@@ -759,6 +903,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   startAddRectPlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
+      pendingMove: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -770,6 +915,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   startAddCirclePlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
+      pendingMove: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -781,6 +927,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   startAddPolygonPlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
+      pendingMove: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -792,6 +939,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   startAddSplinePlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
+      pendingMove: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -877,6 +1025,149 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     set({ pendingAdd: null })
   },
+
+  startMoveFeature: (featureId) =>
+    set((s) => {
+      const featureIds = s.selection.selectedFeatureIds.includes(featureId)
+        ? s.selection.selectedFeatureIds
+        : [featureId]
+      const features = featureIds
+        .map((id) => s.project.features.find((entry) => entry.id === id) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: { mode: 'move', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: featureIds,
+          selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startCopyFeature: (featureId) =>
+    set((s) => {
+      const featureIds = s.selection.selectedFeatureIds.includes(featureId)
+        ? s.selection.selectedFeatureIds
+        : [featureId]
+      const features = featureIds
+        .map((id) => s.project.features.find((entry) => entry.id === id) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (features.length !== featureIds.length) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: { mode: 'copy', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: featureIds,
+          selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  cancelPendingMove: () => set({ pendingMove: null }),
+
+  setPendingMoveFrom: (point) =>
+    set((s) => ({
+      pendingMove: s.pendingMove ? { ...s.pendingMove, fromPoint: point } : null,
+    })),
+
+  setPendingMoveTo: (point) =>
+    set((s) => ({
+      pendingMove: s.pendingMove ? { ...s.pendingMove, toPoint: point } : null,
+    })),
+
+  completePendingMove: (toPoint, copyCount = 1) =>
+    set((s) => {
+      if (!s.pendingMove?.fromPoint) {
+        return {}
+      }
+
+      const { featureIds, fromPoint, mode } = s.pendingMove
+      const dx = toPoint.x - fromPoint.x
+      const dy = toPoint.y - fromPoint.y
+
+      if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
+        return { pendingMove: null }
+      }
+
+      const sourceFeatures = featureIds
+        .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (sourceFeatures.length !== featureIds.length) {
+        return { pendingMove: null }
+      }
+
+      const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
+      const createdFeatures =
+        mode === 'copy'
+          ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+          : []
+
+      const nextProject = {
+        ...s.project,
+        features:
+          mode === 'copy'
+            ? [
+                ...s.project.features,
+                ...createdFeatures,
+              ]
+            : s.project.features.map((feature) => {
+                if (!featureIds.includes(feature.id) || feature.locked) {
+                  return feature
+                }
+
+                return {
+                  ...feature,
+                  sketch: {
+                    ...feature.sketch,
+                    profile: translateProfile(feature.sketch.profile, dx, dy),
+                  },
+                }
+              }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (projectsEqual(nextProject, s.project)) {
+        return { pendingMove: null }
+      }
+
+      return {
+        project: nextProject,
+        pendingMove: null,
+        selection:
+          mode === 'copy'
+            ? {
+                ...s.selection,
+                selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+                selectedFeatureIds: createdFeatures.map((feature) => feature.id),
+                selectedNode: createdFeatures.at(-1)
+                  ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                  : s.selection.selectedNode,
+              }
+            : s.selection,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   // ── Convenience constructors ─────────────────────────────
 

@@ -9,7 +9,8 @@ import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewp
 import { useProjectStore } from './store/projectStore'
 
 interface FeatureContextMenuState {
-  featureId: string
+  featureIds: string[]
+  primaryFeatureId: string
   x: number
   y: number
 }
@@ -20,12 +21,12 @@ function App() {
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const { project, selectFeature, enterSketchEdit, deleteFeature } = useProjectStore()
+  const { project, selectFeature, enterSketchEdit, deleteFeatures, startMoveFeature, startCopyFeature } = useProjectStore()
 
   const menuFeature = useMemo(
     () =>
       featureContextMenu
-        ? project.features.find((feature) => feature.id === featureContextMenu.featureId) ?? null
+        ? project.features.find((feature) => feature.id === featureContextMenu.primaryFeatureId) ?? null
         : null,
     [featureContextMenu, project.features]
   )
@@ -103,8 +104,11 @@ function App() {
   }
 
   function openFeatureContextMenu(featureId: string, x: number, y: number) {
-    selectFeature(featureId)
-    setFeatureContextMenu({ featureId, x, y })
+    const nextSelection = useProjectStore.getState().selection
+    const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
+      ? nextSelection.selectedFeatureIds
+      : [featureId]
+    setFeatureContextMenu({ featureIds, primaryFeatureId: featureId, x, y })
   }
 
   function closeFeatureContextMenu() {
@@ -118,8 +122,20 @@ function App() {
     closeFeatureContextMenu()
   }
 
-  function handleDeleteFeature(featureId: string) {
-    deleteFeature(featureId)
+  function handleDeleteFeatures(featureIds: string[]) {
+    deleteFeatures(featureIds)
+    closeFeatureContextMenu()
+  }
+
+  function handleMoveFeature(featureId: string) {
+    startMoveFeature(featureId)
+    setCenterTab('sketch')
+    closeFeatureContextMenu()
+  }
+
+  function handleCopyFeature(featureId: string) {
+    startCopyFeature(featureId)
+    setCenterTab('sketch')
     closeFeatureContextMenu()
   }
 
@@ -129,6 +145,12 @@ function App() {
         top: Math.min(featureContextMenu.y, window.innerHeight - 180),
       }
     : null
+
+  const menuHasMultipleSelection = (featureContextMenu?.featureIds.length ?? 0) > 1
+  const menuHasLockedSelection =
+    featureContextMenu?.featureIds.some((featureId) =>
+      project.features.some((feature) => feature.id === featureId && feature.locked)
+    ) ?? false
 
   return (
     <>
@@ -149,21 +171,33 @@ function App() {
           style={menuPosition}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <button className="feature-context-menu__item" type="button" onClick={() => handleEditSketch(menuFeature.id)}>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => handleEditSketch(menuFeature.id)}
+            disabled={menuHasMultipleSelection}
+            title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
+          >
             Edit Sketch
           </button>
-          <button className="feature-context-menu__item" type="button" disabled title="Copy is not implemented yet">
-            Copy
+          <button className="feature-context-menu__item" type="button" onClick={() => handleCopyFeature(menuFeature.id)}>
+            {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
           </button>
-          <button className="feature-context-menu__item" type="button" disabled title="Move is not implemented yet">
-            Move
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => handleMoveFeature(menuFeature.id)}
+            disabled={menuHasLockedSelection}
+            title={menuHasLockedSelection ? 'Locked features cannot be moved as part of a selection' : undefined}
+          >
+            {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
           </button>
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => handleDeleteFeature(menuFeature.id)}
+            onClick={() => handleDeleteFeatures(featureContextMenu.featureIds)}
           >
-            Delete
+            {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
           </button>
         </div>
       ) : null}

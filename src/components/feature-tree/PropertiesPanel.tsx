@@ -120,12 +120,12 @@ export function PropertiesPanel() {
     setUnits,
     updateFeature,
     deleteFeature,
+    deleteFeatures,
     enterSketchEdit,
   } = useProjectStore()
 
-  const selectedFeatureId = selection.selectedNode?.type === 'feature'
-    ? selection.selectedNode.featureId
-    : null
+  const selectedFeatureIds = selection.selectedFeatureIds
+  const selectedFeatureId = selectedFeatureIds.length === 1 ? selectedFeatureIds[0] : null
 
   const selectedFeature = selectedFeatureId
     ? project.features.find((feature) => feature.id === selectedFeatureId) ?? null
@@ -299,6 +299,31 @@ export function PropertiesPanel() {
   }
 
   if (!selectedFeature) {
+    if (selectedFeatureIds.length > 1) {
+      return (
+        <div className="properties-panel">
+          <div className="properties-group">
+            <label className="properties-field">
+              <span>Selection</span>
+              <DraftTextInput value={`${selectedFeatureIds.length} Features`} disabled />
+            </label>
+            <label className="properties-field">
+              <span>Edit Sketch</span>
+              <DraftTextInput value="Disabled for multi-select" disabled />
+            </label>
+          </div>
+          <div className="properties-actions">
+            <button className="feat-btn" type="button" disabled title="Edit Sketch is only available for a single feature">
+              Edit Sketch
+            </button>
+            <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatures(selectedFeatureIds)}>
+              Delete Selected
+            </button>
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="panel-empty">
         Select Grid, Stock, or a feature in the tree to edit its properties.

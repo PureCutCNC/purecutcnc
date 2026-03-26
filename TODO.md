@@ -86,6 +86,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Should support precise numeric offsets and direct manipulation in the sketch view.
   - Needs to move the whole feature profile while preserving its Z range and operation.
 
+### Marquee multi-selection
+- Status: Open
+- Priority: Medium
+- Summary: Allow selecting multiple features in the sketch by dragging a rectangular window around them.
+- Notes:
+  - Should complement the current modifier-click multi-select flow.
+  - Need to define whether window selection means fully enclosed only or any overlap.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

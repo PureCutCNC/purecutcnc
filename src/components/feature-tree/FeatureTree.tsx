@@ -108,12 +108,12 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
                 key={feature.id}
                 label={feature.name}
                 kind="feature"
-                isSelected={selection.selectedNode?.type === 'feature' && selection.selectedNode.featureId === feature.id}
+                isSelected={selection.selectedFeatureIds.includes(feature.id)}
                 isDragging={dragId === feature.id}
                 visible={feature.visible}
                 operation={feature.operation}
                 isFirstFeature={index === 0}
-                onClick={() => selectFeature(feature.id)}
+                onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
                 onMouseEnter={() => hoverFeature(feature.id)}
                 onMouseLeave={() => hoverFeature(null)}
                 onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
@@ -124,7 +124,9 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
                 }
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  selectFeature(feature.id)
+                  if (!selection.selectedFeatureIds.includes(feature.id)) {
+                    selectFeature(feature.id)
+                  }
                   onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
                 }}
                 draggable
@@ -149,7 +151,7 @@ interface TreeRowProps {
   visible: boolean
   operation?: 'add' | 'subtract'
   isFirstFeature?: boolean
-  onClick: () => void
+  onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible: () => void

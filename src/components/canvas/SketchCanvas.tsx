@@ -61,6 +61,36 @@ function canvasToWorld(cx: number, cy: number, vt: ViewTransform): Point {
   }
 }
 
+function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
+  return {
+    ...profile,
+    start: { x: profile.start.x + dx, y: profile.start.y + dy },
+    segments: profile.segments.map((segment) => {
+      if (segment.type === 'arc') {
+        return {
+          ...segment,
+          to: { x: segment.to.x + dx, y: segment.to.y + dy },
+          center: { x: segment.center.x + dx, y: segment.center.y + dy },
+        }
+      }
+
+      if (segment.type === 'bezier') {
+        return {
+          ...segment,
+          to: { x: segment.to.x + dx, y: segment.to.y + dy },
+          control1: { x: segment.control1.x + dx, y: segment.control1.y + dy },
+          control2: { x: segment.control2.x + dx, y: segment.control2.y + dy },
+        }
+      }
+
+      return {
+        ...segment,
+        to: { x: segment.to.x + dx, y: segment.to.y + dy },
+      }
+    }),
+  }
+}
+
 function computeBaseViewTransform(stock: Stock, canvasW: number, canvasH: number): ViewTransform {
   const bounds = getStockBounds(stock)
   const stockW = Math.max(bounds.maxX - bounds.minX, 1)
@@ -452,6 +482,25 @@ function drawPendingPoint(
   ctx.stroke()
 }
 
+function drawMoveGuide(
+  ctx: CanvasRenderingContext2D,
+  fromPoint: Point,
+  toPoint: Point,
+  vt: ViewTransform
+): void {
+  const start = worldToCanvas(fromPoint, vt)
+  const end = worldToCanvas(toPoint, vt)
+
+  ctx.beginPath()
+  ctx.moveTo(start.cx, start.cy)
+  ctx.lineTo(end.cx, end.cy)
+  ctx.strokeStyle = 'rgba(239, 188, 122, 0.75)'
+  ctx.lineWidth = 1.5
+  ctx.setLineDash([8, 5])
+  ctx.stroke()
+  ctx.setLineDash([])
+}
+
 function drawPendingPathLoop(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -652,11 +701,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
   const [pendingPreviewPoint, setPendingPreviewPoint] = useState<PendingPreviewPoint | null>(null)
+  const [pendingMovePreviewPoint, setPendingMovePreviewPoint] = useState<PendingPreviewPoint | null>(null)
+  const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
+  const copyCountInputRef = useRef<HTMLInputElement>(null)
 
   const {
     project,
     pendingAdd,
+    pendingMove,
     selection,
     selectFeature,
     hoverFeature,
@@ -671,7 +724,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     addPendingPolygonPoint,
     completePendingPolygon,
     cancelPendingAdd,
+    setPendingMoveFrom,
+    setPendingMoveTo,
+    completePendingMove,
+    cancelPendingMove,
   } = useProjectStore()
+  const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -706,9 +764,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (const feature of project.features) {
       if (!feature.visible) continue
 
-      const selected = feature.id === selection.selectedFeatureId
+      const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
-      const editing = selection.mode === 'sketch_edit' && selected
+      const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
 
       drawFeature(ctx, feature, vt, selected, hovered, editing)
 
@@ -746,12 +804,67 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawPendingPoint(ctx, currentPreviewPoint, vt)
     }
 
+    const currentMovePreviewPoint =
+      pendingMove && pendingMovePreviewPoint?.session === pendingMove.session
+        ? pendingMovePreviewPoint.point
+        : null
+
+    if (pendingMove) {
+      const features = pendingMove.featureIds
+        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (features.length > 0) {
+        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+
+        if (pendingMove.fromPoint && targetPoint) {
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          for (const feature of features) {
+            const previewProfile = translateProfile(
+              feature.sketch.profile,
+              targetPoint.x - pendingMove.fromPoint.x,
+              targetPoint.y - pendingMove.fromPoint.y,
+            )
+            drawPreviewProfile(ctx, previewProfile, vt, pendingMove.mode === 'copy' ? 'Copy preview' : 'Move preview')
+          }
+          if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
+            const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
+            for (let index = 2; index <= parsedCount; index += 1) {
+              for (const feature of features) {
+                const repeatedPreview = translateProfile(
+                  feature.sketch.profile,
+                  (targetPoint.x - pendingMove.fromPoint.x) * index,
+                  (targetPoint.y - pendingMove.fromPoint.y) * index,
+                )
+                drawPreviewProfile(ctx, repeatedPreview, vt, `Copy ${index}`)
+              }
+            }
+          }
+        } else if (currentMovePreviewPoint) {
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+        }
+      }
+    }
+
     drawDepthLegend(ctx, width, height)
-  }, [pendingAdd, pendingPreviewPoint, project, selection, viewState])
+  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, viewState])
 
   useEffect(() => {
     draw()
   }, [draw])
+
+  useEffect(() => {
+    if (!copyCountPromptActive) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      copyCountInputRef.current?.focus({ preventScroll: true })
+      copyCountInputRef.current?.select()
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [copyCountPromptActive])
 
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
@@ -781,7 +894,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [draw])
 
   useEffect(() => {
-    if (selection.mode !== 'sketch_edit') {
+    if (copyCountPromptActive) {
+      return
+    }
+
+    if (selection.mode !== 'sketch_edit' && !pendingMove) {
       return
     }
 
@@ -790,7 +907,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [selection.mode, selection.selectedFeatureId])
+  }, [copyCountPromptActive, pendingMove, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>): CanvasPoint {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -799,6 +916,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function editableFeature(): SketchFeature | null {
     if (selection.mode !== 'sketch_edit') return null
+    if (selection.selectedFeatureIds.length !== 1) return null
     if (!selection.selectedFeatureId) return null
     return project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
   }
@@ -904,6 +1022,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingMove) {
+      hoverFeature(null)
+      setPendingMovePreviewPoint({ point: snapped, session: pendingMove.session })
+      return
+    }
+
     if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
       moveFeatureControl(selection.selectedFeatureId, selection.activeControl, snapped)
       return
@@ -940,6 +1064,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
       setPendingPreviewPoint(null)
+    }
+    if (pendingMove?.fromPoint) {
+      setPendingMovePreviewPoint({
+        point: pendingMove.toPoint ?? pendingMove.fromPoint,
+        session: pendingMove.session,
+      })
+    } else {
+      setPendingMovePreviewPoint(null)
     }
   }
 
@@ -985,7 +1117,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    selectFeature(findHitFeatureId(world, project.features))
+    if (pendingMove) {
+      const snapped = {
+        x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
+        y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
+      }
+
+      if (!pendingMove.fromPoint) {
+        setPendingMoveFrom(snapped)
+        setPendingMovePreviewPoint({ point: snapped, session: pendingMove.session })
+      } else if (!pendingMove.toPoint) {
+        setPendingMoveTo(snapped)
+        setPendingMovePreviewPoint({ point: snapped, session: pendingMove.session })
+        setCopyCountDraft('1')
+        if (pendingMove.mode === 'move') {
+          completePendingMove(snapped)
+          setPendingMovePreviewPoint(null)
+        }
+      }
+      return
+    }
+
+    const hitId = findHitFeatureId(world, project.features)
+    if (hitId) {
+      selectFeature(hitId, event.metaKey || event.ctrlKey || event.shiftKey)
+    } else if (!(event.metaKey || event.ctrlKey || event.shiftKey)) {
+      selectFeature(null)
+    }
   }
 
   function handleWheel(event: WheelEvent<HTMLCanvasElement>) {
@@ -1041,6 +1199,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingMove) {
+      return
+    }
+
     const canvas = canvasRef.current
     if (!canvas) return
 
@@ -1052,7 +1214,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    selectFeature(hitId)
+    if (!selection.selectedFeatureIds.includes(hitId)) {
+      selectFeature(hitId)
+    }
     onFeatureContextMenu?.(hitId, event.clientX, event.clientY)
   }
 
@@ -1073,6 +1237,26 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (event.key === 'Escape' && pendingMove) {
+      cancelPendingMove()
+      setPendingMovePreviewPoint(null)
+      setCopyCountDraft('1')
+      return
+    }
+
+    if (
+      event.key === 'Enter'
+      && pendingMove?.mode === 'copy'
+      && pendingMove.fromPoint
+      && pendingMove.toPoint
+    ) {
+      const nextCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
+      completePendingMove(pendingMove.toPoint, nextCount)
+      setPendingMovePreviewPoint(null)
+      setCopyCountDraft('1')
+      return
+    }
+
     if (event.key === 'Escape' && selection.mode === 'sketch_edit') {
       exitSketchEdit()
       stopNodeDrag()
@@ -1083,7 +1267,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove ? 'sketch-canvas--placing' : ''}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -1118,6 +1302,48 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? 'Click the sketch to set the rectangle corner, then click again to size it.'
                 : 'Click the sketch to set the circle center, then click again to set the radius.'}
           {' '}Press <kbd>Esc</kbd> to cancel.
+        </div>
+      )}
+      {pendingMove && (
+        <div className="sketch-place-banner">
+          {pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint ? (
+            <>
+              <span>Copies</span>
+              <input
+                ref={copyCountInputRef}
+                className="sketch-place-count"
+                type="text"
+                inputMode="numeric"
+                value={copyCountDraft}
+                onChange={(event) => setCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
+                onFocus={(event) => event.currentTarget.select()}
+                onKeyDown={(event) => {
+                  event.stopPropagation()
+                  if (event.key === 'Enter') {
+                    const nextCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
+                    completePendingMove(pendingMove.toPoint!, nextCount)
+                    setPendingMovePreviewPoint(null)
+                    setCopyCountDraft('1')
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelPendingMove()
+                    setPendingMovePreviewPoint(null)
+                    setCopyCountDraft('1')
+                  }
+                }}
+                autoFocus
+              />
+              <span>Press <kbd>Enter</kbd> to confirm, <kbd>Esc</kbd> to cancel.</span>
+            </>
+          ) : (
+            pendingMove.fromPoint
+              ? pendingMove.mode === 'copy'
+                ? 'Click the copy to point, then enter the copy count. Press Esc to cancel.'
+                : 'Click the destination point to complete the move. Press Esc to cancel.'
+              : pendingMove.mode === 'copy'
+                ? 'Click the copy from point, then click the copy to point. Press Esc to cancel.'
+                : 'Click the move from point, then click the move to point. Press Esc to cancel.'
+          )}
         </div>
       )}
     </div>
