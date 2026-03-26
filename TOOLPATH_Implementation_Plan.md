@@ -440,7 +440,7 @@ That gets you the first real pocket path on screen, which is the main milestone.
 ## Tracking Checklist
 
 - [x] Phase T1: Toolpath engine foundations
-- [ ] Phase T2: Pocket region resolver
+- [x] Phase T2: Pocket region resolver
 - [ ] Phase T3: Pocket rough toolpath
 - [ ] Phase T4: Pocket finish toolpath
 - [ ] Phase T5: UI integration

@@ -61,6 +61,28 @@ export interface ResolvedToolpathOperation {
   units: Units
 }
 
+export interface ResolvedPocketRegion {
+  outer: Point[]
+  islands: Point[][]
+  targetFeatureIds: string[]
+  islandFeatureIds: string[]
+}
+
+export interface ResolvedPocketBand {
+  topZ: number
+  bottomZ: number
+  targetFeatureIds: string[]
+  islandFeatureIds: string[]
+  regions: ResolvedPocketRegion[]
+}
+
+export interface ResolvedPocketResult {
+  operationId: string
+  units: Units
+  bands: ResolvedPocketBand[]
+  warnings: string[]
+}
+
 export interface ClipperPoint {
   X: number
   Y: number
