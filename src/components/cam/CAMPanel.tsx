@@ -772,7 +772,7 @@ export function CAMPanel({
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
-                  {selectedOperation.kind === 'pocket' && toolpathWarnings && toolpathWarnings.length > 0 ? (
+                  {toolpathWarnings && toolpathWarnings.length > 0 ? (
                     <div className="properties-field">
                       <span>Toolpath warnings</span>
                       <div className="cam-field-note-list">

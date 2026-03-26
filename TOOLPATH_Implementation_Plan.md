@@ -382,7 +382,7 @@ Current note:
 - warnings are shown in properties
 - multi-operation show/hide preview and richer preview controls are still pending
 
-## Phase T6: Extend to Edge Route [ ]
+## Phase T6: Extend to Edge Route [x]
 
 Deliverables:
 - inside contour path
@@ -392,6 +392,11 @@ Deliverables:
 
 Acceptance:
 - edge-route operations produce correct contour centerlines
+
+Current note:
+- inside and outside contour routing are now generated and previewed in sketch and 3D
+- rough/finish differentiation exists at a first-pass level through leave settings and operation semantics
+- remaining work is path-quality and UI refinement, not missing core contour routing
 
 ## Phase T7: Extend to Surface Clean [ ]
 
@@ -453,5 +458,5 @@ That gets you the first real pocket path on screen, which is the main milestone.
 - [x] Phase T3: Pocket rough toolpath
 - [x] Phase T4: Pocket finish toolpath
 - [~] Phase T5: UI integration
-- [ ] Phase T6: Edge route toolpaths
+- [x] Phase T6: Edge route toolpaths
 - [ ] Phase T7: Surface clean toolpaths

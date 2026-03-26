@@ -1,3 +1,4 @@
+export * from './edge'
 export * from './geometry'
 export * from './pocket'
 export * from './resolver'
