@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AIPanel } from './components/ai/AIPanel'
+import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
@@ -161,6 +162,7 @@ function App() {
         viewport3d={<Viewport3D ref={viewport3dRef} />}
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
+        operationsPanel={<CAMPanel />}
         centerTab={centerTab}
         onCenterTabChange={setCenterTab}
       />

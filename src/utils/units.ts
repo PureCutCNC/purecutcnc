@@ -182,8 +182,16 @@ function convertGrid(grid: GridSettings, from: Units, to: Units): GridSettings {
 function convertTool(tool: Tool, from: Units, to: Units): Tool {
   return {
     ...tool,
+    units: to,
     diameter: convertLength(tool.diameter, from, to),
+    defaultFeed: convertLength(tool.defaultFeed, from, to),
+    defaultPlungeFeed: convertLength(tool.defaultPlungeFeed, from, to),
+    defaultStepdown: convertLength(tool.defaultStepdown, from, to),
   }
+}
+
+export function convertToolUnits(tool: Tool, toUnits: Units): Tool {
+  return convertTool(tool, tool.units, toUnits)
 }
 
 function convertOperation(operation: Operation, from: Units, to: Units): Operation {
@@ -233,7 +241,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     ),
     features: project.features.map((feature) => convertFeature(feature, fromUnits, toUnits)),
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
-    tools: project.tools.map((tool) => convertTool(tool, fromUnits, toUnits)),
+    tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),
     clamps: project.clamps.map((clamp) => convertClamp(clamp, fromUnits, toUnits)),
   }

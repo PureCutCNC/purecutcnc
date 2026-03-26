@@ -48,7 +48,7 @@ export function AppShell({
             <div className="panel-header">
               Feature Tree
               <span className="feature-count">
-                {project.features.length + 2}
+                {project.features.length + 3}
               </span>
             </div>
             <div className="panel-content">{featureTree}</div>

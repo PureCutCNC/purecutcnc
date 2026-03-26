@@ -3,6 +3,7 @@ import {
   type Segment,
   defaultStock,
   defaultGrid,
+  defaultTool,
   getStockBounds,
   newProject,
   rectProfile,
@@ -10,7 +11,7 @@ import {
   polygonProfile,
   splineProfile,
 } from '../types/project'
-import type { GridSettings, Point, Project, SketchFeature, Stock } from '../types/project'
+import type { GridSettings, Point, Project, SketchFeature, Stock, Tool } from '../types/project'
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
 
@@ -75,6 +76,12 @@ export interface ProjectStore {
   deleteFeature: (id: string) => void
   deleteFeatures: (ids: string[]) => void
   reorderFeatures: (ids: string[]) => void
+
+  // Tools
+  addTool: () => string
+  updateTool: (id: string, patch: Partial<Tool>) => void
+  deleteTool: (id: string) => void
+  duplicateTool: (id: string) => string | null
 
   // Selection
   selectFeature: (id: string | null, additive?: boolean) => void
@@ -220,6 +227,19 @@ function duplicateFeatureName(name: string, features: SketchFeature[]): string {
   return `${baseName} ${index}`
 }
 
+function duplicateToolName(name: string, tools: Tool[]): string {
+  const baseName = `${name} Copy`
+  if (!tools.some((tool) => tool.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (tools.some((tool) => tool.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
 function buildCopiedFeatures(
   sourceFeatures: SketchFeature[],
   existingFeatures: SketchFeature[],
@@ -260,10 +280,19 @@ function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   return feature
 }
 
+function normalizeTool(tool: Tool, units: Project['meta']['units'], index: number): Tool {
+  const defaults = defaultTool(units, index + 1)
+  return {
+    ...defaults,
+    ...tool,
+  }
+}
+
 function normalizeProject(project: Project): Project {
   return {
     ...project,
     features: project.features.map(normalizeFeatureZRange),
+    tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
   }
 }
 
@@ -611,6 +640,110 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         },
       }
     }),
+
+  addTool: () => {
+    const nextId = genId('t')
+    const state = get()
+    const template = defaultTool(state.project.meta.units, state.project.tools.length + 1)
+    const tool: Tool = {
+      ...template,
+      id: nextId,
+    }
+
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tools: [...s.project.tools, tool],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return nextId
+  },
+
+  updateTool: (id, patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tools: s.project.tools.map((tool) => (tool.id === id ? { ...tool, ...patch } : tool)),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteTool: (id) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tools: s.project.tools.filter((tool) => tool.id !== id),
+        operations: s.project.operations.map((operation) =>
+          operation.tool_ref === id ? { ...operation, tool_ref: '' } : operation
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  duplicateTool: (id) => {
+    const state = get()
+    const sourceTool = state.project.tools.find((tool) => tool.id === id)
+    if (!sourceTool) {
+      return null
+    }
+
+    const nextId = genId('t')
+    const duplicate: Tool = {
+      ...sourceTool,
+      id: nextId,
+      name: duplicateToolName(sourceTool.name, state.project.tools),
+    }
+
+    set((s) => ({
+      project: {
+        ...s.project,
+        tools: [...s.project.tools, duplicate],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      },
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return nextId
+  },
 
   // ── Features ─────────────────────────────────────────────
 

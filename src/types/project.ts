@@ -151,10 +151,16 @@ export type ToolType = 'flat_endmill' | 'ball_endmill' | 'v_bit' | 'drill'
 export interface Tool {
   id: string
   name: string
+  units: ProjectMeta['units']
   type: ToolType
   diameter: number
   flutes: number
   material: 'hss' | 'carbide'
+  defaultRpm: number
+  defaultFeed: number
+  defaultPlungeFeed: number
+  defaultStepdown: number
+  defaultStepover: number
 }
 
 // ============================================================
@@ -355,6 +361,40 @@ export function defaultGrid(): GridSettings {
     snapEnabled: true,
     snapIncrement: 1,
     visible: true,
+  }
+}
+
+export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool {
+  if (units === 'inch') {
+    return {
+      id: `t${index}`,
+      name: `1/4" Endmill ${index}`,
+      units,
+      type: 'flat_endmill',
+      diameter: 0.25,
+      flutes: 2,
+      material: 'carbide',
+      defaultRpm: 18000,
+      defaultFeed: 30,
+      defaultPlungeFeed: 12,
+      defaultStepdown: 0.1,
+      defaultStepover: 0.4,
+    }
+  }
+
+  return {
+    id: `t${index}`,
+    name: `6 mm Endmill ${index}`,
+    units,
+    type: 'flat_endmill',
+    diameter: 6,
+    flutes: 2,
+    material: 'carbide',
+    defaultRpm: 18000,
+    defaultFeed: 800,
+    defaultPlungeFeed: 300,
+    defaultStepdown: 2,
+    defaultStepover: 0.4,
   }
 }
 
