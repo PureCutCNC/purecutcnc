@@ -185,6 +185,24 @@ function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): nu
   return levels
 }
 
+function resolveBandBottomZ(band: ResolvedPocketBand, operation: Operation): number | null {
+  const descending = band.bottomZ < band.topZ
+  const axialLeave = Math.max(0, operation.stockToLeaveAxial)
+  const effectiveBottom = descending
+    ? band.bottomZ + axialLeave
+    : band.bottomZ - axialLeave
+
+  if (descending && effectiveBottom >= band.topZ) {
+    return null
+  }
+
+  if (!descending && effectiveBottom <= band.topZ) {
+    return null
+  }
+
+  return effectiveBottom
+}
+
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
     return {
@@ -241,8 +259,43 @@ function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   return contours
 }
 
-function generateBandMoves(
+function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
+  return regions
+    .map((region) => region.outer)
+    .filter((contour) => contour.length >= 3)
+}
+
+function buildPocketFloorContours(
+  regions: ResolvedPocketRegion[],
+  initialInset: number,
+  stepoverDistance: number,
+): Point[][] {
+  const contours: Point[][] = []
+  const minStepover = 1 / DEFAULT_CLIPPER_SCALE
+  const effectiveStepover = Math.max(stepoverDistance, minStepover)
+  let currentRegions = regions.flatMap((region) => buildInsetRegions(region, initialInset))
+
+  // Floor cleanup should not implicitly double as a wall-finish contour.
+  // Start one stepover inside the finish boundary so "Finish Floor" can be
+  // used independently from "Finish Walls".
+  currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
+
+  while (currentRegions.length > 0) {
+    const loops = buildOuterContours(currentRegions)
+    if (loops.length === 0) {
+      break
+    }
+
+    contours.push(...loops)
+    currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
+  }
+
+  return contours
+}
+
+function generateRoughBandMoves(
   band: ResolvedPocketBand,
+  operation: Operation,
   safeZ: number,
   stepdown: number,
   toolRadius: number,
@@ -250,13 +303,24 @@ function generateBandMoves(
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
-  const stepLevels = generateStepLevels(band.topZ, band.bottomZ, stepdown)
+  const effectiveBottom = resolveBandBottomZ(band, operation)
+  if (effectiveBottom === null) {
+    return {
+      moves,
+      stepLevels: [],
+      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no roughing depth after axial stock-to-leave`],
+    }
+  }
+
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  const initialInset = toolRadius + radialLeave
+  const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of stepLevels) {
-    let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, toolRadius))
+    let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
     while (currentRegions.length > 0) {
       const contours = buildContourLoops(currentRegions)
       if (contours.length === 0) {
@@ -274,6 +338,75 @@ function generateBandMoves(
       }
 
       currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
+    }
+  }
+
+  return { moves, stepLevels, warnings }
+}
+
+function generateFinishBandMoves(
+  band: ResolvedPocketBand,
+  operation: Operation,
+  safeZ: number,
+  stepdown: number,
+  toolRadius: number,
+  stepoverDistance: number,
+): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
+  const moves: ToolpathMove[] = []
+  const warnings: string[] = []
+  const effectiveBottom = resolveBandBottomZ(band, operation)
+  if (effectiveBottom === null) {
+    return {
+      moves,
+      stepLevels: [],
+      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no finish depth after axial stock-to-leave`],
+    }
+  }
+
+  if (!operation.finishWalls && !operation.finishFloor) {
+    return {
+      moves,
+      stepLevels: [],
+      warnings: ['Finish operation has both Finish Walls and Finish Floor disabled'],
+    }
+  }
+
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  const finishDelta = toolRadius + radialLeave
+  const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+  const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
+  const floorContours = operation.finishFloor
+    ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
+    : []
+  const finishContours = [
+    ...wallContours.map((contour) => ({ contour, floor: false })),
+    ...floorContours.map((contour) => ({ contour, floor: true })),
+  ]
+  if (finishContours.length === 0) {
+    return {
+      moves,
+      stepLevels: [],
+      warnings: [`No finish contours available for band ${band.topZ} -> ${band.bottomZ}`],
+    }
+  }
+
+  const stepLevels = operation.finishFloor
+    ? [effectiveBottom]
+    : generateStepLevels(band.topZ, effectiveBottom, stepdown)
+  let currentPosition: ToolpathPoint | null = null
+
+  for (const z of stepLevels) {
+    for (const entry of finishContours) {
+      if (entry.floor && z !== effectiveBottom) {
+        continue
+      }
+
+      const entryPoint = contourStartPoint(entry.contour, z)
+      currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+      const cutMoves = toClosedCutMoves(entry.contour, z)
+      moves.push(...cutMoves)
+      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
   }
 
@@ -334,13 +467,24 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   const allStepLevels = new Set<number>()
 
   for (const band of resolved.bands) {
-    const { moves, stepLevels, warnings: bandWarnings } = generateBandMoves(
-      band,
-      safeZ,
-      operation.stepdown,
-      tool.radius,
-      stepoverDistance,
-    )
+    const result = operation.pass === 'finish'
+      ? generateFinishBandMoves(
+        band,
+        operation,
+        safeZ,
+        operation.stepdown,
+        tool.radius,
+        stepoverDistance,
+      )
+      : generateRoughBandMoves(
+        band,
+        operation,
+        safeZ,
+        operation.stepdown,
+        tool.radius,
+        stepoverDistance,
+      )
+    const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
     warnings.push(...bandWarnings)

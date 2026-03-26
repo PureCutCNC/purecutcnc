@@ -94,6 +94,30 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Should complement the current modifier-click multi-select flow.
   - Need to define whether window selection means fully enclosed only or any overlap.
 
+### Pocket toolpath ordering and linking
+- Status: Open
+- Priority: Medium
+- Summary: Improve pocket toolpath ordering so disconnected regions are grouped sensibly and long back-and-forth jumps are reduced.
+- Notes:
+  - Finish one connected region before jumping to another when possible.
+  - Add nearest-entry or region-aware contour ordering later.
+
+### Pocket linking without unnecessary safe-Z retracts
+- Status: Open
+- Priority: Medium
+- Summary: Reduce conservative retract-to-safe behavior between contours and levels when a local in-material link or direct stepdown is safe.
+- Notes:
+  - Current first pass retracts too often for disconnected and connected regions alike.
+  - This should be coordinated with smarter contour ordering.
+
+### Pocket finish refinement
+- Status: Open
+- Priority: Medium
+- Summary: Refine finish-pocket strategy beyond the current first pass.
+- Notes:
+  - Current finish supports separate wall and floor toggles.
+  - Future improvements include smarter floor-finish patterns, better finish ordering, and richer finish linking.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

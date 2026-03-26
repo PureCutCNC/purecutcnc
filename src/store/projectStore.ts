@@ -363,6 +363,8 @@ function defaultOperationForTarget(
     rpm: tool.defaultRpm,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
   }
 }
 

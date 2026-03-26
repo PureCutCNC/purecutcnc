@@ -732,6 +732,26 @@ export function CAMPanel({
                       <option value="finish">Finish</option>
                     </select>
                   </label>
+                  {selectedOperation.kind === 'pocket' && selectedOperation.pass === 'finish' ? (
+                    <>
+                      <label className="properties-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedOperation.finishWalls}
+                          onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
+                        />
+                        <span>Finish Walls</span>
+                      </label>
+                      <label className="properties-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedOperation.finishFloor}
+                          onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
+                        />
+                        <span>Finish Floor</span>
+                      </label>
+                    </>
+                  ) : null}
                   <label className="properties-field">
                     <span>Target</span>
                     <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />

@@ -353,7 +353,7 @@ Deliverables:
 Acceptance:
 - selected pocket operation produces a visible path in sketch and 3D
 
-## Phase T4: Pocket Finish Toolpath [ ]
+## Phase T4: Pocket Finish Toolpath [x]
 
 Deliverables:
 - finish contour pass
@@ -361,6 +361,10 @@ Deliverables:
 
 Acceptance:
 - rough and finish can be visualized separately and together
+
+Current note:
+- finish pocket now supports separate wall and floor finishing toggles
+- remaining work is quality/optimization, not missing core finish behavior
 
 ## Phase T5: UI Integration [~]
 
@@ -447,7 +451,7 @@ That gets you the first real pocket path on screen, which is the main milestone.
 - [x] Phase T1: Toolpath engine foundations
 - [x] Phase T2: Pocket region resolver
 - [x] Phase T3: Pocket rough toolpath
-- [ ] Phase T4: Pocket finish toolpath
+- [x] Phase T4: Pocket finish toolpath
 - [~] Phase T5: UI integration
 - [ ] Phase T6: Edge route toolpaths
 - [ ] Phase T7: Surface clean toolpaths

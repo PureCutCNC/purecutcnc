@@ -194,6 +194,8 @@ export interface Operation {
   rpm: number
   stockToLeaveRadial: number
   stockToLeaveAxial: number
+  finishWalls: boolean
+  finishFloor: boolean
 }
 
 // ============================================================
