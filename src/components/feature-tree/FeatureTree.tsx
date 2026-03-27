@@ -12,46 +12,87 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
     selection,
     setGrid,
     setStock,
+    addFeatureFolder,
+    moveFeatureTreeFeature,
+    reorderFeatureTreeEntries,
+    setAllFeaturesVisible,
+    updateFeatureFolder,
     updateFeature,
     selectProject,
     selectGrid,
+    selectFeaturesRoot,
+    selectFeatureFolder,
     selectFeature,
     selectStock,
     hoverFeature,
-    reorderFeatures,
   } = useProjectStore()
 
-  const [dragId, setDragId] = useState<string | null>(null)
-  const dragOverId = useRef<string | null>(null)
+  const [dragItem, setDragItem] = useState<{ kind: 'feature' | 'folder'; id: string } | null>(null)
+  const [featuresCollapsed, setFeaturesCollapsed] = useState(false)
+  const dragOverTarget = useRef<{ kind: 'features' | 'folder' | 'feature'; id?: string } | null>(null)
 
-  function handleDragStart(id: string) {
-    setDragId(id)
+  function handleFeatureDragStart(id: string) {
+    setDragItem({ kind: 'feature', id })
   }
 
-  function handleDragOver(event: DragEvent, id: string) {
+  function handleFolderDragStart(id: string) {
+    setDragItem({ kind: 'folder', id })
+  }
+
+  function handleDragOver(event: DragEvent, target: { kind: 'features' | 'folder' | 'feature'; id?: string }) {
     event.preventDefault()
-    dragOverId.current = id
+    dragOverTarget.current = target
   }
 
   function handleDrop() {
-    if (!dragId || !dragOverId.current || dragId === dragOverId.current) {
-      setDragId(null)
-      dragOverId.current = null
+    if (!dragItem || !dragOverTarget.current) {
+      setDragItem(null)
+      dragOverTarget.current = null
       return
     }
 
-    const ids = project.features.map((feature) => feature.id)
-    const fromIndex = ids.indexOf(dragId)
-    const toIndex = ids.indexOf(dragOverId.current)
-    if (fromIndex === -1 || toIndex === -1) return
+    const target = dragOverTarget.current
 
-    const nextIds = [...ids]
-    nextIds.splice(fromIndex, 1)
-    nextIds.splice(toIndex, 0, dragId)
-    reorderFeatures(nextIds)
+    if (dragItem.kind === 'feature') {
+      if (target.kind === 'features') {
+        moveFeatureTreeFeature(dragItem.id, null)
+      } else if (target.kind === 'folder' && target.id) {
+        moveFeatureTreeFeature(dragItem.id, target.id)
+      } else if (target.kind === 'feature' && target.id && target.id !== dragItem.id) {
+        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        if (targetFeature) {
+          moveFeatureTreeFeature(dragItem.id, targetFeature.folderId ?? null, targetFeature.id)
+        }
+      }
+    } else if (dragItem.kind === 'folder') {
+      const draggedEntry: { type: 'folder'; folderId: string } = { type: 'folder', folderId: dragItem.id }
+      const rootEntries = project.featureTree.filter((entry) => (
+        entry.type === 'folder' ||
+        (entry.type === 'feature' && project.features.some((feature) => feature.id === entry.featureId && feature.folderId === null))
+      ))
+      const filteredEntries = rootEntries.filter((entry) => !(entry.type === 'folder' && entry.folderId === dragItem.id))
+      let insertIndex = filteredEntries.length
 
-    setDragId(null)
-    dragOverId.current = null
+      if (target.kind === 'folder' && target.id && target.id !== dragItem.id) {
+        insertIndex = filteredEntries.findIndex((entry) => entry.type === 'folder' && entry.folderId === target.id)
+      } else if (target.kind === 'feature' && target.id) {
+        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        if (targetFeature?.folderId === null) {
+          insertIndex = filteredEntries.findIndex((entry) => entry.type === 'feature' && entry.featureId === target.id)
+        }
+      }
+
+      if (insertIndex === -1) {
+        insertIndex = filteredEntries.length
+      }
+
+      const nextEntries = [...filteredEntries]
+      nextEntries.splice(insertIndex, 0, draggedEntry)
+      reorderFeatureTreeEntries(nextEntries)
+    }
+
+    setDragItem(null)
+    dragOverTarget.current = null
   }
 
   // Warn if first feature is not 'add' — this should not normally happen
@@ -59,9 +100,53 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
   const firstFeatureInvalid =
     project.features.length > 0 && project.features[0].operation !== 'add'
 
+  const rootEntries = project.featureTree
+
+  function renderFeatureRow(featureId: string, depth: number) {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    if (!feature) {
+      return null
+    }
+
+    const index = project.features.findIndex((entry) => entry.id === feature.id)
+    return (
+      <TreeRow
+        key={feature.id}
+        label={feature.name}
+        kind="feature"
+        depth={depth}
+        isSelected={selection.selectedFeatureIds.includes(feature.id)}
+        isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
+        visible={feature.visible}
+        operation={feature.operation}
+        isFirstFeature={index === 0}
+        onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
+        onMouseEnter={() => hoverFeature(feature.id)}
+        onMouseLeave={() => hoverFeature(null)}
+        onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
+        onToggleOperation={() =>
+          updateFeature(feature.id, {
+            operation: feature.operation === 'add' ? 'subtract' : 'add',
+          })
+        }
+        onContextMenu={(event) => {
+          event.preventDefault()
+          if (!selection.selectedFeatureIds.includes(feature.id)) {
+            selectFeature(feature.id)
+          }
+          onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
+        }}
+        draggable
+        onDragStart={() => handleFeatureDragStart(feature.id)}
+        onDragEnd={() => setDragItem(null)}
+        onDragOver={(event) => handleDragOver(event, { kind: 'feature', id: feature.id })}
+        onDrop={handleDrop}
+      />
+    )
+  }
+
   return (
     <div className="feature-tree-panel">
-      <div className="tree-root-label">Project Tree</div>
       <div className="tree-list">
         <TreeRow
           label="Project"
@@ -104,49 +189,75 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
             })
           }
         />
-        {project.features.length === 0 ? (
+        <TreeRow
+          label="Features"
+          kind="features"
+          depth={0}
+          isSelected={selection.selectedNode?.type === 'features_root'}
+          isDragging={false}
+          collapsed={featuresCollapsed}
+          onClick={selectFeaturesRoot}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onAddFolder={() => addFeatureFolder()}
+          onToggleCollapse={() => setFeaturesCollapsed((value) => !value)}
+          onShowAll={() => setAllFeaturesVisible(true)}
+          onHideAll={() => setAllFeaturesVisible(false)}
+          onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
+          onDrop={handleDrop}
+        />
+        {featuresCollapsed ? null : project.features.length === 0 ? (
           <div className="feature-tree-empty">No feature nodes yet.</div>
         ) : (
-          <>
+          <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
                 ⚠ First feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
               </div>
             )}
-            {project.features.map((feature, index) => (
-              <TreeRow
-                key={feature.id}
-                label={feature.name}
-                kind="feature"
-                isSelected={selection.selectedFeatureIds.includes(feature.id)}
-                isDragging={dragId === feature.id}
-                visible={feature.visible}
-                operation={feature.operation}
-                isFirstFeature={index === 0}
-                onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
-                onMouseEnter={() => hoverFeature(feature.id)}
-                onMouseLeave={() => hoverFeature(null)}
-                onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
-                onToggleOperation={() =>
-                  updateFeature(feature.id, {
-                    operation: feature.operation === 'add' ? 'subtract' : 'add',
-                  })
-                }
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  if (!selection.selectedFeatureIds.includes(feature.id)) {
-                    selectFeature(feature.id)
-                  }
-                  onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
-                }}
-                draggable
-                onDragStart={() => handleDragStart(feature.id)}
-                onDragEnd={() => setDragId(null)}
-                onDragOver={(event) => handleDragOver(event, feature.id)}
-                onDrop={handleDrop}
-              />
-            ))}
-          </>
+            {rootEntries.map((entry) => {
+              if (entry.type === 'feature') {
+                return renderFeatureRow(entry.featureId, 1)
+              }
+
+              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+              if (!folder) {
+                return null
+              }
+
+              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id)
+              return (
+                <div key={folder.id}>
+                  <TreeRow
+                    label={folder.name}
+                    kind="folder"
+                    depth={1}
+                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
+                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
+                    collapsed={folder.collapsed}
+                    onClick={() => selectFeatureFolder(folder.id)}
+                    onMouseEnter={() => hoverFeature(null)}
+                    onMouseLeave={() => hoverFeature(null)}
+                    onToggleCollapse={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                    draggable
+                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragEnd={() => setDragItem(null)}
+                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
+                    onDrop={handleDrop}
+                  />
+                  {!folder.collapsed ? (
+                    <div className="tree-children">
+                      {folderFeatures.length === 0 ? (
+                        <div className="feature-tree-empty">Empty folder.</div>
+                      ) : (
+                        folderFeatures.map((feature) => renderFeatureRow(feature.id, 2))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -155,17 +266,23 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'feature'
+  kind: 'project' | 'grid' | 'stock' | 'features' | 'folder' | 'feature'
+  depth?: number
   isSelected: boolean
   isDragging: boolean
   visible?: boolean
   operation?: 'add' | 'subtract'
   isFirstFeature?: boolean
+  collapsed?: boolean
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
   onToggleOperation?: () => void
+  onToggleCollapse?: () => void
+  onAddFolder?: () => void
+  onShowAll?: () => void
+  onHideAll?: () => void
   onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
   draggable?: boolean
   onDragStart?: () => void
@@ -177,16 +294,22 @@ interface TreeRowProps {
 function TreeRow({
   label,
   kind,
+  depth = 0,
   isSelected,
   isDragging,
   visible,
   operation,
   isFirstFeature = false,
+  collapsed = false,
   onClick,
   onMouseEnter,
   onMouseLeave,
   onToggleVisible,
   onToggleOperation,
+  onToggleCollapse,
+  onAddFolder,
+  onShowAll,
+  onHideAll,
   onContextMenu,
   draggable,
   onDragStart,
@@ -202,6 +325,8 @@ function TreeRow({
       className={[
         'tree-row',
         `tree-row--${kind}`,
+        depth > 0 ? 'tree-row--nested' : '',
+        depth > 1 ? 'tree-row--deep' : '',
         isSelected ? 'tree-row--selected' : '',
         isDragging ? 'tree-row--dragging' : '',
       ].join(' ')}
@@ -214,12 +339,75 @@ function TreeRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onContextMenu={onContextMenu}
+      style={{ paddingLeft: `${depth * 12}px` }}
     >
-      <span className="tree-branch" aria-hidden="true">
-        {kind === 'project' ? 'proj' : kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : 'node'}
+      <span className={`tree-branch tree-branch--${kind}`} aria-hidden="true">
+        {kind === 'folder' ? (
+          <svg viewBox="0 0 16 12" className="tree-icon tree-icon--folder" focusable="false" aria-hidden="true">
+            <path d="M1.5 3.25h3.2l1-1.35h2.15c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v.32h3.05c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v4.97c0 .43-.15.8-.44 1.09-.29.29-.66.44-1.09.44H1.75c-.43 0-.8-.15-1.09-.44-.29-.29-.44-.66-.44-1.09V4.78c0-.43.15-.8.44-1.09.29-.29.66-.44 1.09-.44Z" />
+          </svg>
+        ) : (
+          kind === 'project' ? 'proj' : kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : kind === 'features' ? 'feat' : 'node'
+        )}
       </span>
       <span className="tree-label" title={label}>{label}</span>
       <div className="tree-row-actions">
+        {kind === 'features' && onShowAll ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onShowAll()
+            }}
+            title="Show all features"
+            aria-label="Show all features"
+          >
+            ◉
+          </button>
+        ) : null}
+        {kind === 'features' && onHideAll ? (
+          <button
+            type="button"
+            className="tree-action-btn tree-action-btn--muted"
+            onClick={(event) => {
+              event.stopPropagation()
+              onHideAll()
+            }}
+            title="Hide all features"
+            aria-label="Hide all features"
+          >
+            ○
+          </button>
+        ) : null}
+        {kind === 'features' && onAddFolder ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onAddFolder()
+            }}
+            title="Add folder"
+            aria-label="Add folder"
+          >
+            +
+          </button>
+        ) : null}
+        {(kind === 'folder' || kind === 'features') && onToggleCollapse ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleCollapse()
+            }}
+            title={collapsed ? 'Expand folder' : 'Collapse folder'}
+            aria-label={collapsed ? 'Expand folder' : 'Collapse folder'}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+        ) : null}
         {kind === 'feature' && onToggleOperation ? (
           <button
             type="button"
@@ -249,7 +437,7 @@ function TreeRow({
             }
             aria-disabled={operationLocked}
           >
-            {operation === 'add' ? '+' : '−'}
+            {operationLocked ? '🔒' : operation === 'add' ? '+' : '−'}
           </button>
         ) : null}
         {onToggleVisible ? (

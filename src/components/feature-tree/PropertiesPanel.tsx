@@ -118,10 +118,14 @@ export function PropertiesPanel() {
   const {
     project,
     selection,
+    addFeatureFolder,
+    assignFeaturesToFolder,
+    deleteFeatureFolder,
     setProjectName,
     setGrid,
     setStock,
     setUnits,
+    updateFeatureFolder,
     updateFeature,
     deleteFeature,
     deleteFeatures,
@@ -138,6 +142,33 @@ export function PropertiesPanel() {
   const selectedFeature = selectedFeatureId
     ? project.features.find((feature) => feature.id === selectedFeatureId) ?? null
     : null
+  const selectedNode = selection.selectedNode
+  const selectedFolder =
+    selectedNode?.type === 'folder'
+      ? project.featureFolders.find((folder) => folder.id === selectedNode.folderId) ?? null
+      : null
+  const allSelectedFeatures = project.features.filter((feature) => selectedFeatureIds.includes(feature.id))
+  const commonSelectedFolderId =
+    allSelectedFeatures.length > 0 &&
+    allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
+      ? allSelectedFeatures[0]?.folderId ?? null
+      : '__mixed__'
+
+  function renderFolderSelect(value: string | null, onChange: (folderId: string | null) => void) {
+    return (
+      <select
+        value={value ?? ''}
+        onChange={(event) => onChange(event.target.value === '' ? null : event.target.value)}
+      >
+        <option value="">Root</option>
+        {project.featureFolders.map((folder) => (
+          <option key={folder.id} value={folder.id}>
+            {folder.name}
+          </option>
+        ))}
+      </select>
+    )
+  }
 
   if (selection.selectedNode?.type === 'project') {
     return (
@@ -330,6 +361,70 @@ export function PropertiesPanel() {
     )
   }
 
+  if (selection.selectedNode?.type === 'features_root') {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput value="Features" disabled />
+          </label>
+          <label className="properties-field">
+            <span>Folders</span>
+            <DraftTextInput value={`${project.featureFolders.length}`} disabled />
+          </label>
+          <label className="properties-field">
+            <span>Features</span>
+            <DraftTextInput value={`${project.features.length}`} disabled />
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => addFeatureFolder()}>
+            Add Folder
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (selectedFolder) {
+    const featureCount = project.features.filter((feature) => feature.folderId === selectedFolder.id).length
+
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`folder-name-${selectedFolder.id}-${selectedFolder.name}`}
+              value={selectedFolder.name}
+              onCommit={(next) => updateFeatureFolder(selectedFolder.id, { name: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Features</span>
+            <DraftTextInput value={`${featureCount}`} disabled />
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={!selectedFolder.collapsed}
+              onChange={(event) =>
+                updateFeatureFolder(selectedFolder.id, { collapsed: !event.target.checked })
+              }
+            />
+            <span>Expanded</span>
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(selectedFolder.id)}>
+            Delete Folder
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (!selectedFeature) {
     if (selectedFeatureIds.length > 1) {
       return (
@@ -342,6 +437,28 @@ export function PropertiesPanel() {
             <label className="properties-field">
               <span>Edit Sketch</span>
               <DraftTextInput value="Disabled for multi-select" disabled />
+            </label>
+            <label className="properties-field">
+              <span>Folder</span>
+              <select
+                value={commonSelectedFolderId ?? ''}
+                onChange={(event) =>
+                  assignFeaturesToFolder(
+                    selectedFeatureIds,
+                    event.target.value === '' || event.target.value === '__mixed__' ? null : event.target.value,
+                  )
+                }
+              >
+                {commonSelectedFolderId === '__mixed__' ? (
+                  <option value="__mixed__">Mixed folders</option>
+                ) : null}
+                <option value="">Root</option>
+                {project.featureFolders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="properties-actions">
@@ -386,7 +503,7 @@ export function PropertiesPanel() {
           {isFirstFeature ? (
             <div className="properties-locked-field" title="The first feature must always be Add — it defines the base solid of the part model">
               <span>Add</span>
-              <span className="properties-locked-hint">🔒 Base solid</span>
+              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
             </div>
           ) : (
             <select
@@ -399,6 +516,12 @@ export function PropertiesPanel() {
               <option value="subtract">Subtract</option>
               <option value="add">Add</option>
             </select>
+          )}
+        </label>
+        <label className="properties-field">
+          <span>Folder</span>
+          {renderFolderSelect(selectedFeature.folderId, (folderId) =>
+            assignFeaturesToFolder([selectedFeature.id], folderId),
           )}
         </label>
         <label className="properties-field">

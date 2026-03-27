@@ -12,6 +12,8 @@ import {
   splineProfile,
 } from '../types/project'
 import type {
+  FeatureFolder,
+  FeatureTreeEntry,
   GridSettings,
   Operation,
   OperationKind,
@@ -51,6 +53,8 @@ export type SelectedNode =
   | { type: 'project' }
   | { type: 'grid' }
   | { type: 'stock' }
+  | { type: 'features_root' }
+  | { type: 'folder'; folderId: string }
   | { type: 'feature'; featureId: string }
   | null
 
@@ -82,6 +86,13 @@ export interface ProjectStore {
   setUnits: (units: Project['meta']['units']) => void
 
   // Features
+  addFeatureFolder: () => string
+  updateFeatureFolder: (id: string, patch: Partial<FeatureFolder>) => void
+  deleteFeatureFolder: (id: string) => void
+  assignFeaturesToFolder: (featureIds: string[], folderId: string | null) => void
+  moveFeatureTreeFeature: (featureId: string, folderId: string | null, beforeFeatureId?: string | null) => void
+  reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
+  setAllFeaturesVisible: (visible: boolean) => void
   addFeature: (feature: SketchFeature) => void
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
@@ -108,6 +119,8 @@ export interface ProjectStore {
   selectProject: () => void
   selectGrid: () => void
   selectStock: () => void
+  selectFeaturesRoot: () => void
+  selectFeatureFolder: (id: string) => void
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
   exitSketchEdit: () => void
@@ -175,6 +188,7 @@ function idNumericSuffix(id: string): number {
 function syncIdCounter(project: Project): void {
   const usedIds = [
     ...project.features.map((feature) => feature.id),
+    ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
   ]
@@ -185,6 +199,7 @@ function syncIdCounter(project: Project): void {
 function nextUniqueGeneratedId(project: Project, prefix: string): string {
   const usedIds = new Set([
     ...project.features.map((feature) => feature.id),
+    ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
   ])
@@ -444,6 +459,7 @@ function buildCopiedFeatures(
         ...sourceFeature,
         id: nextId,
         name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created]),
+        folderId: sourceFeature.folderId,
         sketch: {
           ...sourceFeature.sketch,
           profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
@@ -457,16 +473,20 @@ function buildCopiedFeatures(
 }
 
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
-  const { z_top, z_bottom } = feature
+  const safeFeature = {
+    ...feature,
+    folderId: feature.folderId ?? null,
+  }
+  const { z_top, z_bottom } = safeFeature
   if (typeof z_top === 'number' && typeof z_bottom === 'number' && z_top < z_bottom) {
     return {
-      ...feature,
+      ...safeFeature,
       z_top: z_bottom,
       z_bottom: z_top,
     }
   }
 
-  return feature
+  return safeFeature
 }
 
 function normalizeTool(tool: Tool, units: Project['meta']['units'], index: number): Tool {
@@ -474,6 +494,87 @@ function normalizeTool(tool: Tool, units: Project['meta']['units'], index: numbe
   return {
     ...defaults,
     ...tool,
+  }
+}
+
+function syncFeatureTreeProject(project: Project): Project {
+  const featureFolders = project.featureFolders ?? []
+  const folderIdSet = new Set(featureFolders.map((folder) => folder.id))
+  const features = project.features.map((feature) => (
+    feature.folderId && !folderIdSet.has(feature.folderId)
+      ? { ...feature, folderId: null }
+      : feature
+  ))
+
+  const featureMap = new Map(features.map((feature) => [feature.id, feature]))
+  const usedRootFeatures = new Set<string>()
+  const usedFolders = new Set<string>()
+  const normalizedTree: FeatureTreeEntry[] = []
+
+  for (const entry of project.featureTree ?? []) {
+    if (entry.type === 'folder') {
+      if (folderIdSet.has(entry.folderId) && !usedFolders.has(entry.folderId)) {
+        normalizedTree.push(entry)
+        usedFolders.add(entry.folderId)
+      }
+      continue
+    }
+
+    const feature = featureMap.get(entry.featureId)
+    if (!feature || feature.folderId !== null || usedRootFeatures.has(entry.featureId)) {
+      continue
+    }
+
+    normalizedTree.push(entry)
+    usedRootFeatures.add(entry.featureId)
+  }
+
+  for (const folder of featureFolders) {
+    if (!usedFolders.has(folder.id)) {
+      normalizedTree.push({ type: 'folder', folderId: folder.id })
+      usedFolders.add(folder.id)
+    }
+  }
+
+  for (const feature of features) {
+    if (feature.folderId === null && !usedRootFeatures.has(feature.id)) {
+      normalizedTree.push({ type: 'feature', featureId: feature.id })
+      usedRootFeatures.add(feature.id)
+    }
+  }
+
+  const orderedFeatures: SketchFeature[] = []
+  const pushedFeatureIds = new Set<string>()
+
+  for (const entry of normalizedTree) {
+    if (entry.type === 'folder') {
+      for (const feature of features) {
+        if (feature.folderId === entry.folderId && !pushedFeatureIds.has(feature.id)) {
+          orderedFeatures.push(feature)
+          pushedFeatureIds.add(feature.id)
+        }
+      }
+      continue
+    }
+
+    const feature = featureMap.get(entry.featureId)
+    if (feature && !pushedFeatureIds.has(feature.id)) {
+      orderedFeatures.push(feature)
+      pushedFeatureIds.add(feature.id)
+    }
+  }
+
+  for (const feature of features) {
+    if (!pushedFeatureIds.has(feature.id)) {
+      orderedFeatures.push({ ...feature, folderId: null })
+    }
+  }
+
+  return {
+    ...project,
+    features: orderedFeatures,
+    featureFolders,
+    featureTree: normalizedTree,
   }
 }
 
@@ -557,11 +658,13 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
 }
 
 function normalizeProject(project: Project): Project {
-  const normalizedBase = dedupeProjectIds({
+  const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
     features: project.features.map(normalizeFeatureZRange),
+    featureFolders: project.featureFolders ?? [],
+    featureTree: project.featureTree ?? [],
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
-  })
+  }))
 
   const normalizedProject = {
     ...normalizedBase,
@@ -620,6 +723,15 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
       ? selection.hoveredFeatureId
       : null
 
+  const safeSelectedNode =
+    selectedNode?.type === 'folder'
+      ? project.featureFolders.some((folder) => folder.id === selectedNode.folderId)
+        ? selectedNode
+        : null
+      : selectedNode?.type === 'features_root'
+        ? selectedNode
+        : selectedNode
+
   return {
     ...selection,
     mode:
@@ -633,7 +745,7 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
         ? { type: 'feature', featureId: selectedFeatureId }
         : selection.selectedNode?.type === 'feature'
           ? null
-          : selection.selectedNode,
+          : safeSelectedNode,
     hoveredFeatureId,
     activeControl: null,
   }
@@ -1182,6 +1294,239 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // ── Features ─────────────────────────────────────────────
 
+  addFeatureFolder: () => {
+    const state = get()
+    const nextId = nextUniqueGeneratedId(state.project, 'fd')
+    const folder: FeatureFolder = {
+      id: nextId,
+      name: `Folder ${state.project.featureFolders.length + 1}`,
+      collapsed: false,
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        featureFolders: [...s.project.featureFolders, folder],
+        featureTree: [...s.project.featureTree, { type: 'folder', folderId: nextId }],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'folder', folderId: nextId },
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return nextId
+  },
+
+  updateFeatureFolder: (id, patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        featureFolders: s.project.featureFolders.map((folder) => (
+          folder.id === id ? { ...folder, ...patch } : folder
+        )),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteFeatureFolder: (id) =>
+    set((s) => {
+      const folderFeatures = s.project.features.filter((feature) => feature.folderId === id)
+      const nextFeatureTree = s.project.featureTree.flatMap((entry) => (
+        entry.type === 'folder' && entry.folderId === id
+          ? folderFeatures.map((feature) => ({ type: 'feature', featureId: feature.id } as FeatureTreeEntry))
+          : [entry]
+      ))
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        featureFolders: s.project.featureFolders.filter((folder) => folder.id !== id),
+        featureTree: nextFeatureTree,
+        features: s.project.features.map((feature) => (
+          feature.folderId === id ? { ...feature, folderId: null } : feature
+        )),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedNode: s.selection.selectedNode?.type === 'folder' && s.selection.selectedNode.folderId === id
+            ? { type: 'features_root' }
+            : s.selection.selectedNode,
+          selectedFeatureId: s.selection.selectedFeatureId,
+          selectedFeatureIds: s.selection.selectedFeatureIds,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  assignFeaturesToFolder: (featureIds, folderId) =>
+    set((s) => {
+      const ids = featureIds.filter((id, index) => featureIds.indexOf(id) === index)
+      if (ids.length === 0) {
+        return {}
+      }
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: s.project.features.map((feature) => (
+          ids.includes(feature.id) ? { ...feature, folderId } : feature
+        )),
+        featureTree: [
+          ...s.project.featureTree.filter((entry) => !(entry.type === 'feature' && ids.includes(entry.featureId))),
+          ...(folderId === null ? ids.map((featureId) => ({ type: 'feature', featureId } as FeatureTreeEntry)) : []),
+        ],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  moveFeatureTreeFeature: (featureId, folderId, beforeFeatureId = null) =>
+    set((s) => {
+      const sourceFeature = s.project.features.find((feature) => feature.id === featureId)
+      if (!sourceFeature) {
+        return {}
+      }
+      if (folderId !== null && !s.project.featureFolders.some((folder) => folder.id === folderId)) {
+        return {}
+      }
+
+      const remainingFeatures = s.project.features.filter((feature) => feature.id !== featureId)
+      const nextSourceFeature = { ...sourceFeature, folderId }
+      let insertIndex = remainingFeatures.length
+
+      if (beforeFeatureId) {
+        const beforeIndex = remainingFeatures.findIndex((feature) => feature.id === beforeFeatureId)
+        const beforeFeature = remainingFeatures.find((feature) => feature.id === beforeFeatureId)
+        if (beforeIndex !== -1 && beforeFeature && beforeFeature.folderId === folderId) {
+          insertIndex = beforeIndex
+        }
+      } else if (folderId !== null) {
+        const folderIndexes = remainingFeatures
+          .map((feature, index) => (feature.folderId === folderId ? index : -1))
+          .filter((index) => index !== -1)
+        if (folderIndexes.length > 0) {
+          insertIndex = folderIndexes[folderIndexes.length - 1] + 1
+        }
+      }
+
+      const nextFeatures = [...remainingFeatures]
+      nextFeatures.splice(insertIndex, 0, nextSourceFeature)
+
+      const rootEntries = s.project.featureTree.filter((entry) => (
+        entry.type === 'folder' ||
+        (entry.type === 'feature' && entry.featureId !== featureId)
+      ))
+
+      let nextFeatureTree = rootEntries
+      if (folderId === null) {
+        const nextEntry: FeatureTreeEntry = { type: 'feature', featureId }
+        if (beforeFeatureId) {
+          const targetRootIndex = rootEntries.findIndex((entry) => entry.type === 'feature' && entry.featureId === beforeFeatureId)
+          if (targetRootIndex !== -1) {
+            nextFeatureTree = [...rootEntries]
+            nextFeatureTree.splice(targetRootIndex, 0, nextEntry)
+          } else {
+            nextFeatureTree = [...rootEntries, nextEntry]
+          }
+        } else {
+          nextFeatureTree = [...rootEntries, nextEntry]
+        }
+      }
+
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: nextFeatures,
+        featureTree: nextFeatureTree,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  reorderFeatureTreeEntries: (entries) =>
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        featureTree: entries,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setAllFeaturesVisible: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => ({ ...feature, visible })),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   addFeature: (feature) =>
     set((s) => {
       const safeId = s.project.features.some((existing) => existing.id === feature.id)
@@ -1190,14 +1535,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
       const safeFeature: SketchFeature = isFirst
-        ? normalizeFeatureZRange({ ...feature, id: safeId, operation: 'add' })
-        : normalizeFeatureZRange({ ...feature, id: safeId })
+        ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: null, operation: 'add' })
+        : normalizeFeatureZRange({ ...feature, id: safeId, folderId: feature.folderId ?? null })
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, safeFeature],
+        featureTree: [...s.project.featureTree, { type: 'feature', featureId: safeFeature.id }],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
       return {
-        project: {
-          ...s.project,
-          features: [...s.project.features, safeFeature],
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
-        },
+        project: nextProject,
         selection: {
           ...s.selection,
           selectedFeatureId: safeFeature.id,
@@ -1252,11 +1599,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   deleteFeatures: (ids) =>
     set((s) => {
       const idsToDelete = new Set(ids)
-      const nextProject = {
+      const nextProject = syncFeatureTreeProject({
         ...s.project,
         features: s.project.features.filter((feature) => !idsToDelete.has(feature.id)),
+        featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idsToDelete.has(entry.featureId))),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
+      })
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -1293,11 +1641,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         reordered[0] = { ...reordered[0], operation: 'add' }
       }
       return {
-        project: {
+        project: syncFeatureTreeProject({
           ...s.project,
           features: reordered,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
-        },
+        }),
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -1395,6 +1743,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureIds: [],
         selectedNode: { type: 'stock' },
         mode: 'feature',
+      },
+    })),
+
+  selectFeaturesRoot: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'features_root' },
+        mode: 'feature',
+        activeControl: null,
+      },
+    })),
+
+  selectFeatureFolder: (id) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'folder', folderId: id },
+        mode: 'feature',
+        activeControl: null,
       },
     })),
 
@@ -1789,10 +2161,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addRectFeature: (name, x, y, w, h, depth) => {
     const id = nextUniqueGeneratedId(get().project, 'f')
-    const feature: SketchFeature = {
-      id,
-      name,
-      sketch: {
+      const feature: SketchFeature = {
+        id,
+        name,
+        folderId: null,
+        sketch: {
         profile: rectProfile(x, y, w, h),
         origin: { x: 0, y: 0 },
         dimensions: [],
@@ -1809,10 +2182,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addCircleFeature: (name, cx, cy, r, depth) => {
     const id = nextUniqueGeneratedId(get().project, 'f')
-    const feature: SketchFeature = {
-      id,
-      name,
-      sketch: {
+      const feature: SketchFeature = {
+        id,
+        name,
+        folderId: null,
+        sketch: {
         profile: circleProfile(cx, cy, r),
         origin: { x: 0, y: 0 },
         dimensions: [],
@@ -1829,10 +2203,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addPolygonFeature: (name, points, depth) => {
     const id = nextUniqueGeneratedId(get().project, 'f')
-    const feature: SketchFeature = {
-      id,
-      name,
-      sketch: {
+      const feature: SketchFeature = {
+        id,
+        name,
+        folderId: null,
+        sketch: {
         profile: polygonProfile(points),
         origin: { x: 0, y: 0 },
         dimensions: [],
@@ -1849,10 +2224,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   addSplineFeature: (name, points, depth) => {
     const id = nextUniqueGeneratedId(get().project, 'f')
-    const feature: SketchFeature = {
-      id,
-      name,
-      sketch: {
+      const feature: SketchFeature = {
+        id,
+        name,
+        folderId: null,
+        sketch: {
         profile: splineProfile(points),
         origin: { x: 0, y: 0 },
         dimensions: [],

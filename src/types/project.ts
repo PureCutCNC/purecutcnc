@@ -111,6 +111,7 @@ export type FeatureOperation = 'add' | 'subtract'
 export interface SketchFeature {
   id: string
   name: string
+  folderId: string | null
   sketch: Sketch
   operation: FeatureOperation
   z_top: DimensionRef
@@ -118,6 +119,16 @@ export interface SketchFeature {
   visible: boolean
   locked: boolean
 }
+
+export interface FeatureFolder {
+  id: string
+  name: string
+  collapsed: boolean
+}
+
+export type FeatureTreeEntry =
+  | { type: 'folder'; folderId: string }
+  | { type: 'feature'; featureId: string }
 
 // ============================================================
 // Stock
@@ -233,6 +244,8 @@ export interface Project {
   stock: Stock
   dimensions: Record<string, NamedDimension>
   features: SketchFeature[]
+  featureFolders: FeatureFolder[]
+  featureTree: FeatureTreeEntry[]
   global_constraints: GlobalConstraint[]
   tools: Tool[]
   operations: Operation[]
@@ -507,6 +520,8 @@ export function newProject(name = 'Untitled'): Project {
     stock: defaultStock(),
     dimensions: {},
     features: [],
+    featureFolders: [],
+    featureTree: [],
     global_constraints: [],
     tools: [],
     operations: [],
