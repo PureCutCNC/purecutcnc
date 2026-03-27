@@ -11,9 +11,10 @@ import { Toolbar } from './components/layout/Toolbar'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { useProjectStore } from './store/projectStore'
 
-interface FeatureContextMenuState {
-  featureIds: string[]
-  primaryFeatureId: string
+interface TreeContextMenuState {
+  entityType: 'feature' | 'clamp'
+  ids: string[]
+  primaryId: string
   x: number
   y: number
 }
@@ -22,20 +23,39 @@ function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
-  const [featureContextMenu, setFeatureContextMenu] = useState<FeatureContextMenuState | null>(null)
+  const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const { project, selectFeature, enterSketchEdit, deleteFeatures, startMoveFeature, startCopyFeature } = useProjectStore()
+  const {
+    project,
+    selectFeature,
+    enterSketchEdit,
+    enterClampEdit,
+    deleteFeatures,
+    deleteClamp,
+    startMoveFeature,
+    startCopyFeature,
+    startMoveClamp,
+    startCopyClamp,
+  } = useProjectStore()
 
   const menuFeature = useMemo(
     () =>
-      featureContextMenu
-        ? project.features.find((feature) => feature.id === featureContextMenu.primaryFeatureId) ?? null
+      treeContextMenu?.entityType === 'feature'
+        ? project.features.find((feature) => feature.id === treeContextMenu.primaryId) ?? null
         : null,
-    [featureContextMenu, project.features]
+    [treeContextMenu, project.features]
+  )
+
+  const menuClamp = useMemo(
+    () =>
+      treeContextMenu?.entityType === 'clamp'
+        ? project.clamps.find((clamp) => clamp.id === treeContextMenu.primaryId) ?? null
+        : null,
+    [treeContextMenu, project.clamps]
   )
 
   const effectiveSelectedOperationId =
@@ -139,7 +159,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!featureContextMenu) {
+    if (!treeContextMenu) {
       return
     }
 
@@ -148,12 +168,12 @@ function App() {
       if (menuRef.current?.contains(target)) {
         return
       }
-      setFeatureContextMenu(null)
+      setTreeContextMenu(null)
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        setFeatureContextMenu(null)
+        setTreeContextMenu(null)
       }
     }
 
@@ -163,7 +183,7 @@ function App() {
       window.removeEventListener('pointerdown', handlePointerDown)
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [featureContextMenu])
+  }, [treeContextMenu])
 
   function handleZoomToModel() {
     if (centerTab === 'preview3d') {
@@ -179,49 +199,76 @@ function App() {
     const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
       ? nextSelection.selectedFeatureIds
       : [featureId]
-    setFeatureContextMenu({ featureIds, primaryFeatureId: featureId, x, y })
+    setTreeContextMenu({ entityType: 'feature', ids: featureIds, primaryId: featureId, x, y })
   }
 
-  function closeFeatureContextMenu() {
-    setFeatureContextMenu(null)
+  function openClampContextMenu(clampId: string, x: number, y: number) {
+    setTreeContextMenu({ entityType: 'clamp', ids: [clampId], primaryId: clampId, x, y })
+  }
+
+  function closeTreeContextMenu() {
+    setTreeContextMenu(null)
   }
 
   function handleEditSketch(featureId: string) {
     selectFeature(featureId)
     enterSketchEdit(featureId)
     setCenterTab('sketch')
-    closeFeatureContextMenu()
+    closeTreeContextMenu()
+  }
+
+  function handleEditClamp(clampId: string) {
+    enterClampEdit(clampId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
   }
 
   function handleDeleteFeatures(featureIds: string[]) {
     deleteFeatures(featureIds)
-    closeFeatureContextMenu()
+    closeTreeContextMenu()
   }
 
   function handleMoveFeature(featureId: string) {
     startMoveFeature(featureId)
     setCenterTab('sketch')
-    closeFeatureContextMenu()
+    closeTreeContextMenu()
   }
 
   function handleCopyFeature(featureId: string) {
     startCopyFeature(featureId)
     setCenterTab('sketch')
-    closeFeatureContextMenu()
+    closeTreeContextMenu()
   }
 
-  const menuPosition = featureContextMenu
+  function handleDeleteClamp(clampId: string) {
+    deleteClamp(clampId)
+    closeTreeContextMenu()
+  }
+
+  function handleMoveClamp(clampId: string) {
+    startMoveClamp(clampId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleCopyClamp(clampId: string) {
+    startCopyClamp(clampId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  const menuPosition = treeContextMenu
     ? {
-        left: Math.min(featureContextMenu.x, window.innerWidth - 188),
-        top: Math.min(featureContextMenu.y, window.innerHeight - 180),
+        left: Math.min(treeContextMenu.x, window.innerWidth - 188),
+        top: Math.min(treeContextMenu.y, window.innerHeight - 180),
       }
     : null
 
-  const menuHasMultipleSelection = (featureContextMenu?.featureIds.length ?? 0) > 1
+  const menuHasMultipleSelection = treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.length ?? 0) > 1
   const menuHasLockedSelection =
-    featureContextMenu?.featureIds.some((featureId) =>
+    treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.some((featureId) =>
       project.features.some((feature) => feature.id === featureId && feature.locked)
-    ) ?? false
+    ) ?? false)
 
   return (
     <>
@@ -232,6 +279,7 @@ function App() {
           <SketchCanvas
             ref={sketchCanvasRef}
             onFeatureContextMenu={openFeatureContextMenu}
+            onClampContextMenu={openClampContextMenu}
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
           />
@@ -243,7 +291,7 @@ function App() {
             selectedOperationId={effectiveSelectedOperationId}
           />
         }
-        featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} />}
+        featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onClampContextMenu={openClampContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
         camPanel={
           <CAMPanel
@@ -260,41 +308,64 @@ function App() {
         rightTab={rightTab}
         onRightTabChange={setRightTab}
       />
-      {featureContextMenu && menuFeature && menuPosition ? (
+      {treeContextMenu && menuPosition && (menuFeature || menuClamp) ? (
         <div
           ref={menuRef}
           className="feature-context-menu"
           style={menuPosition}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => handleEditSketch(menuFeature.id)}
-            disabled={menuHasMultipleSelection}
-            title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
-          >
-            Edit Sketch
-          </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => handleCopyFeature(menuFeature.id)}>
-            {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => handleMoveFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
-            title={menuHasLockedSelection ? 'Locked features cannot be moved as part of a selection' : undefined}
-          >
-            {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
-          </button>
-          <button
-            className="feature-context-menu__item feature-context-menu__item--danger"
-            type="button"
-            onClick={() => handleDeleteFeatures(featureContextMenu.featureIds)}
-          >
-            {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
-          </button>
+          {menuFeature ? (
+            <>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleEditSketch(menuFeature.id)}
+                disabled={menuHasMultipleSelection}
+                title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
+              >
+                Edit Sketch
+              </button>
+              <button className="feature-context-menu__item" type="button" onClick={() => handleCopyFeature(menuFeature.id)}>
+                {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleMoveFeature(menuFeature.id)}
+                disabled={menuHasLockedSelection}
+                title={menuHasLockedSelection ? 'Locked features cannot be moved as part of a selection' : undefined}
+              >
+                {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
+              </button>
+              <button
+                className="feature-context-menu__item feature-context-menu__item--danger"
+                type="button"
+                onClick={() => handleDeleteFeatures(treeContextMenu.ids)}
+              >
+                {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
+              </button>
+            </>
+          ) : menuClamp ? (
+            <>
+              <button className="feature-context-menu__item" type="button" onClick={() => handleEditClamp(menuClamp.id)}>
+                Edit Sketch
+              </button>
+              <button className="feature-context-menu__item" type="button" onClick={() => handleCopyClamp(menuClamp.id)}>
+                Copy
+              </button>
+              <button className="feature-context-menu__item" type="button" onClick={() => handleMoveClamp(menuClamp.id)}>
+                Move
+              </button>
+              <button
+                className="feature-context-menu__item feature-context-menu__item--danger"
+                type="button"
+                onClick={() => handleDeleteClamp(menuClamp.id)}
+              >
+                Delete
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
     </>

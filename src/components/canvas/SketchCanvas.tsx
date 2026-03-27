@@ -8,13 +8,14 @@ import {
   getProfileBounds,
   getStockBounds,
   polygonProfile,
+  profileExceedsStock,
   profileHasSelfIntersection,
   profileVertices,
-  sampleProfilePoints,
   rectProfile,
+  sampleProfilePoints,
   splineProfile,
 } from '../../types/project'
-import type { GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock } from '../../types/project'
+import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock } from '../../types/project'
 import { convertLength, formatLength } from '../../utils/units'
 
 const PADDING = 42
@@ -606,6 +607,23 @@ function drawPendingPathLoop(
   }
 }
 
+function drawClampFootprint(
+  ctx: CanvasRenderingContext2D,
+  clamp: Clamp,
+  vt: ViewTransform,
+  selected: boolean,
+): void {
+  const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
+  traceProfilePath(ctx, profile, vt)
+  ctx.fillStyle = selected ? 'rgba(118, 144, 209, 0.24)' : 'rgba(86, 110, 168, 0.14)'
+  ctx.fill()
+  ctx.strokeStyle = selected ? '#9db9ff' : 'rgba(122, 151, 224, 0.88)'
+  ctx.lineWidth = selected ? 2.2 : 1.6
+  ctx.setLineDash([6, 4])
+  ctx.stroke()
+  ctx.setLineDash([])
+}
+
 function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
   if (points.length === 0) {
     return []
@@ -760,18 +778,21 @@ function findHitFeatureId(worldPoint: Point, features: SketchFeature[]): string 
   return null
 }
 
+function findHitClampId(worldPoint: Point, clamps: Clamp[]): string | null {
+  for (let index = clamps.length - 1; index >= 0; index -= 1) {
+    const clamp = clamps[index]
+    if (!clamp.visible) continue
+    if (pointInProfile(worldPoint.x, worldPoint.y, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))) {
+      return clamp.id
+    }
+  }
+  return null
+}
+
 function distance2(a: CanvasPoint, b: CanvasPoint): number {
   const dx = a.cx - b.cx
   const dy = a.cy - b.cy
   return dx * dx + dy * dy
-}
-
-function clampToStock(point: Point, stock: Stock): Point {
-  const bounds = getStockBounds(stock)
-  return {
-    x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
-    y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y)),
-  }
 }
 
 function snap(value: number, step: number): number {
@@ -869,24 +890,15 @@ function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point
 }
 
 function buildPendingProfile(
-  pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' }>,
+  pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' | 'clamp' }>,
   previewPoint: Point,
-  stock: Stock,
   units: 'mm' | 'inch',
 ): SketchProfile {
-  const bounds = getStockBounds(stock)
-  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
   const minSize = convertLength(0.01, 'mm', units)
-  const anchor = {
-    x: clamp(pendingAdd.anchor?.x ?? previewPoint.x, bounds.minX, bounds.maxX),
-    y: clamp(pendingAdd.anchor?.y ?? previewPoint.y, bounds.minY, bounds.maxY),
-  }
-  const current = {
-    x: clamp(previewPoint.x, bounds.minX, bounds.maxX),
-    y: clamp(previewPoint.y, bounds.minY, bounds.maxY),
-  }
+  const anchor = pendingAdd.anchor ?? previewPoint
+  const current = previewPoint
 
-  if (pendingAdd.shape === 'rect') {
+  if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'clamp') {
     const x = Math.min(anchor.x, current.x)
     const y = Math.min(anchor.y, current.y)
     return rectProfile(
@@ -898,13 +910,7 @@ function buildPendingProfile(
   }
 
   const radius = Math.max(Math.hypot(current.x - anchor.x, current.y - anchor.y), minSize)
-  const maxRadius = Math.min(
-    Math.abs(bounds.minX - anchor.x),
-    Math.abs(bounds.maxX - anchor.x),
-    Math.abs(bounds.minY - anchor.y),
-    Math.abs(bounds.maxY - anchor.y),
-  )
-  return circleProfile(anchor.x, anchor.y, Math.min(radius, maxRadius))
+  return circleProfile(anchor.x, anchor.y, radius)
 }
 
 type CompositePendingAdd = Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'composite' }>
@@ -1058,12 +1064,13 @@ function isLoopCloseCandidate(
 
 interface SketchCanvasProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+  onClampContextMenu?: (clampId: string, x: number, y: number) => void
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, toolpaths = [], selectedOperationId = null },
+  { onFeatureContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1084,14 +1091,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMove,
     selection,
     selectFeature,
+    selectClamp,
     hoverFeature,
     enterSketchEdit,
+    enterClampEdit,
     applySketchEdit,
     cancelSketchEdit,
     setActiveControl,
     beginHistoryTransaction,
     commitHistoryTransaction,
     moveFeatureControl,
+    moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
     addPendingPolygonPoint,
@@ -1152,6 +1162,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    for (const clamp of project.clamps) {
+      if (!clamp.visible) continue
+      const selected = selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id
+      drawClampFootprint(ctx, clamp, vt, selected)
+      if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
+        drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl)
+      }
+    }
+
     for (const toolpath of toolpaths) {
       if (toolpath.moves.length > 0) {
         drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId)
@@ -1185,9 +1204,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     } else if (pendingAdd?.shape === 'composite') {
       drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt)
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle') && pendingAdd.anchor && currentPreviewPoint) {
-      const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.stock, project.meta.units)
-      const label = pendingAdd.shape === 'rect' ? 'Pending rectangle' : 'Pending circle'
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
+      const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
+      const label =
+        pendingAdd.shape === 'rect'
+          ? 'Pending rectangle'
+          : pendingAdd.shape === 'clamp'
+            ? 'Pending clamp'
+            : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
       drawPendingPoint(ctx, pendingAdd.anchor, vt)
       drawPendingPoint(ctx, currentPreviewPoint, vt)
@@ -1201,11 +1225,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         : null
 
     if (pendingMove) {
-      const features = pendingMove.featureIds
-        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
-      if (features.length > 0) {
-        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+      const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+
+      if (pendingMove.entityType === 'feature') {
+        const features = pendingMove.entityIds
+          .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
+          .filter((feature): feature is SketchFeature => feature !== null)
+        if (features.length === 0) {
+          return
+        }
 
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
@@ -1228,6 +1256,51 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   (targetPoint.y - pendingMove.fromPoint.y) * index,
                 )
                 drawPreviewProfile(ctx, repeatedPreview, vt, `Copy ${index}`)
+              }
+            }
+          }
+        } else if (currentMovePreviewPoint) {
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+        }
+      } else {
+        const clamps = pendingMove.entityIds
+          .map((clampId) => project.clamps.find((entry) => entry.id === clampId) ?? null)
+          .filter((clamp): clamp is Clamp => clamp !== null)
+        if (clamps.length === 0) {
+          return
+        }
+
+        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+
+        if (pendingMove.fromPoint && targetPoint) {
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          for (const clamp of clamps) {
+            drawClampFootprint(
+              ctx,
+              {
+                ...clamp,
+                x: clamp.x + (targetPoint.x - pendingMove.fromPoint.x),
+                y: clamp.y + (targetPoint.y - pendingMove.fromPoint.y),
+              },
+              vt,
+              true,
+            )
+          }
+          if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
+            const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
+            for (let index = 2; index <= parsedCount; index += 1) {
+              for (const clamp of clamps) {
+                drawClampFootprint(
+                  ctx,
+                  {
+                    ...clamp,
+                    x: clamp.x + (targetPoint.x - pendingMove.fromPoint.x) * index,
+                    y: clamp.y + (targetPoint.y - pendingMove.fromPoint.y) * index,
+                  },
+                  vt,
+                  false,
+                )
               }
             }
           }
@@ -1318,13 +1391,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
   }
 
+  function editableClamp(): Clamp | null {
+    if (selection.mode !== 'sketch_edit') return null
+    const selectedNode = selection.selectedNode
+    if (selectedNode?.type !== 'clamp') return null
+    return project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
+  }
+
   function hitEditableControl(point: CanvasPoint): SketchControlRef | null {
     const feature = editableFeature()
+    const clamp = editableClamp()
     const canvas = canvasRef.current
-    if (!feature || !canvas || feature.locked) return null
+    if (!canvas) return null
+
+    const profile =
+      feature
+        ? feature.sketch.profile
+        : clamp
+          ? rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
+          : null
+    if (!profile || (feature && feature.locked)) return null
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const vertices = profileVertices(feature.sketch.profile)
+    const vertices = profileVertices(profile)
     let bestControl: SketchControlRef | null = null
     let bestDistanceSq = NODE_HIT_RADIUS * NODE_HIT_RADIUS
 
@@ -1337,11 +1426,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
-      const outgoingSegment = feature.sketch.profile.segments[index]
+    for (let index = 0; index < profile.segments.length; index += 1) {
+      const outgoingSegment = profile.segments[index]
       const incomingSegment =
-        feature.sketch.profile.segments[
-          (index - 1 + feature.sketch.profile.segments.length) % feature.sketch.profile.segments.length
+        profile.segments[
+          (index - 1 + profile.segments.length) % profile.segments.length
         ]
 
       if (outgoingSegment.type === 'bezier') {
@@ -1363,13 +1452,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
-      const segment = feature.sketch.profile.segments[index]
+    for (let index = 0; index < profile.segments.length; index += 1) {
+      const segment = profile.segments[index]
       if (segment.type !== 'arc') {
         continue
       }
 
-      const handleCanvas = worldToCanvas(arcControlPoint(anchorPointForIndex(feature.sketch.profile, index), segment), vt)
+      const handleCanvas = worldToCanvas(arcControlPoint(anchorPointForIndex(profile, index), segment), vt)
       const d2 = distance2(point, handleCanvas)
       if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
         bestDistanceSq = d2
@@ -1403,11 +1492,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const clamped = clampToStock(world, project.stock)
     const snapStep = project.grid.snapEnabled ? project.grid.snapIncrement : 0
     const snapped = {
-      x: snapStep > 0 ? snap(clamped.x, snapStep) : clamped.x,
-      y: snapStep > 0 ? snap(clamped.y, snapStep) : clamped.y,
+      x: snapStep > 0 ? snap(world.x, snapStep) : world.x,
+      y: snapStep > 0 ? snap(world.y, snapStep) : world.y,
     }
 
     if (isPanningRef.current && lastPanPointRef.current) {
@@ -1442,6 +1530,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'clamp' && selection.activeControl) {
+      moveClampControl(selection.selectedNode.clampId, selection.activeControl, snapped)
+      return
+    }
+
     const hitId = findHitFeatureId(world, project.features)
     hoverFeature(hitId)
   }
@@ -1469,7 +1562,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     hoverFeature(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
       setPendingPreviewPoint(null)
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle') && pendingAdd.anchor) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
       setPendingPreviewPoint(null)
@@ -1497,7 +1590,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!canvas) return
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = clampToStock(canvasToWorld(point.cx, point.cy, vt), project.stock)
+    const world = canvasToWorld(point.cx, point.cy, vt)
 
     if (pendingAdd) {
       const snapped = {
@@ -1516,10 +1609,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           addPendingPolygonPoint(snapped)
         }
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') && !pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') {
         placePendingAddAt(snapped)
         setPendingPreviewPoint(null)
       } else if (pendingAdd.shape === 'composite') {
@@ -1560,6 +1653,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           setPendingMovePreviewPoint(null)
         }
       }
+      return
+    }
+
+    const hitClampId = findHitClampId(world, project.clamps)
+    if (hitClampId) {
+      selectClamp(hitClampId)
       return
     }
 
@@ -1608,6 +1707,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    const hitClampId = findHitClampId(world, project.clamps)
+    if (hitClampId) {
+      enterClampEdit(hitClampId)
+      return
+    }
     const hitId = findHitFeatureId(world, project.features)
     if (hitId) enterSketchEdit(hitId)
   }
@@ -1634,6 +1738,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const point = canvasCoordinates(event)
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    const hitClampId = findHitClampId(world, project.clamps)
+    if (hitClampId) {
+      selectClamp(hitClampId)
+      onClampContextMenu?.(hitClampId, event.clientX, event.clientY)
+      return
+    }
+
     const hitId = findHitFeatureId(world, project.features)
     if (!hitId) {
       return
@@ -1726,13 +1837,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     selection.mode === 'sketch_edit' && selection.selectedFeatureId
       ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
       : null
+  const editingClamp = (() => {
+    if (selection.mode !== 'sketch_edit') return null
+    const selectedNode = selection.selectedNode
+    if (selectedNode?.type !== 'clamp') return null
+    return project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
+  })()
   const editingFeatureHasSelfIntersection =
     editingFeature ? profileHasSelfIntersection(editingFeature.sketch.profile) : false
+  const editingFeatureExceedsStock =
+    editingFeature
+      ? profileExceedsStock(editingFeature.sketch.profile, project.stock)
+      : editingClamp
+        ? profileExceedsStock(rectProfile(editingClamp.x, editingClamp.y, editingClamp.w, editingClamp.h), project.stock)
+        : false
   const pendingDraftProfile =
     pendingAdd?.shape === 'polygon' && pendingAdd.points.length >= 3
       ? polygonProfile(pendingAdd.points)
       : pendingAdd?.shape === 'spline' && pendingAdd.points.length >= 3
         ? splineProfile(pendingAdd.points)
+        : (pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp')
+            && pendingAdd.anchor
+            && pendingPreviewPoint?.session === pendingAdd.session
+          ? buildPendingProfile(pendingAdd, pendingPreviewPoint.point, project.meta.units)
         : pendingAdd?.shape === 'composite' && pendingAdd.start
           ? (() => {
               const segments = resolveCompositeDraftSegmentsForWarning(pendingAdd)
@@ -1746,6 +1873,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : null
   const pendingDraftHasSelfIntersection =
     pendingDraftProfile ? profileHasSelfIntersection(pendingDraftProfile) : false
+  const pendingDraftExceedsStock =
+    pendingDraftProfile ? profileExceedsStock(pendingDraftProfile, project.stock) : false
 
   return (
     <div ref={containerRef} className="sketch-canvas-container">
@@ -1769,6 +1898,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           {editingFeatureHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
           ) : null}
+          {editingFeatureExceedsStock ? (
+            <div className="sketch-banner-warning">This profile extends outside the stock boundary.</div>
+          ) : null}
         </div>
       )}
       {pendingAdd && (
@@ -1782,14 +1914,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   : pendingAdd.shape === 'spline'
                     ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
                     : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
-              : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') && pendingAdd.anchor
-                ? pendingAdd.shape === 'rect'
-                  ? 'Move the mouse to size the rectangle, then click the opposite corner.'
-                  : 'Move the mouse to set the radius, then click again to confirm the circle.'
-                : pendingAdd.shape === 'rect'
-                  ? 'Click the sketch to set the rectangle corner, then click again to size it.'
-                  : pendingAdd.shape === 'circle'
-                    ? 'Click the sketch to set the circle center, then click again to set the radius.'
+            : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
+              ? pendingAdd.shape === 'rect'
+                ? 'Move the mouse to size the rectangle, then click the opposite corner.'
+                : pendingAdd.shape === 'clamp'
+                  ? 'Move the mouse to size the clamp footprint, then click the opposite corner.'
+                : 'Move the mouse to set the radius, then click again to confirm the circle.'
+              : pendingAdd.shape === 'rect'
+                ? 'Click the sketch to set the rectangle corner, then click again to size it.'
+                : pendingAdd.shape === 'clamp'
+                  ? 'Click the sketch to set the clamp corner, then click again to size it.'
+                : pendingAdd.shape === 'circle'
+                  ? 'Click the sketch to set the circle center, then click again to set the radius.'
                     : !pendingAdd.start
                       ? 'Click to place the first composite point. Press L for line, A for arc, or S for spline.'
                       : pendingAdd.currentMode === 'arc'
@@ -1803,6 +1939,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </div>
           {pendingDraftHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
+          ) : null}
+          {pendingDraftExceedsStock ? (
+            <div className="sketch-banner-warning">This profile extends outside the stock boundary.</div>
           ) : null}
         </div>
       )}

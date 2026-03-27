@@ -4,31 +4,38 @@ import { useProjectStore } from '../../store/projectStore'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+  onClampContextMenu?: (clampId: string, x: number, y: number) => void
 }
 
-export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
+export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: FeatureTreeProps) {
   const {
     project,
     selection,
+    startAddClampPlacement,
     setGrid,
     setStock,
     addFeatureFolder,
     moveFeatureTreeFeature,
     reorderFeatureTreeEntries,
     setAllFeaturesVisible,
+    setAllClampsVisible,
     updateFeatureFolder,
     updateFeature,
+    updateClamp,
     selectProject,
     selectGrid,
     selectFeaturesRoot,
+    selectClampsRoot,
     selectFeatureFolder,
     selectFeature,
+    selectClamp,
     selectStock,
     hoverFeature,
   } = useProjectStore()
 
   const [dragItem, setDragItem] = useState<{ kind: 'feature' | 'folder'; id: string } | null>(null)
   const [featuresCollapsed, setFeaturesCollapsed] = useState(false)
+  const [clampsCollapsed, setClampsCollapsed] = useState(false)
   const dragOverTarget = useRef<{ kind: 'features' | 'folder' | 'feature'; id?: string } | null>(null)
 
   function handleFeatureDragStart(id: string) {
@@ -259,6 +266,47 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
             })}
           </div>
         )}
+        <TreeRow
+          label="Clamps"
+          kind="clamps"
+          depth={0}
+          isSelected={selection.selectedNode?.type === 'clamps_root'}
+          isDragging={false}
+          collapsed={clampsCollapsed}
+          onClick={selectClampsRoot}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onAddClamp={() => startAddClampPlacement()}
+          onToggleCollapse={() => setClampsCollapsed((value) => !value)}
+          onShowAll={() => setAllClampsVisible(true)}
+          onHideAll={() => setAllClampsVisible(false)}
+        />
+        {clampsCollapsed ? null : project.clamps.length === 0 ? (
+          <div className="feature-tree-empty">No clamps yet.</div>
+        ) : (
+          <div className="tree-children">
+            {project.clamps.map((clamp) => (
+              <TreeRow
+                key={clamp.id}
+                label={clamp.name}
+                kind="clamp"
+                depth={1}
+                isSelected={selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id}
+                isDragging={false}
+                visible={clamp.visible}
+                onClick={() => selectClamp(clamp.id)}
+                onMouseEnter={() => hoverFeature(null)}
+                onMouseLeave={() => hoverFeature(null)}
+                onToggleVisible={() => updateClamp(clamp.id, { visible: !clamp.visible })}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  selectClamp(clamp.id)
+                  onClampContextMenu?.(clamp.id, event.clientX, event.clientY)
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -266,7 +314,7 @@ export function FeatureTree({ onFeatureContextMenu }: FeatureTreeProps) {
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'features' | 'folder' | 'feature'
+  kind: 'project' | 'grid' | 'stock' | 'features' | 'clamps' | 'folder' | 'feature' | 'clamp'
   depth?: number
   isSelected: boolean
   isDragging: boolean
@@ -281,6 +329,7 @@ interface TreeRowProps {
   onToggleOperation?: () => void
   onToggleCollapse?: () => void
   onAddFolder?: () => void
+  onAddClamp?: () => void
   onShowAll?: () => void
   onHideAll?: () => void
   onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
@@ -308,6 +357,7 @@ function TreeRow({
   onToggleOperation,
   onToggleCollapse,
   onAddFolder,
+  onAddClamp,
   onShowAll,
   onHideAll,
   onContextMenu,
@@ -347,12 +397,24 @@ function TreeRow({
             <path d="M1.5 3.25h3.2l1-1.35h2.15c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v.32h3.05c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v4.97c0 .43-.15.8-.44 1.09-.29.29-.66.44-1.09.44H1.75c-.43 0-.8-.15-1.09-.44-.29-.29-.44-.66-.44-1.09V4.78c0-.43.15-.8.44-1.09.29-.29.66-.44 1.09-.44Z" />
           </svg>
         ) : (
-          kind === 'project' ? 'proj' : kind === 'grid' ? 'grid' : kind === 'stock' ? 'root' : kind === 'features' ? 'feat' : 'node'
+          kind === 'project'
+            ? 'proj'
+            : kind === 'grid'
+              ? 'grid'
+              : kind === 'stock'
+                ? 'root'
+                : kind === 'features'
+                  ? 'feat'
+                  : kind === 'clamps'
+                    ? 'clmp'
+                    : kind === 'clamp'
+                      ? 'node'
+                      : 'node'
         )}
       </span>
       <span className="tree-label" title={label}>{label}</span>
       <div className="tree-row-actions">
-        {kind === 'features' && onShowAll ? (
+        {(kind === 'features' || kind === 'clamps') && onShowAll ? (
           <button
             type="button"
             className="tree-action-btn"
@@ -360,13 +422,13 @@ function TreeRow({
               event.stopPropagation()
               onShowAll()
             }}
-            title="Show all features"
-            aria-label="Show all features"
+            title={kind === 'features' ? 'Show all features' : 'Show all clamps'}
+            aria-label={kind === 'features' ? 'Show all features' : 'Show all clamps'}
           >
             ◉
           </button>
         ) : null}
-        {kind === 'features' && onHideAll ? (
+        {(kind === 'features' || kind === 'clamps') && onHideAll ? (
           <button
             type="button"
             className="tree-action-btn tree-action-btn--muted"
@@ -374,8 +436,8 @@ function TreeRow({
               event.stopPropagation()
               onHideAll()
             }}
-            title="Hide all features"
-            aria-label="Hide all features"
+            title={kind === 'features' ? 'Hide all features' : 'Hide all clamps'}
+            aria-label={kind === 'features' ? 'Hide all features' : 'Hide all clamps'}
           >
             ○
           </button>
@@ -394,7 +456,21 @@ function TreeRow({
             +
           </button>
         ) : null}
-        {(kind === 'folder' || kind === 'features') && onToggleCollapse ? (
+        {kind === 'clamps' && onAddClamp ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onAddClamp()
+            }}
+            title="Add clamp"
+            aria-label="Add clamp"
+          >
+            +
+          </button>
+        ) : null}
+        {(kind === 'folder' || kind === 'features' || kind === 'clamps') && onToggleCollapse ? (
           <button
             type="button"
             className="tree-action-btn"

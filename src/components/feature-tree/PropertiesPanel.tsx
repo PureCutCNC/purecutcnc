@@ -1,4 +1,4 @@
-import { defaultStock, getStockBounds, profileHasSelfIntersection } from '../../types/project'
+import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
@@ -119,17 +119,21 @@ export function PropertiesPanel() {
     project,
     selection,
     addFeatureFolder,
+    startAddClampPlacement,
     assignFeaturesToFolder,
+    deleteClamp,
     deleteFeatureFolder,
     setProjectName,
     setGrid,
     setStock,
     setUnits,
+    updateClamp,
     updateFeatureFolder,
     updateFeature,
     deleteFeature,
     deleteFeatures,
     enterSketchEdit,
+    enterClampEdit,
   } = useProjectStore()
 
   const selectedFeatureIds = selection.selectedFeatureIds
@@ -146,6 +150,10 @@ export function PropertiesPanel() {
   const selectedFolder =
     selectedNode?.type === 'folder'
       ? project.featureFolders.find((folder) => folder.id === selectedNode.folderId) ?? null
+      : null
+  const selectedClamp =
+    selectedNode?.type === 'clamp'
+      ? project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
       : null
   const allSelectedFeatures = project.features.filter((feature) => selectedFeatureIds.includes(feature.id))
   const commonSelectedFolderId =
@@ -387,6 +395,28 @@ export function PropertiesPanel() {
     )
   }
 
+  if (selection.selectedNode?.type === 'clamps_root') {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput value="Clamps" disabled />
+          </label>
+          <label className="properties-field">
+            <span>Clamps</span>
+            <DraftTextInput value={`${project.clamps.length}`} disabled />
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => startAddClampPlacement()}>
+            Add Clamp
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (selectedFolder) {
     const featureCount = project.features.filter((feature) => feature.folderId === selectedFolder.id).length
 
@@ -419,6 +449,61 @@ export function PropertiesPanel() {
         <div className="properties-actions">
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(selectedFolder.id)}>
             Delete Folder
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (selectedClamp) {
+    const minimumClampSize = convertLength(0.1, 'mm', units)
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`clamp-name-${selectedClamp.id}-${selectedClamp.name}`}
+              value={selectedClamp.name}
+              onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Z Top</span>
+            <DraftNumberInput
+              key={`clamp-height-${selectedClamp.id}-${selectedClamp.height}`}
+              value={selectedClamp.height}
+              units={units}
+              min={minimumClampSize}
+              onCommit={(next) => updateClamp(selectedClamp.id, { height: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Z Bottom</span>
+            <DraftNumberInput
+              key={`clamp-zbottom-${selectedClamp.id}`}
+              value={0}
+              units={units}
+              min={0}
+              max={0}
+              onCommit={() => {}}
+            />
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={selectedClamp.visible}
+              onChange={(event) => updateClamp(selectedClamp.id, { visible: event.target.checked })}
+            />
+            <span>Visible</span>
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => enterClampEdit(selectedClamp.id)}>
+            Edit Sketch
+          </button>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteClamp(selectedClamp.id)}>
+            Delete Clamp
           </button>
         </div>
       </div>
@@ -483,6 +568,7 @@ export function PropertiesPanel() {
   const zTop = typeof selectedFeature.z_top === 'number' ? selectedFeature.z_top : 0
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
   const hasSelfIntersection = profileHasSelfIntersection(selectedFeature.sketch.profile)
+  const exceedsStock = profileExceedsStock(selectedFeature.sketch.profile, project.stock)
 
   // First feature in the tree must always be 'add' — lock the operation field
   const isFirstFeature =
@@ -566,6 +652,11 @@ export function PropertiesPanel() {
         {hasSelfIntersection ? (
           <div className="properties-warning">
             This profile self-intersects. 3D/CAM results may be invalid.
+          </div>
+        ) : null}
+        {exceedsStock ? (
+          <div className="properties-warning">
+            This profile extends outside the stock boundary.
           </div>
         ) : null}
       </div>

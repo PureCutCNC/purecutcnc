@@ -220,12 +220,14 @@ export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw'
 
 export interface Clamp {
   id: string
+  name: string
   type: ClampType
   x: number
   y: number
   w: number
   h: number
   height: number   // physical height — used for collision detection
+  visible: boolean
 }
 
 // ============================================================
@@ -629,6 +631,17 @@ export function profileHasSelfIntersection(profile: SketchProfile): boolean {
 
 export function getStockBounds(stock: Stock): Bounds2D {
   return getProfileBounds(stock.profile)
+}
+
+export function profileExceedsStock(profile: SketchProfile, stock: Stock): boolean {
+  const profileBounds = getProfileBounds(profile)
+  const stockBounds = getStockBounds(stock)
+  return (
+    profileBounds.minX < stockBounds.minX
+    || profileBounds.maxX > stockBounds.maxX
+    || profileBounds.minY < stockBounds.minY
+    || profileBounds.maxY > stockBounds.maxY
+  )
 }
 
 export function newProject(name = 'Untitled'): Project {

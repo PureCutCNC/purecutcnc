@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { buildScene } from '../../engine/csg'
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, rectProfile } from '../../types/project'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -342,7 +342,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const buildRequestRef = useRef(0)
   const activePresetRef = useRef<ViewPreset | null>('iso')
 
-  const { project } = useProjectStore()
+  const { project, selection } = useProjectStore()
 
   const syncGridVisibility = useCallback(() => {
     const gridGroup = gridRef.current
@@ -521,6 +521,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       void (async () => {
         const nextSceneObjects = await buildScene(
           project,
+          selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null,
         )
 
         if (cancelled || buildRequestRef.current !== buildRequestId) {
@@ -535,6 +536,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           for (const featureMesh of nextSceneObjects.featureMeshes.values()) {
             featureMesh.geometry.dispose()
             disposeObjectMaterial(featureMesh.material)
+          }
+          for (const clampMesh of nextSceneObjects.clampMeshes.values()) {
+            clampMesh.geometry.dispose()
+            disposeObjectMaterial(clampMesh.material)
           }
           return
         }
@@ -555,12 +560,24 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           objectsRef.current.push(featureMesh)
         }
 
+        for (const clampMesh of nextSceneObjects.clampMeshes.values()) {
+          scene.add(clampMesh)
+          objectsRef.current.push(clampMesh)
+        }
+
         const controls = controlsRef.current
         if (controls) {
           const visibleFeatures = project.features.filter((feature) => feature.visible)
+          const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =
-            visibleFeatures.length > 0
-              ? visibleFeatures.map((feature) => feature.sketch.profile)
+            visibleFeatures.length > 0 || visibleClamps.length > 0
+              ? [
+                  ...visibleFeatures.map((feature) => feature.sketch.profile),
+                  ...visibleClamps.map((clamp) => ({
+                    start: { x: clamp.x, y: clamp.y },
+                    segments: rectProfile(clamp.x, clamp.y, clamp.w, clamp.h).segments,
+                  })),
+                ]
               : [project.stock.profile]
           const points = profiles.flatMap((profile) => [profile.start, ...profile.segments.map((segment) => segment.to)])
 
@@ -569,12 +586,15 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const minWorldZ = Math.min(...points.map((point) => point.y))
           const maxWorldZ = Math.max(...points.map((point) => point.y))
           const verticalValues =
-            visibleFeatures.length > 0
-              ? visibleFeatures.flatMap((feature) => {
-                const top = typeof feature.z_top === 'number' ? feature.z_top : 0
-                const bottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
-                return [top, bottom]
-              })
+            visibleFeatures.length > 0 || visibleClamps.length > 0
+              ? [
+                  ...visibleFeatures.flatMap((feature) => {
+                    const top = typeof feature.z_top === 'number' ? feature.z_top : 0
+                    const bottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+                    return [top, bottom]
+                  }),
+                  ...visibleClamps.flatMap((clamp) => [0, clamp.height]),
+                ]
               : [
                 0,
                 project.stock.visible ? project.stock.thickness : 0,
@@ -596,7 +616,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [clearRenderedObjects, disposeObjectMaterial, project, rebuildGridHelpers])
+  }, [clearRenderedObjects, disposeObjectMaterial, project, rebuildGridHelpers, selection.selectedNode])
 
   useEffect(() => {
     const scene = sceneRef.current

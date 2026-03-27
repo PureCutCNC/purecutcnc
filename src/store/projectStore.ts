@@ -13,6 +13,7 @@ import {
   splineProfile,
 } from '../types/project'
 import type {
+  Clamp,
   FeatureFolder,
   FeatureTreeEntry,
   GridSettings,
@@ -55,8 +56,10 @@ export type SelectedNode =
   | { type: 'grid' }
   | { type: 'stock' }
   | { type: 'features_root' }
+  | { type: 'clamps_root' }
   | { type: 'folder'; folderId: string }
   | { type: 'feature'; featureId: string }
+  | { type: 'clamp'; clampId: string }
   | null
 
 // ============================================================
@@ -101,6 +104,16 @@ export interface ProjectStore {
   deleteFeatures: (ids: string[]) => void
   reorderFeatures: (ids: string[]) => void
 
+  // Clamps
+  addClamp: () => string
+  updateClamp: (id: string, patch: Partial<Clamp>) => void
+  deleteClamp: (id: string) => void
+  setAllClampsVisible: (visible: boolean) => void
+  startAddClampPlacement: () => void
+  startMoveClamp: (clampId: string) => void
+  startCopyClamp: (clampId: string) => void
+  duplicateClamp: (id: string) => string | null
+
   // Tools
   addTool: () => string
   updateTool: (id: string, patch: Partial<Tool>) => void
@@ -122,13 +135,17 @@ export interface ProjectStore {
   selectGrid: () => void
   selectStock: () => void
   selectFeaturesRoot: () => void
+  selectClampsRoot: () => void
   selectFeatureFolder: (id: string) => void
+  selectClamp: (id: string) => void
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
+  enterClampEdit: (id: string) => void
   applySketchEdit: () => void
   cancelSketchEdit: () => void
   setActiveControl: (control: SketchControlRef | null) => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
+  moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
   // Feature placement flow
   startAddRectPlacement: () => void
@@ -163,6 +180,7 @@ export interface ProjectStore {
 export type PendingAddTool =
   | { shape: 'rect'; anchor: Point | null; session: number }
   | { shape: 'circle'; anchor: Point | null; session: number }
+  | { shape: 'clamp'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
   | {
@@ -180,7 +198,8 @@ export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
-  featureIds: string[]
+  entityType: 'feature' | 'clamp'
+  entityIds: string[]
   fromPoint: Point | null
   toPoint: Point | null
   session: number
@@ -193,7 +212,8 @@ export interface ProjectHistory {
 }
 
 export interface SketchEditSession {
-  featureId: string
+  entityType: 'feature' | 'clamp'
+  entityId: string
   snapshot: Project
   pastLength: number
 }
@@ -218,6 +238,7 @@ function syncIdCounter(project: Project): void {
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
+    ...project.clamps.map((clamp) => clamp.id),
   ]
   const maxSuffix = usedIds.reduce((max, id) => Math.max(max, idNumericSuffix(id)), 0)
   _idCounter = Math.max(_idCounter, maxSuffix + 1)
@@ -229,6 +250,7 @@ function nextUniqueGeneratedId(project: Project, prefix: string): string {
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
+    ...project.clamps.map((clamp) => clamp.id),
   ])
 
   let nextId = genId(prefix)
@@ -436,6 +458,14 @@ function translateProfile(profile: SketchFeature['sketch']['profile'], dx: numbe
   }
 }
 
+function translateClamp(clamp: Clamp, dx: number, dy: number): Clamp {
+  return {
+    ...clamp,
+    x: clamp.x + dx,
+    y: clamp.y + dy,
+  }
+}
+
 function duplicateFeatureName(name: string, features: SketchFeature[]): string {
   const baseName = `${name} Copy`
   if (!features.some((feature) => feature.name === baseName)) {
@@ -444,6 +474,19 @@ function duplicateFeatureName(name: string, features: SketchFeature[]): string {
 
   let index = 2
   while (features.some((feature) => feature.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
+function duplicateClampName(name: string, clamps: Clamp[]): string {
+  const baseName = `${name} Copy`
+  if (!clamps.some((clamp) => clamp.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (clamps.some((clamp) => clamp.name === `${baseName} ${index}`)) {
     index += 1
   }
   return `${baseName} ${index}`
@@ -630,6 +673,37 @@ function buildCopiedFeatures(
   return created
 }
 
+function buildCopiedClamps(
+  sourceClamps: Clamp[],
+  existingClamps: Clamp[],
+  project: Project,
+  dx: number,
+  dy: number,
+  count: number,
+): Clamp[] {
+  const created: Clamp[] = []
+
+  for (let step = 1; step <= count; step += 1) {
+    for (const sourceClamp of sourceClamps) {
+      created.push({
+        ...sourceClamp,
+        id: nextUniqueGeneratedId(
+          {
+            ...project,
+            clamps: [...existingClamps, ...created],
+          },
+          'cl',
+        ),
+        name: duplicateClampName(sourceClamp.name, [...existingClamps, ...created]),
+        x: sourceClamp.x + dx * step,
+        y: sourceClamp.y + dy * step,
+      })
+    }
+  }
+
+  return created
+}
+
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const safeFeature = {
     ...feature,
@@ -742,6 +816,7 @@ function dedupeProjectIds(project: Project): Project {
     ...project.features.map((feature) => idNumericSuffix(feature.id)),
     ...project.tools.map((tool) => idNumericSuffix(tool.id)),
     ...project.operations.map((operation) => idNumericSuffix(operation.id)),
+    ...project.clamps.map((clamp) => idNumericSuffix(clamp.id)),
   ].reduce((max, value) => Math.max(max, value), 0) + 1
 
   const nextLocalId = (prefix: string) => `${prefix}${String(localCounter++).padStart(4, '0')}`
@@ -790,11 +865,26 @@ function dedupeProjectIds(project: Project): Project {
     }
   })
 
+  const seenClampIds = new Set<string>()
+  const clamps = project.clamps.map((clamp) => {
+    if (!seenClampIds.has(clamp.id)) {
+      seenClampIds.add(clamp.id)
+      return { ...clamp }
+    }
+
+    const nextId = nextLocalId('cl')
+    return {
+      ...clamp,
+      id: nextId,
+    }
+  })
+
   return {
     ...project,
     features,
     tools,
     operations,
+    clamps,
   }
 }
 
@@ -816,6 +906,22 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
   return normalized
 }
 
+function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], index: number): Clamp {
+  const defaultSize = convertLength(12, 'mm', units)
+  const defaultHeight = convertLength(8, 'mm', units)
+  return {
+    id: clamp.id || `cl${index + 1}`,
+    name: clamp.name || `Clamp ${index + 1}`,
+    type: clamp.type ?? 'step_clamp',
+    x: clamp.x ?? 0,
+    y: clamp.y ?? 0,
+    w: Math.max(clamp.w ?? defaultSize, convertLength(0.1, 'mm', units)),
+    h: Math.max(clamp.h ?? defaultSize, convertLength(0.1, 'mm', units)),
+    height: Math.max(clamp.height ?? defaultHeight, convertLength(0.1, 'mm', units)),
+    visible: clamp.visible ?? true,
+  }
+}
+
 function normalizeProject(project: Project): Project {
   const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
@@ -823,6 +929,7 @@ function normalizeProject(project: Project): Project {
     featureFolders: project.featureFolders ?? [],
     featureTree: project.featureTree ?? [],
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
+    clamps: (project.clamps ?? []).map((clamp, index) => normalizeClamp(clamp, project.meta.units, index)),
   }))
 
   const normalizedProject = {
@@ -887,6 +994,12 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
       ? project.featureFolders.some((folder) => folder.id === selectedNode.folderId)
         ? selectedNode
         : null
+      : selectedNode?.type === 'clamp'
+        ? project.clamps.some((clamp) => clamp.id === selectedNode.clampId)
+          ? selectedNode
+          : null
+      : selectedNode?.type === 'clamps_root'
+        ? selectedNode
       : selectedNode?.type === 'features_root'
         ? selectedNode
         : selectedNode
@@ -1814,6 +1927,176 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  addClamp: () => {
+    const state = get()
+    const bounds = getStockBounds(state.project.stock)
+    const units = state.project.meta.units
+    const width = convertLength(12, 'mm', units)
+    const depth = convertLength(12, 'mm', units)
+    const clampHeight = Math.min(
+      Math.max(convertLength(8, 'mm', units), convertLength(0.1, 'mm', units)),
+      state.project.stock.thickness,
+    )
+    const id = nextUniqueGeneratedId(state.project, 'cl')
+    const clamp: Clamp = {
+      id,
+      name: `Clamp ${state.project.clamps.length + 1}`,
+      type: 'step_clamp',
+      x: bounds.minX + convertLength(4, 'mm', units),
+      y: bounds.minY + convertLength(4, 'mm', units),
+      w: width,
+      h: depth,
+      height: clampHeight,
+      visible: true,
+    }
+
+    set((s) => ({
+      project: {
+        ...s.project,
+        clamps: [...s.project.clamps, clamp],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      },
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamp', clampId: id },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return id
+  },
+
+  updateClamp: (id, patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        clamps: s.project.clamps.map((clamp) => (clamp.id === id ? { ...clamp, ...patch } : clamp)),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteClamp: (id) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        clamps: s.project.clamps.filter((clamp) => clamp.id !== id),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      const nextSelection =
+        s.selection.selectedNode?.type === 'clamp' && s.selection.selectedNode.clampId === id
+          ? emptySelection()
+          : sanitizeSelection(nextProject, s.selection)
+      return {
+        project: nextProject,
+        selection: nextSelection,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  duplicateClamp: (id) => {
+    const state = get()
+    const sourceClamp = state.project.clamps.find((clamp) => clamp.id === id)
+    if (!sourceClamp) {
+      return null
+    }
+
+    const nextId = nextUniqueGeneratedId(state.project, 'cl')
+    const duplicate: Clamp = {
+      ...sourceClamp,
+      id: nextId,
+      name: duplicateClampName(sourceClamp.name, state.project.clamps),
+      x: sourceClamp.x + convertLength(4, 'mm', state.project.meta.units),
+      y: sourceClamp.y + convertLength(4, 'mm', state.project.meta.units),
+    }
+
+    set((s) => ({
+      project: {
+        ...s.project,
+        clamps: [...s.project.clamps, duplicate],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      },
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamp', clampId: nextId },
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return nextId
+  },
+
+  setAllClampsVisible: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        clamps: s.project.clamps.map((clamp) => ({ ...clamp, visible })),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  startAddClampPlacement: () =>
+    set((s) => ({
+      pendingAdd: { shape: 'clamp', anchor: null, session: nextPlacementSession() },
+      pendingMove: null,
+      sketchEditSession: null,
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamps_root' },
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+    })),
+
   // ── Selection ────────────────────────────────────────────
 
   selectFeature: (id, additive = false) =>
@@ -1922,6 +2205,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       sketchEditSession: null,
     })),
 
+  selectClampsRoot: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamps_root' },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+    })),
+
   selectFeatureFolder: (id) =>
     set((s) => ({
       selection: {
@@ -1929,6 +2225,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: null,
         selectedFeatureIds: [],
         selectedNode: { type: 'folder', folderId: id },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+    })),
+
+  selectClamp: (id) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamp', clampId: id },
         mode: 'feature',
         activeControl: null,
       },
@@ -1951,7 +2260,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activeControl: null,
       },
       sketchEditSession: {
-        featureId: id,
+        entityType: 'feature',
+        entityId: id,
+        snapshot: cloneProject(s.project),
+        pastLength: s.history.past.length,
+      },
+    })),
+
+  enterClampEdit: (id) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'clamp', clampId: id },
+        mode: 'sketch_edit',
+        activeControl: null,
+      },
+      sketchEditSession: {
+        entityType: 'clamp',
+        entityId: id,
         snapshot: cloneProject(s.project),
         pastLength: s.history.past.length,
       },
@@ -2167,6 +2495,59 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  moveClampControl: (clampId, control, point) =>
+    set((s) => {
+      const minSize = convertLength(0.1, 'mm', s.project.meta.units)
+      const nextProject = {
+        ...s.project,
+        clamps: s.project.clamps.map((clamp) => {
+          if (clamp.id !== clampId) {
+            return clamp
+          }
+
+          if (control.kind !== 'anchor') {
+            return clamp
+          }
+
+          const corners = [
+            { x: clamp.x, y: clamp.y },
+            { x: clamp.x + clamp.w, y: clamp.y },
+            { x: clamp.x + clamp.w, y: clamp.y + clamp.h },
+            { x: clamp.x, y: clamp.y + clamp.h },
+          ]
+          const opposite = corners[(control.index + 2) % 4]
+          const minX = Math.min(point.x, opposite.x)
+          const maxX = Math.max(point.x, opposite.x)
+          const minY = Math.min(point.y, opposite.y)
+          const maxY = Math.max(point.y, opposite.y)
+
+          return {
+            ...clamp,
+            x: minX,
+            y: minY,
+            w: Math.max(maxX - minX, minSize),
+            h: Math.max(maxY - minY, minSize),
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   startAddRectPlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
@@ -2255,36 +2636,65 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const state = get()
     if (!state.pendingAdd || !('anchor' in state.pendingAdd) || !state.pendingAdd.anchor) return
 
-    const bounds = getStockBounds(state.project.stock)
     const anchor = state.pendingAdd.anchor
     const depth = Math.min(state.project.stock.thickness, 10)
     const minSize = convertLength(0.01, 'mm', state.project.meta.units)
-    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
-    if (state.pendingAdd.shape === 'rect') {
-      const x1 = clamp(anchor.x, bounds.minX, bounds.maxX)
-      const y1 = clamp(anchor.y, bounds.minY, bounds.maxY)
-      const x2 = clamp(point.x, bounds.minX, bounds.maxX)
-      const y2 = clamp(point.y, bounds.minY, bounds.maxY)
+    if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'clamp') {
+      const x1 = anchor.x
+      const y1 = anchor.y
+      const x2 = point.x
+      const y2 = point.y
       const x = Math.min(x1, x2)
       const y = Math.min(y1, y2)
       const width = Math.max(Math.abs(x2 - x1), minSize)
       const height = Math.max(Math.abs(y2 - y1), minSize)
+
+      if (state.pendingAdd.shape === 'clamp') {
+        const id = nextUniqueGeneratedId(state.project, 'cl')
+        const clampEntry: Clamp = {
+          id,
+          name: `Clamp ${state.project.clamps.length + 1}`,
+          type: 'step_clamp',
+          x,
+          y,
+          w: width,
+          h: height,
+          height: Math.min(
+            Math.max(convertLength(8, 'mm', state.project.meta.units), minSize),
+            state.project.stock.thickness,
+          ),
+          visible: true,
+        }
+
+        set((s) => ({
+          project: {
+            ...s.project,
+            clamps: [...s.project.clamps, clampEntry],
+            meta: { ...s.project.meta, modified: new Date().toISOString() },
+          },
+          pendingAdd: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedNode: { type: 'clamp', clampId: id },
+            mode: 'feature',
+            activeControl: null,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }))
+        return
+      }
+
       state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
     } else {
-      const maxRadius = Math.min(
-        Math.abs(bounds.minX - anchor.x),
-        Math.abs(bounds.maxX - anchor.x),
-        Math.abs(bounds.minY - anchor.y),
-        Math.abs(bounds.maxY - anchor.y),
-      )
-      const radius = Math.max(
-        minSize,
-        Math.min(Math.hypot(point.x - anchor.x, point.y - anchor.y), maxRadius),
-      )
-      const cx = clamp(anchor.x, bounds.minX + radius, bounds.maxX - radius)
-      const cy = clamp(anchor.y, bounds.minY + radius, bounds.maxY - radius)
-      state.addCircleFeature(`Circle ${state.project.features.length + 1}`, cx, cy, radius, depth)
+      const radius = Math.max(minSize, Math.hypot(point.x - anchor.x, point.y - anchor.y))
+      state.addCircleFeature(`Circle ${state.project.features.length + 1}`, anchor.x, anchor.y, radius, depth)
     }
 
     set({ pendingAdd: null })
@@ -2523,7 +2933,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         pendingAdd: null,
         sketchEditSession: null,
-        pendingMove: { mode: 'move', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingMove: { mode: 'move', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -2551,12 +2961,58 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         pendingAdd: null,
         sketchEditSession: null,
-        pendingMove: { mode: 'copy', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
           selectedFeatureIds: featureIds,
           selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startMoveClamp: (clampId) =>
+    set((s) => {
+      const clamp = s.project.clamps.find((entry) => entry.id === clampId)
+      if (!clamp) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        sketchEditSession: null,
+        pendingMove: { mode: 'move', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'clamp', clampId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startCopyClamp: (clampId) =>
+    set((s) => {
+      const clamp = s.project.clamps.find((entry) => entry.id === clampId)
+      if (!clamp) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        sketchEditSession: null,
+        pendingMove: { mode: 'copy', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'clamp', clampId },
           mode: 'feature',
           hoveredFeatureId: null,
           activeControl: null,
@@ -2582,7 +3038,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return {}
       }
 
-      const { featureIds, fromPoint, mode } = s.pendingMove
+      const { entityIds, entityType, fromPoint, mode } = s.pendingMove
       const dx = toPoint.x - fromPoint.x
       const dy = toPoint.y - fromPoint.y
 
@@ -2590,40 +3046,90 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return { pendingMove: null }
       }
 
-      const sourceFeatures = featureIds
-        .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
-      if (sourceFeatures.length !== featureIds.length) {
+      const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
+      if (entityType === 'feature') {
+        const sourceFeatures = entityIds
+          .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
+          .filter((feature): feature is SketchFeature => feature !== null)
+        if (sourceFeatures.length !== entityIds.length) {
+          return { pendingMove: null }
+        }
+
+        const createdFeatures =
+          mode === 'copy'
+            ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+            : []
+
+        const nextProject = {
+          ...s.project,
+          features:
+            mode === 'copy'
+              ? [
+                  ...s.project.features,
+                  ...createdFeatures,
+                ]
+              : s.project.features.map((feature) => {
+                  if (!entityIds.includes(feature.id) || feature.locked) {
+                    return feature
+                  }
+
+                  return {
+                    ...feature,
+                    sketch: {
+                      ...feature.sketch,
+                      profile: translateProfile(feature.sketch.profile, dx, dy),
+                    },
+                  }
+                }),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+
+        if (projectsEqual(nextProject, s.project)) {
+          return { pendingMove: null }
+        }
+
+        return {
+          project: nextProject,
+          pendingMove: null,
+          selection:
+            mode === 'copy'
+              ? {
+                  ...s.selection,
+                  selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+                  selectedFeatureIds: createdFeatures.map((feature) => feature.id),
+                  selectedNode: createdFeatures.at(-1)
+                    ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                    : s.selection.selectedNode,
+                }
+              : s.selection,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }
+
+      const sourceClamps = entityIds
+        .map((clampId) => s.project.clamps.find((clamp) => clamp.id === clampId) ?? null)
+        .filter((clamp): clamp is Clamp => clamp !== null)
+      if (sourceClamps.length !== entityIds.length) {
         return { pendingMove: null }
       }
 
-      const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
-      const createdFeatures =
+      const createdClamps =
         mode === 'copy'
-          ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+          ? buildCopiedClamps(sourceClamps, s.project.clamps, s.project, dx, dy, normalizedCopyCount)
           : []
 
       const nextProject = {
         ...s.project,
-        features:
+        clamps:
           mode === 'copy'
-            ? [
-                ...s.project.features,
-                ...createdFeatures,
-              ]
-            : s.project.features.map((feature) => {
-                if (!featureIds.includes(feature.id) || feature.locked) {
-                  return feature
-                }
-
-                return {
-                  ...feature,
-                  sketch: {
-                    ...feature.sketch,
-                    profile: translateProfile(feature.sketch.profile, dx, dy),
-                  },
-                }
-              }),
+            ? [...s.project.clamps, ...createdClamps]
+            : s.project.clamps.map((clamp) => (
+                entityIds.includes(clamp.id) ? translateClamp(clamp, dx, dy) : clamp
+              )),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
 
@@ -2638,10 +3144,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           mode === 'copy'
             ? {
                 ...s.selection,
-                selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
-                selectedFeatureIds: createdFeatures.map((feature) => feature.id),
-                selectedNode: createdFeatures.at(-1)
-                  ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                selectedFeatureId: null,
+                selectedFeatureIds: [],
+                selectedNode: createdClamps.at(-1)
+                  ? { type: 'clamp', clampId: createdClamps.at(-1)!.id }
                   : s.selection.selectedNode,
               }
             : s.selection,
