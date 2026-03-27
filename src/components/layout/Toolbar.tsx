@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline'
+type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite'
 
 function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   switch (name) {
@@ -84,6 +84,17 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
           <circle cx="20" cy="12" r="1.2" />
         </svg>
       )
+    case 'composite':
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 17 9 8l5 3" />
+          <path d="M14 11c2 0 3.5 1.2 5 4" />
+          <path d="M19 15c-1.2 2.2-3.2 3.4-6 3.4H5z" />
+          <circle cx="5" cy="17" r="1.2" />
+          <circle cx="9" cy="8" r="1.2" />
+          <circle cx="14" cy="11" r="1.2" />
+        </svg>
+      )
   }
 }
 
@@ -133,6 +144,7 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
     startAddCirclePlacement,
     startAddPolygonPlacement,
     startAddSplinePlacement,
+    startAddCompositePlacement,
     cancelPendingAdd,
   } = useProjectStore()
 
@@ -178,7 +190,7 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
     input.click()
   }
 
-  function togglePlacement(shape: 'rect' | 'circle' | 'polygon' | 'spline', start: () => void) {
+  function togglePlacement(shape: 'rect' | 'circle' | 'polygon' | 'spline' | 'composite', start: () => void) {
     if (pendingAdd?.shape === shape) {
       cancelPendingAdd()
       return
@@ -270,6 +282,12 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
           label={pendingAdd?.shape === 'spline' ? 'Cancel Spline Tool' : 'Add Spline'}
           active={pendingAdd?.shape === 'spline'}
           onClick={() => togglePlacement('spline', startAddSplinePlacement)}
+        />
+        <ToolbarActionButton
+          icon="composite"
+          label={pendingAdd?.shape === 'composite' ? 'Cancel Composite Tool' : 'Add Composite'}
+          active={pendingAdd?.shape === 'composite'}
+          onClick={() => togglePlacement('composite', startAddCompositePlacement)}
         />
       </div>
     </div>

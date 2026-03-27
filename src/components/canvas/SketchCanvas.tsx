@@ -8,12 +8,13 @@ import {
   getProfileBounds,
   getStockBounds,
   polygonProfile,
+  profileHasSelfIntersection,
   profileVertices,
   sampleProfilePoints,
   rectProfile,
   splineProfile,
 } from '../../types/project'
-import type { GridSettings, Point, SketchFeature, SketchProfile, Stock } from '../../types/project'
+import type { GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock } from '../../types/project'
 import { convertLength, formatLength } from '../../utils/units'
 
 const PADDING = 42
@@ -54,6 +55,20 @@ function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
     cx: vt.offsetX + point.x * vt.scale,
     cy: vt.offsetY + point.y * vt.scale,
   }
+}
+
+function drawDiamond(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - radius)
+  ctx.lineTo(cx + radius, cy)
+  ctx.lineTo(cx, cy + radius)
+  ctx.lineTo(cx - radius, cy)
+  ctx.closePath()
 }
 
 function canvasToWorld(cx: number, cy: number, vt: ViewTransform): Point {
@@ -220,12 +235,27 @@ function traceProfilePath(
   ctx.closePath()
 }
 
-function isBezierProfile(profile: SketchProfile): boolean {
-  return profile.segments.length > 0 && profile.segments.every((segment) => segment.type === 'bezier')
-}
-
 function anchorPointForIndex(profile: SketchProfile, index: number): Point {
   return index === 0 ? profile.start : profile.segments[index - 1].to
+}
+
+function arcControlPoint(start: Point, segment: Extract<Segment, { type: 'arc' }>): Point {
+  const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+  const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+  const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+
+  let sweep = endAngle - startAngle
+  if (segment.clockwise && sweep > 0) {
+    sweep -= Math.PI * 2
+  } else if (!segment.clockwise && sweep < 0) {
+    sweep += Math.PI * 2
+  }
+
+  const midAngle = startAngle + sweep / 2
+  return {
+    x: segment.center.x + Math.cos(midAngle) * radius,
+    y: segment.center.y + Math.sin(midAngle) * radius,
+  }
 }
 
 function drawSketchControls(
@@ -235,33 +265,30 @@ function drawSketchControls(
   activeControl: SketchControlRef | null,
 ): void {
   const vertices = profileVertices(profile)
-  const bezier = isBezierProfile(profile)
 
-  if (bezier) {
-    for (let index = 0; index < profile.segments.length; index += 1) {
-      const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
-      const outgoingSegment = profile.segments[index]
-      const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
+    const outgoingSegment = profile.segments[index]
+    const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
 
-      if (outgoingSegment.type === 'bezier') {
-        const handle = worldToCanvas(outgoingSegment.control1, vt)
-        ctx.beginPath()
-        ctx.moveTo(anchor.cx, anchor.cy)
-        ctx.lineTo(handle.cx, handle.cy)
-        ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
-        ctx.lineWidth = 1
-        ctx.stroke()
-      }
+    if (outgoingSegment.type === 'bezier') {
+      const handle = worldToCanvas(outgoingSegment.control1, vt)
+      ctx.beginPath()
+      ctx.moveTo(anchor.cx, anchor.cy)
+      ctx.lineTo(handle.cx, handle.cy)
+      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
 
-      if (incomingSegment.type === 'bezier') {
-        const handle = worldToCanvas(incomingSegment.control2, vt)
-        ctx.beginPath()
-        ctx.moveTo(anchor.cx, anchor.cy)
-        ctx.lineTo(handle.cx, handle.cy)
-        ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
-        ctx.lineWidth = 1
-        ctx.stroke()
-      }
+    if (incomingSegment.type === 'bezier') {
+      const handle = worldToCanvas(incomingSegment.control2, vt)
+      ctx.beginPath()
+      ctx.moveTo(anchor.cx, anchor.cy)
+      ctx.lineTo(handle.cx, handle.cy)
+      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+      ctx.lineWidth = 1
+      ctx.stroke()
     }
   }
 
@@ -279,8 +306,21 @@ function drawSketchControls(
     ctx.stroke()
   }
 
-  if (!bezier) {
-    return
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const segment = profile.segments[index]
+    if (segment.type !== 'arc') {
+      continue
+    }
+
+    const start = anchorPointForIndex(profile, index)
+    const control = worldToCanvas(arcControlPoint(start, segment), vt)
+    const active = activeControl?.kind === 'arc_handle' && activeControl.index === index
+    drawDiamond(ctx, control.cx, control.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
+    ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+    ctx.fill()
+    ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
   }
 
   for (let index = 0; index < profile.segments.length; index += 1) {
@@ -290,8 +330,7 @@ function drawSketchControls(
     if (outgoingSegment.type === 'bezier') {
       const point = worldToCanvas(outgoingSegment.control1, vt)
       const active = activeControl?.kind === 'out_handle' && activeControl.index === index
-      ctx.beginPath()
-      ctx.arc(point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS, 0, Math.PI * 2)
+      drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
       ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
       ctx.fill()
       ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
@@ -302,8 +341,7 @@ function drawSketchControls(
     if (incomingSegment.type === 'bezier') {
       const point = worldToCanvas(incomingSegment.control2, vt)
       const active = activeControl?.kind === 'in_handle' && activeControl.index === index
-      ctx.beginPath()
-      ctx.arc(point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS, 0, Math.PI * 2)
+      drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
       ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
       ctx.fill()
       ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
@@ -568,6 +606,68 @@ function drawPendingPathLoop(
   }
 }
 
+function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
+  if (points.length === 0) {
+    return []
+  }
+
+  let segments: Segment[] = []
+  for (let index = 1; index < points.length; index += 1) {
+    segments = appendSplineDraftSegment(points[0], segments, points[index])
+  }
+
+  if (previewPoint && !pointsEqual(previewPoint, points[points.length - 1])) {
+    segments = appendSplineDraftSegment(points[0], segments, previewPoint)
+  }
+
+  return segments
+}
+
+function drawPendingSplineLoop(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  previewPoint: Point | null,
+  vt: ViewTransform,
+  closePreview: boolean,
+): void {
+  if (points.length === 0) return
+
+  const previewSegments = buildSplineDraftSegments(points, closePreview ? null : previewPoint)
+  if (previewSegments.length > 0) {
+    traceDraftSegments(ctx, points[0], previewSegments, vt)
+    ctx.strokeStyle = '#efbc7a'
+    ctx.lineWidth = 2
+    ctx.setLineDash([8, 5])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  if (previewPoint && !closePreview) {
+    drawPendingPoint(ctx, previewPoint, vt)
+  }
+
+  if (points.length >= 3 && previewPoint && closePreview) {
+    const profile = splineProfile(points)
+    ctx.save()
+    ctx.globalAlpha = 0.85
+    drawPreviewProfile(ctx, profile, vt, 'Pending spline')
+    ctx.restore()
+  }
+
+  for (let index = 0; index < points.length; index += 1) {
+    const vertex = worldToCanvas(points[index], vt)
+    const isStart = index === 0
+    const isCloseTarget = isStart && points.length >= 3 && closePreview
+    ctx.beginPath()
+    ctx.arc(vertex.cx, vertex.cy, isCloseTarget ? 7 : 5, 0, Math.PI * 2)
+    ctx.fillStyle = isStart ? 'rgba(239, 188, 122, 0.32)' : 'rgba(210, 221, 230, 0.22)'
+    ctx.fill()
+    ctx.strokeStyle = isCloseTarget ? '#ffd095' : isStart ? '#efbc7a' : '#d2dde6'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+}
+
 function drawDepthLegend(ctx: CanvasRenderingContext2D, canvasW: number, canvasH: number): void {
   const x = canvasW - 160
   const y = canvasH - 88
@@ -688,6 +788,86 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
+  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
+}
+
+function addPoint(a: Point, b: Point): Point {
+  return { x: a.x + b.x, y: a.y + b.y }
+}
+
+function subtractPoint(a: Point, b: Point): Point {
+  return { x: a.x - b.x, y: a.y - b.y }
+}
+
+function scalePoint(point: Point, scale: number): Point {
+  return { x: point.x * scale, y: point.y * scale }
+}
+
+function appendSplineDraftSegment(
+  start: Point,
+  segments: Segment[],
+  to: Point,
+): Segment[] {
+  const anchors = [start, ...segments.map((segment) => segment.to)]
+  const current = anchors[anchors.length - 1]
+  const previous = anchors.length >= 2 ? anchors[anchors.length - 2] : current
+
+  const tangent = scalePoint(subtractPoint(to, previous), 1 / 6)
+  const nextSegment: Segment = {
+    type: 'bezier',
+    control1: addPoint(current, tangent),
+    control2: subtractPoint(to, scalePoint(subtractPoint(to, current), 1 / 6)),
+    to,
+  }
+
+  if (segments.length === 0 || segments[segments.length - 1].type !== 'bezier') {
+    return [...segments, nextSegment]
+  }
+
+  const updatedSegments = [...segments]
+  const previousSegment = updatedSegments[updatedSegments.length - 1]
+  if (previousSegment.type === 'bezier') {
+    updatedSegments[updatedSegments.length - 1] = {
+      ...previousSegment,
+      control2: subtractPoint(current, tangent),
+    }
+  }
+
+  updatedSegments.push(nextSegment)
+  return updatedSegments
+}
+
+function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point): Segment | null {
+  const ax = start.x
+  const ay = start.y
+  const bx = through.x
+  const by = through.y
+  const cx = end.x
+  const cy = end.y
+
+  const denominator = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+  if (Math.abs(denominator) < 1e-9) {
+    return null
+  }
+
+  const aSq = ax * ax + ay * ay
+  const bSq = bx * bx + by * by
+  const cSq = cx * cx + cy * cy
+  const center = {
+    x: (aSq * (by - cy) + bSq * (cy - ay) + cSq * (ay - by)) / denominator,
+    y: (aSq * (cx - bx) + bSq * (ax - cx) + cSq * (bx - ax)) / denominator,
+  }
+
+  const cross = (through.x - start.x) * (end.y - start.y) - (through.y - start.y) * (end.x - start.x)
+  return {
+    type: 'arc',
+    to: end,
+    center,
+    clockwise: cross < 0,
+  }
+}
+
 function buildPendingProfile(
   pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' }>,
   previewPoint: Point,
@@ -725,6 +905,145 @@ function buildPendingProfile(
     Math.abs(bounds.maxY - anchor.y),
   )
   return circleProfile(anchor.x, anchor.y, Math.min(radius, maxRadius))
+}
+
+type CompositePendingAdd = Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'composite' }>
+
+function compositeDraftPoints(pendingAdd: CompositePendingAdd): Point[] {
+  if (!pendingAdd.start) return []
+  return [pendingAdd.start, ...pendingAdd.segments.map((segment) => segment.to)]
+}
+
+function traceDraftSegments(
+  ctx: CanvasRenderingContext2D,
+  start: Point,
+  segments: Segment[],
+  vt: ViewTransform,
+): void {
+  ctx.beginPath()
+  const startCanvas = worldToCanvas(start, vt)
+  ctx.moveTo(startCanvas.cx, startCanvas.cy)
+
+  let current = start
+  for (const segment of segments) {
+    const to = worldToCanvas(segment.to, vt)
+
+    if (segment.type === 'line') {
+      ctx.lineTo(to.cx, to.cy)
+      current = segment.to
+      continue
+    }
+
+    if (segment.type === 'bezier') {
+      const control1 = worldToCanvas(segment.control1, vt)
+      const control2 = worldToCanvas(segment.control2, vt)
+      ctx.bezierCurveTo(control1.cx, control1.cy, control2.cx, control2.cy, to.cx, to.cy)
+      current = segment.to
+      continue
+    }
+
+    const center = worldToCanvas(segment.center, vt)
+    const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
+    const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
+    const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+    current = segment.to
+  }
+}
+
+function drawCompositeDraft(
+  ctx: CanvasRenderingContext2D,
+  pendingAdd: CompositePendingAdd,
+  previewPoint: Point | null,
+  vt: ViewTransform,
+): void {
+  if (!pendingAdd.start) {
+    if (previewPoint) {
+      drawPendingPoint(ctx, previewPoint, vt)
+    }
+    return
+  }
+
+  let previewSegments = [...pendingAdd.segments]
+  const lastPoint = pendingAdd.lastPoint ?? pendingAdd.start
+
+  if (!pendingAdd.closed && previewPoint) {
+    if (pendingAdd.currentMode === 'arc') {
+      if (pendingAdd.pendingArcEnd) {
+        const previewArc = buildArcSegmentFromThreePoints(lastPoint, pendingAdd.pendingArcEnd, previewPoint)
+        if (previewArc) {
+          previewSegments = [...previewSegments, previewArc]
+        } else if (!pointsEqual(lastPoint, pendingAdd.pendingArcEnd)) {
+          previewSegments = [...previewSegments, { type: 'line', to: pendingAdd.pendingArcEnd }]
+        }
+      } else if (!pointsEqual(lastPoint, previewPoint)) {
+        previewSegments = [...previewSegments, { type: 'line', to: previewPoint }]
+      }
+    } else if (!pointsEqual(lastPoint, previewPoint)) {
+      previewSegments =
+        pendingAdd.currentMode === 'spline'
+          ? appendSplineDraftSegment(pendingAdd.start, previewSegments, previewPoint)
+          : [...previewSegments, { type: 'line', to: previewPoint }]
+    }
+  }
+
+  if (pendingAdd.closed) {
+    drawPreviewProfile(
+      ctx,
+      { start: pendingAdd.start, segments: pendingAdd.segments },
+      vt,
+      'Pending composite',
+    )
+  } else {
+    traceDraftSegments(ctx, pendingAdd.start, previewSegments, vt)
+    ctx.strokeStyle = '#efbc7a'
+    ctx.lineWidth = 2
+    ctx.setLineDash([8, 5])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  const points = compositeDraftPoints(pendingAdd)
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]
+    const vertex = worldToCanvas(point, vt)
+    const isStart = index === 0
+    ctx.beginPath()
+    ctx.arc(vertex.cx, vertex.cy, isStart ? 5.5 : 5, 0, Math.PI * 2)
+    ctx.fillStyle = isStart ? 'rgba(239, 188, 122, 0.28)' : 'rgba(210, 221, 230, 0.2)'
+    ctx.fill()
+    ctx.strokeStyle = isStart ? '#efbc7a' : '#d2dde6'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  if (pendingAdd.pendingArcEnd) {
+    drawPendingPoint(ctx, pendingAdd.pendingArcEnd, vt)
+  } else if (previewPoint && !pendingAdd.closed) {
+    drawPendingPoint(ctx, previewPoint, vt)
+  }
+}
+
+function resolveCompositeDraftSegmentsForWarning(
+  pendingAdd: CompositePendingAdd,
+): Segment[] | null {
+  if (!pendingAdd.start || !pendingAdd.lastPoint || pendingAdd.pendingArcEnd) {
+    return null
+  }
+
+  if (pendingAdd.segments.length < 2) {
+    return null
+  }
+
+  if (pointsEqual(pendingAdd.lastPoint, pendingAdd.start)) {
+    return pendingAdd.segments
+  }
+
+  if (pendingAdd.currentMode === 'spline') {
+    return appendSplineDraftSegment(pendingAdd.start, pendingAdd.segments, pendingAdd.start)
+  }
+
+  return [...pendingAdd.segments, { type: 'line', to: pendingAdd.start }]
 }
 
 function isLoopCloseCandidate(
@@ -767,7 +1086,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     selectFeature,
     hoverFeature,
     enterSketchEdit,
-    exitSketchEdit,
+    applySketchEdit,
+    cancelSketchEdit,
     setActiveControl,
     beginHistoryTransaction,
     commitHistoryTransaction,
@@ -777,6 +1097,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     addPendingPolygonPoint,
     completePendingPolygon,
     cancelPendingAdd,
+    setPendingCompositeMode,
+    addPendingCompositePoint,
+    undoPendingCompositeStep,
+    completePendingComposite,
     setPendingMoveFrom,
     setPendingMoveTo,
     completePendingMove,
@@ -843,19 +1167,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const closePreview =
         currentPreviewPoint ? isLoopCloseCandidate(worldToCanvas(currentPreviewPoint, vt), pendingAdd.points, vt) : false
       if (pendingAdd.points.length > 0) {
-        drawPendingPathLoop(
-          ctx,
-          pendingAdd.points,
-          currentPreviewPoint,
-          vt,
-          closePreview,
-          pendingAdd.shape === 'spline' ? splineProfile : polygonProfile,
-          pendingAdd.shape === 'spline' ? 'Pending spline' : 'Pending polygon',
-        )
+        if (pendingAdd.shape === 'spline') {
+          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview)
+        } else {
+          drawPendingPathLoop(
+            ctx,
+            pendingAdd.points,
+            currentPreviewPoint,
+            vt,
+            closePreview,
+            polygonProfile,
+            'Pending polygon',
+          )
+        }
       } else if (currentPreviewPoint) {
         drawPendingPoint(ctx, currentPreviewPoint, vt)
       }
-    } else if (pendingAdd?.anchor && currentPreviewPoint) {
+    } else if (pendingAdd?.shape === 'composite') {
+      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt)
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.stock, project.meta.units)
       const label = pendingAdd.shape === 'rect' ? 'Pending rectangle' : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
@@ -913,6 +1243,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   useEffect(() => {
     draw()
   }, [draw])
+
+  useEffect(() => {
+    if (pendingAdd?.shape === 'composite' && pendingAdd.closed) {
+      completePendingComposite()
+    }
+  }, [completePendingComposite, pendingAdd])
 
   useEffect(() => {
     if (!copyCountPromptActive) {
@@ -1001,31 +1337,43 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    if (isBezierProfile(feature.sketch.profile)) {
-      for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
-        const outgoingSegment = feature.sketch.profile.segments[index]
-        const incomingSegment =
-          feature.sketch.profile.segments[
-            (index - 1 + feature.sketch.profile.segments.length) % feature.sketch.profile.segments.length
-          ]
+    for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
+      const outgoingSegment = feature.sketch.profile.segments[index]
+      const incomingSegment =
+        feature.sketch.profile.segments[
+          (index - 1 + feature.sketch.profile.segments.length) % feature.sketch.profile.segments.length
+        ]
 
-        if (outgoingSegment.type === 'bezier') {
-          const handleCanvas = worldToCanvas(outgoingSegment.control1, vt)
-          const d2 = distance2(point, handleCanvas)
-          if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
-            bestDistanceSq = d2
-            bestControl = { kind: 'out_handle', index }
-          }
+      if (outgoingSegment.type === 'bezier') {
+        const handleCanvas = worldToCanvas(outgoingSegment.control1, vt)
+        const d2 = distance2(point, handleCanvas)
+        if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+          bestDistanceSq = d2
+          bestControl = { kind: 'out_handle', index }
         }
+      }
 
-        if (incomingSegment.type === 'bezier') {
-          const handleCanvas = worldToCanvas(incomingSegment.control2, vt)
-          const d2 = distance2(point, handleCanvas)
-          if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
-            bestDistanceSq = d2
-            bestControl = { kind: 'in_handle', index }
-          }
+      if (incomingSegment.type === 'bezier') {
+        const handleCanvas = worldToCanvas(incomingSegment.control2, vt)
+        const d2 = distance2(point, handleCanvas)
+        if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+          bestDistanceSq = d2
+          bestControl = { kind: 'in_handle', index }
         }
+      }
+    }
+
+    for (let index = 0; index < feature.sketch.profile.segments.length; index += 1) {
+      const segment = feature.sketch.profile.segments[index]
+      if (segment.type !== 'arc') {
+        continue
+      }
+
+      const handleCanvas = worldToCanvas(arcControlPoint(anchorPointForIndex(feature.sketch.profile, index), segment), vt)
+      const d2 = distance2(point, handleCanvas)
+      if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+        bestDistanceSq = d2
+        bestControl = { kind: 'arc_handle', index }
       }
     }
 
@@ -1119,9 +1467,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     stopNodeDrag()
     stopPan()
     hoverFeature(null)
-    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
+    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
       setPendingPreviewPoint(null)
-    } else if (pendingAdd?.anchor) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle') && pendingAdd.anchor) {
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
       setPendingPreviewPoint(null)
@@ -1168,12 +1516,28 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           addPendingPolygonPoint(snapped)
         }
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else if (!pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') {
         placePendingAddAt(snapped)
         setPendingPreviewPoint(null)
+      } else if (pendingAdd.shape === 'composite') {
+        const draftPoints = compositeDraftPoints(pendingAdd)
+        const closeCandidate =
+          pendingAdd.currentMode !== 'arc' &&
+          !pendingAdd.pendingArcEnd &&
+          draftPoints.length >= 3 &&
+          isLoopCloseCandidate(point, draftPoints, vt)
+
+        if (closeCandidate) {
+          completePendingComposite()
+          setPendingPreviewPoint(null)
+          return
+        }
+
+        addPendingCompositePoint(snapped)
+        setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
       }
       return
     }
@@ -1292,6 +1656,34 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingAdd?.shape === 'composite') {
+      if (event.key === 'l' || event.key === 'L') {
+        setPendingCompositeMode('line')
+        return
+      }
+      if (event.key === 'a' || event.key === 'A') {
+        setPendingCompositeMode('arc')
+        return
+      }
+      if (event.key === 's' || event.key === 'S') {
+        setPendingCompositeMode('spline')
+        return
+      }
+      if (event.key === 'Backspace') {
+        if (event.repeat) {
+          return
+        }
+        event.preventDefault()
+        undoPendingCompositeStep()
+        return
+      }
+      if (event.key === 'Enter' && pendingAdd.segments.length >= 2 && !pendingAdd.pendingArcEnd) {
+        completePendingComposite()
+        setPendingPreviewPoint(null)
+        return
+      }
+    }
+
     if (event.key === 'Escape' && pendingAdd) {
       cancelPendingAdd()
       setPendingPreviewPoint(null)
@@ -1318,11 +1710,42 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit') {
-      exitSketchEdit()
+    if (event.key === 'Enter' && selection.mode === 'sketch_edit') {
       stopNodeDrag()
+      applySketchEdit()
+      return
+    }
+
+    if (event.key === 'Escape' && selection.mode === 'sketch_edit') {
+      stopNodeDrag()
+      cancelSketchEdit()
     }
   }
+
+  const editingFeature =
+    selection.mode === 'sketch_edit' && selection.selectedFeatureId
+      ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
+      : null
+  const editingFeatureHasSelfIntersection =
+    editingFeature ? profileHasSelfIntersection(editingFeature.sketch.profile) : false
+  const pendingDraftProfile =
+    pendingAdd?.shape === 'polygon' && pendingAdd.points.length >= 3
+      ? polygonProfile(pendingAdd.points)
+      : pendingAdd?.shape === 'spline' && pendingAdd.points.length >= 3
+        ? splineProfile(pendingAdd.points)
+        : pendingAdd?.shape === 'composite' && pendingAdd.start
+          ? (() => {
+              const segments = resolveCompositeDraftSegmentsForWarning(pendingAdd)
+              return segments
+                ? {
+                    start: pendingAdd.start,
+                    segments,
+                  }
+                : null
+            })()
+          : null
+  const pendingDraftHasSelfIntersection =
+    pendingDraftProfile ? profileHasSelfIntersection(pendingDraftProfile) : false
 
   return (
     <div ref={containerRef} className="sketch-canvas-container">
@@ -1342,27 +1765,45 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       />
       {selection.mode === 'sketch_edit' && (
         <div className="sketch-edit-banner">
-          Sketch edit mode active. Drag nodes to reshape. Press <kbd>Esc</kbd> to exit.
+          <div>Sketch edit mode active. Drag nodes to reshape. Press <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.</div>
+          {editingFeatureHasSelfIntersection ? (
+            <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
+          ) : null}
         </div>
       )}
       {pendingAdd && (
         <div className="sketch-place-banner">
-          {pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline'
-            ? pendingAdd.points.length === 0
-              ? `Click to place the first ${pendingAdd.shape} control point.`
-              : pendingAdd.points.length < 3
-                ? `Click to add more control points. You need at least three for a closed ${pendingAdd.shape}.`
-                : pendingAdd.shape === 'spline'
-                  ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
-                  : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
-            : pendingAdd.anchor
-              ? pendingAdd.shape === 'rect'
-                ? 'Move the mouse to size the rectangle, then click the opposite corner.'
-                : 'Move the mouse to set the radius, then click again to confirm the circle.'
-              : pendingAdd.shape === 'rect'
-                ? 'Click the sketch to set the rectangle corner, then click again to size it.'
-                : 'Click the sketch to set the circle center, then click again to set the radius.'}
-          {' '}Press <kbd>Esc</kbd> to cancel.
+          <div>
+            {pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline'
+              ? pendingAdd.points.length === 0
+                ? `Click to place the first ${pendingAdd.shape} control point.`
+                : pendingAdd.points.length < 3
+                  ? `Click to add more control points. You need at least three for a closed ${pendingAdd.shape}.`
+                  : pendingAdd.shape === 'spline'
+                    ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
+                    : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
+              : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle') && pendingAdd.anchor
+                ? pendingAdd.shape === 'rect'
+                  ? 'Move the mouse to size the rectangle, then click the opposite corner.'
+                  : 'Move the mouse to set the radius, then click again to confirm the circle.'
+                : pendingAdd.shape === 'rect'
+                  ? 'Click the sketch to set the rectangle corner, then click again to size it.'
+                  : pendingAdd.shape === 'circle'
+                    ? 'Click the sketch to set the circle center, then click again to set the radius.'
+                    : !pendingAdd.start
+                      ? 'Click to place the first composite point. Press L for line, A for arc, or S for spline.'
+                      : pendingAdd.currentMode === 'arc'
+                          ? pendingAdd.pendingArcEnd
+                            ? 'Click a third point on the arc to define curvature. Press Backspace to undo.'
+                            : 'Click to place the arc end point, then click again to define the arc. Press L or S to switch modes.'
+                          : pendingAdd.currentMode === 'spline'
+                            ? 'Click to add a spline segment endpoint. Press Enter or click the first point to close.'
+                            : 'Click to add connected line segments. Press Enter or click the first point to close.'}
+            {' '}Press <kbd>Esc</kbd> to cancel.
+          </div>
+          {pendingDraftHasSelfIntersection ? (
+            <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
+          ) : null}
         </div>
       )}
       {pendingMove && (

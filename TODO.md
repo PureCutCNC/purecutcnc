@@ -126,6 +126,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Pocket will likely want offset, raster, morph, and rest-machining options later.
   - Surface clean will likely want raster, zig-zag, one-way, and contour-parallel options.
 
+### Segment-type conversion for any editable profile
+- Status: Open
+- Priority: Medium
+- Summary: Allow converting an existing segment between `line`, `arc`, and `spline/bezier` on any editable closed profile, not just composite-created features.
+- Notes:
+  - Rectangles, polygons, splines, and composite features should all participate, since they are all editable profiles.
+  - Example: convert one rectangle edge from a line into an arc without rebuilding the whole feature.
+  - This likely needs explicit segment selection in sketch edit mode, not just point/handle selection.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

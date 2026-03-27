@@ -5,6 +5,7 @@ import {
   defaultGrid,
   defaultTool,
   getStockBounds,
+  inferFeatureKind,
   newProject,
   rectProfile,
   circleProfile,
@@ -45,7 +46,7 @@ export interface SelectionState {
 }
 
 export interface SketchControlRef {
-  kind: 'anchor' | 'in_handle' | 'out_handle'
+  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle'
   index: number
 }
 
@@ -67,6 +68,7 @@ export interface ProjectStore {
   selection: SelectionState
   pendingAdd: PendingAddTool | null
   pendingMove: PendingMoveTool | null
+  sketchEditSession: SketchEditSession | null
   history: ProjectHistory
 
   // Project ops
@@ -123,7 +125,8 @@ export interface ProjectStore {
   selectFeatureFolder: (id: string) => void
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
-  exitSketchEdit: () => void
+  applySketchEdit: () => void
+  cancelSketchEdit: () => void
   setActiveControl: (control: SketchControlRef | null) => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
 
@@ -132,11 +135,17 @@ export interface ProjectStore {
   startAddCirclePlacement: () => void
   startAddPolygonPlacement: () => void
   startAddSplinePlacement: () => void
+  startAddCompositePlacement: () => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
   completePendingPolygon: () => void
+  setPendingCompositeMode: (mode: CompositeSegmentMode) => void
+  addPendingCompositePoint: (point: Point) => void
+  undoPendingCompositeStep: () => void
+  closePendingCompositeDraft: () => void
+  completePendingComposite: () => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string) => void
   cancelPendingMove: () => void
@@ -156,6 +165,18 @@ export type PendingAddTool =
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
+  | {
+      shape: 'composite'
+      start: Point | null
+      lastPoint: Point | null
+      segments: Segment[]
+      currentMode: CompositeSegmentMode
+      pendingArcEnd: Point | null
+      closed: boolean
+      session: number
+    }
+
+export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
@@ -169,6 +190,12 @@ export interface ProjectHistory {
   past: Project[]
   future: Project[]
   transactionStart: Project | null
+}
+
+export interface SketchEditSession {
+  featureId: string
+  snapshot: Project
+  pastLength: number
 }
 
 // ============================================================
@@ -220,6 +247,34 @@ function clonePoint(point: Point): Point {
   return { ...point }
 }
 
+function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
+  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
+}
+
+function addPoint(a: Point, b: Point): Point {
+  return { x: a.x + b.x, y: a.y + b.y }
+}
+
+function subtractPoint(a: Point, b: Point): Point {
+  return { x: a.x - b.x, y: a.y - b.y }
+}
+
+function scalePoint(point: Point, scale: number): Point {
+  return { x: point.x * scale, y: point.y * scale }
+}
+
+function pointLength(point: Point): number {
+  return Math.hypot(point.x, point.y)
+}
+
+function normalizePoint(point: Point): Point | null {
+  const length = pointLength(point)
+  if (length <= 1e-9) {
+    return null
+  }
+  return scalePoint(point, 1 / length)
+}
+
 function cloneSegment(segment: Segment): Segment {
   if (segment.type === 'arc') {
     return {
@@ -241,6 +296,109 @@ function cloneSegment(segment: Segment): Segment {
   return {
     ...segment,
     to: clonePoint(segment.to),
+  }
+}
+
+function appendSplineDraftSegment(
+  start: Point,
+  segments: Segment[],
+  to: Point,
+): Segment[] {
+  const anchors = [start, ...segments.map((segment) => segment.to)]
+  const current = anchors[anchors.length - 1]
+  const previous = anchors.length >= 2 ? anchors[anchors.length - 2] : current
+
+  const tangent = scalePoint(subtractPoint(to, previous), 1 / 6)
+  const nextSegment: Segment = {
+    type: 'bezier',
+    control1: addPoint(current, tangent),
+    control2: subtractPoint(to, scalePoint(subtractPoint(to, current), 1 / 6)),
+    to,
+  }
+
+  if (segments.length === 0 || segments[segments.length - 1].type !== 'bezier') {
+    return [...segments, nextSegment]
+  }
+
+  const updatedSegments = [...segments]
+  const previousSegment = updatedSegments[updatedSegments.length - 1]
+  if (previousSegment.type === 'bezier') {
+    updatedSegments[updatedSegments.length - 1] = {
+      ...previousSegment,
+      control2: subtractPoint(current, tangent),
+    }
+  }
+
+  updatedSegments.push(nextSegment)
+  return updatedSegments
+}
+
+function resolveCompositeDraftSegments(draft: Extract<PendingAddTool, { shape: 'composite' }>): Segment[] | null {
+  if (!draft.start || !draft.lastPoint || draft.pendingArcEnd) {
+    return null
+  }
+
+  if (draft.segments.length < 2) {
+    return null
+  }
+
+  if (pointsEqual(draft.lastPoint, draft.start)) {
+    return draft.segments
+  }
+
+  if (draft.currentMode === 'spline') {
+    return appendSplineDraftSegment(draft.start, draft.segments, draft.start)
+  }
+
+  return [...draft.segments, { type: 'line', to: clonePoint(draft.start) }]
+}
+
+function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point): Segment | null {
+  const ax = start.x
+  const ay = start.y
+  const bx = through.x
+  const by = through.y
+  const cx = end.x
+  const cy = end.y
+
+  const denominator = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+  if (Math.abs(denominator) < 1e-9) {
+    return null
+  }
+
+  const aSq = ax * ax + ay * ay
+  const bSq = bx * bx + by * by
+  const cSq = cx * cx + cy * cy
+  const center = {
+    x: (aSq * (by - cy) + bSq * (cy - ay) + cSq * (ay - by)) / denominator,
+    y: (aSq * (cx - bx) + bSq * (ax - cx) + cSq * (bx - ax)) / denominator,
+  }
+
+  const cross = (through.x - start.x) * (end.y - start.y) - (through.y - start.y) * (end.x - start.x)
+  return {
+    type: 'arc',
+    to: end,
+    center,
+    clockwise: cross < 0,
+  }
+}
+
+function arcControlPoint(start: Point, segment: Extract<Segment, { type: 'arc' }>): Point {
+  const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+  const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+  const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+
+  let sweep = endAngle - startAngle
+  if (segment.clockwise && sweep > 0) {
+    sweep -= Math.PI * 2
+  } else if (!segment.clockwise && sweep < 0) {
+    sweep += Math.PI * 2
+  }
+
+  const midAngle = startAngle + sweep / 2
+  return {
+    x: segment.center.x + Math.cos(midAngle) * radius,
+    y: segment.center.y + Math.sin(midAngle) * radius,
   }
 }
 
@@ -475,6 +633,7 @@ function buildCopiedFeatures(
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const safeFeature = {
     ...feature,
+    kind: feature.kind ?? inferFeatureKind(feature.sketch.profile),
     folderId: feature.folderId ?? null,
   }
   const { z_top, z_bottom } = safeFeature
@@ -771,6 +930,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: normalizeProject(newProject()),
   pendingAdd: null,
   pendingMove: null,
+  sketchEditSession: null,
   history: {
     past: [],
     future: [],
@@ -1722,6 +1882,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         mode: 'feature',
         activeControl: null,
       },
+      sketchEditSession: null,
     })),
 
   selectGrid: () =>
@@ -1733,6 +1894,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedNode: { type: 'grid' },
         mode: 'feature',
       },
+      sketchEditSession: null,
     })),
 
   selectStock: () =>
@@ -1744,6 +1906,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedNode: { type: 'stock' },
         mode: 'feature',
       },
+      sketchEditSession: null,
     })),
 
   selectFeaturesRoot: () =>
@@ -1756,6 +1919,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         mode: 'feature',
         activeControl: null,
       },
+      sketchEditSession: null,
     })),
 
   selectFeatureFolder: (id) =>
@@ -1768,6 +1932,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         mode: 'feature',
         activeControl: null,
       },
+      sketchEditSession: null,
     })),
 
   hoverFeature: (id) =>
@@ -1785,12 +1950,44 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         mode: 'sketch_edit',
         activeControl: null,
       },
+      sketchEditSession: {
+        featureId: id,
+        snapshot: cloneProject(s.project),
+        pastLength: s.history.past.length,
+      },
     })),
 
-  exitSketchEdit: () =>
+  applySketchEdit: () =>
     set((s) => ({
       selection: { ...s.selection, mode: 'feature', activeControl: null },
+      sketchEditSession: null,
     })),
+
+  cancelSketchEdit: () =>
+    set((s) => {
+      if (!s.sketchEditSession) {
+        return {
+          selection: { ...s.selection, mode: 'feature', activeControl: null },
+          sketchEditSession: null,
+        }
+      }
+
+      const restored = normalizeProject(cloneProject(s.sketchEditSession.snapshot))
+      return {
+        project: restored,
+        selection: {
+          ...sanitizeSelection(restored, s.selection),
+          mode: 'feature',
+          activeControl: null,
+        },
+        sketchEditSession: null,
+        history: {
+          past: s.history.past.slice(0, s.sketchEditSession.pastLength),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   setActiveControl: (control) =>
     set((s) => ({
@@ -1826,6 +2023,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               return feature
             }
 
+            const incomingIndex = (control.index - 1 + anchorCount) % anchorCount
+            const outgoingIndex = control.index % anchorCount
+            const originalIncoming = nextProfile.segments[incomingIndex]
+            const originalOutgoing = nextProfile.segments[outgoingIndex]
+            const originalIncomingStart =
+              incomingIndex === 0 ? nextProfile.start : nextProfile.segments[incomingIndex - 1]?.to
+            const originalOutgoingStart = currentAnchor
+            const incomingArcThrough =
+              originalIncoming?.type === 'arc' && originalIncomingStart
+                ? arcControlPoint(originalIncomingStart, originalIncoming)
+                : null
+            const outgoingArcThrough =
+              originalOutgoing?.type === 'arc' && originalOutgoingStart
+                ? arcControlPoint(originalOutgoingStart, originalOutgoing)
+                : null
+
             const dx = point.x - currentAnchor.x
             const dy = point.y - currentAnchor.y
 
@@ -1846,7 +2059,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               }
             }
 
-            const outgoingSegment = nextProfile.segments[control.index % anchorCount]
+            const incomingSegment = nextProfile.segments[incomingIndex]
+            if (incomingSegment?.type === 'arc' && incomingArcThrough) {
+              const incomingStart =
+                incomingIndex === 0 ? nextProfile.start : nextProfile.segments[incomingIndex - 1]?.to
+              if (incomingStart) {
+                const rebuiltIncoming = buildArcSegmentFromThreePoints(incomingStart, incomingSegment.to, incomingArcThrough)
+                if (rebuiltIncoming) {
+                  nextProfile.segments[incomingIndex] = rebuiltIncoming
+                }
+              }
+            }
+
+            const outgoingSegment = nextProfile.segments[outgoingIndex]
+            if (outgoingSegment?.type === 'arc' && outgoingArcThrough) {
+              const outgoingStart =
+                control.index === 0 ? nextProfile.start : nextProfile.segments[control.index - 1]?.to
+              if (outgoingStart) {
+                const rebuiltOutgoing = buildArcSegmentFromThreePoints(outgoingStart, outgoingSegment.to, outgoingArcThrough)
+                if (rebuiltOutgoing) {
+                  nextProfile.segments[outgoingIndex] = rebuiltOutgoing
+                }
+              }
+            }
+
             if (outgoingSegment?.type === 'bezier') {
               outgoingSegment.control1 = translatePoint(outgoingSegment.control1, dx, dy)
             }
@@ -1854,11 +2090,54 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             const outgoingSegment = nextProfile.segments[control.index % anchorCount]
             if (outgoingSegment?.type === 'bezier') {
               outgoingSegment.control1 = point
+
+              const incomingSegment = nextProfile.segments[(control.index - 1 + anchorCount) % anchorCount]
+              const anchor =
+                control.index === 0
+                  ? nextProfile.start
+                  : nextProfile.segments[control.index - 1]?.to
+
+              if (incomingSegment?.type === 'bezier' && anchor) {
+                const oppositeLength = pointLength(subtractPoint(incomingSegment.control2, anchor))
+                const direction = normalizePoint(subtractPoint(point, anchor))
+                if (direction && oppositeLength > 1e-9) {
+                  incomingSegment.control2 = subtractPoint(anchor, scalePoint(direction, oppositeLength))
+                }
+              }
+            }
+          } else if (control.kind === 'arc_handle') {
+            const segmentIndex = control.index % anchorCount
+            const arcSegment = nextProfile.segments[segmentIndex]
+            if (arcSegment?.type === 'arc') {
+              const arcStart =
+                segmentIndex === 0 ? nextProfile.start : nextProfile.segments[segmentIndex - 1]?.to
+              if (!arcStart) {
+                return feature
+              }
+
+              const rebuiltSegment = buildArcSegmentFromThreePoints(arcStart, arcSegment.to, point)
+              if (rebuiltSegment) {
+                nextProfile.segments[segmentIndex] = rebuiltSegment
+              }
             }
           } else {
             const incomingSegment = nextProfile.segments[(control.index - 1 + anchorCount) % anchorCount]
             if (incomingSegment?.type === 'bezier') {
               incomingSegment.control2 = point
+
+              const outgoingSegment = nextProfile.segments[control.index % anchorCount]
+              const anchor =
+                control.index === 0
+                  ? nextProfile.start
+                  : nextProfile.segments[control.index - 1]?.to
+
+              if (outgoingSegment?.type === 'bezier' && anchor) {
+                const oppositeLength = pointLength(subtractPoint(outgoingSegment.control1, anchor))
+                const direction = normalizePoint(subtractPoint(point, anchor))
+                if (direction && oppositeLength > 1e-9) {
+                  outgoingSegment.control1 = subtractPoint(anchor, scalePoint(direction, oppositeLength))
+                }
+              }
             }
           }
 
@@ -1892,6 +2171,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
+      sketchEditSession: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -1904,6 +2184,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
+      sketchEditSession: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -1916,6 +2197,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
       pendingMove: null,
+      sketchEditSession: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -1928,6 +2210,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
       pendingMove: null,
+      sketchEditSession: null,
+      selection: {
+        ...s.selection,
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+    })),
+
+  startAddCompositePlacement: () =>
+    set((s) => ({
+      pendingAdd: {
+        shape: 'composite',
+        start: null,
+        lastPoint: null,
+        segments: [],
+        currentMode: 'line',
+        pendingArcEnd: null,
+        closed: false,
+        session: nextPlacementSession(),
+      },
+      pendingMove: null,
+      sketchEditSession: null,
       selection: {
         ...s.selection,
         mode: 'feature',
@@ -2014,6 +2319,195 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ pendingAdd: null })
   },
 
+  setPendingCompositeMode: (mode) =>
+    set((s) => ({
+      pendingAdd:
+        s.pendingAdd?.shape === 'composite'
+          ? {
+              ...s.pendingAdd,
+              currentMode: mode,
+              pendingArcEnd: mode === 'arc' ? s.pendingAdd.pendingArcEnd : null,
+            }
+          : s.pendingAdd,
+    })),
+
+  addPendingCompositePoint: (point) =>
+    set((s) => {
+      if (s.pendingAdd?.shape !== 'composite' || s.pendingAdd.closed) {
+        return {}
+      }
+
+      if (!s.pendingAdd.start) {
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            start: point,
+            lastPoint: point,
+            pendingArcEnd: null,
+          },
+        }
+      }
+
+      if (!s.pendingAdd.lastPoint) {
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            lastPoint: point,
+          },
+        }
+      }
+
+      if (s.pendingAdd.currentMode === 'arc') {
+        if (!s.pendingAdd.pendingArcEnd) {
+          if (pointsEqual(point, s.pendingAdd.lastPoint)) {
+            return {}
+          }
+          return {
+            pendingAdd: {
+              ...s.pendingAdd,
+              pendingArcEnd: point,
+            },
+          }
+        }
+
+        const arcSegment = buildArcSegmentFromThreePoints(
+          s.pendingAdd.lastPoint,
+          s.pendingAdd.pendingArcEnd,
+          point,
+        )
+        if (!arcSegment) {
+          return {}
+        }
+
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            segments: [...s.pendingAdd.segments, arcSegment],
+            lastPoint: s.pendingAdd.pendingArcEnd,
+            pendingArcEnd: null,
+            closed: pointsEqual(s.pendingAdd.pendingArcEnd, s.pendingAdd.start),
+          },
+        }
+      }
+
+      if (pointsEqual(point, s.pendingAdd.lastPoint)) {
+        return {}
+      }
+
+      return {
+        pendingAdd: {
+          ...s.pendingAdd,
+          segments:
+            s.pendingAdd.currentMode === 'spline'
+              ? appendSplineDraftSegment(s.pendingAdd.start, s.pendingAdd.segments, point)
+              : [...s.pendingAdd.segments, { type: 'line', to: point }],
+          lastPoint: point,
+        },
+      }
+    }),
+
+  undoPendingCompositeStep: () =>
+    set((s) => {
+      if (s.pendingAdd?.shape !== 'composite') {
+        return {}
+      }
+
+      if (s.pendingAdd.pendingArcEnd) {
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            pendingArcEnd: null,
+          },
+        }
+      }
+
+      if (s.pendingAdd.segments.length === 0) {
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            start: null,
+            lastPoint: null,
+            closed: false,
+          },
+        }
+      }
+
+      const nextSegments = s.pendingAdd.segments.slice(0, -1)
+      const previousPoint =
+        nextSegments.length > 0
+          ? nextSegments[nextSegments.length - 1].to
+          : s.pendingAdd.start
+
+      return {
+        pendingAdd: {
+          ...s.pendingAdd,
+          segments: nextSegments,
+          lastPoint: previousPoint ? clonePoint(previousPoint) : null,
+          pendingArcEnd: null,
+          closed: false,
+        },
+      }
+    }),
+
+  closePendingCompositeDraft: () =>
+    set((s) => {
+      if (s.pendingAdd?.shape !== 'composite' || !s.pendingAdd.start || !s.pendingAdd.lastPoint) {
+        return {}
+      }
+      const closedSegments = resolveCompositeDraftSegments(s.pendingAdd)
+      if (!closedSegments) {
+        return {}
+      }
+
+      return {
+        pendingAdd: {
+          ...s.pendingAdd,
+          segments: closedSegments,
+          lastPoint: clonePoint(s.pendingAdd.start),
+          pendingArcEnd: null,
+          closed: true,
+        },
+      }
+    }),
+
+  completePendingComposite: () => {
+    const state = get()
+    if (state.pendingAdd?.shape !== 'composite' || !state.pendingAdd.start) {
+      return
+    }
+
+    const closedSegments = resolveCompositeDraftSegments(state.pendingAdd)
+    if (!closedSegments) {
+      return
+    }
+
+    const depth = Math.min(state.project.stock.thickness, 10)
+    const id = nextUniqueGeneratedId(state.project, 'f')
+    const feature: SketchFeature = {
+      id,
+      name: `Composite ${state.project.features.length + 1}`,
+      kind: 'composite',
+      folderId: null,
+      sketch: {
+        profile: {
+          start: clonePoint(state.pendingAdd.start),
+          segments: closedSegments.map(cloneSegment),
+        },
+        origin: { x: 0, y: 0 },
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'subtract',
+      z_top: depth,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    }
+
+    state.addFeature(feature)
+    set({ pendingAdd: null })
+  },
+
   startMoveFeature: (featureId) =>
     set((s) => {
       const featureIds = s.selection.selectedFeatureIds.includes(featureId)
@@ -2028,6 +2522,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
       return {
         pendingAdd: null,
+        sketchEditSession: null,
         pendingMove: { mode: 'move', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         selection: {
           ...s.selection,
@@ -2055,6 +2550,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
       return {
         pendingAdd: null,
+        sketchEditSession: null,
         pendingMove: { mode: 'copy', featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         selection: {
           ...s.selection,
@@ -2164,6 +2660,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const feature: SketchFeature = {
         id,
         name,
+        kind: 'rect',
         folderId: null,
         sketch: {
         profile: rectProfile(x, y, w, h),
@@ -2185,6 +2682,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const feature: SketchFeature = {
         id,
         name,
+        kind: 'circle',
         folderId: null,
         sketch: {
         profile: circleProfile(cx, cy, r),
@@ -2206,6 +2704,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const feature: SketchFeature = {
         id,
         name,
+        kind: 'polygon',
         folderId: null,
         sketch: {
         profile: polygonProfile(points),
@@ -2227,6 +2726,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const feature: SketchFeature = {
         id,
         name,
+        kind: 'spline',
         folderId: null,
         sketch: {
         profile: splineProfile(points),

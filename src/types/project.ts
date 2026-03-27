@@ -107,10 +107,12 @@ export interface LocalDimension {
 // ============================================================
 
 export type FeatureOperation = 'add' | 'subtract'
+export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite'
 
 export interface SketchFeature {
   id: string
   name: string
+  kind: FeatureKind
   folderId: string | null
   sketch: Sketch
   operation: FeatureOperation
@@ -300,6 +302,65 @@ export function polygonProfile(points: Point[]): SketchProfile {
       { type: 'line' as const, to: start },
     ]),
   }
+}
+
+function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
+  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
+}
+
+function distanceSquared(a: Point, b: Point): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return dx * dx + dy * dy
+}
+
+function isAxisAlignedLine(from: Point, to: Point, epsilon = 1e-9): boolean {
+  const horizontal = Math.abs(from.y - to.y) <= epsilon && Math.abs(from.x - to.x) > epsilon
+  const vertical = Math.abs(from.x - to.x) <= epsilon && Math.abs(from.y - to.y) > epsilon
+  return horizontal || vertical
+}
+
+export function inferFeatureKind(profile: SketchProfile): FeatureKind {
+  const { start, segments } = profile
+  if (segments.length === 4 && segments.every((segment) => segment.type === 'arc')) {
+    const firstCenter = segments[0].type === 'arc' ? segments[0].center : null
+    const closed = pointsEqual(segments[segments.length - 1].to, start)
+    if (firstCenter && closed) {
+      const startRadiusSq = distanceSquared(start, firstCenter)
+      const isCircle = segments.every((segment) => (
+        segment.type === 'arc' &&
+        pointsEqual(segment.center, firstCenter) &&
+        Math.abs(distanceSquared(segment.to, firstCenter) - startRadiusSq) <= 1e-6
+      ))
+      if (isCircle) {
+        return 'circle'
+      }
+    }
+  }
+
+  if (segments.every((segment) => segment.type === 'line')) {
+    const allPoints = [start, ...segments.map((segment) => segment.to)]
+    const closed = pointsEqual(allPoints[allPoints.length - 1], start)
+    if (
+      closed &&
+      segments.length === 4 &&
+      allPoints.slice(0, -1).every((point, index, array) => array.findIndex((candidate) => pointsEqual(candidate, point)) === index) &&
+      allPoints.slice(0, -1).every((point, index) => {
+        const nextPoint = allPoints[index + 1]
+        return nextPoint ? isAxisAlignedLine(point, nextPoint) : true
+      })
+    ) {
+      return 'rect'
+    }
+
+    return 'polygon'
+  }
+
+  if (segments.every((segment) => segment.type === 'bezier')) {
+    return 'spline'
+  }
+
+  return 'composite'
 }
 
 function lerpPoint(a: Point, b: Point, t: number): Point {
@@ -505,6 +566,65 @@ export function getProfileBounds(profile: SketchProfile): Bounds2D {
   }
 
   return { minX, maxX, minY, maxY }
+}
+
+function cross2d(a: Point, b: Point, c: Point): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+function onSegment(a: Point, b: Point, p: Point, epsilon = 1e-9): boolean {
+  return (
+    Math.min(a.x, b.x) - epsilon <= p.x &&
+    p.x <= Math.max(a.x, b.x) + epsilon &&
+    Math.min(a.y, b.y) - epsilon <= p.y &&
+    p.y <= Math.max(a.y, b.y) + epsilon
+  )
+}
+
+function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point, epsilon = 1e-9): boolean {
+  const d1 = cross2d(a1, a2, b1)
+  const d2 = cross2d(a1, a2, b2)
+  const d3 = cross2d(b1, b2, a1)
+  const d4 = cross2d(b1, b2, a2)
+
+  if ((d1 > epsilon && d2 < -epsilon || d1 < -epsilon && d2 > epsilon) &&
+      (d3 > epsilon && d4 < -epsilon || d3 < -epsilon && d4 > epsilon)) {
+    return true
+  }
+
+  if (Math.abs(d1) <= epsilon && onSegment(a1, a2, b1, epsilon)) return true
+  if (Math.abs(d2) <= epsilon && onSegment(a1, a2, b2, epsilon)) return true
+  if (Math.abs(d3) <= epsilon && onSegment(b1, b2, a1, epsilon)) return true
+  if (Math.abs(d4) <= epsilon && onSegment(b1, b2, a2, epsilon)) return true
+
+  return false
+}
+
+export function profileHasSelfIntersection(profile: SketchProfile): boolean {
+  const points = sampleProfilePoints(profile, 24)
+  const count = points.length
+  if (count < 4) {
+    return false
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const a1 = points[i]
+    const a2 = points[(i + 1) % count]
+
+    for (let j = i + 1; j < count; j += 1) {
+      if (j === i) continue
+      if (j === i + 1) continue
+      if (i === 0 && j === count - 1) continue
+
+      const b1 = points[j]
+      const b2 = points[(j + 1) % count]
+      if (segmentsIntersect(a1, a2, b1, b2)) {
+        return true
+      }
+    }
+  }
+
+  return false
 }
 
 export function getStockBounds(stock: Stock): Bounds2D {

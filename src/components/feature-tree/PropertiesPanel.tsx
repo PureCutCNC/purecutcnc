@@ -1,4 +1,4 @@
-import { defaultStock, getStockBounds } from '../../types/project'
+import { defaultStock, getStockBounds, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
@@ -482,6 +482,7 @@ export function PropertiesPanel() {
 
   const zTop = typeof selectedFeature.z_top === 'number' ? selectedFeature.z_top : 0
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
+  const hasSelfIntersection = profileHasSelfIntersection(selectedFeature.sketch.profile)
 
   // First feature in the tree must always be 'add' — lock the operation field
   const isFirstFeature =
@@ -562,6 +563,11 @@ export function PropertiesPanel() {
           />
           <span>Locked</span>
         </label>
+        {hasSelfIntersection ? (
+          <div className="properties-warning">
+            This profile self-intersects. 3D/CAM results may be invalid.
+          </div>
+        ) : null}
       </div>
       <div className="properties-actions">
         <button className="feat-btn" type="button" onClick={() => enterSketchEdit(selectedFeature.id)}>
