@@ -366,7 +366,7 @@ Current note:
 - finish pocket now supports separate wall and floor finishing toggles
 - remaining work is quality/optimization, not missing core finish behavior
 
-## Phase T5: UI Integration [~]
+## Phase T5: UI Integration [x]
 
 Deliverables:
 - selected operation generates path automatically
@@ -380,8 +380,9 @@ Acceptance:
 Current note:
 - operation preview is wired in sketch and 3D
 - warnings are shown in properties
-- per-operation show/hide preview is now supported
-- richer preview controls and operation deselect/selection polish are still being refined
+- per-operation and bulk show/hide preview are now supported
+- selected-operation emphasis and deselection behavior are in place
+- remaining work is polish, not missing preview workflow
 
 ## Phase T6: Extend to Edge Route [x]
 
@@ -463,6 +464,6 @@ That gets you the first real pocket path on screen, which is the main milestone.
 - [x] Phase T2: Pocket region resolver
 - [x] Phase T3: Pocket rough toolpath
 - [x] Phase T4: Pocket finish toolpath
-- [~] Phase T5: UI integration
+- [x] Phase T5: UI integration
 - [x] Phase T6: Edge route toolpaths
 - [x] Phase T7: Surface clean toolpaths
