@@ -185,6 +185,7 @@ export interface Operation {
   kind: OperationKind
   pass: OperationPass
   enabled: boolean
+  showToolpath: boolean
   target: OperationTarget
   toolRef: string | null
   stepdown: number

@@ -17,7 +17,6 @@ interface CAMPanelProps {
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
   toolpathWarnings?: string[] | null
-  onRegenerateOperation?: (operationId: string) => void
 }
 
 type NewOperationMode = OperationPass | 'pair'
@@ -308,7 +307,6 @@ export function CAMPanel({
   selectedOperationId: selectedOperationIdProp,
   onSelectedOperationIdChange,
   toolpathWarnings,
-  onRegenerateOperation,
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
@@ -332,6 +330,7 @@ export function CAMPanel({
     duplicateTool,
     addOperation,
     updateOperation,
+    setAllOperationToolpathVisibility,
     deleteOperation,
     duplicateOperation,
     reorderOperations,
@@ -349,7 +348,7 @@ export function CAMPanel({
   const selectedOperationId =
     selectedOperationIdProp && project.operations.some((operation) => operation.id === selectedOperationIdProp)
       ? selectedOperationIdProp
-      : project.operations[0]?.id ?? null
+      : null
 
   const selectedOperation = selectedOperationId
     ? project.operations.find((operation) => operation.id === selectedOperationId) ?? null
@@ -493,6 +492,11 @@ export function CAMPanel({
   }
 
   function handleSelectOperation(operationId: string) {
+    if (selectedOperationId === operationId) {
+      onSelectedOperationIdChange(null)
+      return
+    }
+
     onSelectedOperationIdChange(operationId)
     const operation = project.operations.find((item) => item.id === operationId)
     if (!operation) {
@@ -574,6 +578,26 @@ export function CAMPanel({
                 <span>Operations</span>
                 <div className="cam-section-header-actions" ref={addOperationMenuRef}>
                   <span className="feature-count">{project.operations.length}</span>
+                  <button
+                    className="tree-action-btn tree-action-btn--visibility"
+                    type="button"
+                    title="Show all toolpaths"
+                    aria-label="Show all toolpaths"
+                    disabled={project.operations.length === 0}
+                    onClick={() => setAllOperationToolpathVisibility(true)}
+                  >
+                    ◉
+                  </button>
+                  <button
+                    className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
+                    type="button"
+                    title="Hide all toolpaths"
+                    aria-label="Hide all toolpaths"
+                    disabled={project.operations.length === 0}
+                    onClick={() => setAllOperationToolpathVisibility(false)}
+                  >
+                    ○
+                  </button>
                   <button
                     className="cam-header-action"
                     type="button"
@@ -667,14 +691,14 @@ export function CAMPanel({
                             <button
                               className="tree-action-btn"
                               type="button"
-                              title="Regenerate toolpath"
-                              aria-label={`Regenerate toolpath for ${operation.name}`}
+                              title={operation.showToolpath ? 'Hide toolpath' : 'Show toolpath'}
+                              aria-label={`${operation.showToolpath ? 'Hide' : 'Show'} toolpath for ${operation.name}`}
                               onClick={(event) => {
                                 event.stopPropagation()
-                                onRegenerateOperation?.(operation.id)
+                                updateOperation(operation.id, { showToolpath: !operation.showToolpath })
                               }}
                             >
-                              ↻
+                              {operation.showToolpath ? '◉' : '○'}
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
                           </span>

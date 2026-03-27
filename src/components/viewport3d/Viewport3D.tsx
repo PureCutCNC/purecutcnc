@@ -70,14 +70,15 @@ export interface Viewport3DHandle {
 }
 
 interface Viewport3DProps {
-  toolpath?: ToolpathResult | null
+  toolpaths?: ToolpathResult[]
+  selectedOperationId?: string | null
 }
 
 function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): THREE.Vector3 {
   return new THREE.Vector3(point.x, point.z, point.y)
 }
 
-function buildToolpathOverlay(toolpath: ToolpathResult): THREE.Object3D[] {
+function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
     color: number
@@ -117,7 +118,7 @@ function buildToolpathOverlay(toolpath: ToolpathResult): THREE.Object3D[] {
     const material = new THREE.LineBasicMaterial({
       color: layer.color,
       transparent: true,
-      opacity: layer.opacity,
+      opacity: emphasized ? layer.opacity : layer.opacity * 0.3,
       depthWrite: false,
       depthTest: false,
     })
@@ -328,7 +329,7 @@ function createOrbitControls(
   }
 }
 
-export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({ toolpath = null }, ref) {
+export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({ toolpaths = [], selectedOperationId = null }, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -605,11 +606,12 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
     clearToolpathObjects(scene)
 
-    if (!toolpath || toolpath.moves.length === 0) {
+    const nextObjects = toolpaths.flatMap((toolpath) => (
+      toolpath.moves.length > 0 ? buildToolpathOverlay(toolpath, toolpath.operationId === selectedOperationId) : []
+    ))
+    if (nextObjects.length === 0) {
       return
     }
-
-    const nextObjects = buildToolpathOverlay(toolpath)
     for (const object of nextObjects) {
       scene.add(object)
     }
@@ -618,7 +620,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     return () => {
       clearToolpathObjects(scene)
     }
-  }, [clearToolpathObjects, toolpath])
+  }, [clearToolpathObjects, selectedOperationId, toolpaths])
 
   useImperativeHandle(ref, () => ({
     zoomToModel,

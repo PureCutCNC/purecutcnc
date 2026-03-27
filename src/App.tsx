@@ -21,9 +21,9 @@ interface FeatureContextMenuState {
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
+  const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [featureContextMenu, setFeatureContextMenu] = useState<FeatureContextMenuState | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
-  const [toolpathRefreshToken, setToolpathRefreshToken] = useState(0)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -40,33 +40,46 @@ function App() {
   const effectiveSelectedOperationId =
     selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
       ? selectedOperationId
-      : project.operations[0]?.id ?? null
+      : null
 
   const selectedOperation = useMemo(
     () => project.operations.find((operation) => operation.id === effectiveSelectedOperationId) ?? null,
     [effectiveSelectedOperationId, project.operations]
   )
 
-  const selectedToolpath = useMemo<ToolpathResult | null>(() => {
-    void toolpathRefreshToken
-    if (!selectedOperation) {
+  const generateToolpathForOperation = useMemo(
+    () => (operation: typeof selectedOperation): ToolpathResult | null => {
+      if (!operation) {
+        return null
+      }
+
+      if (operation.kind === 'pocket') {
+        return generatePocketToolpath(project, operation)
+      }
+
+      if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
+        return generateEdgeRouteToolpath(project, operation)
+      }
+
+      if (operation.kind === 'surface_clean') {
+        return generateSurfaceCleanToolpath(project, operation)
+      }
+
       return null
-    }
+    },
+    [project]
+  )
 
-    if (selectedOperation.kind === 'pocket') {
-      return generatePocketToolpath(project, selectedOperation)
-    }
+  const selectedToolpath = useMemo<ToolpathResult | null>(() => {
+    return generateToolpathForOperation(selectedOperation)
+  }, [generateToolpathForOperation, selectedOperation])
 
-    if (selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') {
-      return generateEdgeRouteToolpath(project, selectedOperation)
-    }
-
-    if (selectedOperation.kind === 'surface_clean') {
-      return generateSurfaceCleanToolpath(project, selectedOperation)
-    }
-
-    return null
-  }, [project, selectedOperation, toolpathRefreshToken])
+  const visibleToolpaths = useMemo<ToolpathResult[]>(() => {
+    return project.operations
+      .filter((operation) => operation.showToolpath)
+      .map((operation) => generateToolpathForOperation(operation))
+      .filter((toolpath): toolpath is ToolpathResult => toolpath !== null)
+  }, [generateToolpathForOperation, project.operations])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -198,10 +211,17 @@ function App() {
           <SketchCanvas
             ref={sketchCanvasRef}
             onFeatureContextMenu={openFeatureContextMenu}
-            toolpath={selectedToolpath}
+            toolpaths={visibleToolpaths}
+            selectedOperationId={effectiveSelectedOperationId}
           />
         }
-        viewport3d={<Viewport3D ref={viewport3dRef} toolpath={selectedToolpath} />}
+        viewport3d={
+          <Viewport3D
+            ref={viewport3dRef}
+            toolpaths={visibleToolpaths}
+            selectedOperationId={effectiveSelectedOperationId}
+          />
+        }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
         camPanel={
@@ -210,14 +230,12 @@ function App() {
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={setSelectedOperationId}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
-            onRegenerateOperation={(operationId) => {
-              setSelectedOperationId(operationId)
-              setToolpathRefreshToken((value) => value + 1)
-            }}
           />
         }
         centerTab={centerTab}
         onCenterTabChange={setCenterTab}
+        workspaceLayout={workspaceLayout}
+        onWorkspaceLayoutChange={setWorkspaceLayout}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
       />

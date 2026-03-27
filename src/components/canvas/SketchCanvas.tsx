@@ -594,6 +594,7 @@ function drawToolpath(
   ctx: CanvasRenderingContext2D,
   toolpath: ToolpathResult,
   vt: ViewTransform,
+  emphasized: boolean,
 ): void {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
@@ -621,10 +622,12 @@ function drawToolpath(
       ctx.lineTo(to.cx, to.cy)
     }
     ctx.strokeStyle = layer.stroke
-    ctx.lineWidth = layer.lineWidth
+    ctx.globalAlpha = emphasized ? 1 : 0.34
+    ctx.lineWidth = emphasized ? layer.lineWidth + 0.35 : Math.max(1, layer.lineWidth - 0.35)
     ctx.setLineDash(layer.dash)
     ctx.stroke()
     ctx.setLineDash([])
+    ctx.globalAlpha = 1
   }
 }
 
@@ -736,11 +739,12 @@ function isLoopCloseCandidate(
 
 interface SketchCanvasProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
-  toolpath?: ToolpathResult | null
+  toolpaths?: ToolpathResult[]
+  selectedOperationId?: string | null
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, toolpath = null },
+  { onFeatureContextMenu, toolpaths = [], selectedOperationId = null },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -824,8 +828,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    if (toolpath && toolpath.moves.length > 0) {
-      drawToolpath(ctx, toolpath, vt)
+    for (const toolpath of toolpaths) {
+      if (toolpath.moves.length > 0) {
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId)
+      }
     }
 
     const currentPreviewPoint =
@@ -902,7 +908,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     drawDepthLegend(ctx, width, height)
-  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, toolpath, viewState])
+  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
 
   useEffect(() => {
     draw()

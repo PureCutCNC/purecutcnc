@@ -378,9 +378,10 @@ Acceptance:
 - user can select an operation and inspect the result without leaving the existing views
 
 Current note:
-- pocket preview is wired in sketch and 3D for the selected operation
+- operation preview is wired in sketch and 3D
 - warnings are shown in properties
-- multi-operation show/hide preview and richer preview controls are still pending
+- per-operation show/hide preview is now supported
+- richer preview controls and operation deselect/selection polish are still being refined
 
 ## Phase T6: Extend to Edge Route [x]
 

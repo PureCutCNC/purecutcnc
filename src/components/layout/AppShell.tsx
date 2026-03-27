@@ -14,6 +14,8 @@ interface AppShellProps {
   camPanel?: ReactNode
   centerTab: 'sketch' | 'preview3d'
   onCenterTabChange: (tab: 'sketch' | 'preview3d') => void
+  workspaceLayout: 'lcr' | 'lc' | 'c' | 'cr'
+  onWorkspaceLayoutChange: (layout: 'lcr' | 'lc' | 'c' | 'cr') => void
   rightTab: 'operations' | 'tools' | 'ai'
   onRightTabChange: (tab: 'operations' | 'tools' | 'ai') => void
 }
@@ -34,6 +36,8 @@ export function AppShell({
   camPanel,
   centerTab,
   onCenterTabChange,
+  workspaceLayout,
+  onWorkspaceLayoutChange,
   rightTab,
   onRightTabChange,
 }: AppShellProps) {
@@ -43,6 +47,12 @@ export function AppShell({
   const stockHeight = stockBounds.maxY - stockBounds.minY
   const centerTabs = ['sketch', 'preview3d'] as const
   const rightTabs = ['operations', 'tools', 'ai'] as const
+  const workspaceLayouts = [
+    { id: 'lcr', label: 'Show left, center, and right panels' },
+    { id: 'lc', label: 'Show left and center panels' },
+    { id: 'c', label: 'Show center panel only' },
+    { id: 'cr', label: 'Show center and right panels' },
+  ] as const
 
   return (
     <div className="app-shell">
@@ -52,7 +62,7 @@ export function AppShell({
       </header>
 
       {/* Main work area */}
-      <div className="app-body">
+      <div className={`app-body app-body--${workspaceLayout}`}>
         <aside className="panel-left">
           <section className="panel panel-tree">
             <div className="panel-header">
@@ -126,6 +136,25 @@ export function AppShell({
               >
                 3D View
               </button>
+              <div className="panel-tabs-spacer" />
+              <div className="workspace-layout-controls" aria-label="Workspace layout presets">
+                {workspaceLayouts.map((layout) => (
+                  <button
+                    key={layout.id}
+                    className={`workspace-layout-btn ${workspaceLayout === layout.id ? 'workspace-layout-btn--active' : ''}`}
+                    type="button"
+                    title={layout.label}
+                    aria-label={layout.label}
+                    onClick={() => onWorkspaceLayoutChange(layout.id)}
+                  >
+                    <span className={`workspace-layout-icon workspace-layout-icon--${layout.id}`} aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="centre-stage">
               <div

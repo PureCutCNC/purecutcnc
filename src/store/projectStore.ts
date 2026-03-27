@@ -97,6 +97,7 @@ export interface ProjectStore {
   // Operations
   addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
+  setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void
@@ -379,6 +380,7 @@ function defaultOperationForTarget(
     kind,
     pass,
     enabled: true,
+    showToolpath: false,
     target,
     toolRef,
     stepdown: tool.defaultStepdown,
@@ -1030,6 +1032,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const operation: Operation = {
       ...template,
       id: nextId,
+      showToolpath: false,
     }
 
     set((s) => ({
@@ -1062,6 +1065,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ? nextOperation
             : operation
         }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setAllOperationToolpathVisibility: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        operations: s.project.operations.map((operation) => ({
+          ...operation,
+          showToolpath: visible,
+        })),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
