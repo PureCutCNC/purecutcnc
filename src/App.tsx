@@ -26,6 +26,7 @@ function App() {
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
+  const hasAutoFramed3DRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const { project, selectFeature, enterSketchEdit, deleteFeatures, startMoveFeature, startCopyFeature } = useProjectStore()
 
@@ -80,6 +81,26 @@ function App() {
       .map((operation) => generateToolpathForOperation(operation))
       .filter((toolpath): toolpath is ToolpathResult => toolpath !== null)
   }, [generateToolpathForOperation, project.operations])
+
+  useEffect(() => {
+    if (centerTab !== 'preview3d' || hasAutoFramed3DRef.current) {
+      return
+    }
+
+    let frame1 = 0
+    let frame2 = 0
+    frame1 = window.requestAnimationFrame(() => {
+      frame2 = window.requestAnimationFrame(() => {
+        viewport3dRef.current?.zoomToModel()
+        hasAutoFramed3DRef.current = true
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame1)
+      window.cancelAnimationFrame(frame2)
+    }
+  }, [centerTab])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
