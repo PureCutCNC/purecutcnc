@@ -227,6 +227,10 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     meta: {
       ...project.meta,
       units: toUnits,
+      maxTravelZ: convertLength(project.meta.maxTravelZ, fromUnits, toUnits),
+      operationClearanceZ: convertLength(project.meta.operationClearanceZ, fromUnits, toUnits),
+      clampClearanceXY: convertLength(project.meta.clampClearanceXY, fromUnits, toUnits),
+      clampClearanceZ: convertLength(project.meta.clampClearanceZ, fromUnits, toUnits),
     },
     grid: convertGrid(project.grid, fromUnits, toUnits),
     stock: convertStock(project.stock, fromUnits, toUnits),

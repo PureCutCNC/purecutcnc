@@ -124,6 +124,7 @@ export function PropertiesPanel() {
     deleteClamp,
     deleteFeatureFolder,
     setProjectName,
+    setProjectClearances,
     setGrid,
     setStock,
     setUnits,
@@ -199,6 +200,46 @@ export function PropertiesPanel() {
               <option value="mm">Millimeters</option>
               <option value="inch">Inches</option>
             </select>
+          </label>
+          <label className="properties-field">
+            <span>Max Z</span>
+            <DraftNumberInput
+              key={`project-max-travel-z-${project.meta.maxTravelZ}`}
+              value={project.meta.maxTravelZ}
+              units={units}
+              min={0}
+              onCommit={(next) => setProjectClearances({ maxTravelZ: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Op clearance Z</span>
+            <DraftNumberInput
+              key={`project-operation-clearance-z-${project.meta.operationClearanceZ}`}
+              value={project.meta.operationClearanceZ}
+              units={units}
+              min={0}
+              onCommit={(next) => setProjectClearances({ operationClearanceZ: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Clamp clearance XY</span>
+            <DraftNumberInput
+              key={`project-clamp-clearance-xy-${project.meta.clampClearanceXY}`}
+              value={project.meta.clampClearanceXY}
+              units={units}
+              min={0}
+              onCommit={(next) => setProjectClearances({ clampClearanceXY: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Clamp clearance Z</span>
+            <DraftNumberInput
+              key={`project-clamp-clearance-z-${project.meta.clampClearanceZ}`}
+              value={project.meta.clampClearanceZ}
+              units={units}
+              min={0}
+              onCommit={(next) => setProjectClearances({ clampClearanceZ: next })}
+            />
           </label>
         </div>
       </div>

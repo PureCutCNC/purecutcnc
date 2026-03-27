@@ -135,6 +135,38 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Example: convert one rectangle edge from a line into an arc without rebuilding the whole feature.
   - This likely needs explicit segment selection in sketch edit mode, not just point/handle selection.
 
+### Clamp naming / type cleanup
+- Status: Open
+- Priority: Low
+- Summary: Simplify clamp naming and clamp type handling now that first-pass clamp authoring is working.
+- Notes:
+  - Current clamp type is still mostly placeholder data.
+  - Revisit whether multiple clamp types belong in the POC or whether a simpler clamp model is better until a clamp library exists.
+
+### Per-clamp display color
+- Status: Open
+- Priority: Low
+- Summary: Allow clamps to use their own display colors in sketch and 3D.
+- Notes:
+  - Current clamp rendering uses one shared visual language.
+  - This is mainly setup readability polish.
+
+### Clamp folders / setup groups
+- Status: Open
+- Priority: Low
+- Summary: Add grouping for clamps so larger setups can organize workholding separately from features.
+- Notes:
+  - Likely similar to the feature-folder model.
+  - Could later support setup-specific visibility or enable/disable behavior.
+
+### XY reroute around clamps
+- Status: Open
+- Priority: Medium
+- Summary: Add XY rerouting around clamp keep-out regions when a direct rapid/link crossing is unsafe or inefficient.
+- Notes:
+  - Current clamp handling only lifts rapids vertically when possible.
+  - This is a later toolpath-optimization feature, not required for current clamp-aware processing.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

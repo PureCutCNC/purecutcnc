@@ -239,6 +239,10 @@ export interface ProjectMeta {
   created: string    // ISO 8601
   modified: string
   units: 'mm' | 'inch'
+  maxTravelZ: number
+  operationClearanceZ: number
+  clampClearanceXY: number
+  clampClearanceZ: number
 }
 
 export interface Project {
@@ -477,6 +481,22 @@ export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool
   }
 }
 
+export function defaultClampClearanceXY(units: ProjectMeta['units'] = 'mm'): number {
+  return units === 'mm' ? 2 : 0.08
+}
+
+export function defaultOperationClearanceZ(units: ProjectMeta['units'] = 'mm'): number {
+  return units === 'mm' ? 5 : 0.2
+}
+
+export function defaultMaxTravelZ(units: ProjectMeta['units'] = 'mm'): number {
+  return units === 'mm' ? 50 : 2
+}
+
+export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): number {
+  return units === 'mm' ? 5 : 0.2
+}
+
 export interface Bounds2D {
   minX: number
   maxX: number
@@ -648,7 +668,16 @@ export function newProject(name = 'Untitled'): Project {
   const now = new Date().toISOString()
   return {
     version: '1.0',
-    meta: { name, created: now, modified: now, units: 'mm' },
+    meta: {
+      name,
+      created: now,
+      modified: now,
+      units: 'mm',
+      maxTravelZ: defaultMaxTravelZ('mm'),
+      operationClearanceZ: defaultOperationClearanceZ('mm'),
+      clampClearanceXY: defaultClampClearanceXY('mm'),
+      clampClearanceZ: defaultClampClearanceZ('mm'),
+    },
     grid: defaultGrid(),
     stock: defaultStock(),
     dimensions: {},

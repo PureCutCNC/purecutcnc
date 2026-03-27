@@ -203,20 +203,17 @@ Later, make this configurable.
 - `[x]` edit clamp height in properties
 
 ### K5. Clamp-aware toolpath checks
-- `[ ]` add XY footprint intersection helpers
-- `[ ]` add clamp clearance evaluation for generated toolpaths
-- `[ ]` surface warnings on unsafe moves
+- `[x]` add XY footprint intersection helpers
+- `[x]` add clamp clearance evaluation for generated toolpaths
+- `[x]` surface warnings on unsafe moves
 
 ### K6. Clamp-aware toolpath adjustment
-- `[ ]` lift rapid/link moves when clamp crossing requires more clearance
-- `[ ]` keep cut paths unchanged in v1 unless explicitly impossible
-- `[ ]` show adjusted preview in sketch and 3D
+- `[x]` lift rapid/link moves when clamp crossing requires more clearance
+- `[x]` keep cut paths unchanged in v1 unless explicitly impossible
+- `[x]` show adjusted preview in sketch and 3D
 
 ### K7. Refinement
-- `[ ]` clamp naming / type cleanup
-- `[ ]` optional per-clamp color
-- `[ ]` optional clamp folders or setup groups
-- `[ ]` optional reroute-around-clamp logic in XY later
+- `[~]` moved to backlog
 
 ## Recommended Build Order
 
@@ -240,6 +237,10 @@ Clamp support is usable for the POC when:
 - clamps appear in the left tree and both viewports
 - selected toolpaths account for clamp clearance on non-cut motion
 - unsafe clamp crossings are no longer silent
+
+Status:
+- core clamp implementation complete through `K6`
+- `K7` items are backlog refinement, not blockers for current processing
 
 ## Notes / Open Questions
 

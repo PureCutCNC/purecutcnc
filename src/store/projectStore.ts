@@ -4,6 +4,10 @@ import {
   defaultStock,
   defaultGrid,
   defaultTool,
+  defaultMaxTravelZ,
+  defaultOperationClearanceZ,
+  defaultClampClearanceXY,
+  defaultClampClearanceZ,
   getStockBounds,
   inferFeatureKind,
   newProject,
@@ -77,6 +81,7 @@ export interface ProjectStore {
   // Project ops
   createNewProject: () => void
   setProjectName: (name: string) => void
+  setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   loadProject: (p: Project) => void
   saveProject: () => string   // returns JSON string
   undo: () => void
@@ -923,8 +928,17 @@ function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], index: nu
 }
 
 function normalizeProject(project: Project): Project {
+  const meta = {
+    ...project.meta,
+    maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
+    operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
+    clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
+    clampClearanceZ: project.meta.clampClearanceZ ?? defaultClampClearanceZ(project.meta.units),
+  }
+
   const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
+    meta,
     features: project.features.map(normalizeFeatureZRange),
     featureFolders: project.featureFolders ?? [],
     featureTree: project.featureTree ?? [],
@@ -1075,6 +1089,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const nextProject = {
         ...s.project,
         meta: { ...s.project.meta, name, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setProjectClearances: (patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          ...patch,
+          modified: new Date().toISOString(),
+        },
       }
       if (projectsEqual(nextProject, s.project)) {
         return {}

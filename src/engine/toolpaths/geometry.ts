@@ -8,7 +8,7 @@ import type {
   Tool,
 } from '../../types/project'
 import { sampleProfilePoints } from '../../types/project'
-import { convertLength, convertToolUnits } from '../../utils/units'
+import { convertToolUnits } from '../../utils/units'
 import type {
   ClipperPath,
   FlattenedPath,
@@ -153,7 +153,7 @@ export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE
 }
 
 export function getOperationClearance(project: Project): number {
-  return convertLength(5, 'mm', project.meta.units)
+  return Math.max(0, project.meta.operationClearanceZ)
 }
 
 export function getOperationSafeZ(project: Project, featureSpans: ResolvedFeatureZSpan[] = []): number {
