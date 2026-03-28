@@ -522,6 +522,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         const nextSceneObjects = await buildScene(
           project,
           selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null,
+          selection.selectedNode?.type === 'tab' ? selection.selectedNode.tabId : null,
         )
 
         if (cancelled || buildRequestRef.current !== buildRequestId) {
@@ -536,6 +537,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           for (const featureMesh of nextSceneObjects.featureMeshes.values()) {
             featureMesh.geometry.dispose()
             disposeObjectMaterial(featureMesh.material)
+          }
+          for (const tabMesh of nextSceneObjects.tabMeshes.values()) {
+            tabMesh.geometry.dispose()
+            disposeObjectMaterial(tabMesh.material)
           }
           for (const clampMesh of nextSceneObjects.clampMeshes.values()) {
             clampMesh.geometry.dispose()
@@ -560,19 +565,29 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           objectsRef.current.push(featureMesh)
         }
 
+        for (const tabMesh of nextSceneObjects.tabMeshes.values()) {
+          scene.add(tabMesh)
+          objectsRef.current.push(tabMesh)
+        }
+
         for (const clampMesh of nextSceneObjects.clampMeshes.values()) {
           scene.add(clampMesh)
           objectsRef.current.push(clampMesh)
         }
 
-        const controls = controlsRef.current
+          const controls = controlsRef.current
         if (controls) {
           const visibleFeatures = project.features.filter((feature) => feature.visible)
+          const visibleTabs = project.tabs.filter((tab) => tab.visible)
           const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =
-            visibleFeatures.length > 0 || visibleClamps.length > 0
+            visibleFeatures.length > 0 || visibleTabs.length > 0 || visibleClamps.length > 0
               ? [
                   ...visibleFeatures.map((feature) => feature.sketch.profile),
+                  ...visibleTabs.map((tab) => ({
+                    start: { x: tab.x, y: tab.y },
+                    segments: rectProfile(tab.x, tab.y, tab.w, tab.h).segments,
+                  })),
                   ...visibleClamps.map((clamp) => ({
                     start: { x: clamp.x, y: clamp.y },
                     segments: rectProfile(clamp.x, clamp.y, clamp.w, clamp.h).segments,
@@ -586,13 +601,14 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const minWorldZ = Math.min(...points.map((point) => point.y))
           const maxWorldZ = Math.max(...points.map((point) => point.y))
           const verticalValues =
-            visibleFeatures.length > 0 || visibleClamps.length > 0
+            visibleFeatures.length > 0 || visibleTabs.length > 0 || visibleClamps.length > 0
               ? [
                   ...visibleFeatures.flatMap((feature) => {
                     const top = typeof feature.z_top === 'number' ? feature.z_top : 0
                     const bottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
                     return [top, bottom]
                   }),
+                  ...visibleTabs.flatMap((tab) => [tab.z_top, tab.z_bottom]),
                   ...visibleClamps.flatMap((clamp) => [0, clamp.height]),
                 ]
               : [

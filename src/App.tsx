@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
-import { applyClampWarnings, generateEdgeRouteToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
+import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
 import type { ToolpathResult } from './engine/toolpaths'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
@@ -75,15 +75,16 @@ function App() {
       }
 
       if (operation.kind === 'pocket') {
-        return applyClampWarnings(project, generatePocketToolpath(project, operation))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)))
       }
 
       if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
-        return applyClampWarnings(project, generateEdgeRouteToolpath(project, operation))
+        const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware))
       }
 
       if (operation.kind === 'surface_clean') {
-        return applyClampWarnings(project, generateSurfaceCleanToolpath(project, operation))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)))
       }
 
       return null

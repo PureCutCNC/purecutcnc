@@ -29,6 +29,7 @@ import type {
   Project,
   SketchFeature,
   Stock,
+  Tab,
   Tool,
 } from '../types/project'
 import { convertProjectUnits } from '../utils/units'
@@ -60,9 +61,11 @@ export type SelectedNode =
   | { type: 'grid' }
   | { type: 'stock' }
   | { type: 'features_root' }
+  | { type: 'tabs_root' }
   | { type: 'clamps_root' }
   | { type: 'folder'; folderId: string }
   | { type: 'feature'; featureId: string }
+  | { type: 'tab'; tabId: string }
   | { type: 'clamp'; clampId: string }
   | null
 
@@ -119,6 +122,12 @@ export interface ProjectStore {
   startCopyClamp: (clampId: string) => void
   duplicateClamp: (id: string) => string | null
 
+  // Tabs
+  updateTab: (id: string, patch: Partial<Tab>) => void
+  deleteTab: (id: string) => void
+  setAllTabsVisible: (visible: boolean) => void
+  startAddTabPlacement: () => void
+
   // Tools
   addTool: () => string
   updateTool: (id: string, patch: Partial<Tool>) => void
@@ -140,8 +149,10 @@ export interface ProjectStore {
   selectGrid: () => void
   selectStock: () => void
   selectFeaturesRoot: () => void
+  selectTabsRoot: () => void
   selectClampsRoot: () => void
   selectFeatureFolder: (id: string) => void
+  selectTab: (id: string) => void
   selectClamp: (id: string) => void
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
@@ -185,6 +196,7 @@ export interface ProjectStore {
 export type PendingAddTool =
   | { shape: 'rect'; anchor: Point | null; session: number }
   | { shape: 'circle'; anchor: Point | null; session: number }
+  | { shape: 'tab'; anchor: Point | null; session: number }
   | { shape: 'clamp'; anchor: Point | null; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
@@ -243,6 +255,7 @@ function syncIdCounter(project: Project): void {
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
+    ...project.tabs.map((tab) => tab.id),
     ...project.clamps.map((clamp) => clamp.id),
   ]
   const maxSuffix = usedIds.reduce((max, id) => Math.max(max, idNumericSuffix(id)), 0)
@@ -255,6 +268,7 @@ function nextUniqueGeneratedId(project: Project, prefix: string): string {
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
+    ...project.tabs.map((tab) => tab.id),
     ...project.clamps.map((clamp) => clamp.id),
   ])
 
@@ -821,6 +835,7 @@ function dedupeProjectIds(project: Project): Project {
     ...project.features.map((feature) => idNumericSuffix(feature.id)),
     ...project.tools.map((tool) => idNumericSuffix(tool.id)),
     ...project.operations.map((operation) => idNumericSuffix(operation.id)),
+    ...project.tabs.map((tab) => idNumericSuffix(tab.id)),
     ...project.clamps.map((clamp) => idNumericSuffix(clamp.id)),
   ].reduce((max, value) => Math.max(max, value), 0) + 1
 
@@ -884,11 +899,26 @@ function dedupeProjectIds(project: Project): Project {
     }
   })
 
+  const seenTabIds = new Set<string>()
+  const tabs = project.tabs.map((tab) => {
+    if (!seenTabIds.has(tab.id)) {
+      seenTabIds.add(tab.id)
+      return { ...tab }
+    }
+
+    const nextId = nextLocalId('tb')
+    return {
+      ...tab,
+      id: nextId,
+    }
+  })
+
   return {
     ...project,
     features,
     tools,
     operations,
+    tabs,
     clamps,
   }
 }
@@ -927,6 +957,25 @@ function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], index: nu
   }
 }
 
+function normalizeTab(tab: Tab, units: Project['meta']['units'], index: number): Tab {
+  const defaultSize = convertLength(6, 'mm', units)
+  const defaultBottom = 0
+  const defaultTop = convertLength(3, 'mm', units)
+  const zBottom = tab.z_bottom ?? defaultBottom
+  const zTop = tab.z_top ?? defaultTop
+  return {
+    id: tab.id || `tb${index + 1}`,
+    name: tab.name || `Tab ${index + 1}`,
+    x: tab.x ?? 0,
+    y: tab.y ?? 0,
+    w: Math.max(tab.w ?? defaultSize, convertLength(0.1, 'mm', units)),
+    h: Math.max(tab.h ?? defaultSize, convertLength(0.1, 'mm', units)),
+    z_top: Math.max(zTop, zBottom),
+    z_bottom: Math.min(zTop, zBottom),
+    visible: tab.visible ?? true,
+  }
+}
+
 function normalizeProject(project: Project): Project {
   const meta = {
     ...project.meta,
@@ -943,6 +992,7 @@ function normalizeProject(project: Project): Project {
     featureFolders: project.featureFolders ?? [],
     featureTree: project.featureTree ?? [],
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
+    tabs: (project.tabs ?? []).map((tab, index) => normalizeTab(tab, project.meta.units, index)),
     clamps: (project.clamps ?? []).map((clamp, index) => normalizeClamp(clamp, project.meta.units, index)),
   }))
 
@@ -1008,6 +1058,12 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
       ? project.featureFolders.some((folder) => folder.id === selectedNode.folderId)
         ? selectedNode
         : null
+      : selectedNode?.type === 'tab'
+        ? project.tabs.some((tab) => tab.id === selectedNode.tabId)
+          ? selectedNode
+          : null
+      : selectedNode?.type === 'tabs_root'
+        ? selectedNode
       : selectedNode?.type === 'clamp'
         ? project.clamps.some((clamp) => clamp.id === selectedNode.clampId)
           ? selectedNode
@@ -2101,6 +2157,71 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return nextId
   },
 
+  updateTab: (id, patch) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tabs: s.project.tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteTab: (id) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tabs: s.project.tabs.filter((tab) => tab.id !== id),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      const nextSelection =
+        s.selection.selectedNode?.type === 'tab' && s.selection.selectedNode.tabId === id
+          ? emptySelection()
+          : sanitizeSelection(nextProject, s.selection)
+      return {
+        project: nextProject,
+        selection: nextSelection,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setAllTabsVisible: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        tabs: s.project.tabs.map((tab) => ({ ...tab, visible })),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   setAllClampsVisible: (visible) =>
     set((s) => {
       const nextProject = {
@@ -2245,6 +2366,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       sketchEditSession: null,
     })),
 
+  selectTabsRoot: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'tabs_root' },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+    })),
+
   selectClampsRoot: () =>
     set((s) => ({
       selection: {
@@ -2265,6 +2399,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureId: null,
         selectedFeatureIds: [],
         selectedNode: { type: 'folder', folderId: id },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+    })),
+
+  selectTab: (id) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'tab', tabId: id },
         mode: 'feature',
         activeControl: null,
       },
@@ -2601,6 +2748,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
     })),
 
+  startAddTabPlacement: () =>
+    set((s) => ({
+      pendingAdd: { shape: 'tab', anchor: null, session: nextPlacementSession() },
+      pendingMove: null,
+      sketchEditSession: null,
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'tabs_root' },
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+    })),
+
   startAddCirclePlacement: () =>
     set((s) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
@@ -2680,7 +2843,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const depth = Math.min(state.project.stock.thickness, 10)
     const minSize = convertLength(0.01, 'mm', state.project.meta.units)
 
-    if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'clamp') {
+    if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'tab' || state.pendingAdd.shape === 'clamp') {
       const x1 = anchor.x
       const y1 = anchor.y
       const x2 = point.x
@@ -2689,6 +2852,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const y = Math.min(y1, y2)
       const width = Math.max(Math.abs(x2 - x1), minSize)
       const height = Math.max(Math.abs(y2 - y1), minSize)
+
+      if (state.pendingAdd.shape === 'tab') {
+        const id = nextUniqueGeneratedId(state.project, 'tb')
+        const tabEntry: Tab = {
+          id,
+          name: `Tab ${state.project.tabs.length + 1}`,
+          x,
+          y,
+          w: width,
+          h: height,
+          z_bottom: 0,
+          z_top: Math.min(
+            Math.max(convertLength(3, 'mm', state.project.meta.units), minSize),
+            state.project.stock.thickness,
+          ),
+          visible: true,
+        }
+
+        set((s) => ({
+          project: {
+            ...s.project,
+            tabs: [...s.project.tabs, tabEntry],
+            meta: { ...s.project.meta, modified: new Date().toISOString() },
+          },
+          pendingAdd: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedNode: { type: 'tab', tabId: id },
+            mode: 'feature',
+            activeControl: null,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }))
+        return
+      }
 
       if (state.pendingAdd.shape === 'clamp') {
         const id = nextUniqueGeneratedId(state.project, 'cl')

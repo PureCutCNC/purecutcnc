@@ -11,6 +11,7 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
   const {
     project,
     selection,
+    startAddTabPlacement,
     startAddClampPlacement,
     setGrid,
     setStock,
@@ -18,16 +19,20 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
     moveFeatureTreeFeature,
     reorderFeatureTreeEntries,
     setAllFeaturesVisible,
+    setAllTabsVisible,
     setAllClampsVisible,
     updateFeatureFolder,
     updateFeature,
+    updateTab,
     updateClamp,
     selectProject,
     selectGrid,
     selectFeaturesRoot,
+    selectTabsRoot,
     selectClampsRoot,
     selectFeatureFolder,
     selectFeature,
+    selectTab,
     selectClamp,
     selectStock,
     hoverFeature,
@@ -35,6 +40,7 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
 
   const [dragItem, setDragItem] = useState<{ kind: 'feature' | 'folder'; id: string } | null>(null)
   const [featuresCollapsed, setFeaturesCollapsed] = useState(false)
+  const [tabsCollapsed, setTabsCollapsed] = useState(false)
   const [clampsCollapsed, setClampsCollapsed] = useState(false)
   const dragOverTarget = useRef<{ kind: 'features' | 'folder' | 'feature'; id?: string } | null>(null)
 
@@ -267,6 +273,42 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
           </div>
         )}
         <TreeRow
+          label="Tabs"
+          kind="tabs"
+          depth={0}
+          isSelected={selection.selectedNode?.type === 'tabs_root'}
+          isDragging={false}
+          collapsed={tabsCollapsed}
+          onClick={selectTabsRoot}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onAddTab={() => startAddTabPlacement()}
+          onToggleCollapse={() => setTabsCollapsed((value) => !value)}
+          onShowAll={() => setAllTabsVisible(true)}
+          onHideAll={() => setAllTabsVisible(false)}
+        />
+        {tabsCollapsed ? null : project.tabs.length === 0 ? (
+          <div className="feature-tree-empty">No tabs yet.</div>
+        ) : (
+          <div className="tree-children">
+            {project.tabs.map((tab) => (
+              <TreeRow
+                key={tab.id}
+                label={tab.name}
+                kind="tab"
+                depth={1}
+                isSelected={selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id}
+                isDragging={false}
+                visible={tab.visible}
+                onClick={() => selectTab(tab.id)}
+                onMouseEnter={() => hoverFeature(null)}
+                onMouseLeave={() => hoverFeature(null)}
+                onToggleVisible={() => updateTab(tab.id, { visible: !tab.visible })}
+              />
+            ))}
+          </div>
+        )}
+        <TreeRow
           label="Clamps"
           kind="clamps"
           depth={0}
@@ -314,7 +356,7 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'features' | 'clamps' | 'folder' | 'feature' | 'clamp'
+  kind: 'project' | 'grid' | 'stock' | 'features' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
   isSelected: boolean
   isDragging: boolean
@@ -329,6 +371,7 @@ interface TreeRowProps {
   onToggleOperation?: () => void
   onToggleCollapse?: () => void
   onAddFolder?: () => void
+  onAddTab?: () => void
   onAddClamp?: () => void
   onShowAll?: () => void
   onHideAll?: () => void
@@ -357,6 +400,7 @@ function TreeRow({
   onToggleOperation,
   onToggleCollapse,
   onAddFolder,
+  onAddTab,
   onAddClamp,
   onShowAll,
   onHideAll,
@@ -405,8 +449,12 @@ function TreeRow({
                 ? 'root'
                 : kind === 'features'
                   ? 'feat'
+                  : kind === 'tabs'
+                    ? 'root'
                   : kind === 'clamps'
                     ? 'clmp'
+                    : kind === 'tab'
+                      ? 'node'
                     : kind === 'clamp'
                       ? 'node'
                       : 'node'
@@ -414,7 +462,7 @@ function TreeRow({
       </span>
       <span className="tree-label" title={label}>{label}</span>
       <div className="tree-row-actions">
-        {(kind === 'features' || kind === 'clamps') && onShowAll ? (
+        {(kind === 'features' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
           <button
             type="button"
             className="tree-action-btn"
@@ -422,13 +470,13 @@ function TreeRow({
               event.stopPropagation()
               onShowAll()
             }}
-            title={kind === 'features' ? 'Show all features' : 'Show all clamps'}
-            aria-label={kind === 'features' ? 'Show all features' : 'Show all clamps'}
+            title={kind === 'features' ? 'Show all features' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
+            aria-label={kind === 'features' ? 'Show all features' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
           >
             ◉
           </button>
         ) : null}
-        {(kind === 'features' || kind === 'clamps') && onHideAll ? (
+        {(kind === 'features' || kind === 'tabs' || kind === 'clamps') && onHideAll ? (
           <button
             type="button"
             className="tree-action-btn tree-action-btn--muted"
@@ -436,8 +484,8 @@ function TreeRow({
               event.stopPropagation()
               onHideAll()
             }}
-            title={kind === 'features' ? 'Hide all features' : 'Hide all clamps'}
-            aria-label={kind === 'features' ? 'Hide all features' : 'Hide all clamps'}
+            title={kind === 'features' ? 'Hide all features' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
+            aria-label={kind === 'features' ? 'Hide all features' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
           >
             ○
           </button>
@@ -456,6 +504,20 @@ function TreeRow({
             +
           </button>
         ) : null}
+        {kind === 'tabs' && onAddTab ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onAddTab()
+            }}
+            title="Add tab"
+            aria-label="Add tab"
+          >
+            +
+          </button>
+        ) : null}
         {kind === 'clamps' && onAddClamp ? (
           <button
             type="button"
@@ -470,7 +532,7 @@ function TreeRow({
             +
           </button>
         ) : null}
-        {(kind === 'folder' || kind === 'features' || kind === 'clamps') && onToggleCollapse ? (
+        {(kind === 'folder' || kind === 'features' || kind === 'tabs' || kind === 'clamps') && onToggleCollapse ? (
           <button
             type="button"
             className="tree-action-btn"

@@ -231,6 +231,22 @@ export interface Clamp {
 }
 
 // ============================================================
+// Tabs
+// ============================================================
+
+export interface Tab {
+  id: string
+  name: string
+  x: number
+  y: number
+  w: number
+  h: number
+  z_top: number
+  z_bottom: number
+  visible: boolean
+}
+
+// ============================================================
 // Project — top-level .camj document
 // ============================================================
 
@@ -257,6 +273,7 @@ export interface Project {
   global_constraints: GlobalConstraint[]
   tools: Tool[]
   operations: Operation[]
+  tabs: Tab[]
   clamps: Clamp[]
   ai_history: AIMessage[]
 }
@@ -687,6 +704,7 @@ export function newProject(name = 'Untitled'): Project {
     global_constraints: [],
     tools: [],
     operations: [],
+    tabs: [],
     clamps: [],
     ai_history: [],
   }

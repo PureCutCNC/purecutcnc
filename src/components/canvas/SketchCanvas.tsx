@@ -15,7 +15,7 @@ import {
   sampleProfilePoints,
   splineProfile,
 } from '../../types/project'
-import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock } from '../../types/project'
+import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock, Tab } from '../../types/project'
 import { convertLength, formatLength } from '../../utils/units'
 
 const PADDING = 42
@@ -150,6 +150,18 @@ function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getS
   for (const feature of project.features) {
     if (feature.visible) {
       profiles.push(feature.sketch.profile)
+    }
+  }
+
+  for (const tab of project.tabs) {
+    if (tab.visible) {
+      profiles.push(rectProfile(tab.x, tab.y, tab.w, tab.h))
+    }
+  }
+
+  for (const clamp of project.clamps) {
+    if (clamp.visible) {
+      profiles.push(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
     }
   }
 
@@ -624,6 +636,23 @@ function drawClampFootprint(
   ctx.setLineDash([])
 }
 
+function drawTabFootprint(
+  ctx: CanvasRenderingContext2D,
+  tab: Tab,
+  vt: ViewTransform,
+  selected: boolean,
+): void {
+  const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
+  traceProfilePath(ctx, profile, vt)
+  ctx.fillStyle = selected ? 'rgba(168, 208, 110, 0.24)' : 'rgba(128, 175, 82, 0.14)'
+  ctx.fill()
+  ctx.strokeStyle = selected ? '#c7ef94' : 'rgba(156, 205, 103, 0.88)'
+  ctx.lineWidth = selected ? 2.2 : 1.6
+  ctx.setLineDash([6, 4])
+  ctx.stroke()
+  ctx.setLineDash([])
+}
+
 function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
   if (points.length === 0) {
     return []
@@ -890,7 +919,7 @@ function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point
 }
 
 function buildPendingProfile(
-  pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' | 'clamp' }>,
+  pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' | 'tab' | 'clamp' }>,
   previewPoint: Point,
   units: 'mm' | 'inch',
 ): SketchProfile {
@@ -898,7 +927,7 @@ function buildPendingProfile(
   const anchor = pendingAdd.anchor ?? previewPoint
   const current = previewPoint
 
-  if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'clamp') {
+  if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
     const x = Math.min(anchor.x, current.x)
     const y = Math.min(anchor.y, current.y)
     return rectProfile(
@@ -1171,6 +1200,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    for (const tab of project.tabs) {
+      if (!tab.visible) continue
+      const selected = selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id
+      drawTabFootprint(ctx, tab, vt, selected)
+    }
+
     for (const toolpath of toolpaths) {
       if (toolpath.moves.length > 0) {
         drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId)
@@ -1204,11 +1239,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     } else if (pendingAdd?.shape === 'composite') {
       drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt)
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
         pendingAdd.shape === 'rect'
           ? 'Pending rectangle'
+          : pendingAdd.shape === 'tab'
+            ? 'Pending tab'
           : pendingAdd.shape === 'clamp'
             ? 'Pending clamp'
             : 'Pending circle'
@@ -1562,7 +1599,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     hoverFeature(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
       setPendingPreviewPoint(null)
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
       setPendingPreviewPoint(null)
@@ -1609,10 +1646,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           addPendingPolygonPoint(snapped)
         }
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
         placePendingAddAt(snapped)
         setPendingPreviewPoint(null)
       } else if (pendingAdd.shape === 'composite') {
@@ -1856,7 +1893,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ? polygonProfile(pendingAdd.points)
       : pendingAdd?.shape === 'spline' && pendingAdd.points.length >= 3
         ? splineProfile(pendingAdd.points)
-        : (pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'clamp')
+        : (pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp')
             && pendingAdd.anchor
             && pendingPreviewPoint?.session === pendingAdd.session
           ? buildPendingProfile(pendingAdd, pendingPreviewPoint.point, project.meta.units)
@@ -1914,14 +1951,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   : pendingAdd.shape === 'spline'
                     ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
                     : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
-            : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
+            : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner.'
+                : pendingAdd.shape === 'tab'
+                  ? 'Move the mouse to size the tab footprint, then click the opposite corner.'
                 : pendingAdd.shape === 'clamp'
                   ? 'Move the mouse to size the clamp footprint, then click the opposite corner.'
                 : 'Move the mouse to set the radius, then click again to confirm the circle.'
               : pendingAdd.shape === 'rect'
                 ? 'Click the sketch to set the rectangle corner, then click again to size it.'
+                : pendingAdd.shape === 'tab'
+                  ? 'Click the sketch to set the tab corner, then click again to size it.'
                 : pendingAdd.shape === 'clamp'
                   ? 'Click the sketch to set the clamp corner, then click again to size it.'
                 : pendingAdd.shape === 'circle'

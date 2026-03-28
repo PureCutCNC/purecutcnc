@@ -119,8 +119,10 @@ export function PropertiesPanel() {
     project,
     selection,
     addFeatureFolder,
+    startAddTabPlacement,
     startAddClampPlacement,
     assignFeaturesToFolder,
+    deleteTab,
     deleteClamp,
     deleteFeatureFolder,
     setProjectName,
@@ -128,6 +130,7 @@ export function PropertiesPanel() {
     setGrid,
     setStock,
     setUnits,
+    updateTab,
     updateClamp,
     updateFeatureFolder,
     updateFeature,
@@ -155,6 +158,10 @@ export function PropertiesPanel() {
   const selectedClamp =
     selectedNode?.type === 'clamp'
       ? project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
+      : null
+  const selectedTab =
+    selectedNode?.type === 'tab'
+      ? project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
       : null
   const allSelectedFeatures = project.features.filter((feature) => selectedFeatureIds.includes(feature.id))
   const commonSelectedFolderId =
@@ -458,6 +465,28 @@ export function PropertiesPanel() {
     )
   }
 
+  if (selection.selectedNode?.type === 'tabs_root') {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput value="Tabs" disabled />
+          </label>
+          <label className="properties-field">
+            <span>Tabs</span>
+            <DraftTextInput value={`${project.tabs.length}`} disabled />
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => startAddTabPlacement()}>
+            Add Tab
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (selectedFolder) {
     const featureCount = project.features.filter((feature) => feature.folderId === selectedFolder.id).length
 
@@ -545,6 +574,58 @@ export function PropertiesPanel() {
           </button>
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteClamp(selectedClamp.id)}>
             Delete Clamp
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (selectedTab) {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`tab-name-${selectedTab.id}-${selectedTab.name}`}
+              value={selectedTab.name}
+              onCommit={(next) => updateTab(selectedTab.id, { name: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Z Top</span>
+            <DraftNumberInput
+              key={`tab-ztop-${selectedTab.id}-${selectedTab.z_top}`}
+              value={selectedTab.z_top}
+              units={units}
+              min={0}
+              validate={(next) => next >= selectedTab.z_bottom}
+              onCommit={(next) => updateTab(selectedTab.id, { z_top: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Z Bottom</span>
+            <DraftNumberInput
+              key={`tab-zbottom-${selectedTab.id}-${selectedTab.z_bottom}`}
+              value={selectedTab.z_bottom}
+              units={units}
+              min={0}
+              validate={(next) => next <= selectedTab.z_top}
+              onCommit={(next) => updateTab(selectedTab.id, { z_bottom: next })}
+            />
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={selectedTab.visible}
+              onChange={(event) => updateTab(selectedTab.id, { visible: event.target.checked })}
+            />
+            <span>Visible</span>
+          </label>
+        </div>
+        <div className="properties-actions">
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteTab(selectedTab.id)}>
+            Delete Tab
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
-import type { Clamp, DimensionRef, Project, SketchFeature, SketchProfile, Segment, Stock } from '../types/project'
+import type { Clamp, DimensionRef, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
@@ -209,6 +209,31 @@ export function buildClampMesh(clamp: Clamp, selected = false): THREE.Mesh {
   return mesh
 }
 
+export function buildTabMesh(tab: Tab, selected = false): THREE.Mesh {
+  const shape = profileToShape(rectProfile(tab.x, tab.y, tab.w, tab.h))
+  const zStart = Math.min(tab.z_top, tab.z_bottom)
+  const depth = Math.max(Math.abs(tab.z_top - tab.z_bottom), 0.1)
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+  })
+  geometry.rotateX(-Math.PI / 2)
+  geometry.translate(0, zStart, 0)
+
+  const material = new THREE.MeshStandardMaterial({
+    color: selected ? new THREE.Color('#c7ef94') : new THREE.Color('#9ccd67'),
+    transparent: true,
+    opacity: selected ? 0.72 : 0.56,
+    roughness: 0.74,
+    metalness: 0.06,
+    side: THREE.DoubleSide,
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.scale.z = -1
+  return mesh
+}
+
 function manifoldMeshToGeometry(mesh: ManifoldMesh): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry()
   const positions = new Float32Array(mesh.numVert * 3)
@@ -340,18 +365,22 @@ export interface SceneObjects {
   stockWireframe: THREE.LineSegments
   modelMesh: THREE.Mesh | null
   featureMeshes: Map<string, THREE.Mesh>
+  tabMeshes: Map<string, THREE.Mesh>
   clampMeshes: Map<string, THREE.Mesh>
 }
 
 export async function buildScene(
   project: Project,
   selectedClampId: string | null = null,
+  selectedTabId: string | null = null,
 ): Promise<SceneObjects> {
   const visibleFeatures = project.features.filter((feature) => feature.visible)
+  const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const stockMesh = buildStockMesh(project.stock)
   const stockWireframe = buildStockWireframe(project.stock)
   const featureMeshes = new Map<string, THREE.Mesh>()
+  const tabMeshes = new Map<string, THREE.Mesh>()
   const clampMeshes = new Map<string, THREE.Mesh>()
   let modelMesh: THREE.Mesh | null = null
 
@@ -371,9 +400,13 @@ export async function buildScene(
   stockMesh.visible = showStockReference
   stockWireframe.visible = showStockReference
 
+  for (const tab of visibleTabs) {
+    tabMeshes.set(tab.id, buildTabMesh(tab, tab.id === selectedTabId))
+  }
+
   for (const clamp of visibleClamps) {
     clampMeshes.set(clamp.id, buildClampMesh(clamp, clamp.id === selectedClampId))
   }
 
-  return { stockMesh, stockWireframe, modelMesh, featureMeshes, clampMeshes }
+  return { stockMesh, stockWireframe, modelMesh, featureMeshes, tabMeshes, clampMeshes }
 }
