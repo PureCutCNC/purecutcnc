@@ -10,6 +10,7 @@ import {
   defaultClampClearanceZ,
   getStockBounds,
   inferFeatureKind,
+  getProfileBounds,
   newProject,
   rectProfile,
   circleProfile,
@@ -131,6 +132,7 @@ export interface ProjectStore {
   startAddTabPlacement: () => void
   startMoveTab: (tabId: string) => void
   startCopyTab: (tabId: string) => void
+  autoPlaceTabsForOperation: (operationId: string) => void
 
   // Tools
   addTool: () => string
@@ -534,6 +536,100 @@ function duplicateTabName(name: string, tabs: Tab[]): string {
     index += 1
   }
   return `${baseName} ${index}`
+}
+
+function nextAutoTabName(baseName: string, tabs: Tab[]): string {
+  const preferred = `${baseName} Tab`
+  if (!tabs.some((tab) => tab.name === preferred)) {
+    return preferred
+  }
+
+  let index = 2
+  while (tabs.some((tab) => tab.name === `${preferred} ${index}`)) {
+    index += 1
+  }
+  return `${preferred} ${index}`
+}
+
+function defaultAutoTabZTop(project: Project): number {
+  return Math.min(project.stock.thickness, convertLength(3, 'mm', project.meta.units))
+}
+
+function resolveToolDiameterInProjectUnits(project: Project, operation: Operation): number | null {
+  if (!operation.toolRef) {
+    return null
+  }
+
+  const tool = project.tools.find((entry) => entry.id === operation.toolRef) ?? null
+  if (!tool || !(tool.diameter > 0)) {
+    return null
+  }
+
+  return tool.units === project.meta.units
+    ? tool.diameter
+    : convertLength(tool.diameter, tool.units, project.meta.units)
+}
+
+function buildAutoTabsForFeature(
+  feature: SketchFeature,
+  project: Project,
+  operation: Operation,
+  existingTabs: Tab[],
+): Tab[] {
+  const bounds = getProfileBounds(feature.sketch.profile)
+  const width = Math.max(bounds.maxX - bounds.minX, convertLength(0.1, 'mm', project.meta.units))
+  const height = Math.max(bounds.maxY - bounds.minY, convertLength(0.1, 'mm', project.meta.units))
+  const cx = bounds.minX + width / 2
+  const cy = bounds.minY + height / 2
+  const toolDiameter = resolveToolDiameterInProjectUnits(project, operation)
+  const minSize = Math.max(convertLength(3, 'mm', project.meta.units), (toolDiameter ?? 0) * 1.25)
+  const maxSize = Math.max(minSize, Math.min(width, height) * 0.18)
+  const size = Math.min(Math.max(minSize, Math.min(width, height) * 0.1), maxSize)
+  const zTop = defaultAutoTabZTop(project)
+  const zBottom = 0
+
+  const entries: Array<Pick<Tab, 'x' | 'y' | 'w' | 'h'>> =
+    Math.min(width, height) < size * 3
+      ? (
+          width >= height
+            ? [
+                { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
+                { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
+              ]
+            : [
+                { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
+                { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
+              ]
+        )
+      : [
+          { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
+          { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
+          { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
+          { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
+        ]
+
+  const created: Tab[] = []
+  for (const entry of entries) {
+    created.push({
+      id: nextUniqueGeneratedId(
+        {
+          ...project,
+          tabs: [...existingTabs, ...created],
+        },
+        'tb',
+      ),
+      name: nextAutoTabName(feature.name, [...existingTabs, ...created]),
+      x: entry.x,
+      y: entry.y,
+      w: entry.w,
+      h: entry.h,
+      z_top: zTop,
+      z_bottom: zBottom,
+      visible: true,
+    })
+  }
+
+  return created
 }
 
 function duplicateToolName(name: string, tools: Tool[]): string {
@@ -3429,6 +3525,52 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           selectedFeatureId: null,
           selectedFeatureIds: [],
           selectedNode: { type: 'tab', tabId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  autoPlaceTabsForOperation: (operationId) =>
+    set((s) => {
+      const operation = s.project.operations.find((entry) => entry.id === operationId) ?? null
+      if (!operation || (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside')) {
+        return {}
+      }
+
+      if (operation.target.source !== 'features' || operation.target.featureIds.length === 0) {
+        return {}
+      }
+
+      const expectedOperation = operation.kind === 'edge_route_inside' ? 'subtract' : 'add'
+      const targetFeatures = operation.target.featureIds
+        .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+        .filter((feature) => feature.operation === expectedOperation)
+
+      if (targetFeatures.length === 0) {
+        return {}
+      }
+
+      const createdTabs: Tab[] = []
+      for (const feature of targetFeatures) {
+        createdTabs.push(...buildAutoTabsForFeature(feature, s.project, operation, [...s.project.tabs, ...createdTabs]))
+      }
+      if (createdTabs.length === 0) {
+        return {}
+      }
+
+      return {
+        project: {
+          ...s.project,
+          tabs: [...s.project.tabs, ...createdTabs],
+        },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'tab', tabId: createdTabs[createdTabs.length - 1].id },
           mode: 'feature',
           hoveredFeatureId: null,
           activeControl: null,

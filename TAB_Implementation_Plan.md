@@ -260,11 +260,15 @@ Need explicit warnings when:
 - validate tab-raised contour motion against clamp clearance and project `Max Z`
 - warn when a tab-crossing lift cannot be performed safely
 
-### TB8. Refinement / backlog candidates
-- moved to backlog
+### TB8. Next-pass tab behavior
+- `[x]` automatic tab placement
+- `[ ]` pocket-aware tabs
+- notes:
+  - `Pocket-aware tabs` should be addressed together with the broader pocket preserved-material issue.
+  - This is where overlapping preserved additive features and temporary tab geometry should converge in the pocket resolver.
+
+### Backlog items
 - tab presets / default dimensions
-- automatic tab placement
-- pocket-aware tabs
 - non-rectangular tabs
 
 ## Recommended Build Order
@@ -276,7 +280,7 @@ Need explicit warnings when:
 5. `TB5` validation
 6. `TB6` edge-route tab machining
 7. `TB7` clamp/machine interaction if/when machine-safety validation becomes urgent
-8. `TB8` polish and advanced behavior as backlog work
+8. `TB8` automatic placement and pocket-aware behavior
 
 Reason:
 - first make tabs real authored objects
@@ -293,4 +297,5 @@ Tabs are usable for the POC when:
 
 Current status:
 - first-pass tab implementation is complete through `TB6`
-- `TB7` and `TB8` are backlog/refinement work
+- `TB7` is backlog/refinement work
+- `TB8` remains open for the next pass

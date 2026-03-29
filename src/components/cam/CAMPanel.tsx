@@ -334,6 +334,7 @@ export function CAMPanel({
     deleteOperation,
     duplicateOperation,
     reorderOperations,
+    autoPlaceTabsForOperation,
   } = useProjectStore()
 
   const selectedToolId =
@@ -568,6 +569,14 @@ export function CAMPanel({
     setTargetUpdateMessage(null)
   }
 
+  function handleAutoPlaceTabs() {
+    if (!selectedOperation || (selectedOperation.kind !== 'edge_route_inside' && selectedOperation.kind !== 'edge_route_outside')) {
+      return
+    }
+
+    autoPlaceTabsForOperation(selectedOperation.id)
+  }
+
   return (
     <div className="cam-panel">
       {mode === 'operations' ? (
@@ -784,6 +793,14 @@ export function CAMPanel({
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
+                  {(selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
+                    <div className="properties-field">
+                      <span>Tabs</span>
+                      <button className="feat-btn" type="button" onClick={handleAutoPlaceTabs}>
+                        Auto place tabs
+                      </button>
+                    </div>
+                  ) : null}
                   {toolpathWarnings && toolpathWarnings.length > 0 ? (
                     <div className="properties-field">
                       <span>Toolpath warnings</span>

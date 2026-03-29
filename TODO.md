@@ -212,18 +212,13 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Priority: Low
 - Summary: Validate tab-raised contour motion against clamp clearance and project `Max Z`, and warn when a tab-crossing lift cannot be performed safely.
 - Notes:
-  - This is the deferred `TB7` work from the tab plan.
+  - This is deferred `TB7` work from the tab plan.
   - It matters for machine-safety validation, but is not blocking the current tab workflow.
 
 ### Tab presets / default dimensions
 - Status: Open
 - Priority: Low
 - Summary: Add reusable default tab dimensions or simple tab presets to speed up manual placement.
-
-### Automatic tab placement
-- Status: Open
-- Priority: Low
-- Summary: Add automatic tab placement suggestions or generation for suitable edge-route operations.
 
 ### Non-rectangular tabs
 - Status: Open
