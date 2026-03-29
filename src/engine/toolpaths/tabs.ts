@@ -193,7 +193,7 @@ function rectsOverlap(a: PreservedObstacle, b: PreservedObstacle): boolean {
 }
 
 function isSupportedTabOperation(kind: Operation['kind']): boolean {
-  return kind === 'edge_route_inside' || kind === 'edge_route_outside'
+  return kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'pocket'
 }
 
 function pointAt(move: ToolpathMove, t: number, z: number): ToolpathPoint {

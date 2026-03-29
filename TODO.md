@@ -170,9 +170,13 @@ This file tracks follow-up work, open issues, and design questions that come up 
 ### Pocket preserved-material handling
 - Status: Open
 - Priority: Medium
-- Summary: Make pocket toolpaths respect included preserved material features the same way edge routes now respect relevant additive restorations.
+- Summary: Resolve the remaining pocket preserved-material edge cases in complex multi-target and nested additive/subtractive situations.
 - Notes:
-  - Current pocket generation still ignores some included/internal preserved features during path generation.
+  - Basic preserved-material cases are now working:
+    - overlapping additive features inside pockets
+    - internal additive features inside pockets
+    - tabs as temporary preserved material inside pockets
+  - Remaining issues are narrower resolver edge cases, not a general pocket-preservation failure.
   - This should be resolved in the pocket CAM resolver/toolpath stage, not by changing finished-part modeling.
 
 ### Combine multiple inside edge targets

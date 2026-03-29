@@ -262,10 +262,10 @@ Need explicit warnings when:
 
 ### TB8. Next-pass tab behavior
 - `[x]` automatic tab placement
-- `[ ]` pocket-aware tabs
+- `[x]` pocket-aware tabs
 - notes:
-  - `Pocket-aware tabs` should be addressed together with the broader pocket preserved-material issue.
-  - This is where overlapping preserved additive features and temporary tab geometry should converge in the pocket resolver.
+  - Pocket operations now treat tabs as temporary preserved additive geometry in the pocket resolver.
+  - Broader preserved-material edge cases in pocket generation still live in the general CAM backlog.
 
 ### Backlog items
 - tab presets / default dimensions
@@ -298,4 +298,4 @@ Tabs are usable for the POC when:
 Current status:
 - first-pass tab implementation is complete through `TB6`
 - `TB7` is backlog/refinement work
-- `TB8` remains open for the next pass
+- `TB8` is complete for the current pass

@@ -1,5 +1,6 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature } from '../../types/project'
+import { rectProfile } from '../../types/project'
 import type {
   ClipperPath,
   ResolvedFeatureZSpan,
@@ -21,6 +22,15 @@ interface FeatureWithSpan {
   span: ResolvedFeatureZSpan
 }
 
+interface AdditiveObstacleWithSpan {
+  id: string
+  path: ClipperPath
+  span: {
+    min: number
+    max: number
+  }
+}
+
 interface PolyTreeNode {
   IsHole(): boolean
   Contour(): ClipperPath
@@ -37,12 +47,20 @@ function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLI
   return toClipperPath(normalizeWinding(flattened.points, false), scale)
 }
 
-function uniqueSortedDepths(features: FeatureWithSpan[]): number[] {
-  return [...new Set(features.flatMap(({ span }) => [span.min, span.max]))].sort((a, b) => b - a)
+function uniqueSortedDepthsFromSpans(spans: Array<{ min: number; max: number }>): number[] {
+  return [...new Set(spans.flatMap((span) => [span.min, span.max]))].sort((a, b) => b - a)
 }
 
 function activeForBand(features: FeatureWithSpan[], topZ: number, bottomZ: number): FeatureWithSpan[] {
   return features.filter(({ span }) => span.max >= topZ && span.min <= bottomZ)
+}
+
+function activeObstaclesForBand(
+  obstacles: AdditiveObstacleWithSpan[],
+  topZ: number,
+  bottomZ: number,
+): AdditiveObstacleWithSpan[] {
+  return obstacles.filter(({ span }) => span.max >= topZ && span.min <= bottomZ)
 }
 
 function executeClip(
@@ -204,8 +222,20 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
+  const candidateTabIslands: AdditiveObstacleWithSpan[] = project.tabs.map((tab) => ({
+    id: tab.id,
+    path: toClipperPath(normalizeWinding(flattenProfile(rectProfile(tab.x, tab.y, tab.w, tab.h)).points, false), DEFAULT_CLIPPER_SCALE),
+    span: {
+      min: Math.min(tab.z_bottom, tab.z_top),
+      max: Math.max(tab.z_bottom, tab.z_top),
+    },
+  }))
 
-  const depths = uniqueSortedDepths(targetFeatures)
+  const depths = uniqueSortedDepthsFromSpans([
+    ...targetFeatures.map(({ span }) => span),
+    ...candidateIslands.map(({ span }) => span),
+    ...candidateTabIslands.map(({ span }) => span),
+  ])
   const bands: ResolvedPocketBand[] = []
   const targetIdSet = new Set(targetFeatures.map(({ feature }) => feature.id))
 
@@ -222,6 +252,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     }
 
     const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
+    const activeTabIslands = activeObstaclesForBand(candidateTabIslands, topZ, bottomZ)
     const activeBandFeatureIds = new Set([
       ...activeTargets.map(({ feature }) => feature.id),
       ...activeIslands.map(({ feature }) => feature.id),
@@ -244,6 +275,13 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       }
     }
 
+    if (resolvedPaths.length > 0 && activeTabIslands.length > 0) {
+      resolvedPaths = differencePaths(
+        resolvedPaths,
+        activeTabIslands.map((tab) => tab.path),
+      )
+    }
+
     if (resolvedPaths.length === 0) {
       warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty subject geometry`)
       continue
@@ -254,7 +292,10 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     const regions = polyTreeToRegions(
       polyTree,
       activeTargets.map(({ feature }) => feature.id),
-      activeIslands.map(({ feature }) => feature.id),
+      [
+        ...activeIslands.map(({ feature }) => feature.id),
+        ...activeTabIslands.map((tab) => tab.id),
+      ],
     )
 
     if (regions.length === 0) {
@@ -266,7 +307,10 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       topZ,
       bottomZ,
       targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
-      islandFeatureIds: activeIslands.map(({ feature }) => feature.id),
+      islandFeatureIds: [
+        ...activeIslands.map(({ feature }) => feature.id),
+        ...activeTabIslands.map((tab) => tab.id),
+      ],
       regions,
     })
   }
