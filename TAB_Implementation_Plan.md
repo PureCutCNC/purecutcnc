@@ -241,9 +241,9 @@ Need explicit warnings when:
 - `[x]` support selection highlight
 
 ### TB4. Tab editing workflow
-- `[ ]` support rectangle-style sketch edit
-- `[ ]` support move / copy / delete
-- `[ ]` support context menu actions
+- `[x]` support rectangle-style sketch edit
+- `[x]` support move / copy / delete
+- `[x]` support context menu actions
 
 ### TB5. Operation validation and preview warnings
 - `[x]` detect when tabs are relevant to the selected operation
@@ -256,14 +256,16 @@ Need explicit warnings when:
 - `[x]` preview tab-aware edge-route toolpaths in sketch and 3D
 
 ### TB7. Clamp / machine-limit interaction
-- `[ ]` validate tab-raised contour motion against clamp clearance and project `Max Z`
-- `[ ]` warn when a tab-crossing lift cannot be performed safely
+- moved to backlog
+- validate tab-raised contour motion against clamp clearance and project `Max Z`
+- warn when a tab-crossing lift cannot be performed safely
 
 ### TB8. Refinement / backlog candidates
-- `[ ]` tab presets / default dimensions
-- `[ ]` automatic tab placement
-- `[ ]` pocket-aware tabs
-- `[ ]` non-rectangular tabs
+- moved to backlog
+- tab presets / default dimensions
+- automatic tab placement
+- pocket-aware tabs
+- non-rectangular tabs
 
 ## Recommended Build Order
 
@@ -273,8 +275,8 @@ Need explicit warnings when:
 4. `TB4` editing workflow
 5. `TB5` validation
 6. `TB6` edge-route tab machining
-7. `TB7` clamp/machine interaction
-8. `TB8` polish and advanced behavior
+7. `TB7` clamp/machine interaction if/when machine-safety validation becomes urgent
+8. `TB8` polish and advanced behavior as backlog work
 
 Reason:
 - first make tabs real authored objects
@@ -288,3 +290,7 @@ Tabs are usable for the POC when:
 - tabs appear in the tree, sketch, and 3D
 - edge-route toolpaths visibly leave material at tab locations by raising Z there
 - invalid tab setups produce warnings instead of silent bad output
+
+Current status:
+- first-pass tab implementation is complete through `TB6`
+- `TB7` and `TB8` are backlog/refinement work

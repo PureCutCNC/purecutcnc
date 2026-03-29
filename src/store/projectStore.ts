@@ -123,10 +123,14 @@ export interface ProjectStore {
   duplicateClamp: (id: string) => string | null
 
   // Tabs
+  enterTabEdit: (id: string) => void
+  moveTabControl: (tabId: string, control: SketchControlRef, point: Point) => void
   updateTab: (id: string, patch: Partial<Tab>) => void
   deleteTab: (id: string) => void
   setAllTabsVisible: (visible: boolean) => void
   startAddTabPlacement: () => void
+  startMoveTab: (tabId: string) => void
+  startCopyTab: (tabId: string) => void
 
   // Tools
   addTool: () => string
@@ -215,7 +219,7 @@ export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
-  entityType: 'feature' | 'clamp'
+  entityType: 'feature' | 'clamp' | 'tab'
   entityIds: string[]
   fromPoint: Point | null
   toPoint: Point | null
@@ -229,7 +233,7 @@ export interface ProjectHistory {
 }
 
 export interface SketchEditSession {
-  entityType: 'feature' | 'clamp'
+  entityType: 'feature' | 'clamp' | 'tab'
   entityId: string
   snapshot: Project
   pastLength: number
@@ -485,6 +489,14 @@ function translateClamp(clamp: Clamp, dx: number, dy: number): Clamp {
   }
 }
 
+function translateTab(tab: Tab, dx: number, dy: number): Tab {
+  return {
+    ...tab,
+    x: tab.x + dx,
+    y: tab.y + dy,
+  }
+}
+
 function duplicateFeatureName(name: string, features: SketchFeature[]): string {
   const baseName = `${name} Copy`
   if (!features.some((feature) => feature.name === baseName)) {
@@ -506,6 +518,19 @@ function duplicateClampName(name: string, clamps: Clamp[]): string {
 
   let index = 2
   while (clamps.some((clamp) => clamp.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
+function duplicateTabName(name: string, tabs: Tab[]): string {
+  const baseName = `${name} Copy`
+  if (!tabs.some((tab) => tab.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (tabs.some((tab) => tab.name === `${baseName} ${index}`)) {
     index += 1
   }
   return `${baseName} ${index}`
@@ -716,6 +741,37 @@ function buildCopiedClamps(
         name: duplicateClampName(sourceClamp.name, [...existingClamps, ...created]),
         x: sourceClamp.x + dx * step,
         y: sourceClamp.y + dy * step,
+      })
+    }
+  }
+
+  return created
+}
+
+function buildCopiedTabs(
+  sourceTabs: Tab[],
+  existingTabs: Tab[],
+  project: Project,
+  dx: number,
+  dy: number,
+  count: number,
+): Tab[] {
+  const created: Tab[] = []
+
+  for (let step = 1; step <= count; step += 1) {
+    for (const sourceTab of sourceTabs) {
+      created.push({
+        ...sourceTab,
+        id: nextUniqueGeneratedId(
+          {
+            ...project,
+            tabs: [...existingTabs, ...created],
+          },
+          'tb',
+        ),
+        name: duplicateTabName(sourceTab.name, [...existingTabs, ...created]),
+        x: sourceTab.x + dx * step,
+        y: sourceTab.y + dy * step,
       })
     }
   }
@@ -2472,6 +2528,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
     })),
 
+  enterTabEdit: (id) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'tab', tabId: id },
+        mode: 'sketch_edit',
+        activeControl: null,
+      },
+      sketchEditSession: {
+        entityType: 'tab',
+        entityId: id,
+        snapshot: cloneProject(s.project),
+        pastLength: s.history.past.length,
+      },
+    })),
+
   applySketchEdit: () =>
     set((s) => ({
       selection: { ...s.selection, mode: 'feature', activeControl: null },
@@ -2719,6 +2793,58 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
 
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  moveTabControl: (tabId, control, point) =>
+    set((s) => {
+      const minSize = convertLength(0.1, 'mm', s.project.meta.units)
+      const nextProject = {
+        ...s.project,
+        tabs: s.project.tabs.map((tab) => {
+          if (tab.id !== tabId) {
+            return tab
+          }
+
+          if (control.kind !== 'anchor') {
+            return tab
+          }
+
+          const corners = [
+            { x: tab.x, y: tab.y },
+            { x: tab.x + tab.w, y: tab.y },
+            { x: tab.x + tab.w, y: tab.y + tab.h },
+            { x: tab.x, y: tab.y + tab.h },
+          ]
+          const opposite = corners[(control.index + 2) % 4]
+          const minX = Math.min(point.x, opposite.x)
+          const maxX = Math.max(point.x, opposite.x)
+          const minY = Math.min(point.y, opposite.y)
+          const maxY = Math.max(point.y, opposite.y)
+
+          return {
+            ...tab,
+            x: minX,
+            y: minY,
+            w: Math.max(maxX - minX, minSize),
+            h: Math.max(maxY - minY, minSize),
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -3264,6 +3390,52 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  startMoveTab: (tabId) =>
+    set((s) => {
+      const tab = s.project.tabs.find((entry) => entry.id === tabId)
+      if (!tab) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        sketchEditSession: null,
+        pendingMove: { mode: 'move', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'tab', tabId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startCopyTab: (tabId) =>
+    set((s) => {
+      const tab = s.project.tabs.find((entry) => entry.id === tabId)
+      if (!tab) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        sketchEditSession: null,
+        pendingMove: { mode: 'copy', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'tab', tabId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
   cancelPendingMove: () => set({ pendingMove: null }),
 
   setPendingMoveFrom: (point) =>
@@ -3343,6 +3515,56 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   selectedFeatureIds: createdFeatures.map((feature) => feature.id),
                   selectedNode: createdFeatures.at(-1)
                     ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                    : s.selection.selectedNode,
+                }
+              : s.selection,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }
+
+      if (entityType === 'tab') {
+        const sourceTabs = entityIds
+          .map((tabId) => s.project.tabs.find((tab) => tab.id === tabId) ?? null)
+          .filter((tab): tab is Tab => tab !== null)
+        if (sourceTabs.length !== entityIds.length) {
+          return { pendingMove: null }
+        }
+
+        const createdTabs =
+          mode === 'copy'
+            ? buildCopiedTabs(sourceTabs, s.project.tabs, s.project, dx, dy, normalizedCopyCount)
+            : []
+
+        const nextProject = {
+          ...s.project,
+          tabs:
+            mode === 'copy'
+              ? [...s.project.tabs, ...createdTabs]
+              : s.project.tabs.map((tab) => (
+                  entityIds.includes(tab.id) ? translateTab(tab, dx, dy) : tab
+                )),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+
+        if (projectsEqual(nextProject, s.project)) {
+          return { pendingMove: null }
+        }
+
+        return {
+          project: nextProject,
+          pendingMove: null,
+          selection:
+            mode === 'copy'
+              ? {
+                  ...s.selection,
+                  selectedFeatureId: null,
+                  selectedFeatureIds: [],
+                  selectedNode: createdTabs.at(-1)
+                    ? { type: 'tab', tabId: createdTabs.at(-1)!.id }
                     : s.selection.selectedNode,
                 }
               : s.selection,

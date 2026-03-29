@@ -167,6 +167,71 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current clamp handling only lifts rapids vertically when possible.
   - This is a later toolpath-optimization feature, not required for current clamp-aware processing.
 
+### Pocket preserved-material handling
+- Status: Open
+- Priority: Medium
+- Summary: Make pocket toolpaths respect included preserved material features the same way edge routes now respect relevant additive restorations.
+- Notes:
+  - Current pocket generation still ignores some included/internal preserved features during path generation.
+  - This should be resolved in the pocket CAM resolver/toolpath stage, not by changing finished-part modeling.
+
+### Combine multiple inside edge targets
+- Status: Open
+- Priority: Medium
+- Summary: When multiple features are selected for an inside edge route, resolve them as one combined target region where appropriate, similar to pocket target union behavior.
+- Notes:
+  - Current inside edge routing still treats multiple targets too independently in some cases.
+  - This should be addressed in the inside-edge resolver rather than as a display-only change.
+
+### Combine multiple outside edge targets
+- Status: Open
+- Priority: High
+- Summary: When multiple features are selected for an outside edge route, resolve them as one combined outer boundary where appropriate instead of cutting through the interior overlap.
+- Notes:
+  - Current outside edge routing can machine through the inside of overlapping selected add features.
+  - This is a resolver/toolpath correctness issue, not just a preview issue.
+
+### New operations visible by default
+- Status: Open
+- Priority: Low
+- Summary: Newly created operations should default to `showToolpath = true` so the preview appears immediately without extra user action.
+- Notes:
+  - This is a CAM UI/default-behavior improvement.
+  - It should apply consistently across rough, finish, and paired operation creation.
+
+### Reduce irrelevant tab warnings
+- Status: Open
+- Priority: Medium
+- Summary: Do not show per-tab warnings for tabs that are not meaningfully relevant to the current operation/toolpath.
+- Notes:
+  - Current tab validation is too noisy when many tabs exist elsewhere in the setup.
+  - Prefer surfacing only tabs that intersect or are otherwise plausibly involved in the selected operation.
+
+### Tab lift vs machine/clamp limits
+- Status: Open
+- Priority: Low
+- Summary: Validate tab-raised contour motion against clamp clearance and project `Max Z`, and warn when a tab-crossing lift cannot be performed safely.
+- Notes:
+  - This is the deferred `TB7` work from the tab plan.
+  - It matters for machine-safety validation, but is not blocking the current tab workflow.
+
+### Tab presets / default dimensions
+- Status: Open
+- Priority: Low
+- Summary: Add reusable default tab dimensions or simple tab presets to speed up manual placement.
+
+### Automatic tab placement
+- Status: Open
+- Priority: Low
+- Summary: Add automatic tab placement suggestions or generation for suitable edge-route operations.
+
+### Non-rectangular tabs
+- Status: Open
+- Priority: Low
+- Summary: Support tab shapes beyond simple rectangles.
+- Notes:
+  - This likely belongs under the same future profile-based approach as richer clamp geometry.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

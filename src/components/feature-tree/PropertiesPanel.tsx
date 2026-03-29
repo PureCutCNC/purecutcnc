@@ -137,6 +137,7 @@ export function PropertiesPanel() {
     deleteFeature,
     deleteFeatures,
     enterSketchEdit,
+    enterTabEdit,
     enterClampEdit,
   } = useProjectStore()
 
@@ -624,6 +625,9 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => enterTabEdit(selectedTab.id)}>
+            Edit Sketch
+          </button>
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteTab(selectedTab.id)}>
             Delete Tab
           </button>

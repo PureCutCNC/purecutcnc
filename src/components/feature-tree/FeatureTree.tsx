@@ -4,10 +4,11 @@ import { useProjectStore } from '../../store/projectStore'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+  onTabContextMenu?: (tabId: string, x: number, y: number) => void
   onClampContextMenu?: (clampId: string, x: number, y: number) => void
 }
 
-export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: FeatureTreeProps) {
+export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampContextMenu }: FeatureTreeProps) {
   const {
     project,
     selection,
@@ -304,6 +305,11 @@ export function FeatureTree({ onFeatureContextMenu, onClampContextMenu }: Featur
                 onMouseEnter={() => hoverFeature(null)}
                 onMouseLeave={() => hoverFeature(null)}
                 onToggleVisible={() => updateTab(tab.id, { visible: !tab.visible })}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  selectTab(tab.id)
+                  onTabContextMenu?.(tab.id, event.clientX, event.clientY)
+                }}
               />
             ))}
           </div>

@@ -818,6 +818,17 @@ function findHitClampId(worldPoint: Point, clamps: Clamp[]): string | null {
   return null
 }
 
+function findHitTabId(worldPoint: Point, tabs: Tab[]): string | null {
+  for (let index = tabs.length - 1; index >= 0; index -= 1) {
+    const tab = tabs[index]
+    if (!tab.visible) continue
+    if (pointInProfile(worldPoint.x, worldPoint.y, rectProfile(tab.x, tab.y, tab.w, tab.h))) {
+      return tab.id
+    }
+  }
+  return null
+}
+
 function distance2(a: CanvasPoint, b: CanvasPoint): number {
   const dx = a.cx - b.cx
   const dy = a.cy - b.cy
@@ -1093,13 +1104,14 @@ function isLoopCloseCandidate(
 
 interface SketchCanvasProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
+  onTabContextMenu?: (tabId: string, x: number, y: number) => void
   onClampContextMenu?: (clampId: string, x: number, y: number) => void
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null },
+  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1120,9 +1132,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMove,
     selection,
     selectFeature,
+    selectTab,
     selectClamp,
     hoverFeature,
     enterSketchEdit,
+    enterTabEdit,
     enterClampEdit,
     applySketchEdit,
     cancelSketchEdit,
@@ -1130,6 +1144,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     beginHistoryTransaction,
     commitHistoryTransaction,
     moveFeatureControl,
+    moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
@@ -1204,6 +1219,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (!tab.visible) continue
       const selected = selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id
       drawTabFootprint(ctx, tab, vt, selected)
+      if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id) {
+        drawSketchControls(ctx, rectProfile(tab.x, tab.y, tab.w, tab.h), vt, selection.activeControl)
+      }
     }
 
     for (const toolpath of toolpaths) {
@@ -1299,7 +1317,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         } else if (currentMovePreviewPoint) {
           drawPendingPoint(ctx, currentMovePreviewPoint, vt)
         }
-      } else {
+      } else if (pendingMove.entityType === 'clamp') {
         const clamps = pendingMove.entityIds
           .map((clampId) => project.clamps.find((entry) => entry.id === clampId) ?? null)
           .filter((clamp): clamp is Clamp => clamp !== null)
@@ -1334,6 +1352,51 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     ...clamp,
                     x: clamp.x + (targetPoint.x - pendingMove.fromPoint.x) * index,
                     y: clamp.y + (targetPoint.y - pendingMove.fromPoint.y) * index,
+                  },
+                  vt,
+                  false,
+                )
+              }
+            }
+          }
+        } else if (currentMovePreviewPoint) {
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+        }
+      } else {
+        const tabs = pendingMove.entityIds
+          .map((tabId) => project.tabs.find((entry) => entry.id === tabId) ?? null)
+          .filter((tab): tab is Tab => tab !== null)
+        if (tabs.length === 0) {
+          return
+        }
+
+        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+
+        if (pendingMove.fromPoint && targetPoint) {
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          for (const tab of tabs) {
+            drawTabFootprint(
+              ctx,
+              {
+                ...tab,
+                x: tab.x + (targetPoint.x - pendingMove.fromPoint.x),
+                y: tab.y + (targetPoint.y - pendingMove.fromPoint.y),
+              },
+              vt,
+              true,
+            )
+          }
+          if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
+            const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
+            for (let index = 2; index <= parsedCount; index += 1) {
+              for (const tab of tabs) {
+                drawTabFootprint(
+                  ctx,
+                  {
+                    ...tab,
+                    x: tab.x + (targetPoint.x - pendingMove.fromPoint.x) * index,
+                    y: tab.y + (targetPoint.y - pendingMove.fromPoint.y) * index,
                   },
                   vt,
                   false,
@@ -1435,9 +1498,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
   }
 
+  function editableTab(): Tab | null {
+    if (selection.mode !== 'sketch_edit') return null
+    const selectedNode = selection.selectedNode
+    if (selectedNode?.type !== 'tab') return null
+    return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
+  }
+
   function hitEditableControl(point: CanvasPoint): SketchControlRef | null {
     const feature = editableFeature()
     const clamp = editableClamp()
+    const tab = editableTab()
     const canvas = canvasRef.current
     if (!canvas) return null
 
@@ -1446,6 +1517,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ? feature.sketch.profile
         : clamp
           ? rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
+          : tab
+            ? rectProfile(tab.x, tab.y, tab.w, tab.h)
           : null
     if (!profile || (feature && feature.locked)) return null
 
@@ -1569,6 +1642,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (isDraggingNodeRef.current && selection.selectedNode?.type === 'clamp' && selection.activeControl) {
       moveClampControl(selection.selectedNode.clampId, selection.activeControl, snapped)
+      return
+    }
+
+    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'tab' && selection.activeControl) {
+      moveTabControl(selection.selectedNode.tabId, selection.activeControl, snapped)
+      return
+    }
+
+    const hitTabId = findHitTabId(world, project.tabs)
+    if (hitTabId) {
+      hoverFeature(null)
       return
     }
 
@@ -1699,6 +1783,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    const hitTabId = findHitTabId(world, project.tabs)
+    if (hitTabId) {
+      selectTab(hitTabId)
+      return
+    }
+
     const hitId = findHitFeatureId(world, project.features)
     if (hitId) {
       selectFeature(hitId, event.metaKey || event.ctrlKey || event.shiftKey)
@@ -1749,6 +1839,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       enterClampEdit(hitClampId)
       return
     }
+    const hitTabId = findHitTabId(world, project.tabs)
+    if (hitTabId) {
+      enterTabEdit(hitTabId)
+      return
+    }
     const hitId = findHitFeatureId(world, project.features)
     if (hitId) enterSketchEdit(hitId)
   }
@@ -1779,6 +1874,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (hitClampId) {
       selectClamp(hitClampId)
       onClampContextMenu?.(hitClampId, event.clientX, event.clientY)
+      return
+    }
+
+    const hitTabId = findHitTabId(world, project.tabs)
+    if (hitTabId) {
+      selectTab(hitTabId)
+      onTabContextMenu?.(hitTabId, event.clientX, event.clientY)
       return
     }
 
@@ -1880,6 +1982,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selectedNode?.type !== 'clamp') return null
     return project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
   })()
+  const editingTab = (() => {
+    if (selection.mode !== 'sketch_edit') return null
+    const selectedNode = selection.selectedNode
+    if (selectedNode?.type !== 'tab') return null
+    return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
+  })()
   const editingFeatureHasSelfIntersection =
     editingFeature ? profileHasSelfIntersection(editingFeature.sketch.profile) : false
   const editingFeatureExceedsStock =
@@ -1887,6 +1995,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ? profileExceedsStock(editingFeature.sketch.profile, project.stock)
       : editingClamp
         ? profileExceedsStock(rectProfile(editingClamp.x, editingClamp.y, editingClamp.w, editingClamp.h), project.stock)
+        : editingTab
+          ? profileExceedsStock(rectProfile(editingTab.x, editingTab.y, editingTab.w, editingTab.h), project.stock)
         : false
   const pendingDraftProfile =
     pendingAdd?.shape === 'polygon' && pendingAdd.points.length >= 3
