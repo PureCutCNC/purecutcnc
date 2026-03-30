@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { buildClampMesh } from '../../engine/csg'
 import { buildSimulationGeometry } from '../../engine/simulation/mesh'
 import type { SimulationResult } from '../../engine/simulation'
-import type { Operation } from '../../types/project'
+import type { Clamp, Operation } from '../../types/project'
 
 const DEFAULT_CAMERA_SPHERICAL = {
   theta: Math.PI / 4,
@@ -61,6 +62,8 @@ interface SimulationViewportProps {
   mode: 'selected' | 'visible'
   onModeChange: (mode: 'selected' | 'visible') => void
   operationCount: number
+  clamps: Clamp[]
+  selectedClampId: string | null
 }
 
 const SIMULATION_DETAIL_MIN = 240
@@ -262,6 +265,8 @@ export function SimulationViewport({
   mode,
   onModeChange,
   operationCount,
+  clamps,
+  selectedClampId,
 }: SimulationViewportProps) {
   const [showOverlay, setShowOverlay] = useState(false)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -271,6 +276,8 @@ export function SimulationViewport({
   const controlsRef = useRef<ReturnType<typeof createOrbitControls> | null>(null)
   const frameRef = useRef<number>(0)
   const objectRef = useRef<THREE.Object3D | null>(null)
+  const clampObjectsRef = useRef<THREE.Mesh[]>([])
+  const hasAutoFramedRef = useRef(false)
 
   const disposeCurrentMesh = useCallback((scene: THREE.Scene) => {
     if (objectRef.current instanceof THREE.Mesh) {
@@ -283,6 +290,19 @@ export function SimulationViewport({
       }
       objectRef.current = null
     }
+  }, [])
+
+  const disposeClampMeshes = useCallback((scene: THREE.Scene) => {
+    for (const mesh of clampObjectsRef.current) {
+      scene.remove(mesh)
+      mesh.geometry.dispose()
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((entry) => entry.dispose())
+      } else {
+        mesh.material.dispose()
+      }
+    }
+    clampObjectsRef.current = []
   }, [])
 
   useEffect(() => {
@@ -336,12 +356,13 @@ export function SimulationViewport({
     return () => {
       cancelAnimationFrame(frameRef.current)
       disposeCurrentMesh(scene)
+      disposeClampMeshes(scene)
       controls.dispose()
       resizeObserver.disconnect()
       renderer.dispose()
       mount.removeChild(renderer.domElement)
     }
-  }, [disposeCurrentMesh])
+  }, [disposeClampMeshes, disposeCurrentMesh])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -368,11 +389,37 @@ export function SimulationViewport({
     scene.add(mesh)
     objectRef.current = mesh
 
-    const bounds = new THREE.Box3().setFromObject(mesh)
-    if (!bounds.isEmpty()) {
-      controls.fitToBounds(bounds, true)
+    if (!hasAutoFramedRef.current) {
+      const bounds = new THREE.Box3().setFromObject(mesh)
+      if (!bounds.isEmpty()) {
+        controls.fitToBounds(bounds, true)
+        hasAutoFramedRef.current = true
+      }
     }
   }, [disposeCurrentMesh, simulation])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) {
+      return
+    }
+
+    disposeClampMeshes(scene)
+
+    if (clamps.length === 0) {
+      return
+    }
+
+    const nextClampMeshes = clamps.map((clamp) => buildClampMesh(clamp, clamp.id === selectedClampId))
+    for (const mesh of nextClampMeshes) {
+      scene.add(mesh)
+    }
+    clampObjectsRef.current = nextClampMeshes
+
+    return () => {
+      disposeClampMeshes(scene)
+    }
+  }, [clamps, disposeClampMeshes, selectedClampId])
 
   return (
     <div className="simulation-viewport">

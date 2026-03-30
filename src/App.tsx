@@ -5,7 +5,7 @@ import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/Sketc
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
-import { simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation'
+import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
@@ -36,6 +36,7 @@ function App() {
   const menuRef = useRef<HTMLDivElement>(null)
   const {
     project,
+    selection,
     selectFeature,
     enterSketchEdit,
     enterTabEdit,
@@ -85,6 +86,16 @@ function App() {
     [effectiveSelectedOperationId, project.operations]
   )
 
+  const visibleClamps = useMemo(
+    () => project.clamps.filter((clamp) => clamp.visible),
+    [project.clamps]
+  )
+
+  const selectedClampId =
+    selection.selectedNode?.type === 'clamp'
+      ? selection.selectedNode.clampId
+      : null
+
   const generateToolpathForOperation = useMemo(
     () => (operation: typeof selectedOperation): ToolpathResult | null => {
       if (!operation) {
@@ -114,9 +125,26 @@ function App() {
   }, [generateToolpathForOperation, selectedOperation])
 
   const simulationResult = useMemo(() => {
+    if (centerTab !== 'simulation') {
+      return null
+    }
+
+    const emptySimulationResult = {
+      grid: createSimulationGrid(project, {
+        targetLongAxisCells: simulationDetailCells,
+      }),
+      stats: {
+        removedCellCount: 0,
+        minTopZ: project.stock.thickness,
+        maxRemovedDepth: 0,
+        processedMoveCount: 0,
+      },
+      warnings: [],
+    }
+
     if (simulationMode === 'selected') {
       if (!selectedOperation || !selectedToolpath) {
-        return null
+        return emptySimulationResult
       }
 
       return simulateOperationHeightfield(project, selectedOperation, selectedToolpath, {
@@ -149,13 +177,13 @@ function App() {
       .filter((item) => item !== null)
 
     if (replayItems.length === 0) {
-      return null
+      return emptySimulationResult
     }
 
     return simulateReplayItemsHeightfield(project, replayItems, {
       targetLongAxisCells: simulationDetailCells,
     })
-  }, [generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+  }, [centerTab, generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {
@@ -398,6 +426,8 @@ function App() {
             mode={simulationMode}
             onModeChange={setSimulationMode}
             operationCount={simulationOperationCount}
+            clamps={visibleClamps}
+            selectedClampId={selectedClampId}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

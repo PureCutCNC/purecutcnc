@@ -231,6 +231,21 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Notes:
   - This likely belongs under the same future profile-based approach as richer clamp geometry.
 
+### Simulation zoom extent
+- Status: Open
+- Priority: Low
+- Summary: Make `zoom extent` work in the `Simulation` view.
+- Notes:
+  - The simulation viewport should fit the current simulated stock/overlays the same way the other 3D viewports do.
+
+### Preserve view direction on fit
+- Status: Open
+- Priority: Low
+- Summary: Make viewport fit/zoom extent preserve the current camera direction instead of forcing iso.
+- Notes:
+  - This applies to both `3D View` and `Simulation`.
+  - Current fit behavior resets orientation instead of only adjusting target/radius.
+
 ## Done
 
 ### Ordered 3D boolean evaluation

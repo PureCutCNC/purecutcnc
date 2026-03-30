@@ -44,7 +44,7 @@ function pointSegmentDistanceAndT(
 }
 
 function moveIsMaterialRemoving(move: ToolpathMove): boolean {
-  return move.kind === 'cut' || move.kind === 'plunge'
+  return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
 function applyMoveToGrid(grid: SimulationGrid, move: ToolpathMove, toolRadius: number, toolType: 'flat_endmill'): number {

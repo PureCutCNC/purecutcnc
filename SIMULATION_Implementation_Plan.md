@@ -281,14 +281,15 @@ Likely touch points:
 
 ### S5. Pocket validation pass
 - `[x]` render full-depth pocket cuts as underside openings when material is removed to stock bottom
-- `[ ]` validate pocket simulation against current pocket toolpaths
-- `[ ]` confirm islands and preserved material remain visible in simulation
-- `[ ]` confirm tabs survive through simulation when toolpaths preserve them
+- `[x]` validate pocket simulation against current pocket toolpaths
+- `[x]` confirm islands and preserved material remain visible in simulation
+- `[x]` confirm tabs survive through simulation when toolpaths preserve them
 
 ### S6. Edge-route and surface-clean support
-- `[ ]` validate edge-route replay
-- `[ ]` validate surface-clean replay
-- `[ ]` fix move-type edge cases where replay semantics differ from pocket
+- `[x]` replay `lead_in` / `lead_out` as material-removing moves where applicable
+- `[x]` validate edge-route replay
+- `[x]` validate surface-clean replay
+- `[x]` fix move-type edge cases where replay semantics differ from pocket
 
 ### S7. Multi-operation simulation
 - `[x]` simulate all enabled operations in operation-tree order
@@ -300,7 +301,7 @@ Likely touch points:
 - `[ ]` support `v_bit`
 - `[x]` add simulation quality controls
 - `[ ]` add stock comparison / deviation view
-- `[ ]` optional clamp/tab overlays in simulation viewport
+- `[x]` optional clamp/tab overlays in simulation viewport
 - `[ ]` optional tool animation / scrubber
 
 ## Recommended Build Order
