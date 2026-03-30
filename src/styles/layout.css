@@ -1176,6 +1176,13 @@
   flex-wrap: wrap;
 }
 
+.cam-toolbar-note {
+  margin-top: -4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .cam-toolbar--stack {
   display: grid;
   gap: 8px;
@@ -1189,7 +1196,7 @@
 
 .cam-tools-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
   gap: 12px;
   min-height: 0;
 }
@@ -1382,6 +1389,7 @@
   gap: 8px;
   align-content: start;
   min-height: 0;
+  overflow: auto;
 }
 
 .cam-tools-layout > * {
@@ -1423,6 +1431,7 @@
 
 .cam-tool-properties {
   min-height: 0;
+  overflow: auto;
 }
 
 @media (max-width: 1100px) {

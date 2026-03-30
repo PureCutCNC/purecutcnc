@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import type { SelectionState } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
+import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import type {
   OperationKind,
   OperationPass,
@@ -190,6 +191,22 @@ function toolUnitsLabel(units: Tool['units']): string {
   return units === 'inch' ? 'in' : 'mm'
 }
 
+function toolMatchesLibraryEntry(tool: Tool, libraryEntry: ToolLibraryEntry): boolean {
+  return (
+    tool.name === libraryEntry.name
+    && tool.units === libraryEntry.units
+    && tool.type === libraryEntry.type
+    && tool.diameter === libraryEntry.diameter
+    && tool.flutes === libraryEntry.flutes
+    && tool.material === libraryEntry.material
+    && tool.defaultRpm === libraryEntry.defaultRpm
+    && tool.defaultFeed === libraryEntry.defaultFeed
+    && tool.defaultPlungeFeed === libraryEntry.defaultPlungeFeed
+    && tool.defaultStepdown === libraryEntry.defaultStepdown
+    && tool.defaultStepover === libraryEntry.defaultStepover
+  )
+}
+
 function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
@@ -309,6 +326,10 @@ export function CAMPanel({
   toolpathWarnings,
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
+  const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
+  const [libraryName, setLibraryName] = useState('Bundled Tool Library')
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
   const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
@@ -325,6 +346,7 @@ export function CAMPanel({
     selectFeatures,
     selectStock,
     addTool,
+    importTools,
     updateTool,
     deleteTool,
     duplicateTool,
@@ -346,6 +368,11 @@ export function CAMPanel({
     ? project.tools.find((tool) => tool.id === selectedToolId) ?? null
     : null
 
+  const missingLibraryTools = useMemo(
+    () => libraryTools.filter((libraryTool) => !project.tools.some((tool) => toolMatchesLibraryEntry(tool, libraryTool))),
+    [libraryTools, project.tools]
+  )
+
   const selectedOperationId =
     selectedOperationIdProp && project.operations.some((operation) => operation.id === selectedOperationIdProp)
       ? selectedOperationIdProp
@@ -361,6 +388,30 @@ export function CAMPanel({
       onSelectedOperationIdChange(selectedOperationId)
     }
   }, [onSelectedOperationIdChange, selectedOperationId, selectedOperationIdProp])
+
+  const ensureBundledLibraryLoaded = useCallback(async (): Promise<ToolLibraryEntry[]> => {
+    if (libraryLoading) {
+      return libraryTools
+    }
+
+    if (libraryTools.length > 0) {
+      return libraryTools
+    }
+
+    setLibraryLoading(true)
+    try {
+      const library = await loadBundledToolLibrary()
+      setLibraryName(library.name)
+      setLibraryTools(library.tools)
+      setLibraryError(null)
+      return library.tools
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : 'Failed to load tool library.')
+      return []
+    } finally {
+      setLibraryLoading(false)
+    }
+  }, [libraryLoading, libraryTools])
 
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
     () => ([
@@ -444,6 +495,32 @@ export function CAMPanel({
     const fallback = project.tools[currentIndex - 1]?.id ?? project.tools[currentIndex + 1]?.id ?? null
     deleteTool(selectedTool.id)
     setSelectedToolId(fallback)
+  }
+
+  async function handleImportLibrary() {
+    const sourceTools = libraryTools.length > 0 ? libraryTools : await ensureBundledLibraryLoaded()
+    const importCandidates = sourceTools.filter((libraryTool) => !project.tools.some((tool) => toolMatchesLibraryEntry(tool, libraryTool)))
+
+    if (importCandidates.length === 0) {
+      return
+    }
+
+    const importedIds = importTools(importCandidates.map((tool) => ({
+      name: tool.name,
+      units: tool.units,
+      type: tool.type,
+      diameter: tool.diameter,
+      flutes: tool.flutes,
+      material: tool.material,
+      defaultRpm: tool.defaultRpm,
+      defaultFeed: tool.defaultFeed,
+      defaultPlungeFeed: tool.defaultPlungeFeed,
+      defaultStepdown: tool.defaultStepdown,
+      defaultStepover: tool.defaultStepover,
+    })))
+    if (importedIds.length > 0) {
+      setSelectedToolId(importedIds[importedIds.length - 1] ?? null)
+    }
   }
 
   function handleAddOperation(kind: OperationKind) {
@@ -676,7 +753,7 @@ export function CAMPanel({
                     <div className="tree-root-label">CAM</div>
                     <div className="tree-list">
                       {project.operations.map((operation) => (
-                        <button
+                        <div
                           key={operation.id}
                           className={[
                             'tree-row',
@@ -684,8 +761,15 @@ export function CAMPanel({
                             operation.id === selectedOperationId ? 'tree-row--selected' : '',
                             dragOperationId === operation.id ? 'tree-row--dragging' : '',
                           ].join(' ')}
-                          type="button"
                           onClick={() => handleSelectOperation(operation.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              handleSelectOperation(operation.id)
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
                           draggable
                           onDragStart={() => handleOperationDragStart(operation.id)}
                           onDragEnd={() => setDragOperationId(null)}
@@ -711,7 +795,7 @@ export function CAMPanel({
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
                           </span>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -916,6 +1000,15 @@ export function CAMPanel({
             <button className="feat-btn" type="button" onClick={handleAddTool}>
               Add Tool
             </button>
+            <button
+              className="feat-btn"
+              type="button"
+              onClick={handleImportLibrary}
+              disabled={libraryLoading || (libraryTools.length > 0 && missingLibraryTools.length === 0)}
+              title={libraryLoading ? 'Loading bundled tool library' : undefined}
+            >
+              Import Library
+            </button>
             <button className="feat-btn" type="button" onClick={handleDuplicateTool} disabled={!selectedTool}>
               Duplicate
             </button>
@@ -924,131 +1017,157 @@ export function CAMPanel({
             </button>
           </div>
 
-          <div className="cam-tools-layout">
-            <div className="cam-tool-list">
-              {project.tools.length === 0 ? (
-                <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
-              ) : (
-                project.tools.map((tool) => (
-                  <button
-                    key={tool.id}
-                    className={`cam-tool-row ${tool.id === selectedToolId ? 'cam-tool-row--active' : ''}`}
-                    type="button"
-                    onClick={() => setSelectedToolId(tool.id)}
-                  >
-                    <span className="cam-tool-row__name">{tool.name}</span>
-                    <span className="cam-tool-row__meta">
-                      {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
+          <div className="cam-toolbar-note">
+            {libraryLoading
+              ? 'Loading bundled tool library...'
+              : libraryError
+                ? `Tool library: ${libraryError}`
+                : libraryTools.length > 0
+                  ? `${libraryName}: ${libraryTools.length} tools, ${missingLibraryTools.length} missing from project.`
+                  : 'Bundled tool library not loaded yet.'}
+          </div>
 
-            {selectedTool ? (
-              <div className="properties-panel cam-tool-properties">
-                <div className="properties-group">
-                  <label className="properties-field">
-                    <span>Name</span>
-                    <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
-                  </label>
-                  <label className="properties-field">
-                    <span>Type</span>
-                    <select
-                      value={selectedTool.type}
-                      onChange={(event) => updateTool(selectedTool.id, { type: event.target.value as ToolType })}
-                    >
-                      <option value="flat_endmill">Flat Endmill</option>
-                      <option value="ball_endmill">Ball Endmill</option>
-                      <option value="v_bit">V-Bit</option>
-                      <option value="drill">Drill</option>
-                    </select>
-                  </label>
-                  <label className="properties-field">
-                    <span>Units</span>
-                    <select
-                      value={selectedTool.units}
-                      onChange={(event) => updateTool(selectedTool.id, convertToolUnits(selectedTool, event.target.value as Tool['units']))}
-                    >
-                      <option value="mm">Millimeters</option>
-                      <option value="inch">Inches</option>
-                    </select>
-                  </label>
-                  <label className="properties-field">
-                    <span>Diameter</span>
-                    <DraftLengthInput
-                      value={selectedTool.diameter}
-                      units={selectedTool.units}
-                      min={0.0001}
-                      onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Flutes</span>
-                    <DraftNumberInput
-                      value={selectedTool.flutes}
-                      min={1}
-                      max={12}
-                      onCommit={(value) => updateTool(selectedTool.id, { flutes: Math.round(value) })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Material</span>
-                    <select
-                      value={selectedTool.material}
-                      onChange={(event) => updateTool(selectedTool.id, { material: event.target.value as Tool['material'] })}
-                    >
-                      <option value="carbide">Carbide</option>
-                      <option value="hss">HSS</option>
-                    </select>
-                  </label>
-                  <label className="properties-field">
-                    <span>Default RPM</span>
-                    <DraftNumberInput
-                      value={selectedTool.defaultRpm}
-                      min={1}
-                      onCommit={(value) => updateTool(selectedTool.id, { defaultRpm: Math.round(value) })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Default Feed</span>
-                    <DraftLengthInput
-                      value={selectedTool.defaultFeed}
-                      units={selectedTool.units}
-                      min={0.0001}
-                      onCommit={(value) => updateTool(selectedTool.id, { defaultFeed: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Plunge Feed</span>
-                    <DraftLengthInput
-                      value={selectedTool.defaultPlungeFeed}
-                      units={selectedTool.units}
-                      min={0.0001}
-                      onCommit={(value) => updateTool(selectedTool.id, { defaultPlungeFeed: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Stepdown</span>
-                    <DraftLengthInput
-                      value={selectedTool.defaultStepdown}
-                      units={selectedTool.units}
-                      min={0.0001}
-                      onCommit={(value) => updateTool(selectedTool.id, { defaultStepdown: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Stepover Ratio</span>
-                    <DraftNumberInput
-                      value={selectedTool.defaultStepover}
-                      min={0.01}
-                      max={1}
-                      onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
-                    />
-                  </label>
+          <div className="cam-tools-layout">
+            <section className="cam-section">
+              <div className="cam-section-header">
+                <span>Tools</span>
+              </div>
+              <div className="cam-section-content">
+                <div className="cam-tool-list">
+                  {project.tools.length === 0 ? (
+                    <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
+                  ) : (
+                    project.tools.map((tool) => (
+                      <button
+                        key={tool.id}
+                        className={`cam-tool-row ${tool.id === selectedToolId ? 'cam-tool-row--active' : ''}`}
+                        type="button"
+                        onClick={() => setSelectedToolId(tool.id)}
+                      >
+                        <span className="cam-tool-row__name">{tool.name}</span>
+                        <span className="cam-tool-row__meta">
+                          {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
+                        </span>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
-            ) : null}
+            </section>
+
+            <section className="cam-section cam-section--properties">
+              <div className="cam-section-header">
+                <span>Properties</span>
+              </div>
+              <div className="cam-section-content">
+                {selectedTool ? (
+                  <div key={selectedTool.id} className="properties-panel cam-tool-properties">
+                    <div className="properties-group">
+                      <label className="properties-field">
+                        <span>Name</span>
+                        <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
+                      </label>
+                      <label className="properties-field">
+                        <span>Type</span>
+                        <select
+                          value={selectedTool.type}
+                          onChange={(event) => updateTool(selectedTool.id, { type: event.target.value as ToolType })}
+                        >
+                          <option value="flat_endmill">Flat Endmill</option>
+                          <option value="ball_endmill">Ball Endmill</option>
+                          <option value="v_bit">V-Bit</option>
+                          <option value="drill">Drill</option>
+                        </select>
+                      </label>
+                      <label className="properties-field">
+                        <span>Units</span>
+                        <select
+                          value={selectedTool.units}
+                          onChange={(event) => updateTool(selectedTool.id, convertToolUnits(selectedTool, event.target.value as Tool['units']))}
+                        >
+                          <option value="mm">Millimeters</option>
+                          <option value="inch">Inches</option>
+                        </select>
+                      </label>
+                      <label className="properties-field">
+                        <span>Diameter</span>
+                        <DraftLengthInput
+                          value={selectedTool.diameter}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Flutes</span>
+                        <DraftNumberInput
+                          value={selectedTool.flutes}
+                          min={1}
+                          max={12}
+                          onCommit={(value) => updateTool(selectedTool.id, { flutes: Math.round(value) })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Material</span>
+                        <select
+                          value={selectedTool.material}
+                          onChange={(event) => updateTool(selectedTool.id, { material: event.target.value as Tool['material'] })}
+                        >
+                          <option value="carbide">Carbide</option>
+                          <option value="hss">HSS</option>
+                        </select>
+                      </label>
+                      <label className="properties-field">
+                        <span>Default RPM</span>
+                        <DraftNumberInput
+                          value={selectedTool.defaultRpm}
+                          min={1}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultRpm: Math.round(value) })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Default Feed</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultFeed}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultFeed: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Plunge Feed</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultPlungeFeed}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultPlungeFeed: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Stepdown</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultStepdown}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepdown: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Stepover Ratio</span>
+                        <DraftNumberInput
+                          value={selectedTool.defaultStepover}
+                          min={0.01}
+                          max={1}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="panel-empty">Select a tool to edit its properties.</div>
+                )}
+              </div>
+            </section>
           </div>
         </div>
       )}

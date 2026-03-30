@@ -136,6 +136,7 @@ export interface ProjectStore {
 
   // Tools
   addTool: () => string
+  importTools: (tools: Array<Omit<Tool, 'id'>>) => string[]
   updateTool: (id: string, patch: Partial<Tool>) => void
   deleteTool: (id: string) => void
   duplicateTool: (id: string) => string | null
@@ -643,6 +644,22 @@ function duplicateToolName(name: string, tools: Tool[]): string {
     index += 1
   }
   return `${baseName} ${index}`
+}
+
+function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
+  return (
+    existingTool.name === candidate.name
+    && existingTool.units === candidate.units
+    && existingTool.type === candidate.type
+    && existingTool.diameter === candidate.diameter
+    && existingTool.flutes === candidate.flutes
+    && existingTool.material === candidate.material
+    && existingTool.defaultRpm === candidate.defaultRpm
+    && existingTool.defaultFeed === candidate.defaultFeed
+    && existingTool.defaultPlungeFeed === candidate.defaultPlungeFeed
+    && existingTool.defaultStepdown === candidate.defaultStepdown
+    && existingTool.defaultStepover === candidate.defaultStepover
+  )
 }
 
 function operationKindLabel(kind: OperationKind): string {
@@ -1576,6 +1593,52 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     })
 
     return nextId
+  },
+
+  importTools: (tools) => {
+    const state = get()
+    const imported: Tool[] = []
+    let nextProject = state.project
+
+    for (const sourceTool of tools) {
+      if (nextProject.tools.some((tool) => toolMatchesTemplate(tool, sourceTool))) {
+        continue
+      }
+
+      const nextId = nextUniqueGeneratedId(nextProject, 't')
+      const tool = normalizeTool(
+        {
+          ...sourceTool,
+          id: nextId,
+        },
+        sourceTool.units,
+        nextProject.tools.length,
+      )
+
+      imported.push(tool)
+      nextProject = {
+        ...nextProject,
+        tools: [...nextProject.tools, tool],
+      }
+    }
+
+    if (imported.length === 0) {
+      return []
+    }
+
+    set((s) => ({
+      project: {
+        ...nextProject,
+        meta: { ...nextProject.meta, modified: new Date().toISOString() },
+      },
+      history: {
+        past: [...s.history.past, cloneProject(s.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+
+    return imported.map((tool) => tool.id)
   },
 
   updateTool: (id, patch) =>

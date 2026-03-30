@@ -297,12 +297,13 @@ Likely touch points:
 - `[x]` keep selected-operation-first workflow simple
 
 ### S8. Refinement / backlog candidates
-- `[ ]` support `ball_endmill`
-- `[ ]` support `v_bit`
-- `[x]` add simulation quality controls
-- `[ ]` add stock comparison / deviation view
-- `[x]` optional clamp/tab overlays in simulation viewport
-- `[ ]` optional tool animation / scrubber
+- `[~]` moved to backlog
+- Notes:
+  - `ball_endmill` and `v_bit` simulation should be implemented alongside future carving / follow-line operations, where they can be exercised meaningfully.
+  - The remaining simulation refinements are useful, but not part of the current core stock-removal pass.
+  - Completed from this bucket:
+    - simulation quality controls
+    - clamp/tab overlays in the simulation viewport
 
 ## Recommended Build Order
 

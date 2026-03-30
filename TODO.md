@@ -20,14 +20,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Flat shading fixed the worst artifacts.
   - The final look likely still needs another pass once the modeling flow stabilizes.
 
-### 3D grid alignment does not match sketch view
-- Status: Open
-- Priority: Medium
-- Summary: Align the 3D viewport grid orientation and positioning with the sketch view so both views share the same spatial reference.
-- Notes:
-  - Current 3D grid reference still feels inconsistent relative to the sketch plane.
-  - Recheck this after the recent sketch-to-3D axis mapping changes.
-
 ### Sketch legend review / removal
 - Status: Open
 - Priority: Low
@@ -62,29 +54,21 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current implementation treats features as CSG volumes spanning `z_top..z_bottom`.
   - Stock is currently reference-only for semantics.
 
-### Undo / Redo
+### Multi-level tree presentation
 - Status: Open
-- Priority: High
-- Summary: Add undo and redo across project edits, including feature creation, deletion, reorder, property changes, and sketch edits.
+- Priority: Low
+- Summary: Improve the way nested tree items and connectors are presented in the project tree.
 - Notes:
-  - Needs to cover both model edits and sketch control-point edits.
-  - Should integrate cleanly with toolbar shortcuts and future menu actions.
+  - Current tree is workable but still visually awkward for deeper nesting.
+  - Revisit connector style and spacing once the tree structure stabilizes.
 
-### Copy / Duplicate
+### Folder delete behavior
 - Status: Open
-- Priority: High
-- Summary: Add copy/duplicate support for features so users can quickly reuse and reposition existing geometry.
+- Priority: Low
+- Summary: When deleting a feature folder, ask whether the contained features should also be deleted.
 - Notes:
-  - Should preserve sketch geometry, operation, and Z range on duplicate.
-  - Likely needs both toolbar/menu action and keyboard shortcut support.
-
-### Move / Translate
-- Status: Open
-- Priority: High
-- Summary: Add a move/translate tool so users can reposition existing features without entering low-level sketch point editing.
-- Notes:
-  - Should support precise numeric offsets and direct manipulation in the sketch view.
-  - Needs to move the whole feature profile while preserving its Z range and operation.
+  - Current behavior should be made explicit before more folder-heavy projects appear.
+  - This is mainly a safety/UX cleanup item.
 
 ### Marquee multi-selection
 - Status: Open
@@ -159,6 +143,22 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Likely similar to the feature-folder model.
   - Could later support setup-specific visibility or enable/disable behavior.
 
+### Clamp geometry upgrade
+- Status: Open
+- Priority: Low
+- Summary: Upgrade clamps from simple rectangles to full profile-based geometry with richer editing.
+- Notes:
+  - This should eventually reuse the same profile/composite editing model as features.
+  - That would allow non-rectangular clamps and better direct manipulation.
+
+### Clamp library / presets
+- Status: Open
+- Priority: Low
+- Summary: Add reusable clamp presets or a clamp library.
+- Notes:
+  - This pairs naturally with richer clamp geometry later.
+  - First pass could still be simple named rectangular presets.
+
 ### XY reroute around clamps
 - Status: Open
 - Priority: Medium
@@ -178,6 +178,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
     - tabs as temporary preserved material inside pockets
   - Remaining issues are narrower resolver edge cases, not a general pocket-preservation failure.
   - This should be resolved in the pocket CAM resolver/toolpath stage, not by changing finished-part modeling.
+
+### Shallower enclosed pocket warning
+- Status: Open
+- Priority: Low
+- Summary: Warn when a selected shallower subtract pocket is enclosed by a deeper pocket target and resolves like an unsupported island case.
+- Notes:
+  - This is not a general pocket bug, but a specific case that should not fail silently.
+  - The warning should explain that the preserved/resulting behavior is limited in this configuration.
 
 ### Combine multiple inside edge targets
 - Status: Open
@@ -246,6 +254,77 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - This applies to both `3D View` and `Simulation`.
   - Current fit behavior resets orientation instead of only adjusting target/radius.
 
+### Prevent view shift on show/hide
+- Status: Open
+- Priority: Low
+- Summary: Prevent 3D framing/target from shifting when showing or hiding features, tabs, or similar overlays.
+- Notes:
+  - Visibility changes should not unexpectedly move the camera target.
+  - This is separate from explicit fit/zoom extent behavior.
+
+### Tool tab filtering
+- Status: Open
+- Priority: Low
+- Summary: Add filtering/search to the Tools tab.
+- Notes:
+  - Likely first filters:
+    - tool type
+    - units
+    - maybe text search by name
+  - This becomes more important now that the bundled library can populate the project tool list quickly.
+
+### Tool library loading enhancements
+- Status: Open
+- Priority: Low
+- Summary: Extend tool library loading beyond the bundled static JSON.
+- Notes:
+  - Support loading from a user-provided/custom JSON file
+  - Add per-tool import instead of import-all only
+  - Add library-side filtering/search similar to the main Tools tab
+  - Likely first filters:
+    - tool type
+    - units
+    - text search by name
+
+### Ball endmill / V-bit simulation
+- Status: Open
+- Priority: Low
+- Summary: Add non-flat tool simulation for `ball_endmill` and `v_bit`.
+- Notes:
+  - This should be implemented together with future carving / follow-line operations, where those tools can be exercised meaningfully.
+  - Not a priority for the current 2.5D flat-endmill simulation pass.
+
+### Simulation stock comparison / deviation view
+- Status: Open
+- Priority: Low
+- Summary: Add a comparison mode that shows deviation between the simulated stock result and the intended model.
+
+### Simulation tool animation / scrubber
+- Status: Open
+- Priority: Low
+- Summary: Add optional tool animation or a replay scrubber in the Simulation view.
+
+### Carving operation with open-profile support
+- Status: Open
+- Priority: Medium
+- Summary: Add a carving / follow-line operation that can machine along open sketch geometry.
+- Notes:
+  - This requires support for open features/profiles, not only closed profiles.
+  - That will affect sketch authoring, feature representation, and CAM target selection.
+  - This is also the natural place to introduce meaningful `ball_endmill` and `v_bit` workflows.
+
+### Operation/simulation responsiveness
+- Status: Open
+- Priority: Medium
+- Summary: Reduce UI lag when switching operations or rebuilding simulation.
+- Notes:
+  - The main remaining slowdown is in the `Simulation` tab where toolpaths, replay, and mesh generation rebuild together.
+  - Likely follow-ups:
+    - cache generated toolpaths per operation
+    - cache simulation replay by operation set and detail level
+    - throttle/debounce simulation rebuild while editing
+    - consider moving simulation replay/mesh generation off the main thread
+
 ## Done
 
 ### Ordered 3D boolean evaluation
@@ -260,4 +339,10 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Status: Done
 - Summary: Feature tree moved left, properties panel added below, right panel now uses `Operations` and `AI Chat` tabs.
 
-- `Investigate UI responsiveness regression when selecting operations / recomputing previews`
+### Undo / Redo
+- Status: Done
+- Summary: Project history supports undo/redo across edits, with keyboard shortcuts wired in the app shell.
+
+### Copy / Duplicate / Move
+- Status: Done
+- Summary: Features, tabs, and clamps support duplicate/copy/move workflows, including direct manipulation and context-menu entry points.
