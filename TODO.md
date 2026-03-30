@@ -244,3 +244,5 @@ This file tracks follow-up work, open issues, and design questions that come up 
 ### Left tree / properties / right tabs layout
 - Status: Done
 - Summary: Feature tree moved left, properties panel added below, right panel now uses `Operations` and `AI Chat` tabs.
+
+- `Investigate UI responsiveness regression when selecting operations / recomputing previews`

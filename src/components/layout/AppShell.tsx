@@ -10,10 +10,11 @@ interface AppShellProps {
   featureTree: ReactNode
   propertiesPanel: ReactNode
   viewport3d: ReactNode
+  simulationViewport: ReactNode
   aiPanel: ReactNode
   camPanel?: ReactNode
-  centerTab: 'sketch' | 'preview3d'
-  onCenterTabChange: (tab: 'sketch' | 'preview3d') => void
+  centerTab: 'sketch' | 'preview3d' | 'simulation'
+  onCenterTabChange: (tab: 'sketch' | 'preview3d' | 'simulation') => void
   workspaceLayout: 'lcr' | 'lc' | 'c' | 'cr'
   onWorkspaceLayoutChange: (layout: 'lcr' | 'lc' | 'c' | 'cr') => void
   rightTab: 'operations' | 'tools' | 'ai'
@@ -32,6 +33,7 @@ export function AppShell({
   featureTree,
   propertiesPanel,
   viewport3d,
+  simulationViewport,
   aiPanel,
   camPanel,
   centerTab,
@@ -45,7 +47,7 @@ export function AppShell({
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
   const stockHeight = stockBounds.maxY - stockBounds.minY
-  const centerTabs = ['sketch', 'preview3d'] as const
+  const centerTabs = ['sketch', 'preview3d', 'simulation'] as const
   const rightTabs = ['operations', 'tools', 'ai'] as const
   const workspaceLayouts = [
     { id: 'lcr', label: 'Show left, center, and right panels' },
@@ -136,6 +138,33 @@ export function AppShell({
               >
                 3D View
               </button>
+              <button
+                id="workspace-tab-simulation"
+                className={`panel-tab ${centerTab === 'simulation' ? 'panel-tab--active' : ''}`}
+                onClick={() => onCenterTabChange('simulation')}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowRight') {
+                    event.preventDefault()
+                    onCenterTabChange(nextTab(centerTabs, centerTab, 1))
+                  } else if (event.key === 'ArrowLeft') {
+                    event.preventDefault()
+                    onCenterTabChange(nextTab(centerTabs, centerTab, -1))
+                  } else if (event.key === 'Home') {
+                    event.preventDefault()
+                    onCenterTabChange(centerTabs[0])
+                  } else if (event.key === 'End') {
+                    event.preventDefault()
+                    onCenterTabChange(centerTabs[centerTabs.length - 1])
+                  }
+                }}
+                type="button"
+                role="tab"
+                aria-selected={centerTab === 'simulation'}
+                aria-controls="workspace-panel-simulation"
+                tabIndex={centerTab === 'simulation' ? 0 : -1}
+              >
+                Simulation
+              </button>
               <div className="panel-tabs-spacer" />
               <div className="workspace-layout-controls" aria-label="Workspace layout presets">
                 {workspaceLayouts.map((layout) => (
@@ -174,6 +203,15 @@ export function AppShell({
                 aria-hidden={centerTab !== 'preview3d'}
               >
                 {viewport3d}
+              </div>
+              <div
+                id="workspace-panel-simulation"
+                className={`centre-view ${centerTab === 'simulation' ? 'centre-view--active' : ''}`}
+                role="tabpanel"
+                aria-labelledby="workspace-tab-simulation"
+                aria-hidden={centerTab !== 'simulation'}
+              >
+                {simulationViewport}
               </div>
             </div>
           </div>

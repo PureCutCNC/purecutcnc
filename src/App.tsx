@@ -3,11 +3,14 @@ import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
+import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
+import { simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
 import { Toolbar } from './components/layout/Toolbar'
+import { SimulationViewport } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { useProjectStore } from './store/projectStore'
 
@@ -20,11 +23,13 @@ interface TreeContextMenuState {
 }
 
 function App() {
-  const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d'>('sketch')
+  const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+  const [simulationDetailCells, setSimulationDetailCells] = useState(280)
+  const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
@@ -107,6 +112,58 @@ function App() {
   const selectedToolpath = useMemo<ToolpathResult | null>(() => {
     return generateToolpathForOperation(selectedOperation)
   }, [generateToolpathForOperation, selectedOperation])
+
+  const simulationResult = useMemo(() => {
+    if (simulationMode === 'selected') {
+      if (!selectedOperation || !selectedToolpath) {
+        return null
+      }
+
+      return simulateOperationHeightfield(project, selectedOperation, selectedToolpath, {
+        targetLongAxisCells: simulationDetailCells,
+      })
+    }
+
+    const replayItems = project.operations
+      .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
+      .map((operation) => {
+        const toolpath = generateToolpathForOperation(operation)
+        const toolRecord = operation.toolRef
+          ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+          : null
+
+        if (!toolpath || !toolRecord) {
+          return null
+        }
+
+        const normalizedTool = normalizeToolForProject(toolRecord, project)
+        return {
+          operationId: operation.id,
+          operationName: operation.name,
+          toolRef: toolRecord.id,
+          toolType: toolRecord.type,
+          toolRadius: normalizedTool.radius,
+          toolpath,
+        }
+      })
+      .filter((item) => item !== null)
+
+    if (replayItems.length === 0) {
+      return null
+    }
+
+    return simulateReplayItemsHeightfield(project, replayItems, {
+      targetLongAxisCells: simulationDetailCells,
+    })
+  }, [generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+
+  const simulationOperationCount = useMemo(() => {
+    if (simulationMode === 'selected') {
+      return selectedOperation && selectedToolpath ? 1 : 0
+    }
+
+    return project.operations.filter((operation) => operation.enabled && operation.showToolpath).length
+  }, [project.operations, selectedOperation, selectedToolpath, simulationMode])
 
   const visibleToolpaths = useMemo<ToolpathResult[]>(() => {
     return project.operations
@@ -330,6 +387,17 @@ function App() {
             ref={viewport3dRef}
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
+          />
+        }
+        simulationViewport={
+          <SimulationViewport
+            operation={selectedOperation}
+            simulation={simulationResult}
+            detailCells={simulationDetailCells}
+            onDetailCellsChange={setSimulationDetailCells}
+            mode={simulationMode}
+            onModeChange={setSimulationMode}
+            operationCount={simulationOperationCount}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

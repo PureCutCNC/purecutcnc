@@ -1,7 +1,8 @@
+import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project } from '../../types/project'
 import { getProfileBounds, rectProfile, sampleProfilePoints } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { resolveFeatureZSpan } from './geometry'
+import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, resolveFeatureZSpan, toClipperPath } from './geometry'
 
 interface PreservedObstacle {
   id: string
@@ -9,6 +10,34 @@ interface PreservedObstacle {
   points: Point[]
   zTop: number
   zBottom: number
+}
+
+function offsetObstaclePoints(points: Point[], delta: number): Point[] {
+  if (!(delta > 1e-9) || points.length < 3) {
+    return points
+  }
+
+  const offset = new ClipperLib.ClipperOffset()
+  offset.AddPaths(
+    [toClipperPath(normalizeWinding(points, false), DEFAULT_CLIPPER_SCALE)],
+    ClipperLib.JoinType.jtMiter,
+    ClipperLib.EndType.etClosedPolygon,
+  )
+  const solution = new ClipperLib.Paths()
+  offset.Execute(solution, delta * DEFAULT_CLIPPER_SCALE)
+  const expanded = (solution as unknown as { X: number; Y: number }[][])[0]
+  return expanded ? fromClipperPath(expanded, DEFAULT_CLIPPER_SCALE) : points
+}
+
+function expandObstacles(obstacles: PreservedObstacle[], delta: number): PreservedObstacle[] {
+  if (!(delta > 1e-9)) {
+    return obstacles
+  }
+
+  return obstacles.map((obstacle) => ({
+    ...obstacle,
+    points: offsetObstaclePoints(obstacle.points, delta),
+  }))
 }
 
 function buildTabObstacles(project: Project): PreservedObstacle[] {
@@ -350,10 +379,17 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     return result
   }
 
-  const obstacles = [
+  const toolRecord = operation.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+  const effectiveRadius = toolRecord
+    ? normalizeToolForProject(toolRecord, project).radius + Math.max(0, operation.stockToLeaveRadial)
+    : Math.max(0, operation.stockToLeaveRadial)
+
+  const obstacles = expandObstacles([
     ...buildTabObstacles(project),
     ...buildAddFeatureObstacles(project, operation),
-  ]
+  ], effectiveRadius)
   if (obstacles.length === 0) {
     return result
   }
