@@ -297,14 +297,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
     - units
     - text search by name
 
-### Ball endmill / V-bit simulation
-- Status: Open
-- Priority: Low
-- Summary: Add non-flat tool simulation for `ball_endmill` and `v_bit`.
-- Notes:
-  - This should be implemented together with future carving / follow-line operations, where those tools can be exercised meaningfully.
-  - Not a priority for the current 2.5D flat-endmill simulation pass.
-
 ### Simulation stock comparison / deviation view
 - Status: Open
 - Priority: Low
@@ -315,14 +307,46 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Priority: Low
 - Summary: Add optional tool animation or a replay scrubber in the Simulation view.
 
-### Carving operation with open-profile support
+### Offset carving operation
 - Status: Open
 - Priority: Medium
-- Summary: Add a carving / follow-line operation that can machine along open sketch geometry.
+- Summary: Add an `Offset Carving` operation that widens a carved line by generating offset passes around open or closed target profiles.
 - Notes:
-  - This requires support for open features/profiles, not only closed profiles.
-  - That will affect sketch authoring, feature representation, and CAM target selection.
-  - This is also the natural place to introduce meaningful `ball_endmill` and `v_bit` workflows.
+  - Tracked in [planning/OFFSET_CARVING_Implementation_Plan.md](/Users/frankp/Projects/camcam/planning/OFFSET_CARVING_Implementation_Plan.md).
+  - Intended as a separate carving mode from `Follow Line`.
+  - First pass should support operation-defined width/depth, rough/finish behavior, and open/closed targets.
+
+### Text feature planning
+- Status: Open
+- Priority: Low
+- Summary: Add text features for carving, including skeleton fonts and outline fonts for constant-width carving.
+- Notes:
+  - This was deferred from the carving first pass.
+  - Should integrate with carving operations rather than the solid-model CSG pipeline by default.
+
+### Variable-width V-carve planning
+- Status: Open
+- Priority: Low
+- Summary: Plan a variable-width V-carve mode where depth and width are derived from geometry rather than a fixed offset/follow-line depth.
+- Notes:
+  - This is a follow-on carving mode, not part of the current follow-line implementation.
+  - It likely needs tool-shape-aware path generation rather than just simulation support.
+
+### Follow-line ordering / linking refinement
+- Status: Open
+- Priority: Low
+- Summary: Improve follow-line toolpath ordering and linking across multiple targets to reduce unnecessary jumps and retracts.
+- Notes:
+  - The current first pass traces targets in target order and retracts conservatively.
+  - This should be coordinated with broader linking optimization across CAM operations.
+
+### Multi-depth carving pass strategy
+- Status: Open
+- Priority: Low
+- Summary: Revisit when multi-depth carving passes should be generated automatically and how rough/finish switching should normalize related fields.
+- Notes:
+  - Current follow-line rough now honors `stepdown`; finish is a single final-depth pass.
+  - This should stay aligned with future pass-switch normalization work.
 
 ### Operation/simulation responsiveness
 - Status: Open
@@ -337,6 +361,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
     - consider moving simulation replay/mesh generation off the main thread
 
 ## Done
+
+### Ball endmill / V-bit simulation
+- Status: Done
+- Summary: Added first-pass simulation support for `ball_endmill` and `v_bit`, including explicit V-bit angle support in the tool model.
+
+### Carving operation with open-profile support
+- Status: Done
+- Summary: Added `Follow Line` carving with open-profile support plus rough/finish behavior and simulation support.
 
 ### Ordered 3D boolean evaluation
 - Status: Done

@@ -334,10 +334,10 @@ These should stay out of first pass and go to backlog:
 - `[x]` define first-pass behavior for ball endmill and V-bit simulation
 
 ### FV8. Refinement / backlog split
-- `[ ]` text feature planning
-- `[ ]` variable-width V-carve planning
-- `[ ]` follow-line ordering / linking refinement
-- `[ ]` decide when multi-depth carving passes are needed
+- `[>]` text feature planning
+- `[>]` variable-width V-carve planning
+- `[>]` follow-line ordering / linking refinement
+- `[>]` decide when multi-depth carving passes are needed
 
 ## Risks / Edge Cases
 
