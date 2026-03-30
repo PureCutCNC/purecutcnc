@@ -1,5 +1,6 @@
-import type { Clamp, Project } from '../../types/project'
+import type { Clamp, Operation, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import { normalizeToolForProject } from './geometry'
 
 interface ExpandedClampBounds {
   clamp: Clamp
@@ -10,18 +11,23 @@ interface ExpandedClampBounds {
   requiredZ: number
 }
 
-function buildExpandedClampBounds(project: Project): ExpandedClampBounds[] {
+function buildExpandedClampBounds(project: Project, operation?: Operation | null): ExpandedClampBounds[] {
   const clearanceXY = Math.max(0, project.meta.clampClearanceXY)
   const clearanceZ = Math.max(0, project.meta.clampClearanceZ)
+  const toolRecord = operation?.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+  const toolRadius = toolRecord ? normalizeToolForProject(toolRecord, project).radius : 0
+  const expandedXY = clearanceXY + Math.max(0, toolRadius)
 
   return project.clamps
     .filter((clamp) => clamp.visible)
     .map((clamp) => ({
       clamp,
-      minX: clamp.x - clearanceXY,
-      maxX: clamp.x + clamp.w + clearanceXY,
-      minY: clamp.y - clearanceXY,
-      maxY: clamp.y + clamp.h + clearanceXY,
+      minX: clamp.x - expandedXY,
+      maxX: clamp.x + clamp.w + expandedXY,
+      minY: clamp.y - expandedXY,
+      maxY: clamp.y + clamp.h + expandedXY,
       requiredZ: clamp.height + clearanceZ,
     }))
 }
@@ -176,18 +182,19 @@ function liftRapidMove(move: ToolpathMove, requiredZ: number): ToolpathMove[] {
   return liftedMoves.length > 0 ? liftedMoves : [move]
 }
 
-export function applyClampWarnings(project: Project, result: ToolpathResult): ToolpathResult {
+export function applyClampWarnings(project: Project, result: ToolpathResult, operation?: Operation | null): ToolpathResult {
   if (result.moves.length === 0 || project.clamps.length === 0) {
     return result
   }
 
-  const expandedClamps = buildExpandedClampBounds(project)
+  const expandedClamps = buildExpandedClampBounds(project, operation)
   if (expandedClamps.length === 0) {
     return result
   }
 
   const maxTravelZ = Math.max(0, project.meta.maxTravelZ)
   const adjustedMoves: ToolpathMove[] = []
+  const collidingClampIds = new Set<string>()
   const warningCounts = new Map<string, { clamp: Clamp; kind: ToolpathMove['kind']; count: number; minActualZ: number; requiredZ: number }>()
   const travelLimitWarnings = new Set<string>()
 
@@ -203,6 +210,10 @@ export function applyClampWarnings(project: Project, result: ToolpathResult): To
     if (unsafe.length === 0) {
       adjustedMoves.push(move)
       continue
+    }
+
+    for (const rect of unsafe) {
+      collidingClampIds.add(rect.clamp.id)
     }
 
     const requiredZ = unsafe.reduce((max, rect) => Math.max(max, rect.requiredZ), 0)
@@ -256,5 +267,6 @@ export function applyClampWarnings(project: Project, result: ToolpathResult): To
     moves: adjustedMoves,
     warnings,
     bounds: computeBounds(adjustedMoves),
+    collidingClampIds: [...collidingClampIds],
   }
 }

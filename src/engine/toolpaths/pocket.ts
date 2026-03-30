@@ -348,7 +348,7 @@ function generateFinishBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
   safeZ: number,
-  stepdown: number,
+  _stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
@@ -386,9 +386,7 @@ function generateFinishBandMoves(
     }
   }
 
-  const wallStepLevels = operation.finishWalls
-    ? generateStepLevels(band.topZ, effectiveBottom, stepdown)
-    : []
+  const wallStepLevels = operation.finishWalls ? [effectiveBottom] : []
   const floorStepLevels = operation.finishFloor ? [effectiveBottom] : []
   let currentPosition: ToolpathPoint | null = null
 

@@ -187,7 +187,7 @@ export function buildFeatureMesh(
   return mesh
 }
 
-export function buildClampMesh(clamp: Clamp, selected = false): THREE.Mesh {
+export function buildClampMesh(clamp: Clamp, selected = false, colliding = false): THREE.Mesh {
   const shape = profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
   const geometry = new THREE.ExtrudeGeometry(shape, {
     depth: Math.max(clamp.height, 0.1),
@@ -196,9 +196,12 @@ export function buildClampMesh(clamp: Clamp, selected = false): THREE.Mesh {
   geometry.rotateX(-Math.PI / 2)
 
   const material = new THREE.MeshStandardMaterial({
-    color: selected ? new THREE.Color('#9db9ff') : new THREE.Color('#6c89d1'),
+    color:
+      colliding
+        ? (selected ? new THREE.Color('#ff9c9c') : new THREE.Color('#d46b6b'))
+        : (selected ? new THREE.Color('#9db9ff') : new THREE.Color('#6c89d1')),
     transparent: true,
-    opacity: selected ? 0.72 : 0.58,
+    opacity: colliding ? (selected ? 0.8 : 0.68) : (selected ? 0.72 : 0.58),
     roughness: 0.72,
     metalness: 0.08,
     side: THREE.DoubleSide,
@@ -373,10 +376,12 @@ export async function buildScene(
   project: Project,
   selectedClampId: string | null = null,
   selectedTabId: string | null = null,
+  collidingClampIds: string[] = [],
 ): Promise<SceneObjects> {
   const visibleFeatures = project.features.filter((feature) => feature.visible)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
+  const collidingClampIdSet = new Set(collidingClampIds)
   const stockMesh = buildStockMesh(project.stock)
   const stockWireframe = buildStockWireframe(project.stock)
   const featureMeshes = new Map<string, THREE.Mesh>()
@@ -405,7 +410,10 @@ export async function buildScene(
   }
 
   for (const clamp of visibleClamps) {
-    clampMeshes.set(clamp.id, buildClampMesh(clamp, clamp.id === selectedClampId))
+    clampMeshes.set(
+      clamp.id,
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id)),
+    )
   }
 
   return { stockMesh, stockWireframe, modelMesh, featureMeshes, tabMeshes, clampMeshes }

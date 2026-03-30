@@ -262,7 +262,10 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     }
 
     const span = resolveFeatureZSpan(project, feature)
-    const levels = generateStepLevels(span.top, effectiveBottom, operation.stepdown)
+    const levels =
+      operation.pass === 'finish'
+        ? [effectiveBottom]
+        : generateStepLevels(span.top, effectiveBottom, operation.stepdown)
 
     for (const z of levels) {
       for (const contour of contours) {

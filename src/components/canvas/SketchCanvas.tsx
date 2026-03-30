@@ -624,12 +624,17 @@ function drawClampFootprint(
   clamp: Clamp,
   vt: ViewTransform,
   selected: boolean,
+  colliding: boolean,
 ): void {
   const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
   traceProfilePath(ctx, profile, vt)
-  ctx.fillStyle = selected ? 'rgba(118, 144, 209, 0.24)' : 'rgba(86, 110, 168, 0.14)'
+  ctx.fillStyle = colliding
+    ? (selected ? 'rgba(209, 118, 118, 0.28)' : 'rgba(184, 98, 98, 0.18)')
+    : (selected ? 'rgba(118, 144, 209, 0.24)' : 'rgba(86, 110, 168, 0.14)')
   ctx.fill()
-  ctx.strokeStyle = selected ? '#9db9ff' : 'rgba(122, 151, 224, 0.88)'
+  ctx.strokeStyle = colliding
+    ? (selected ? '#ffb0b0' : 'rgba(235, 122, 122, 0.92)')
+    : (selected ? '#9db9ff' : 'rgba(122, 151, 224, 0.88)')
   ctx.lineWidth = selected ? 2.2 : 1.6
   ctx.setLineDash([6, 4])
   ctx.stroke()
@@ -1108,10 +1113,11 @@ interface SketchCanvasProps {
   onClampContextMenu?: (clampId: string, x: number, y: number) => void
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
+  collidingClampIds?: string[]
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null },
+  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null, collidingClampIds = [] },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1172,6 +1178,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const width = canvas.width
     const height = canvas.height
     const vt = computeViewTransform(project.stock, width, height, viewState)
+    const collidingClampIdSet = new Set(collidingClampIds)
 
     ctx.clearRect(0, 0, width, height)
     ctx.fillStyle = '#0f151d'
@@ -1209,7 +1216,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (const clamp of project.clamps) {
       if (!clamp.visible) continue
       const selected = selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id
-      drawClampFootprint(ctx, clamp, vt, selected)
+      drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl)
       }
@@ -1340,6 +1347,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               },
               vt,
               true,
+              false,
             )
           }
           if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
@@ -1354,6 +1362,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     y: clamp.y + (targetPoint.y - pendingMove.fromPoint.y) * index,
                   },
                   vt,
+                  false,
                   false,
                 )
               }
@@ -1411,7 +1420,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     drawDepthLegend(ctx, width, height)
-  }, [copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
+  }, [collidingClampIds, copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
 
   useEffect(() => {
     draw()

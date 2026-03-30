@@ -64,6 +64,7 @@ interface SimulationViewportProps {
   operationCount: number
   clamps: Clamp[]
   selectedClampId: string | null
+  collidingClampIds: string[]
 }
 
 const SIMULATION_DETAIL_MIN = 240
@@ -267,6 +268,7 @@ export function SimulationViewport({
   operationCount,
   clamps,
   selectedClampId,
+  collidingClampIds,
 }: SimulationViewportProps) {
   const [showOverlay, setShowOverlay] = useState(false)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -410,7 +412,10 @@ export function SimulationViewport({
       return
     }
 
-    const nextClampMeshes = clamps.map((clamp) => buildClampMesh(clamp, clamp.id === selectedClampId))
+    const collidingClampIdSet = new Set(collidingClampIds)
+    const nextClampMeshes = clamps.map((clamp) =>
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id)),
+    )
     for (const mesh of nextClampMeshes) {
       scene.add(mesh)
     }
@@ -419,7 +424,7 @@ export function SimulationViewport({
     return () => {
       disposeClampMeshes(scene)
     }
-  }, [clamps, disposeClampMeshes, selectedClampId])
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId])
 
   return (
     <div className="simulation-viewport">

@@ -29,6 +29,7 @@ export interface ToolpathResult {
   moves: ToolpathMove[]
   warnings: string[]
   bounds: ToolpathBounds | null
+  collidingClampIds?: string[]
 }
 
 export interface PocketToolpathResult extends ToolpathResult {

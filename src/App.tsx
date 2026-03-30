@@ -103,16 +103,16 @@ function App() {
       }
 
       if (operation.kind === 'pocket') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)), operation)
       }
 
       if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
-        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
       }
 
       if (operation.kind === 'surface_clean') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)), operation)
       }
 
       return null
@@ -199,6 +199,15 @@ function App() {
       .map((operation) => generateToolpathForOperation(operation))
       .filter((toolpath): toolpath is ToolpathResult => toolpath !== null)
   }, [generateToolpathForOperation, project.operations])
+  const collidingClampIds = useMemo(
+    () => [
+      ...new Set([
+        ...visibleToolpaths.flatMap((toolpath) => toolpath.collidingClampIds ?? []),
+        ...(selectedToolpath?.collidingClampIds ?? []),
+      ]),
+    ],
+    [selectedToolpath, visibleToolpaths],
+  )
 
   useEffect(() => {
     if (centerTab !== 'preview3d' || hasAutoFramed3DRef.current) {
@@ -408,6 +417,7 @@ function App() {
             onClampContextMenu={openClampContextMenu}
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
+            collidingClampIds={collidingClampIds}
           />
         }
         viewport3d={
@@ -415,6 +425,7 @@ function App() {
             ref={viewport3dRef}
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
+            collidingClampIds={collidingClampIds}
           />
         }
         simulationViewport={
@@ -428,6 +439,7 @@ function App() {
             operationCount={simulationOperationCount}
             clamps={visibleClamps}
             selectedClampId={selectedClampId}
+            collidingClampIds={collidingClampIds}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

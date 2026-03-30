@@ -72,6 +72,7 @@ export interface Viewport3DHandle {
 interface Viewport3DProps {
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
+  collidingClampIds?: string[]
 }
 
 function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): THREE.Vector3 {
@@ -329,7 +330,11 @@ function createOrbitControls(
   }
 }
 
-export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({ toolpaths = [], selectedOperationId = null }, ref) {
+export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({
+  toolpaths = [],
+  selectedOperationId = null,
+  collidingClampIds = [],
+}, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -523,6 +528,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           project,
           selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null,
           selection.selectedNode?.type === 'tab' ? selection.selectedNode.tabId : null,
+          collidingClampIds,
         )
 
         if (cancelled || buildRequestRef.current !== buildRequestId) {
@@ -632,7 +638,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [clearRenderedObjects, disposeObjectMaterial, project, rebuildGridHelpers, selection.selectedNode])
+  }, [clearRenderedObjects, collidingClampIds, disposeObjectMaterial, project, rebuildGridHelpers, selection.selectedNode])
 
   useEffect(() => {
     const scene = sceneRef.current
