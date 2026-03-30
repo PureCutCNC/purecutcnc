@@ -46,6 +46,9 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
   }
 
   const diameter = isFiniteNumber(value.diameter) && value.diameter > 0 ? value.diameter : null
+  const vBitAngle = isFiniteNumber(value.vBitAngle) && value.vBitAngle > 0 && value.vBitAngle < 180
+    ? value.vBitAngle
+    : null
   const flutes = isFiniteNumber(value.flutes) && value.flutes >= 1 ? Math.round(value.flutes) : null
   const defaultRpm = isFiniteNumber(value.defaultRpm) && value.defaultRpm > 0 ? Math.round(value.defaultRpm) : null
   const defaultFeed = isFiniteNumber(value.defaultFeed) && value.defaultFeed > 0 ? value.defaultFeed : null
@@ -74,6 +77,7 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
     units,
     type,
     diameter,
+    vBitAngle: type === 'v_bit' ? (vBitAngle ?? 60) : null,
     flutes,
     material,
     defaultRpm,

@@ -47,7 +47,13 @@ function moveIsMaterialRemoving(move: ToolpathMove): boolean {
   return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
-function applyMoveToGrid(grid: SimulationGrid, move: ToolpathMove, toolRadius: number, toolType: 'flat_endmill'): number {
+function applyMoveToGrid(
+  grid: SimulationGrid,
+  move: ToolpathMove,
+  toolRadius: number,
+  toolType: SimulationReplayItem['toolType'],
+  vBitAngle: number | null,
+): number {
   const minX = Math.min(move.from.x, move.to.x) + -toolRadius
   const maxX = Math.max(move.from.x, move.to.x) + toolRadius
   const minY = Math.min(move.from.y, move.to.y) + -toolRadius
@@ -68,6 +74,7 @@ function applyMoveToGrid(grid: SimulationGrid, move: ToolpathMove, toolRadius: n
         toolRadius,
         toolCenterZ,
         distance,
+        vBitAngle,
       )
 
       if (cutZ === null) {
@@ -108,7 +115,7 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
 
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: string[] } {
   const warnings: string[] = []
-  if (item.toolType !== 'flat_endmill') {
+  if (item.toolType === 'drill') {
     warnings.push(`Operation "${item.operationName}" uses unsupported tool type "${item.toolType}" for simulation.`)
     return { processedMoveCount: 0, warnings }
   }
@@ -119,7 +126,7 @@ function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): {
       continue
     }
 
-    applyMoveToGrid(grid, move, item.toolRadius, 'flat_endmill')
+    applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
     processedMoveCount += 1
   }
 
@@ -172,6 +179,7 @@ export function simulateOperationHeightfield(
     toolRef: toolRecord.id,
     toolType: toolRecord.type,
     toolRadius: tool.radius,
+    vBitAngle: tool.vBitAngle,
     toolpath,
   })
   warnings.push(...replay.warnings)

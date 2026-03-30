@@ -197,6 +197,7 @@ function toolMatchesLibraryEntry(tool: Tool, libraryEntry: ToolLibraryEntry): bo
     && tool.units === libraryEntry.units
     && tool.type === libraryEntry.type
     && tool.diameter === libraryEntry.diameter
+    && tool.vBitAngle === libraryEntry.vBitAngle
     && tool.flutes === libraryEntry.flutes
     && tool.material === libraryEntry.material
     && tool.defaultRpm === libraryEntry.defaultRpm
@@ -217,6 +218,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Edge Route Outside'
     case 'surface_clean':
       return 'Surface Clean'
+    case 'follow_line':
+      return 'Follow Line'
   }
 }
 
@@ -232,7 +235,25 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
   return names.length > 0 ? names.join(', ') : 'No features'
 }
 
+function operationRequiresClosedProfiles(kind: OperationKind): boolean {
+  return kind === 'pocket' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+}
+
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
+  if (kind === 'follow_line') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    return features.length === selection.selectedFeatureIds.length
+      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+      : null
+  }
+
   if (kind === 'surface_clean') {
     if (selection.selectedFeatureIds.length === 0) {
       return null
@@ -246,7 +267,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.operation === 'add')
+    return features.every((feature) => feature.operation === 'add' && (!operationRequiresClosedProfiles(kind) || feature.sketch.profile.closed))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -269,10 +290,21 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
     return null
   }
 
+  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => feature.sketch.profile.closed)) {
+    return null
+  }
+
   return { source: 'features', featureIds: features.map((feature) => feature.id) }
 }
 
 function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
+  if (kind === 'follow_line') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select one or more open or closed features first'
+    }
+    return null
+  }
+
   if (kind === 'surface_clean') {
     if (selection.selectedFeatureIds.length === 0) {
       return 'Select one or more add features first'
@@ -282,9 +314,13 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    return features.every((feature) => feature.operation === 'add')
+    if (!features.every((feature) => feature.operation === 'add')) {
+      return 'Surface clean only accepts add features'
+    }
+
+    return features.every((feature) => feature.sketch.profile.closed)
       ? null
-      : 'Surface clean only accepts add features'
+      : 'Surface clean only accepts closed profiles'
   }
 
   if (selection.selectedFeatureIds.length === 0) {
@@ -301,6 +337,10 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
     return wantsSubtract
       ? 'This operation only accepts subtract features'
       : 'This operation only accepts add features'
+  }
+
+  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => feature.sketch.profile.closed)) {
+    return `${operationKindLabel(kind)} only accepts closed profiles`
   }
 
   return null
@@ -439,6 +479,12 @@ export function CAMPanel({
         hint: getOperationAddHint(project, selection, 'surface_clean') ?? undefined,
         disabled: getValidOperationTarget(project, selection, 'surface_clean') === null,
       },
+      {
+        kind: 'follow_line',
+        label: 'Follow Line',
+        hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'follow_line') === null,
+      },
     ]),
     [project, selection]
   )
@@ -510,6 +556,7 @@ export function CAMPanel({
       units: tool.units,
       type: tool.type,
       diameter: tool.diameter,
+      vBitAngle: tool.vBitAngle,
       flutes: tool.flutes,
       material: tool.material,
       defaultRpm: tool.defaultRpm,
@@ -837,6 +884,17 @@ export function CAMPanel({
                       <option value="finish">Finish</option>
                     </select>
                   </label>
+                  {selectedOperation.kind === 'follow_line' ? (
+                    <label className="properties-field">
+                      <span>Carve Depth</span>
+                      <DraftLengthInput
+                        value={selectedOperation.carveDepth}
+                        units={project.meta.units}
+                        min={0.0001}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { carveDepth: value })}
+                      />
+                    </label>
+                  ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish' ? (
                     <>
                       <label className="properties-check">
@@ -932,15 +990,17 @@ export function CAMPanel({
                       onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
                     />
                   </label>
-                  <label className="properties-field">
-                    <span>Stepover Ratio</span>
-                    <DraftNumberInput
-                      value={selectedOperation.stepover}
-                      min={0.01}
-                      max={1}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
-                    />
-                  </label>
+                  {selectedOperation.kind !== 'follow_line' ? (
+                    <label className="properties-field">
+                      <span>Stepover Ratio</span>
+                      <DraftNumberInput
+                        value={selectedOperation.stepover}
+                        min={0.01}
+                        max={1}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
+                      />
+                    </label>
+                  ) : null}
                   <label className="properties-field">
                     <span>Feed</span>
                     <DraftLengthInput
@@ -967,24 +1027,28 @@ export function CAMPanel({
                       onCommit={(value) => updateOperation(selectedOperation.id, { rpm: Math.round(value) })}
                     />
                   </label>
-                  <label className="properties-field">
-                    <span>Stock To Leave Radial</span>
-                    <DraftLengthInput
-                      value={selectedOperation.stockToLeaveRadial}
-                      units={project.meta.units}
-                      min={0}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>Stock To Leave Axial</span>
-                    <DraftLengthInput
-                      value={selectedOperation.stockToLeaveAxial}
-                      units={project.meta.units}
-                      min={0}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
-                    />
-                  </label>
+                  {selectedOperation.kind !== 'follow_line' ? (
+                    <>
+                      <label className="properties-field">
+                        <span>Stock To Leave Radial</span>
+                        <DraftLengthInput
+                          value={selectedOperation.stockToLeaveRadial}
+                          units={project.meta.units}
+                          min={0}
+                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Stock To Leave Axial</span>
+                        <DraftLengthInput
+                          value={selectedOperation.stockToLeaveAxial}
+                          units={project.meta.units}
+                          min={0}
+                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
+                        />
+                      </label>
+                    </>
+                  ) : null}
                     </div>
                   </div>
                 ) : (
@@ -1071,7 +1135,13 @@ export function CAMPanel({
                         <span>Type</span>
                         <select
                           value={selectedTool.type}
-                          onChange={(event) => updateTool(selectedTool.id, { type: event.target.value as ToolType })}
+                          onChange={(event) => {
+                            const nextType = event.target.value as ToolType
+                            updateTool(selectedTool.id, {
+                              type: nextType,
+                              vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
+                            })
+                          }}
                         >
                           <option value="flat_endmill">Flat Endmill</option>
                           <option value="ball_endmill">Ball Endmill</option>
@@ -1098,6 +1168,17 @@ export function CAMPanel({
                           onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
                         />
                       </label>
+                      {selectedTool.type === 'v_bit' ? (
+                        <label className="properties-field">
+                          <span>V Angle</span>
+                          <DraftNumberInput
+                            value={selectedTool.vBitAngle ?? 60}
+                            min={1}
+                            max={179}
+                            onCommit={(value) => updateTool(selectedTool.id, { vBitAngle: value })}
+                          />
+                        </label>
+                      ) : null}
                       <label className="properties-field">
                         <span>Flutes</span>
                         <DraftNumberInput

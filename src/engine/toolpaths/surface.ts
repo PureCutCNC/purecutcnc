@@ -271,7 +271,12 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
     warnings.push('Some selected target features are missing or are not add features')
   }
 
-  if (targetFeatures.length === 0) {
+  const closedTargetFeatures = targetFeatures.filter(({ feature }) => feature.sketch.profile.closed)
+  if (closedTargetFeatures.length !== targetFeatures.length) {
+    warnings.push('Surface-clean operations only support closed target profiles')
+  }
+
+  if (closedTargetFeatures.length === 0) {
     return {
       operationId: operation.id,
       units: project.meta.units,
@@ -281,16 +286,16 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
   }
 
   const allAddFeatures = project.features
-    .filter((feature) => feature.operation === 'add')
+    .filter((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
     .map((feature) => {
       const span = resolveFeatureZSpan(project, feature)
       return { feature, top: span.max }
     })
 
-  const depthLevels = [...new Set([project.stock.thickness, ...targetFeatures.map(({ top }) => top)])]
+  const depthLevels = [...new Set([project.stock.thickness, ...closedTargetFeatures.map(({ top }) => top)])]
     .sort((a, b) => b - a)
   const bands: ResolvedPocketBand[] = []
-  const targetIdSet = new Set(targetFeatures.map(({ feature }) => feature.id))
+  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
 
   for (let index = 0; index < depthLevels.length - 1; index += 1) {
     const topZ = depthLevels[index]
@@ -299,7 +304,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
       continue
     }
 
-    const activeTargets = targetFeatures.filter(({ top }) => top <= bottomZ)
+    const activeTargets = closedTargetFeatures.filter(({ top }) => top <= bottomZ)
     if (activeTargets.length === 0) {
       continue
     }

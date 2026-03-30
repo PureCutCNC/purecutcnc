@@ -34,5 +34,6 @@ export interface SimulationReplayItem {
   toolRef: string | null
   toolType: ToolType
   toolRadius: number
+  vBitAngle: number | null
   toolpath: import('../toolpaths/types').ToolpathResult
 }

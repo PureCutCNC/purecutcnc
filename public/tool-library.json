@@ -64,6 +64,7 @@
       "units": "inch",
       "type": "v_bit",
       "diameter": 0.5,
+      "vBitAngle": 60,
       "flutes": 2,
       "material": "carbide",
       "defaultRpm": 16000,

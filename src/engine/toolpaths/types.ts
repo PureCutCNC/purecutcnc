@@ -41,8 +41,10 @@ export interface NormalizedTool {
   name: string
   sourceUnits: Units
   units: Units
+  type: Tool['type']
   diameter: number
   radius: number
+  vBitAngle: number | null
   flutes: number
   material: Tool['material']
   defaultRpm: number

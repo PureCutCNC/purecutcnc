@@ -666,6 +666,7 @@ function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): b
     && existingTool.units === candidate.units
     && existingTool.type === candidate.type
     && existingTool.diameter === candidate.diameter
+    && existingTool.vBitAngle === candidate.vBitAngle
     && existingTool.flutes === candidate.flutes
     && existingTool.material === candidate.material
     && existingTool.defaultRpm === candidate.defaultRpm
@@ -686,6 +687,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Edge Route Outside'
     case 'surface_clean':
       return 'Surface Clean'
+    case 'follow_line':
+      return 'Follow Line'
   }
 }
 
@@ -703,6 +706,18 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
 }
 
 function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
+  if (kind === 'follow_line') {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    return features.length === target.featureIds.length
+  }
+
   if (kind === 'surface_clean') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
@@ -716,7 +731,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       return false
     }
 
-    return features.every((feature) => feature.operation === 'add')
+    return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
   }
 
   if (target.source !== 'features' || target.featureIds.length === 0) {
@@ -732,14 +747,16 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
   }
 
   if (kind === 'pocket' || kind === 'edge_route_inside') {
-    return features.every((feature) => feature.operation === 'subtract')
+    return features.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
   }
 
-  return features.every((feature) => feature.operation === 'add')
+  return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
+  const baseName = kind === 'follow_line'
+    ? operationKindLabel(kind)
+    : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
     return baseName
   }
@@ -779,25 +796,33 @@ function defaultOperationForTarget(
     stockToLeaveAxial: 0,
     finishWalls: true,
     finishFloor: true,
+    carveDepth: convertLength(1, 'mm', project.meta.units),
   }
 }
 
 function fallbackOperationTarget(project: Project, kind: OperationKind): OperationTarget {
+  if (kind === 'follow_line') {
+    const firstFeature = project.features[0]
+    return firstFeature
+      ? { source: 'features', featureIds: [firstFeature.id] }
+      : { source: 'stock' }
+  }
+
   if (kind === 'surface_clean' || kind === 'edge_route_outside') {
-    const firstAddFeature = project.features.find((feature) => feature.operation === 'add')
+    const firstAddFeature = project.features.find((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
     if (firstAddFeature) {
       return { source: 'features', featureIds: [firstAddFeature.id] }
     }
   }
 
   if (kind === 'pocket' || kind === 'edge_route_inside') {
-    const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract')
+    const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
     if (firstSubtractFeature) {
       return { source: 'features', featureIds: [firstSubtractFeature.id] }
     }
   }
 
-  const firstFeature = project.features[0]
+  const firstFeature = project.features.find((feature) => feature.sketch.profile.closed)
   return firstFeature
     ? { source: 'features', featureIds: [firstFeature.id] }
     : { source: 'stock' }
@@ -936,6 +961,7 @@ function normalizeTool(tool: Tool, units: Project['meta']['units'], index: numbe
   return {
     ...defaults,
     ...tool,
+    vBitAngle: (tool.type ?? defaults.type) === 'v_bit' ? (tool.vBitAngle ?? 60) : null,
   }
 }
 
@@ -1757,6 +1783,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ...template,
       id: nextId,
       showToolpath: false,
+      pass,
     }
 
     set((s) => ({

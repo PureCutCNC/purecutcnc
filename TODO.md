@@ -30,6 +30,17 @@ This file tracks follow-up work, open issues, and design questions that come up 
 
 ## Backlog
 
+### Refactor UI to use SVG Sprite Icon system
+- Status: Open
+- Priority: Medium
+- Summary: Replace all inline SVGs and character-based icons (like ◉, ○, ▸) with the unified `Icon` component.
+- Notes:
+  - Utilize the new `src/components/Icon.tsx` component which pulls from the `public/icons.svg` pool.
+  - Target files for refactoring: `Toolbar.tsx`, `FeatureTree.tsx`, `CAMPanel.tsx`, and `Viewport3D.tsx`.
+  - Standardize icon sizing (e.g., 18px for toolbar, 14-16px for panels).
+  - Use CSS (`.icon-sprite` in `layout.css`) for global properties like `stroke-width`, `transition`, and `currentColor` inheritance.
+  - Map current character icons (◉, ○) to professional sprite IDs like `eye` and `eye-off`.
+
 ### Per-feature display color
 - Status: Deferred
 - Priority: Low

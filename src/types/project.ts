@@ -166,6 +166,7 @@ export interface Tool {
   units: ProjectMeta['units']
   type: ToolType
   diameter: number
+  vBitAngle: number | null
   flutes: number
   material: 'hss' | 'carbide'
   defaultRpm: number
@@ -184,6 +185,7 @@ export type OperationKind =
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'
+  | 'follow_line'
 
 export type OperationPass = 'rough' | 'finish'
 
@@ -209,6 +211,7 @@ export interface Operation {
   stockToLeaveAxial: number
   finishWalls: boolean
   finishFloor: boolean
+  carveDepth: number
 }
 
 // ============================================================
@@ -475,6 +478,7 @@ export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool
       units,
       type: 'flat_endmill',
       diameter: 0.25,
+      vBitAngle: null,
       flutes: 2,
       material: 'carbide',
       defaultRpm: 18000,
@@ -491,6 +495,7 @@ export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool
     units,
     type: 'flat_endmill',
     diameter: 6,
+    vBitAngle: null,
     flutes: 2,
     material: 'carbide',
     defaultRpm: 18000,

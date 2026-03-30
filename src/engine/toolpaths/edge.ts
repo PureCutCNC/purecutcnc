@@ -229,7 +229,12 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation} features`)
   }
 
-  if (targetFeatures.length === 0) {
+  const closedTargetFeatures = targetFeatures.filter((feature) => feature.sketch.profile.closed)
+  if (closedTargetFeatures.length !== targetFeatures.length) {
+    warnings.push('Edge-route operations only support closed target profiles')
+  }
+
+  if (closedTargetFeatures.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
@@ -248,7 +253,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
 
-  for (const feature of targetFeatures) {
+  for (const feature of closedTargetFeatures) {
     const contours = resolveContourTarget(feature, offsetDistance)
     if (contours.length === 0) {
       warnings.push(`No valid contour could be generated for ${feature.name}`)

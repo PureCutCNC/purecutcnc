@@ -1,24 +1,176 @@
-<svg xmlns="http://www.w3.org/2000/svg">
-  <symbol id="bluesky-icon" viewBox="0 0 16 17">
-    <g clip-path="url(#bluesky-clip)"><path fill="#08060d" d="M7.75 7.735c-.693-1.348-2.58-3.86-4.334-5.097-1.68-1.187-2.32-.981-2.74-.79C.188 2.065.1 2.812.1 3.251s.241 3.602.398 4.13c.52 1.744 2.367 2.333 4.07 2.145-2.495.37-4.71 1.278-1.805 4.512 3.196 3.309 4.38-.71 4.987-2.746.608 2.036 1.307 5.91 4.93 2.746 2.72-2.746.747-4.143-1.747-4.512 1.702.189 3.55-.4 4.07-2.145.156-.528.397-3.691.397-4.13s-.088-1.186-.575-1.406c-.42-.19-1.06-.395-2.741.79-1.755 1.24-3.64 3.752-4.334 5.099"/></g>
-    <defs><clipPath id="bluesky-clip"><path fill="#fff" d="M.1.85h15.3v15.3H.1z"/></clipPath></defs>
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <!-- File Operations -->
+  <symbol id="new" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+    <line x1="12" y1="18" x2="12" y2="12"/>
+    <line x1="9" y1="15" x2="15" y2="15"/>
   </symbol>
-  <symbol id="discord-icon" viewBox="0 0 20 19">
-    <path fill="#08060d" d="M16.224 3.768a14.5 14.5 0 0 0-3.67-1.153c-.158.286-.343.67-.47.976a13.5 13.5 0 0 0-4.067 0c-.128-.306-.317-.69-.476-.976A14.4 14.4 0 0 0 3.868 3.77C1.546 7.28.916 10.703 1.231 14.077a14.7 14.7 0 0 0 4.5 2.306q.545-.748.965-1.587a9.5 9.5 0 0 1-1.518-.74q.191-.14.372-.293c2.927 1.369 6.107 1.369 8.999 0q.183.152.372.294-.723.437-1.52.74.418.838.963 1.588a14.6 14.6 0 0 0 4.504-2.308c.37-3.911-.63-7.302-2.644-10.309m-9.13 8.234c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.894 0 1.614.82 1.599 1.82.001 1-.705 1.82-1.6 1.82m5.91 0c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.893 0 1.614.82 1.599 1.82 0 1-.706 1.82-1.6 1.82"/>
+  <symbol id="open" viewBox="0 0 24 24">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
   </symbol>
-  <symbol id="documentation-icon" viewBox="0 0 21 20">
-    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="m15.5 13.333 1.533 1.322c.645.555.967.833.967 1.178s-.322.623-.967 1.179L15.5 18.333m-3.333-5-1.534 1.322c-.644.555-.966.833-.966 1.178s.322.623.966 1.179l1.534 1.321"/>
-    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M17.167 10.836v-4.32c0-1.41 0-2.117-.224-2.68-.359-.906-1.118-1.621-2.08-1.96-.599-.21-1.349-.21-2.848-.21-2.623 0-3.935 0-4.983.369-1.684.591-3.013 1.842-3.641 3.428C3 6.449 3 7.684 3 10.154v2.122c0 2.558 0 3.838.706 4.726q.306.383.713.671c.76.536 1.79.64 3.581.66"/>
-    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M3 10a2.78 2.78 0 0 1 2.778-2.778c.555 0 1.209.097 1.748-.047.48-.129.854-.503.982-.982.145-.54.048-1.194.048-1.749a2.78 2.78 0 0 1 2.777-2.777"/>
+  <symbol id="save" viewBox="0 0 24 24">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+    <polyline points="17 21 17 13 7 13 7 21"/>
+    <polyline points="7 3 7 8 15 8"/>
   </symbol>
-  <symbol id="github-icon" viewBox="0 0 19 19">
-    <path fill="#08060d" fill-rule="evenodd" d="M9.356 1.85C5.05 1.85 1.57 5.356 1.57 9.694a7.84 7.84 0 0 0 5.324 7.44c.387.079.528-.168.528-.376 0-.182-.013-.805-.013-1.454-2.165.467-2.616-.935-2.616-.935-.349-.91-.864-1.143-.864-1.143-.71-.48.051-.48.051-.48.787.051 1.2.805 1.2.805.695 1.194 1.817.857 2.268.649.064-.507.27-.857.49-1.052-1.728-.182-3.545-.857-3.545-3.87 0-.857.31-1.558.8-2.104-.078-.195-.349-1 .077-2.078 0 0 .657-.208 2.14.805a7.5 7.5 0 0 1 1.946-.26c.657 0 1.328.092 1.946.26 1.483-1.013 2.14-.805 2.14-.805.426 1.078.155 1.883.078 2.078.502.546.799 1.247.799 2.104 0 3.013-1.818 3.675-3.558 3.87.284.247.528.714.528 1.454 0 1.052-.012 1.896-.012 2.156 0 .208.142.455.528.377a7.84 7.84 0 0 0 5.324-7.441c.013-4.338-3.48-7.844-7.773-7.844" clip-rule="evenodd"/>
+
+  <!-- History & Navigation -->
+  <symbol id="undo" viewBox="0 0 24 24">
+    <path d="M3 7v6h6"/>
+    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
   </symbol>
-  <symbol id="social-icon" viewBox="0 0 20 20">
-    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M12.5 6.667a4.167 4.167 0 1 0-8.334 0 4.167 4.167 0 0 0 8.334 0"/>
-    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M2.5 16.667a5.833 5.833 0 0 1 8.75-5.053m3.837.474.513 1.035c.07.144.257.282.414.309l.93.155c.596.1.736.536.307.965l-.723.73a.64.64 0 0 0-.152.531l.207.903c.164.715-.213.991-.84.618l-.872-.52a.63.63 0 0 0-.577 0l-.872.52c-.624.373-1.003.094-.84-.618l.207-.903a.64.64 0 0 0-.152-.532l-.723-.729c-.426-.43-.289-.864.306-.964l.93-.156a.64.64 0 0 0 .412-.31l.513-1.034c.28-.562.735-.562 1.012 0"/>
+  <symbol id="redo" viewBox="0 0 24 24">
+    <path d="M21 7v6h-6"/>
+    <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
   </symbol>
-  <symbol id="x-icon" viewBox="0 0 19 19">
-    <path fill="#08060d" fill-rule="evenodd" d="M1.893 1.98c.052.072 1.245 1.769 2.653 3.77l2.892 4.114c.183.261.333.48.333.486s-.068.089-.152.183l-.522.593-.765.867-3.597 4.087c-.375.426-.734.834-.798.905a1 1 0 0 0-.118.148c0 .01.236.017.664.017h.663l.729-.83c.4-.457.796-.906.879-.999a692 692 0 0 0 1.794-2.038c.034-.037.301-.34.594-.675l.551-.624.345-.392a7 7 0 0 1 .34-.374c.006 0 .93 1.306 2.052 2.903l2.084 2.965.045.063h2.275c1.87 0 2.273-.003 2.266-.021-.008-.02-1.098-1.572-3.894-5.547-2.013-2.862-2.28-3.246-2.273-3.266.008-.019.282-.332 2.085-2.38l2-2.274 1.567-1.782c.022-.028-.016-.03-.65-.03h-.674l-.3.342a871 871 0 0 1-1.782 2.025c-.067.075-.405.458-.75.852a100 100 0 0 1-.803.91c-.148.172-.299.344-.99 1.127-.304.343-.32.358-.345.327-.015-.019-.904-1.282-1.976-2.808L6.365 1.85H1.8zm1.782.91 8.078 11.294c.772 1.08 1.413 1.973 1.425 1.984.016.017.241.02 1.05.017l1.03-.004-2.694-3.766L7.796 5.75 5.722 2.852l-1.039-.004-1.039-.004z" clip-rule="evenodd"/>
+  <symbol id="fit" viewBox="0 0 24 24">
+    <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6"/>
+  </symbol>
+
+  <!-- Drawing Tools -->
+  <symbol id="select" viewBox="0 0 24 24">
+    <path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+    <path d="m13 13 6 6"/>
+  </symbol>
+  <symbol id="rect" viewBox="0 0 24 24">
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+  </symbol>
+  <symbol id="circle" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/>
+  </symbol>
+  <symbol id="polygon" viewBox="0 0 24 24">
+    <path d="M12 2l9 7-3 12H6L3 9l9-7z"/>
+  </symbol>
+  <symbol id="spline" viewBox="0 0 24 24">
+    <path d="M3 12c4-8 8 8 12 0s4-8 6 0"/>
+    <circle cx="3" cy="12" r="1"/>
+    <circle cx="9" cy="8" r="1"/>
+    <circle cx="15" cy="16" r="1"/>
+    <circle cx="21" cy="12" r="1"/>
+  </symbol>
+  <symbol id="composite" viewBox="0 0 24 24">
+    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+  </symbol>
+
+  <!-- CAM Operations -->
+  <symbol id="pocket" viewBox="0 0 24 24">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <rect x="7" y="7" width="10" height="10" rx="1" opacity="0.5"/>
+    <path d="M12 7v10M7 12h10" opacity="0.3"/>
+  </symbol>
+  <symbol id="edge-in" viewBox="0 0 24 24">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M7 7h10v10H7z" opacity="0.5"/>
+    <path d="M12 7l-2 2 2 2m0 6l2-2-2-2"/>
+  </symbol>
+  <symbol id="edge-out" viewBox="0 0 24 24">
+    <rect x="7" y="7" width="10" height="10" rx="1"/>
+    <path d="M3 3h18v18H3z" opacity="0.3"/>
+    <path d="M12 3l2 2-2 2m0 14l-2-2 2-2"/>
+  </symbol>
+  <symbol id="surface" viewBox="0 0 24 24">
+    <path d="M3 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>
+    <path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0" opacity="0.6"/>
+    <path d="M3 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0" opacity="0.6"/>
+  </symbol>
+
+  <!-- Tree & Management -->
+  <symbol id="project" viewBox="0 0 24 24">
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+    <polyline points="9 22 9 12 15 12 15 22"/>
+  </symbol>
+  <symbol id="grid" viewBox="0 0 24 24">
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+    <line x1="3" y1="9" x2="21" y2="9"/>
+    <line x1="3" y1="15" x2="21" y2="15"/>
+    <line x1="9" y1="3" x2="9" y2="21"/>
+    <line x1="15" y1="3" x2="15" y2="21"/>
+  </symbol>
+  <symbol id="stock" viewBox="0 0 24 24">
+    <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+    <path d="m3.3 7 8.7 5 8.7-5"/>
+    <path d="M12 22V12"/>
+  </symbol>
+  <symbol id="folder" viewBox="0 0 24 24">
+    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+  </symbol>
+  <symbol id="tab" viewBox="0 0 24 24">
+    <path d="M2 14h20v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4z"/>
+    <path d="M2 14l4-4h12l4 4" opacity="0.5"/>
+  </symbol>
+  <symbol id="clamp" viewBox="0 0 24 24">
+    <path d="M4 18V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12"/>
+    <path d="M2 18h20v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2z"/>
+    <circle cx="12" cy="10" r="2" opacity="0.5"/>
+  </symbol>
+
+  <!-- Tools -->
+  <symbol id="tool-endmill" viewBox="0 0 24 24">
+    <path d="M10 2h4v16h-4z"/>
+    <path d="M10 18l2 4 2-4"/>
+    <path d="M10 6h4m-4 4h4m-4 4h4" opacity="0.5"/>
+  </symbol>
+  <symbol id="tool-ballmill" viewBox="0 0 24 24">
+    <path d="M10 2h4v15h-4z"/>
+    <path d="M10 17a2 2 0 0 0 4 0"/>
+    <path d="M10 6l4 2m-4 2l4 2m-4 2l4 2" opacity="0.5"/>
+  </symbol>
+
+  <!-- UI Elements -->
+  <symbol id="eye" viewBox="0 0 24 24">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+    <circle cx="12" cy="12" r="3"/>
+  </symbol>
+  <symbol id="eye-off" viewBox="0 0 24 24">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+    <line x1="1" y1="1" x2="23" y2="23"/>
+  </symbol>
+  <symbol id="lock" viewBox="0 0 24 24">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+  </symbol>
+  <symbol id="trash" viewBox="0 0 24 24">
+    <polyline points="3 6 5 6 21 6"/>
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+  </symbol>
+  <symbol id="copy" viewBox="0 0 24 24">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+  </symbol>
+  <symbol id="chevron-down" viewBox="0 0 24 24">
+    <polyline points="6 9 12 15 18 9"/>
+  </symbol>
+  <symbol id="plus" viewBox="0 0 24 24">
+    <line x1="12" y1="5" x2="12" y2="19"/>
+    <line x1="5" y1="12" x2="19" y2="12"/>
+  </symbol>
+  <symbol id="minus" viewBox="0 0 24 24">
+    <line x1="5" y1="12" x2="19" y2="12"/>
+  </symbol>
+
+  <!-- Viewport Presets -->
+  <symbol id="view-iso" viewBox="0 0 24 24">
+    <path d="M12 2l10 5-10 5L2 7l10-5z"/>
+    <path d="M2 7v10l10 5 10-5V7"/>
+    <path d="M12 12v10"/>
+  </symbol>
+  <symbol id="view-top" viewBox="0 0 24 24">
+    <rect x="4" y="4" width="16" height="16" rx="2" opacity="0.3"/>
+    <path d="M12 2v20M2 12h20"/>
+  </symbol>
+
+  <!-- Simulation & Export -->
+  <symbol id="play" viewBox="0 0 24 24">
+    <polygon points="5 3 19 12 5 21 5 3"/>
+  </symbol>
+  <symbol id="pause" viewBox="0 0 24 24">
+    <rect x="6" y="4" width="4" height="16"/>
+    <rect x="14" y="4" width="4" height="16"/>
+  </symbol>
+  <symbol id="export" viewBox="0 0 24 24">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/>
   </symbol>
 </svg>

@@ -119,7 +119,7 @@ function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): TH
     const material = new THREE.LineBasicMaterial({
       color: layer.color,
       transparent: true,
-      opacity: emphasized ? layer.opacity : layer.opacity * 0.3,
+      opacity: emphasized ? layer.opacity : Math.max(layer.opacity * 0.55, 0.45),
       depthWrite: false,
       depthTest: false,
     })

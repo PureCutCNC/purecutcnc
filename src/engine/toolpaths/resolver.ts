@@ -207,7 +207,12 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     warnings.push('Some selected target features are missing or are not subtract features')
   }
 
-  if (targetFeatures.length === 0) {
+  const closedTargetFeatures = targetFeatures.filter(({ feature }) => feature.sketch.profile.closed)
+  if (closedTargetFeatures.length !== targetFeatures.length) {
+    warnings.push('Pocket operations only support closed target profiles')
+  }
+
+  if (closedTargetFeatures.length === 0) {
     return {
       operationId: operation.id,
       units: project.meta.units,
@@ -217,7 +222,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   }
 
   const candidateIslands = project.features
-    .filter((feature) => feature.operation === 'add')
+    .filter((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
@@ -232,12 +237,12 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   }))
 
   const depths = uniqueSortedDepthsFromSpans([
-    ...targetFeatures.map(({ span }) => span),
+    ...closedTargetFeatures.map(({ span }) => span),
     ...candidateIslands.map(({ span }) => span),
     ...candidateTabIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
-  const targetIdSet = new Set(targetFeatures.map(({ feature }) => feature.id))
+  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
 
   for (let index = 0; index < depths.length - 1; index += 1) {
     const topZ = depths[index]
@@ -246,7 +251,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       continue
     }
 
-    const activeTargets = activeForBand(targetFeatures, topZ, bottomZ)
+    const activeTargets = activeForBand(closedTargetFeatures, topZ, bottomZ)
     if (activeTargets.length === 0) {
       continue
     }

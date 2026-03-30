@@ -306,32 +306,32 @@ These should stay out of first pass and go to backlog:
 - `[x]` preserve explicit close action / close-on-first-point behavior
 
 ### FV3. Open-profile validation in existing CAM ops
-- `[ ]` reject open profiles for pocket
-- `[ ]` reject open profiles for edge routes
-- `[ ]` reject open profiles for surface clean
-- `[ ]` show clear warnings in CAM properties
+- `[x]` reject open profiles for pocket
+- `[x]` reject open profiles for edge routes
+- `[x]` reject open profiles for surface clean
+- `[x]` show clear warnings in CAM properties
 
 ### FV4. Carving operation schema and UI
-- `[ ]` add `follow_line` operation kind
-- `[ ]` add `carveDepth` parameter
-- `[ ]` surface operation controls in CAM panel
-- `[ ]` allow any feature targets, open or closed
+- `[x]` add `follow_line` operation kind
+- `[x]` add `carveDepth` parameter
+- `[x]` surface operation controls in CAM panel
+- `[x]` allow any feature targets, open or closed
 
 ### FV5. Follow-line toolpath engine
-- `[ ]` generate follow-line path from authored profile geometry
-- `[ ]` support open and closed targets
-- `[ ]` use `feature.z_top - carveDepth`
-- `[ ]` support multiple targets in one operation
+- `[x]` generate follow-line path from authored profile geometry
+- `[x]` support open and closed targets
+- `[x]` use `feature.z_top - carveDepth`
+- `[x]` support multiple targets in one operation
 
 ### FV6. View integration
-- `[ ]` sketch overlay for follow-line
-- `[ ]` 3D path overlay for follow-line
-- `[ ]` operation warnings/status integration
+- `[x]` sketch overlay for follow-line
+- `[x]` 3D path overlay for follow-line
+- `[x]` operation warnings/status integration
 
 ### FV7. Simulation integration
-- `[ ]` replay follow-line moves in simulation
-- `[ ]` verify flat endmill simulation
-- `[ ]` define first-pass behavior for ball endmill and V-bit simulation
+- `[x]` replay follow-line moves in simulation
+- `[x]` verify flat endmill simulation
+- `[x]` define first-pass behavior for ball endmill and V-bit simulation
 
 ### FV8. Refinement / backlog split
 - `[ ]` text feature planning
