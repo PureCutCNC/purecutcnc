@@ -86,6 +86,7 @@ function convertProfile(profile: SketchProfile, from: Units, to: Units): SketchP
     ...profile,
     start: convertPoint(profile.start, from, to),
     segments: profile.segments.map((segment) => convertSegment(segment, from, to)),
+    closed: profile.closed,
   }
 }
 

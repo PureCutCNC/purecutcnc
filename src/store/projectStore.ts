@@ -181,11 +181,13 @@ export interface ProjectStore {
   placePendingAddAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
   completePendingPolygon: () => void
+  completePendingOpenPath: () => void
   setPendingCompositeMode: (mode: CompositeSegmentMode) => void
   addPendingCompositePoint: (point: Point) => void
   undoPendingCompositeStep: () => void
   closePendingCompositeDraft: () => void
   completePendingComposite: () => void
+  completePendingOpenComposite: () => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string) => void
   cancelPendingMove: () => void
@@ -399,6 +401,18 @@ function resolveCompositeDraftSegments(draft: Extract<PendingAddTool, { shape: '
   }
 
   return [...draft.segments, { type: 'line', to: clonePoint(draft.start) }]
+}
+
+function resolveOpenCompositeDraftSegments(draft: Extract<PendingAddTool, { shape: 'composite' }>): Segment[] | null {
+  if (!draft.start || !draft.lastPoint || draft.pendingArcEnd) {
+    return null
+  }
+
+  if (draft.segments.length < 1) {
+    return null
+  }
+
+  return draft.segments
 }
 
 function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point): Segment | null {
@@ -895,6 +909,13 @@ function buildCopiedTabs(
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const safeFeature = {
     ...feature,
+    sketch: {
+      ...feature.sketch,
+      profile: {
+        ...feature.sketch.profile,
+        closed: feature.sketch.profile.closed ?? true,
+      },
+    },
     kind: feature.kind ?? inferFeatureKind(feature.sketch.profile),
     folderId: feature.folderId ?? null,
   }
@@ -1157,6 +1178,13 @@ function normalizeProject(project: Project): Project {
   const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
     meta,
+    stock: {
+      ...project.stock,
+      profile: {
+        ...project.stock.profile,
+        closed: project.stock.profile.closed ?? true,
+      },
+    },
     features: project.features.map(normalizeFeatureZRange),
     featureFolders: project.featureFolders ?? [],
     featureTree: project.featureTree ?? [],
@@ -3258,6 +3286,76 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ pendingAdd: null })
   },
 
+  completePendingOpenPath: () => {
+    const state = get()
+    if (!state.pendingAdd || !('points' in state.pendingAdd)) return
+
+    const depth = Math.min(state.project.stock.thickness, 10)
+    if (state.pendingAdd.shape === 'spline') {
+      if (state.pendingAdd.points.length < 2) return
+      const id = nextUniqueGeneratedId(state.project, 'f')
+      const points = state.pendingAdd.points
+      let segments: Segment[] = []
+      for (let index = 1; index < points.length; index += 1) {
+        segments = appendSplineDraftSegment(points[0], segments, points[index])
+      }
+
+      const feature: SketchFeature = {
+        id,
+        name: `Spline ${state.project.features.length + 1}`,
+        kind: 'spline',
+        folderId: null,
+        sketch: {
+          profile: {
+            start: points[0],
+            segments,
+            closed: false,
+          },
+          origin: { x: 0, y: 0 },
+          dimensions: [],
+          constraints: [],
+        },
+        operation: 'subtract',
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      state.addFeature(feature)
+    } else {
+      if (state.pendingAdd.points.length < 2) return
+      const id = nextUniqueGeneratedId(state.project, 'f')
+      const start = state.pendingAdd.points[0]
+      const segments = state.pendingAdd.points.slice(1).map((point) => ({
+        type: 'line' as const,
+        to: point,
+      }))
+      const feature: SketchFeature = {
+        id,
+        name: `Polyline ${state.project.features.length + 1}`,
+        kind: 'polygon',
+        folderId: null,
+        sketch: {
+          profile: {
+            start,
+            segments,
+            closed: false,
+          },
+          origin: { x: 0, y: 0 },
+          dimensions: [],
+          constraints: [],
+        },
+        operation: 'subtract',
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      state.addFeature(feature)
+    }
+    set({ pendingAdd: null })
+  },
+
   setPendingCompositeMode: (mode) =>
     set((s) => ({
       pendingAdd:
@@ -3431,6 +3529,46 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         profile: {
           start: clonePoint(state.pendingAdd.start),
           segments: closedSegments.map(cloneSegment),
+          closed: true,
+        },
+        origin: { x: 0, y: 0 },
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'subtract',
+      z_top: depth,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    }
+
+    state.addFeature(feature)
+    set({ pendingAdd: null })
+  },
+
+  completePendingOpenComposite: () => {
+    const state = get()
+    if (state.pendingAdd?.shape !== 'composite' || !state.pendingAdd.start) {
+      return
+    }
+
+    const openSegments = resolveOpenCompositeDraftSegments(state.pendingAdd)
+    if (!openSegments) {
+      return
+    }
+
+    const depth = Math.min(state.project.stock.thickness, 10)
+    const id = nextUniqueGeneratedId(state.project, 'f')
+    const feature: SketchFeature = {
+      id,
+      name: `Composite ${state.project.features.length + 1}`,
+      kind: 'composite',
+      folderId: null,
+      sketch: {
+        profile: {
+          start: clonePoint(state.pendingAdd.start),
+          segments: openSegments.map(cloneSegment),
+          closed: false,
         },
         origin: { x: 0, y: 0 },
         dimensions: [],

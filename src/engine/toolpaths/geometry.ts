@@ -90,7 +90,7 @@ export function flattenProfile(profile: SketchProfile, curveSamples = 24, arcSte
 
   return {
     points: sampled.map(clonePoint),
-    closed: true,
+    closed: profile.closed,
   }
 }
 

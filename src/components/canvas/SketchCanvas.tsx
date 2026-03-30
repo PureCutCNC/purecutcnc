@@ -245,7 +245,9 @@ function traceProfilePath(
     current = segment.to
   }
 
-  ctx.closePath()
+  if (profile.closed) {
+    ctx.closePath()
+  }
 }
 
 function anchorPointForIndex(profile: SketchProfile, index: number): Point {
@@ -460,8 +462,10 @@ function drawFeature(
   }
 
   traceProfilePath(ctx, feature.sketch.profile, vt)
-  ctx.fillStyle = fill
-  ctx.fill()
+  if (feature.sketch.profile.closed) {
+    ctx.fillStyle = fill
+    ctx.fill()
+  }
 
   ctx.strokeStyle = stroke
   ctx.lineWidth = editing || selected ? 2.5 : 1.8
@@ -488,8 +492,10 @@ function drawPreviewProfile(
   label: string,
 ): void {
   traceProfilePath(ctx, profile, vt)
-  ctx.fillStyle = 'rgba(236, 184, 122, 0.18)'
-  ctx.fill()
+  if (profile.closed) {
+    ctx.fillStyle = 'rgba(236, 184, 122, 0.18)'
+    ctx.fill()
+  }
   ctx.setLineDash([8, 5])
   ctx.strokeStyle = '#efbc7a'
   ctx.lineWidth = 2
@@ -784,6 +790,10 @@ function drawToolpath(
 }
 
 function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
+  if (!profile.closed) {
+    return false
+  }
+
   const points = sampleProfilePoints(profile)
   if (points.length < 3) return false
 
@@ -801,11 +811,48 @@ function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
   return inside
 }
 
-function findHitFeatureId(worldPoint: Point, features: SketchFeature[]): string | null {
+function distancePointToSegment(point: Point, start: Point, end: Point): number {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
+    return Math.hypot(point.x - start.x, point.y - start.y)
+  }
+
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)))
+  const projection = {
+    x: start.x + dx * t,
+    y: start.y + dy * t,
+  }
+  return Math.hypot(point.x - projection.x, point.y - projection.y)
+}
+
+function pointNearProfile(worldPoint: Point, profile: SketchProfile, vt: ViewTransform, tolerancePx = 8): boolean {
+  const points = sampleProfilePoints(profile)
+  if (points.length < 2) {
+    return false
+  }
+
+  const toleranceWorld = tolerancePx / Math.max(vt.scale, 1e-6)
+  const segmentCount = profile.closed ? points.length : points.length - 1
+  for (let index = 0; index < segmentCount; index += 1) {
+    const start = points[index]
+    const end = points[(index + 1) % points.length]
+    if (distancePointToSegment(worldPoint, start, end) <= toleranceWorld) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: ViewTransform): string | null {
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)) {
+    if (
+      pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)
+      || pointNearProfile(worldPoint, feature.sketch.profile, vt)
+    ) {
       return feature.id
     }
   }
@@ -1041,7 +1088,7 @@ function drawCompositeDraft(
   if (pendingAdd.closed) {
     drawPreviewProfile(
       ctx,
-      { start: pendingAdd.start, segments: pendingAdd.segments },
+      { start: pendingAdd.start, segments: pendingAdd.segments, closed: true },
       vt,
       'Pending composite',
     )
@@ -1156,11 +1203,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     placePendingAddAt,
     addPendingPolygonPoint,
     completePendingPolygon,
+    completePendingOpenPath,
     cancelPendingAdd,
     setPendingCompositeMode,
     addPendingCompositePoint,
     undoPendingCompositeStep,
     completePendingComposite,
+    completePendingOpenComposite,
     setPendingMoveFrom,
     setPendingMoveTo,
     completePendingMove,
@@ -1244,7 +1293,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
       const closePreview =
-        currentPreviewPoint ? isLoopCloseCandidate(worldToCanvas(currentPreviewPoint, vt), pendingAdd.points, vt) : false
+        currentPreviewPoint && pendingAdd.points.length >= 3
+          ? isLoopCloseCandidate(worldToCanvas(currentPreviewPoint, vt), pendingAdd.points, vt)
+          : false
       if (pendingAdd.points.length > 0) {
         if (pendingAdd.shape === 'spline') {
           drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview)
@@ -1665,7 +1716,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features)
+    const hitId = findHitFeatureId(world, project.features, vt)
     hoverFeature(hitId)
   }
 
@@ -1730,7 +1781,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
         const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        if (isLoopCloseCandidate(point, pendingAdd.points, vt)) {
+        if (pendingAdd.points.length >= 3 && isLoopCloseCandidate(point, pendingAdd.points, vt)) {
           completePendingPolygon()
           setPendingPreviewPoint(null)
           return
@@ -1798,7 +1849,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features)
+    const hitId = findHitFeatureId(world, project.features, vt)
     if (hitId) {
       selectFeature(hitId, event.metaKey || event.ctrlKey || event.shiftKey)
     } else if (!(event.metaKey || event.ctrlKey || event.shiftKey)) {
@@ -1829,9 +1880,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function handleDoubleClick(event: MouseEvent<HTMLCanvasElement>) {
     if (pendingAdd) {
-      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 3) {
+      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 2) {
         event.preventDefault()
-        completePendingPolygon()
+        completePendingOpenPath()
         setPendingPreviewPoint(null)
       }
       return
@@ -1853,7 +1904,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, project.features)
+    const hitId = findHitFeatureId(world, project.features, vt)
     if (hitId) enterSketchEdit(hitId)
   }
 
@@ -1893,7 +1944,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features)
+    const hitId = findHitFeatureId(world, project.features, vt)
     if (!hitId) {
       return
     }
@@ -1908,9 +1959,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (
       event.key === 'Enter'
       && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
-      && pendingAdd.points.length >= 3
+      && pendingAdd.points.length >= 2
     ) {
-      completePendingPolygon()
+      completePendingOpenPath()
       setPendingPreviewPoint(null)
       return
     }
@@ -1936,8 +1987,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         undoPendingCompositeStep()
         return
       }
-      if (event.key === 'Enter' && pendingAdd.segments.length >= 2 && !pendingAdd.pendingArcEnd) {
-        completePendingComposite()
+      if (event.key === 'Enter' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd) {
+        completePendingOpenComposite()
         setPendingPreviewPoint(null)
         return
       }
@@ -2023,6 +2074,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? {
                     start: pendingAdd.start,
                     segments,
+                    closed: pendingAdd.closed,
                   }
                 : null
             })()
@@ -2065,11 +2117,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             {pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline'
               ? pendingAdd.points.length === 0
                 ? `Click to place the first ${pendingAdd.shape} control point.`
-                : pendingAdd.points.length < 3
-                  ? `Click to add more control points. You need at least three for a closed ${pendingAdd.shape}.`
+                : pendingAdd.points.length < 2
+                  ? 'Click to add one more control point.'
                   : pendingAdd.shape === 'spline'
-                    ? 'Click to add control points. Click the first point, double-click, or press Enter to close the spline.'
-                    : 'Click to add vertices. Click the first point, double-click, or press Enter to close the polygon.'
+                    ? 'Click to add control points. Click the first point to close, or press Enter / double-click to finish open.'
+                    : 'Click to add vertices. Click the first point to close, or press Enter / double-click to finish open.'
             : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner.'
@@ -2093,8 +2145,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                             ? 'Click a third point on the arc to define curvature. Press Backspace to undo.'
                             : 'Click to place the arc end point, then click again to define the arc. Press L or S to switch modes.'
                           : pendingAdd.currentMode === 'spline'
-                            ? 'Click to add a spline segment endpoint. Press Enter or click the first point to close.'
-                            : 'Click to add connected line segments. Press Enter or click the first point to close.'}
+                            ? 'Click to add a spline segment endpoint. Click the first point to close, or press Enter to finish open.'
+                            : 'Click to add connected line segments. Click the first point to close, or press Enter to finish open.'}
             {' '}Press <kbd>Esc</kbd> to cancel.
           </div>
           {pendingDraftHasSelfIntersection ? (

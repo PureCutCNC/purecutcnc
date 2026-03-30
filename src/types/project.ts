@@ -28,11 +28,10 @@ export type BezierSegment = {
 
 export type Segment = LineSegment | ArcSegment | BezierSegment
 
-// A closed profile — last segment implicitly closes back to first point
 export interface SketchProfile {
-  // First point is the implicit start; each segment ends at its 'to'
   start: Point
   segments: Segment[]
+  closed: boolean
 }
 
 // ============================================================
@@ -296,6 +295,7 @@ export function rectProfile(x: number, y: number, w: number, h: number): SketchP
       { type: 'line', to: { x, y: y + h } },
       { type: 'line', to: { x, y } },
     ],
+    closed: true,
   }
 }
 
@@ -309,6 +309,7 @@ export function circleProfile(cx: number, cy: number, r: number): SketchProfile 
       { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: false },
       { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: false },
     ],
+    closed: true,
   }
 }
 
@@ -324,6 +325,7 @@ export function polygonProfile(points: Point[]): SketchProfile {
     })).concat([
       { type: 'line' as const, to: start },
     ]),
+    closed: true,
   }
 }
 
@@ -439,6 +441,7 @@ export function splineProfile(points: Point[]): SketchProfile {
   return {
     start,
     segments,
+    closed: true,
   }
 }
 
@@ -524,7 +527,7 @@ export interface Bounds2D {
 // Returns editable vertices (without duplicate closure vertex).
 export function profileVertices(profile: SketchProfile): Point[] {
   const points: Point[] = [profile.start, ...profile.segments.map((segment) => segment.to)]
-  if (points.length > 1) {
+  if (profile.closed && points.length > 1) {
     const first = points[0]
     const last = points[points.length - 1]
     if (first.x === last.x && first.y === last.y) {
@@ -583,7 +586,7 @@ export function sampleProfilePoints(
 
   const first = points[0]
   const last = points[points.length - 1]
-  if (first && last && first.x === last.x && first.y === last.y) {
+  if (profile.closed && first && last && first.x === last.x && first.y === last.y) {
     points.pop()
   }
 
@@ -640,6 +643,10 @@ function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point, epsilon =
 }
 
 export function profileHasSelfIntersection(profile: SketchProfile): boolean {
+  if (!profile.closed) {
+    return false
+  }
+
   const points = sampleProfilePoints(profile, 24)
   const count = points.length
   if (count < 4) {

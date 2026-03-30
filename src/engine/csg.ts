@@ -69,7 +69,9 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
     }
   }
 
-  shape.closePath()
+  if (profile.closed) {
+    shape.closePath()
+  }
   return shape
 }
 
@@ -266,6 +268,10 @@ function buildFeatureSolid(
   project: Project,
   feature: SketchFeature
 ): ManifoldSolid | null {
+  if (!feature.sketch.profile.closed) {
+    return null
+  }
+
   const contour = profileToPolygon(feature.sketch.profile)
   if (contour.length < 3) {
     return null

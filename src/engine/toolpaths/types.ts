@@ -97,5 +97,5 @@ export type ClipperPath = ClipperPoint[]
 
 export interface FlattenedPath {
   points: Point[]
-  closed: true
+  closed: boolean
 }
