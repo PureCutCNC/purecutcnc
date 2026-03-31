@@ -127,6 +127,7 @@ export function PropertiesPanel() {
     deleteFeatureFolder,
     setProjectName,
     setProjectClearances,
+    setOrigin,
     setGrid,
     setStock,
     setUnits,
@@ -410,6 +411,58 @@ export function PropertiesPanel() {
                 stock.visible = event.target.checked
                 setStock(stock)
               }}
+            />
+            <span>Visible</span>
+          </label>
+        </div>
+      </div>
+    )
+  }
+
+  if (selection.selectedNode?.type === 'origin') {
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`origin-name-${project.origin.name}`}
+              value={project.origin.name}
+              onCommit={(next) => setOrigin({ ...project.origin, name: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>X</span>
+            <DraftNumberInput
+              key={`origin-x-${project.origin.x}`}
+              value={project.origin.x}
+              units={units}
+              onCommit={(next) => setOrigin({ ...project.origin, x: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Y</span>
+            <DraftNumberInput
+              key={`origin-y-${project.origin.y}`}
+              value={project.origin.y}
+              units={units}
+              onCommit={(next) => setOrigin({ ...project.origin, y: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Z</span>
+            <DraftNumberInput
+              key={`origin-z-${project.origin.z}`}
+              value={project.origin.z}
+              units={units}
+              onCommit={(next) => setOrigin({ ...project.origin, z: next })}
+            />
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={project.origin.visible}
+              onChange={(event) => setOrigin({ ...project.origin, visible: event.target.checked })}
             />
             <span>Visible</span>
           </label>

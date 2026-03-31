@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import * as THREE from 'three'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
-import { buildScene } from '../../engine/csg'
+import { buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
@@ -73,6 +73,20 @@ interface Viewport3DProps {
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
   collidingClampIds?: string[]
+  originVisible?: boolean
+}
+
+function disposeObject3D(object: THREE.Object3D) {
+  object.traverse((entry) => {
+    if (entry instanceof THREE.Mesh || entry instanceof THREE.Line) {
+      entry.geometry.dispose()
+      if (Array.isArray(entry.material)) {
+        entry.material.forEach((material) => material.dispose())
+      } else {
+        entry.material.dispose()
+      }
+    }
+  })
 }
 
 function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): THREE.Vector3 {
@@ -334,6 +348,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   toolpaths = [],
   selectedOperationId = null,
   collidingClampIds = [],
+  originVisible = true,
 }, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -344,6 +359,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const frameRef = useRef<number>(0)
   const objectsRef = useRef<THREE.Object3D[]>([])
   const toolpathObjectsRef = useRef<THREE.Object3D[]>([])
+  const originObjectRef = useRef<THREE.Object3D | null>(null)
   const buildRequestRef = useRef(0)
   const activePresetRef = useRef<ViewPreset | null>('iso')
 
@@ -514,6 +530,15 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     toolpathObjectsRef.current = []
   }, [disposeObjectMaterial])
 
+  const clearOriginObject = useCallback((scene: THREE.Scene) => {
+    if (!originObjectRef.current) {
+      return
+    }
+    scene.remove(originObjectRef.current)
+    disposeObject3D(originObjectRef.current)
+    originObjectRef.current = null
+  }, [])
+
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -606,6 +631,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const maxX = Math.max(...points.map((point) => point.x))
           const minWorldZ = Math.min(...points.map((point) => point.y))
           const maxWorldZ = Math.max(...points.map((point) => point.y))
+          const sceneMinX = originVisible ? Math.min(minX, project.origin.x) : minX
+          const sceneMaxX = originVisible ? Math.max(maxX, project.origin.x) : maxX
+          const sceneMinWorldZ = originVisible ? Math.min(minWorldZ, project.origin.y) : minWorldZ
+          const sceneMaxWorldZ = originVisible ? Math.max(maxWorldZ, project.origin.y) : maxWorldZ
           const verticalValues =
             visibleFeatures.length > 0 || visibleTabs.length > 0 || visibleClamps.length > 0
               ? [
@@ -621,12 +650,12 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
                 0,
                 project.stock.visible ? project.stock.thickness : 0,
               ]
-          const minY = Math.min(...verticalValues)
-          const maxY = Math.max(...verticalValues)
+          const minY = Math.min(...verticalValues, originVisible ? project.origin.z : Infinity)
+          const maxY = Math.max(...verticalValues, originVisible ? project.origin.z : -Infinity)
 
-          const centerX = minX + (maxX - minX) / 2
+          const centerX = sceneMinX + (sceneMaxX - sceneMinX) / 2
           const centerY = minY + (maxY - minY) / 2
-          const centerZ = minWorldZ + (maxWorldZ - minWorldZ) / 2
+          const centerZ = sceneMinWorldZ + (sceneMaxWorldZ - sceneMinWorldZ) / 2
 
           controls.setTarget(centerX, centerY, centerZ)
           rebuildGridHelpers()
@@ -638,7 +667,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [clearRenderedObjects, collidingClampIds, disposeObjectMaterial, project, rebuildGridHelpers, selection.selectedNode])
+  }, [clearRenderedObjects, collidingClampIds, disposeObjectMaterial, originVisible, project, rebuildGridHelpers, selection.selectedNode])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -663,6 +692,30 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       clearToolpathObjects(scene)
     }
   }, [clearToolpathObjects, selectedOperationId, toolpaths])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) {
+      return
+    }
+
+    clearOriginObject(scene)
+    if (!originVisible) {
+      return
+    }
+
+    const stockBounds = getStockBounds(project.stock)
+    const stockWidth = stockBounds.maxX - stockBounds.minX
+    const stockHeight = stockBounds.maxY - stockBounds.minY
+    const axisSize = Math.max(Math.max(stockWidth, stockHeight, project.stock.thickness) * 0.08, 1)
+    const triad = buildOriginTriad(project.origin, axisSize)
+    scene.add(triad)
+    originObjectRef.current = triad
+
+    return () => {
+      clearOriginObject(scene)
+    }
+  }, [clearOriginObject, originVisible, project.origin, project.stock])
 
   useImperativeHandle(ref, () => ({
     zoomToModel,

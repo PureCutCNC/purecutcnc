@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
-import type { Clamp, DimensionRef, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
@@ -237,6 +237,65 @@ export function buildTabMesh(tab: Tab, selected = false): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material)
   mesh.scale.z = -1
   return mesh
+}
+
+export function buildOriginTriad(origin: MachineOrigin, size: number): THREE.Group {
+  const group = new THREE.Group()
+  group.position.set(origin.x, origin.z, origin.y)
+
+  const axisData = [
+    { direction: new THREE.Vector3(1, 0, 0), color: 0xe35b5b },
+    { direction: new THREE.Vector3(0, 0, -1), color: 0x63c07a },
+    { direction: new THREE.Vector3(0, 1, 0), color: 0x5b90e3 },
+  ]
+  const shaftRadius = Math.max(size * 0.025, 0.08)
+  const tipRadius = Math.max(size * 0.055, shaftRadius * 1.5)
+  const tipLength = Math.max(size * 0.18, shaftRadius * 4)
+  const shaftLength = Math.max(size - tipLength, size * 0.55)
+
+  for (const axis of axisData) {
+    const material = new THREE.MeshStandardMaterial({
+      color: axis.color,
+      roughness: 0.38,
+      metalness: 0.08,
+      transparent: true,
+      opacity: 0.98,
+    })
+
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12),
+      material.clone(),
+    )
+    const tip = new THREE.Mesh(
+      new THREE.ConeGeometry(tipRadius, tipLength, 12),
+      material.clone(),
+    )
+
+    // The cylinder and cone are Y-aligned by default.
+    // We rotate them to align with the axis direction.
+    const direction = axis.direction.clone().normalize()
+    const up = new THREE.Vector3(0, 1, 0)
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction)
+
+    shaft.quaternion.copy(quaternion)
+    tip.quaternion.copy(quaternion)
+
+    shaft.position.copy(direction).multiplyScalar(shaftLength / 2)
+    tip.position.copy(direction).multiplyScalar(shaftLength + tipLength / 2)
+
+    group.add(shaft)
+    group.add(tip)
+  }
+
+  const centerGeometry = new THREE.SphereGeometry(Math.max(size * 0.1, 0.06), 14, 14)
+  const centerMaterial = new THREE.MeshStandardMaterial({
+    color: 0xe6edf5,
+    roughness: 0.4,
+    metalness: 0.1,
+  })
+  group.add(new THREE.Mesh(centerGeometry, centerMaterial))
+
+  return group
 }
 
 function manifoldMeshToGeometry(mesh: ManifoldMesh): THREE.BufferGeometry {

@@ -182,6 +182,13 @@ function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getS
     maxY = Math.max(maxY, bounds.maxY)
   }
 
+  if (project.origin.visible) {
+    minX = Math.min(minX, project.origin.x)
+    maxX = Math.max(maxX, project.origin.x)
+    minY = Math.min(minY, project.origin.y)
+    maxY = Math.max(maxY, project.origin.y)
+  }
+
   return { minX, maxX, minY, maxY }
 }
 
@@ -662,6 +669,61 @@ function drawTabFootprint(
   ctx.setLineDash([6, 4])
   ctx.stroke()
   ctx.setLineDash([])
+}
+
+function drawOriginMarker(
+  ctx: CanvasRenderingContext2D,
+  origin: ReturnType<typeof useProjectStore.getState>['project']['origin'],
+  vt: ViewTransform,
+): void {
+  const anchor = worldToCanvas({ x: origin.x, y: origin.y }, vt)
+  const axisLength = 20
+
+  ctx.save()
+  ctx.lineCap = 'round'
+
+  ctx.beginPath()
+  ctx.moveTo(anchor.cx, anchor.cy)
+  ctx.lineTo(anchor.cx + axisLength, anchor.cy)
+  ctx.strokeStyle = '#e35b5b'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.moveTo(anchor.cx + axisLength, anchor.cy)
+  ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy - 3)
+  ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy + 3)
+  ctx.closePath()
+  ctx.fillStyle = '#e35b5b'
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.moveTo(anchor.cx, anchor.cy)
+  ctx.lineTo(anchor.cx, anchor.cy - axisLength)
+  ctx.strokeStyle = '#63c07a'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.moveTo(anchor.cx, anchor.cy - axisLength)
+  ctx.lineTo(anchor.cx - 3, anchor.cy - axisLength + 6)
+  ctx.lineTo(anchor.cx + 3, anchor.cy - axisLength + 6)
+  ctx.closePath()
+  ctx.fillStyle = '#63c07a'
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.arc(anchor.cx, anchor.cy, 4, 0, Math.PI * 2)
+  ctx.fillStyle = '#5b90e3'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(230, 237, 245, 0.95)'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.fillStyle = 'rgba(230, 237, 245, 0.95)'
+  ctx.fillText(origin.name, anchor.cx + 10, anchor.cy - 8)
+  ctx.restore()
 }
 
 function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
@@ -1246,6 +1308,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       traceProfilePath(ctx, project.stock.profile, vt)
       ctx.fillStyle = hexToRgba(project.stock.color, 0.12)
       ctx.fill()
+    }
+
+    if (project.origin.visible) {
+      drawOriginMarker(ctx, project.origin, vt)
     }
 
     for (const feature of project.features) {

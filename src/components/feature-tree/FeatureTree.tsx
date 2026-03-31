@@ -15,6 +15,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     startAddTabPlacement,
     startAddClampPlacement,
     setGrid,
+    setOrigin,
     setStock,
     addFeatureFolder,
     moveFeatureTreeFeature,
@@ -28,6 +29,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     updateClamp,
     selectProject,
     selectGrid,
+    selectOrigin,
     selectFeaturesRoot,
     selectTabsRoot,
     selectClampsRoot,
@@ -204,6 +206,17 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           }
         />
         <TreeRow
+          label="Origin"
+          kind="origin"
+          isSelected={selection.selectedNode?.type === 'origin'}
+          isDragging={false}
+          visible={project.origin.visible}
+          onClick={selectOrigin}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onToggleVisible={() => setOrigin({ ...project.origin, visible: !project.origin.visible })}
+        />
+        <TreeRow
           label="Features"
           kind="features"
           depth={0}
@@ -362,7 +375,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'features' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
+  kind: 'project' | 'grid' | 'stock' | 'origin' | 'features' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
   isSelected: boolean
   isDragging: boolean
@@ -453,6 +466,8 @@ function TreeRow({
               ? 'grid'
               : kind === 'stock'
                 ? 'root'
+                : kind === 'origin'
+                  ? 'orig'
                 : kind === 'features'
                   ? 'feat'
                   : kind === 'tabs'

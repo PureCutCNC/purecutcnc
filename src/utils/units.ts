@@ -217,6 +217,15 @@ function convertClamp(clamp: Clamp, from: Units, to: Units): Clamp {
   }
 }
 
+function convertOrigin(origin: Project['origin'], from: Units, to: Units): Project['origin'] {
+  return {
+    ...origin,
+    x: convertLength(origin.x, from, to),
+    y: convertLength(origin.y, from, to),
+    z: convertLength(origin.z, from, to),
+  }
+}
+
 export function convertProjectUnits(project: Project, toUnits: Units): Project {
   const fromUnits = project.meta.units
   if (fromUnits === toUnits) {
@@ -235,6 +244,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     },
     grid: convertGrid(project.grid, fromUnits, toUnits),
     stock: convertStock(project.stock, fromUnits, toUnits),
+    origin: convertOrigin(project.origin, fromUnits, toUnits),
     dimensions: Object.fromEntries(
       Object.entries(project.dimensions).map(([key, dimension]) => [
         key,

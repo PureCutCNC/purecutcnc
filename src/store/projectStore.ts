@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   type Segment,
   defaultStock,
+  defaultOrigin,
   defaultGrid,
   defaultTool,
   defaultMaxTravelZ,
@@ -61,6 +62,7 @@ export type SelectedNode =
   | { type: 'project' }
   | { type: 'grid' }
   | { type: 'stock' }
+  | { type: 'origin' }
   | { type: 'features_root' }
   | { type: 'tabs_root' }
   | { type: 'clamps_root' }
@@ -86,6 +88,7 @@ export interface ProjectStore {
   createNewProject: () => void
   setProjectName: (name: string) => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
+  setOrigin: (origin: Project['origin']) => void
   loadProject: (p: Project) => void
   saveProject: () => string   // returns JSON string
   undo: () => void
@@ -155,6 +158,7 @@ export interface ProjectStore {
   selectProject: () => void
   selectGrid: () => void
   selectStock: () => void
+  selectOrigin: () => void
   selectFeaturesRoot: () => void
   selectTabsRoot: () => void
   selectClampsRoot: () => void
@@ -1201,6 +1205,14 @@ function normalizeProject(project: Project): Project {
     clampClearanceZ: project.meta.clampClearanceZ ?? defaultClampClearanceZ(project.meta.units),
   }
 
+  const stockBounds = getStockBounds(project.stock)
+  const legacyDefaultOrigin =
+    project.origin
+    && project.origin.name === 'Origin'
+    && project.origin.x === stockBounds.minX
+    && project.origin.y === stockBounds.minY
+    && project.origin.z === project.stock.thickness
+
   const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
     meta,
@@ -1217,6 +1229,9 @@ function normalizeProject(project: Project): Project {
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
     tabs: (project.tabs ?? []).map((tab, index) => normalizeTab(tab, project.meta.units, index)),
     clamps: (project.clamps ?? []).map((clamp, index) => normalizeClamp(clamp, project.meta.units, index)),
+    origin: project.origin
+      ? (legacyDefaultOrigin ? defaultOrigin(project.stock) : project.origin)
+      : defaultOrigin(project.stock),
   }))
 
   const normalizedProject = {
@@ -1292,6 +1307,8 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
           ? selectedNode
           : null
       : selectedNode?.type === 'clamps_root'
+        ? selectedNode
+      : selectedNode?.type === 'origin'
         ? selectedNode
       : selectedNode?.type === 'features_root'
         ? selectedNode
@@ -1411,6 +1428,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  setOrigin: (origin) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        origin,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   loadProject: (p) =>
     set((state) => {
       const stockDefaults = defaultStock()
@@ -1428,6 +1468,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           origin: normalizedProject.stock?.origin ?? stockDefaults.origin,
           profile: normalizedProject.stock?.profile ?? stockDefaults.profile,
         },
+        origin: normalizedProject.origin ?? defaultOrigin(normalizedProject.stock ?? stockDefaults),
       }
       return {
         project: nextProject,
@@ -2619,6 +2660,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selectedFeatureIds: [],
         selectedNode: { type: 'stock' },
         mode: 'feature',
+      },
+      sketchEditSession: null,
+    })),
+
+  selectOrigin: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'origin' },
+        mode: 'feature',
+        activeControl: null,
       },
       sketchEditSession: null,
     })),

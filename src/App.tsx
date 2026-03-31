@@ -431,6 +431,7 @@ function App() {
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
             collidingClampIds={collidingClampIds}
+            originVisible={project.origin.visible}
           />
         }
         simulationViewport={
@@ -445,6 +446,7 @@ function App() {
             clamps={visibleClamps}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
+            origin={project.origin}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

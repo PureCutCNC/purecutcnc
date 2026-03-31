@@ -263,11 +263,20 @@ export interface ProjectMeta {
   clampClearanceZ: number
 }
 
+export interface MachineOrigin {
+  name: string
+  x: number
+  y: number
+  z: number
+  visible: boolean
+}
+
 export interface Project {
   version: '1.0'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
+  origin: MachineOrigin
   dimensions: Record<string, NamedDimension>
   features: SketchFeature[]
   featureFolders: FeatureFolder[]
@@ -522,6 +531,17 @@ export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): numb
   return units === 'mm' ? 5 : 0.2
 }
 
+export function defaultOrigin(stock: Stock): MachineOrigin {
+  const bounds = getStockBounds(stock)
+  return {
+    name: 'Origin',
+    x: bounds.minX,
+    y: bounds.maxY,
+    z: stock.thickness,
+    visible: true,
+  }
+}
+
 export interface Bounds2D {
   minX: number
   maxX: number
@@ -695,6 +715,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 
 export function newProject(name = 'Untitled'): Project {
   const now = new Date().toISOString()
+  const stock = defaultStock()
   return {
     version: '1.0',
     meta: {
@@ -708,7 +729,8 @@ export function newProject(name = 'Untitled'): Project {
       clampClearanceZ: defaultClampClearanceZ('mm'),
     },
     grid: defaultGrid(),
-    stock: defaultStock(),
+    stock,
+    origin: defaultOrigin(stock),
     dimensions: {},
     features: [],
     featureFolders: [],

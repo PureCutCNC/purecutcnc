@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { buildClampMesh } from '../../engine/csg'
+import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { buildSimulationGeometry } from '../../engine/simulation/mesh'
 import type { SimulationResult } from '../../engine/simulation'
-import type { Clamp, Operation } from '../../types/project'
+import type { Clamp, MachineOrigin, Operation } from '../../types/project'
 
 const DEFAULT_CAMERA_SPHERICAL = {
   theta: Math.PI / 4,
@@ -65,6 +65,7 @@ interface SimulationViewportProps {
   clamps: Clamp[]
   selectedClampId: string | null
   collidingClampIds: string[]
+  origin: MachineOrigin
 }
 
 const SIMULATION_DETAIL_MIN = 240
@@ -269,6 +270,7 @@ export function SimulationViewport({
   clamps,
   selectedClampId,
   collidingClampIds,
+  origin,
 }: SimulationViewportProps) {
   const [showOverlay, setShowOverlay] = useState(false)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -279,6 +281,7 @@ export function SimulationViewport({
   const frameRef = useRef<number>(0)
   const objectRef = useRef<THREE.Object3D | null>(null)
   const clampObjectsRef = useRef<THREE.Mesh[]>([])
+  const originObjectRef = useRef<THREE.Object3D | null>(null)
   const hasAutoFramedRef = useRef(false)
 
   const disposeCurrentMesh = useCallback((scene: THREE.Scene) => {
@@ -305,6 +308,24 @@ export function SimulationViewport({
       }
     }
     clampObjectsRef.current = []
+  }, [])
+
+  const disposeOriginMesh = useCallback((scene: THREE.Scene) => {
+    if (!originObjectRef.current) {
+      return
+    }
+    scene.remove(originObjectRef.current)
+    originObjectRef.current.traverse((entry) => {
+      if (entry instanceof THREE.Mesh || entry instanceof THREE.Line) {
+        entry.geometry.dispose()
+        if (Array.isArray(entry.material)) {
+          entry.material.forEach((material) => material.dispose())
+        } else {
+          entry.material.dispose()
+        }
+      }
+    })
+    originObjectRef.current = null
   }, [])
 
   useEffect(() => {
@@ -425,6 +446,36 @@ export function SimulationViewport({
       disposeClampMeshes(scene)
     }
   }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) {
+      return
+    }
+
+    disposeOriginMesh(scene)
+    if (!origin.visible || !simulation) {
+      return
+    }
+
+    const width = simulation.grid.cols * simulation.grid.cellSize
+    const height = simulation.grid.rows * simulation.grid.cellSize
+    const axisSize = Math.max(
+      Math.max(
+        width,
+        height,
+        simulation.grid.stockTopZ - simulation.grid.stockBottomZ,
+      ) * 0.08,
+      1,
+    )
+    const triad = buildOriginTriad(origin, axisSize)
+    scene.add(triad)
+    originObjectRef.current = triad
+
+    return () => {
+      disposeOriginMesh(scene)
+    }
+  }, [disposeOriginMesh, origin, simulation])
 
   return (
     <div className="simulation-viewport">
