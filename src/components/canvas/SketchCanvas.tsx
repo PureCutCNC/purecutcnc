@@ -1235,6 +1235,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
+  const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const drawFrameRef = useRef<number | null>(null)
   const [pendingPreviewPoint, setPendingPreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [pendingMovePreviewPoint, setPendingMovePreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [copyCountDraft, setCopyCountDraft] = useState('1')
@@ -1263,6 +1265,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
+    placeOriginAt,
     addPendingPolygonPoint,
     completePendingPolygon,
     completePendingOpenPath,
@@ -1353,9 +1356,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     const currentPreviewPoint =
-      pendingAdd && pendingPreviewPoint?.session === pendingAdd.session
-        ? pendingPreviewPoint.point
-        : null
+      pendingAdd?.shape === 'origin'
+        ? (
+            originPreviewPointRef.current && originPreviewPointRef.current.session === pendingAdd.session
+              ? originPreviewPointRef.current.point
+              : null
+          )
+        : pendingAdd && pendingPreviewPoint?.session === pendingAdd.session
+          ? pendingPreviewPoint.point
+          : null
 
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
       const closePreview =
@@ -1542,6 +1551,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   useEffect(() => {
     draw()
   }, [draw])
+
+  function scheduleDraw() {
+    if (drawFrameRef.current !== null) {
+      return
+    }
+
+    drawFrameRef.current = window.requestAnimationFrame(() => {
+      drawFrameRef.current = null
+      draw()
+    })
+  }
+
+  useEffect(() => {
+    return () => {
+      if (drawFrameRef.current !== null) {
+        window.cancelAnimationFrame(drawFrameRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (pendingAdd?.shape === 'composite' && pendingAdd.closed) {
@@ -1751,6 +1779,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingAdd) {
       hoverFeature(null)
+      if (pendingAdd.shape === 'origin') {
+        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
+        scheduleDraw()
+        return
+      }
       setPendingPreviewPoint({ point: snapped, session: pendingAdd.session })
       return
     }
@@ -1809,6 +1842,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     hoverFeature(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
       setPendingPreviewPoint(null)
+    } else if (pendingAdd?.shape === 'origin') {
+      originPreviewPointRef.current = null
+      scheduleDraw()
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       setPendingPreviewPoint({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
@@ -1843,6 +1879,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const snapped = {
         x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
         y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
+      }
+
+      if (pendingAdd.shape === 'origin') {
+        originPreviewPointRef.current = null
+        placeOriginAt(snapped)
+        setPendingPreviewPoint(null)
+        return
       }
 
       if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
@@ -2061,6 +2104,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (event.key === 'Escape' && pendingAdd) {
+      originPreviewPointRef.current = null
       cancelPendingAdd()
       setPendingPreviewPoint(null)
       return
@@ -2188,6 +2232,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   : pendingAdd.shape === 'spline'
                     ? 'Click to add control points. Click the first point to close, or press Enter / double-click to finish open.'
                     : 'Click to add vertices. Click the first point to close, or press Enter / double-click to finish open.'
+            : pendingAdd.shape === 'origin'
+              ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
             : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner.'

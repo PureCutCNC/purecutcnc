@@ -57,7 +57,9 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
   const defaultStepdown =
     isFiniteNumber(value.defaultStepdown) && value.defaultStepdown > 0 ? value.defaultStepdown : null
   const defaultStepover =
-    isFiniteNumber(value.defaultStepover) && value.defaultStepover > 0 ? value.defaultStepover : null
+    isFiniteNumber(value.defaultStepover) && value.defaultStepover > 0 && value.defaultStepover <= 1
+      ? value.defaultStepover
+      : null
 
   if (
     diameter === null

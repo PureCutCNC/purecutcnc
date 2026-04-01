@@ -17,6 +17,7 @@ interface CAMPanelProps {
   mode: 'operations' | 'tools'
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
+  onExport: () => void
   toolpathWarnings?: string[] | null
 }
 
@@ -363,6 +364,7 @@ export function CAMPanel({
   mode,
   selectedOperationId: selectedOperationIdProp,
   onSelectedOperationIdChange,
+  onExport,
   toolpathWarnings,
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
@@ -730,6 +732,13 @@ export function CAMPanel({
                     onClick={() => setAllOperationToolpathVisibility(false)}
                   >
                     ○
+                  </button>
+                  <button
+                    className="cam-header-action"
+                    type="button"
+                    onClick={onExport}
+                  >
+                    Export
                   </button>
                   <button
                     className="cam-header-action"

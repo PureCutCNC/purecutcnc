@@ -1,3 +1,6 @@
+@import './styles/layout.css';
+@import './styles/dialog.css';
+
 :root {
   --bg: #0a1016;
   --bg-elev-1: #101821;

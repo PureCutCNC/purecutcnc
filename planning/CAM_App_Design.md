@@ -37,6 +37,18 @@ This is closer to how machinists think than the sketch→extrude→cut workflow 
 
 **Stock boundary** follows the same rule — it is also a closed profile, not just a width/height pair. Default stock is a rectangular profile but any shape is valid (casting blanks, pre-cut stock, irregular plate).
 
+The app's internal 2D project space is an implementation detail, chosen to make
+sketch interaction and canvas rendering straightforward. It is not the
+user-facing machining coordinate system. As stock becomes fully profile-based,
+the internal top-left of project space will not necessarily coincide with any
+meaningful "corner" of the stock. User-facing CAM setup therefore must not rely
+on exposing those raw internal coordinates.
+
+**CAM origin** is a separate setup object placed visually on the sketch. It
+defines machine zero for export and simulation, but it does not redefine the
+internal project coordinate system. Export is responsible for converting from
+internal project space into machine space.
+
 ### 2.2 Parametric Dimensions
 
 Any depth or dimension value can be a literal number or a reference to a named dimension. Named dimensions support formulas:
@@ -264,6 +276,8 @@ All imports convert to the internal `.camj` geometry schema. Parsers are adapter
 - Post-processor system (extensible for custom machines)
 - Preview with syntax highlighting in dialog
 - Download `.nc` file
+- Uses the currently placed CAM origin as machine zero
+- Does not expose raw internal project coordinates in the export UI
 
 ---
 

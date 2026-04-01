@@ -41,6 +41,16 @@ The origin defines the **relationship between project coordinates and machine
 coordinates**. Every coordinate in the generated G-code is expressed relative
 to this point.
 
+Important distinction:
+- **Project coordinates** are internal application coordinates used for sketch
+  editing, rendering, and geometric computation.
+- **Machine coordinates** are the user-facing coordinates implied by the chosen
+  work zero.
+
+The user should think of origin as **"where machine X0 Y0 Z0 is"**, not as a
+raw set of internal project-space numbers. The internal coordinate system is an
+implementation detail and should stay hidden anywhere we can avoid exposing it.
+
 Origin is a **first-class object in the project tree**, alongside Grid and
 Stock:
 
@@ -60,8 +70,8 @@ Project
 
 ```typescript
 interface MachineOrigin {
-  // Position in project coordinates.
-  // Project space: X = right, Y = forward, Z = up from stock bottom-left.
+  // Stored in internal project coordinates.
+  // These values are persistence details, not user-facing machine coordinates.
   x: number
   y: number
   z: number
@@ -76,7 +86,7 @@ interface MachineOrigin {
 
 WCS slot selection (`G54`, `G55`, etc.) is **not** part of the origin — it
 belongs in the machine definition (see §3.6). The origin is purely a
-coordinate in project space.
+point in project space that defines machine zero after export-time conversion.
 
 ### 2.3 Coordinate Transform
 
@@ -84,23 +94,30 @@ Every toolpath point is transformed before formatting:
 
 ```
 machine_X = project_X - origin.x
-machine_Y = project_Y - origin.y
+machine_Y = origin.y - project_Y
 machine_Z = project_Z - origin.z
 ```
 
-The post-processor applies this to every `ToolpathMove` before emitting
-numbers. The axis remapping defined in the machine definition (§3.3) is
-applied after the origin offset.
+`X` and `Z` use direct origin-relative subtraction.
+
+`Y` is inverted during export because CAMCAM's internal 2D project space uses a
+screen-friendly downward-increasing Y axis, while machine coordinates are
+user-facing setup coordinates that increase upward from the selected origin.
+
+The post-processor applies this project-space → machine-space conversion to
+every `ToolpathMove` before emitting numbers. The axis remapping defined in the
+machine definition (§3.3) is applied after this conversion.
 
 ### 2.4 Default Origin
 
 ```typescript
 function defaultOrigin(stock: Stock): MachineOrigin {
+  const bounds = getStockBounds(stock)
   return {
     name: 'Origin',
-    x: 0,
-    y: 0,
-    z: stock.thickness,   // top surface, bottom-left corner — most common
+    x: bounds.minX,
+    y: bounds.maxY,
+    z: stock.thickness,   // top surface, bottom-left machine corner
     visible: true,
   }
 }
@@ -109,19 +126,30 @@ function defaultOrigin(stock: Stock): MachineOrigin {
 ### 2.5 Quick-Set Presets
 
 The properties panel provides one-click presets for the three most common
-reference points:
+reference points. These are **bounding-box-based setup shortcuts** for the
+current stock profile, not statements about the app's internal coordinate
+origin:
 
 | Preset | x | y | z | Typical use |
 |---|---|---|---|---|
-| Stock top-left | 0 | 0 | thickness | Most hobby CNC setups |
-| Stock center top | width/2 | height/2 | thickness | Symmetric parts |
-| Stock bottom-left | 0 | 0 | 0 | Referencing off spoilboard |
+| Stock top-left | minX | minY | thickness | Common top-of-stock setup |
+| Stock center top | centerX | centerY | thickness | Symmetric parts |
+| Stock bottom-left | minX | maxY | 0 | Referencing off spoilboard |
+
+As stock becomes fully arbitrary-profile rather than just rectangular, these
+remain convenience presets derived from the stock bounds. They are not the only
+valid origin locations.
 
 ### 2.6 Visual Representation
 
 In sketch view and 3D view the origin renders as a small **axis triad** —
 X (red), Y (green), Z (blue) arrows — at the defined position. This gives
 immediate feedback about where the machine will consider (0, 0, 0) to be.
+
+Primary origin interaction should be visual placement on the sketch
+(`Move/Place Origin` → click location), not manual entry of raw internal
+coordinates. Numeric fields can exist as an advanced fallback, but should not
+be the main setup workflow.
 
 ### 2.7 Project File
 
@@ -141,6 +169,10 @@ The origin is stored in the `.camj` file at the project root:
 
 Existing files without an `origin` field receive the default on load (same
 pattern as `grid` and other fields added post-v1).
+
+The stored `origin.x/y/z` values are internal project-space persistence data.
+They should not be shown in export UI as if they were already machine-space
+coordinates.
 
 ### 2.8 Multi-Setup (Future)
 
@@ -170,9 +202,9 @@ interface MachineDefinition {
   fileExtension: string  // "nc", "gcode", "tap"
 
   // ── Coordinate system ────────────────────────────────────
-  // Maps project axes to machine output words.
-  // Project is always: X = right, Y = forward, Z = up.
-  // Most machines agree; some (laser cutters, certain routers) swap axes.
+  // Maps already-converted machine-space axes to controller output words.
+  // This exists for real machine/controller differences only.
+  // It must not encode CAMCAM's internal project-space quirks.
   coordinateSystem: {
     xAxis: 'X' | 'Y' | 'Z' | '-X' | '-Y' | '-Z'
     yAxis: 'X' | 'Y' | 'Z' | '-X' | '-Y' | '-Z'
@@ -275,21 +307,26 @@ interface MachineDefinition {
 
 ### 3.3 Coordinate System Mapping
 
-The `coordinateSystem` field maps project axes to machine output word letters.
-The origin offset is applied first, then the axis remap:
+The post-processor first converts internal project coordinates into canonical
+machine-space coordinates using the selected origin:
 
 ```
-// Project point after origin offset:
+// Canonical machine-space point after origin conversion:
 //   dx = project.x - origin.x
-//   dy = project.y - origin.y
+//   dy = origin.y - project.y
 //   dz = project.z - origin.z
+```
 
-// Machine output (example: standard XYZ machine):
+The `coordinateSystem` field then maps those machine-space axes to controller
+output word letters:
+
+```
+// Controller output (example: standard XYZ machine):
 //   X word = dx   (xAxis = 'X')
 //   Y word = dy   (yAxis = 'Y')
 //   Z word = dz   (zAxis = 'Z')
 
-// Machine output (example: Y/Z swapped router):
+// Controller output (example: Y/Z swapped router):
 //   X word = dx   (xAxis = 'X')
 //   Y word = dz   (yAxis = 'Z')   ← project Z becomes machine Y
 //   Z word = dy   (zAxis = 'Y')   ← project Y becomes machine Z
@@ -557,7 +594,7 @@ For each call to `runPostProcessor`:
       - emit pause if pauseAfterChange
    c. Emit spindle on + RPM (M3 S{rpm})
    d. For each move in toolpath.moves:
-      - apply origin offset
+      - convert from internal project coordinates into machine-space coordinates
       - apply axis remap
       - format as G-code line (see §5.4)
    e. Emit spindle off after last move of operation
@@ -673,8 +710,10 @@ persistent panel — it is modal, opened on demand.
 │  Machine:  [GRBL 1.1                          ▼]   │
 │            [Load custom definition...]              │
 │                                                     │
-│  Origin:   X 0.000  Y 0.000  Z 20.000  mm          │
-│            (edit in project tree to change)         │
+│  Origin:   Using current CAM origin as X0 Y0 Z0    │
+│            (place/edit in sketch or project tree)  │
+│                                                     │
+│  Units:    Inch                                     │
 │                                                     │
 │  Operations set:                                    │
 │  Using visible + enabled operations                │
@@ -730,6 +769,9 @@ Notes:
 The preview regenerates as options change (debounced 300ms). It shows the
 first 20–30 lines of the output. A "Copy all" button copies the full G-code to
 the clipboard without downloading.
+
+The dialog should describe origin in setup terms ("current CAM origin is used
+as machine zero") rather than exposing raw internal origin coordinates.
 
 ---
 
@@ -789,6 +831,7 @@ src/components/export/
 - Full origin properties panel (X, Y, Z, name, visible)
 - Quick-set presets (stock top-left, stock center top, stock bottom-left)
 - Axis triad visual in sketch and 3D view
+- Sketch placement interaction so the user can place origin directly on the canvas
 
 ### G6 — Arc support (when toolpath engine produces arcs)
 - Extend `ToolpathMove` with optional `arc` field
@@ -820,33 +863,33 @@ Legend:
 - `[x]` add `MachineOrigin` to project schema
 - `[x]` add `defaultOrigin()` helper
 - `[x]` show origin in project tree
-- `[ ]` apply origin offset in post-processor input preparation
+- `[x]` apply origin offset in post-processor input preparation
 
 ### G2. Machine definition types and bundled library
-- `[ ]` define `MachineDefinition` TypeScript interface
-- `[ ]` author bundled GRBL definition
-- `[ ]` author bundled Mach3 definition
-- `[ ]` add validation for machine definitions at load/import time
-- `[ ]` export bundled definitions from the G-code engine surface
+- `[x]` define `MachineDefinition` TypeScript interface
+- `[x]` author bundled GRBL definition
+- `[x]` author bundled Mach3 definition
+- `[x]` add validation for machine definitions at load/import time
+- `[x]` export bundled definitions from the G-code engine surface
 
 ### G3. Post-processor engine
-- `[ ]` implement `runPostProcessor()`
-- `[ ]` modal state tracking
-- `[ ]` template variable substitution
-- `[ ]` linear move formatting (`rapid`, `plunge`, `cut`, `lead_in`, `lead_out`)
-- `[ ]` tool change sequencing
-- `[ ]` warning collection
+- `[x]` implement `runPostProcessor()`
+- `[x]` modal state tracking
+- `[x]` template variable substitution
+- `[x]` linear move formatting (`rapid`, `plunge`, `cut`, `lead_in`, `lead_out`)
+- `[x]` tool change sequencing
+- `[x]` warning collection
 
 ### G4. Export dialog
-- `[ ]` machine picker (bundled + custom JSON load)
-- `[ ]` origin summary display
-- `[ ]` options (`emitToolChanges`, optional coolant support if retained)
-- `[ ]` live G-code preview with debounce
-- `[ ]` download output
+- `[x]` machine picker (bundled + custom JSON load)
+- `[x]` origin summary display
+- `[x]` options (`emitToolChanges`, optional coolant support if retained)
+- `[x]` live G-code preview with debounce
+- `[x]` download output
 
 ### G5. Origin editing and visualization
 - `[x]` full origin properties panel
-- `[ ]` quick-set presets
+- `[x]` quick-set presets
 - `[x]` axis triad in sketch view
 - `[x]` axis triad in 3D view
 

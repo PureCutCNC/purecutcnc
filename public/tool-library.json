@@ -14,7 +14,7 @@
       "defaultFeed": 18,
       "defaultPlungeFeed": 8,
       "defaultStepdown": 0.05,
-      "defaultStepover": 0.04
+      "defaultStepover": 0.32
     },
     {
       "key": "flat_1_4_in",
@@ -28,7 +28,7 @@
       "defaultFeed": 30,
       "defaultPlungeFeed": 12,
       "defaultStepdown": 0.1,
-      "defaultStepover": 0.08
+      "defaultStepover": 0.32
     },
     {
       "key": "flat_1_2_in",
@@ -42,7 +42,7 @@
       "defaultFeed": 45,
       "defaultPlungeFeed": 18,
       "defaultStepdown": 0.15,
-      "defaultStepover": 0.16
+      "defaultStepover": 0.32
     },
     {
       "key": "ball_1_8_in",
@@ -56,7 +56,7 @@
       "defaultFeed": 16,
       "defaultPlungeFeed": 6,
       "defaultStepdown": 0.03,
-      "defaultStepover": 0.02
+      "defaultStepover": 0.16
     },
     {
       "key": "vbit_60deg_1_2_in",
@@ -71,7 +71,7 @@
       "defaultFeed": 20,
       "defaultPlungeFeed": 6,
       "defaultStepdown": 0.03,
-      "defaultStepover": 0.02
+      "defaultStepover": 0.04
     },
     {
       "key": "flat_3mm",
@@ -85,7 +85,7 @@
       "defaultFeed": 480,
       "defaultPlungeFeed": 180,
       "defaultStepdown": 0.8,
-      "defaultStepover": 1.0
+      "defaultStepover": 0.333
     },
     {
       "key": "flat_6mm",
@@ -99,7 +99,7 @@
       "defaultFeed": 800,
       "defaultPlungeFeed": 300,
       "defaultStepdown": 2.0,
-      "defaultStepover": 2.4
+      "defaultStepover": 0.4
     },
     {
       "key": "ball_6mm",
@@ -113,7 +113,7 @@
       "defaultFeed": 600,
       "defaultPlungeFeed": 220,
       "defaultStepdown": 0.6,
-      "defaultStepover": 0.4
+      "defaultStepover": 0.067
     }
   ]
 }

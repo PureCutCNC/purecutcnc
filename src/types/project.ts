@@ -1,3 +1,5 @@
+import type { MachineDefinition } from '../engine/gcode/types'
+
 // ============================================================
 // Core geometry primitives
 // ============================================================
@@ -261,6 +263,8 @@ export interface ProjectMeta {
   operationClearanceZ: number
   clampClearanceXY: number
   clampClearanceZ: number
+  machineId: string | null
+  customMachineDefinition: MachineDefinition | null
 }
 
 export interface MachineOrigin {
@@ -727,6 +731,8 @@ export function newProject(name = 'Untitled'): Project {
       operationClearanceZ: defaultOperationClearanceZ('mm'),
       clampClearanceXY: defaultClampClearanceXY('mm'),
       clampClearanceZ: defaultClampClearanceZ('mm'),
+      machineId: null,
+      customMachineDefinition: null,
     },
     grid: defaultGrid(),
     stock,

@@ -12,6 +12,7 @@ import { AppShell } from './components/layout/AppShell'
 import { Toolbar } from './components/layout/Toolbar'
 import { SimulationViewport } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
+import { ExportDialog } from './components/export/ExportDialog'
 import { useProjectStore } from './store/projectStore'
 
 interface TreeContextMenuState {
@@ -30,6 +31,7 @@ function App() {
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
+  const [showExportDialog, setShowExportDialog] = useState(false)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
@@ -412,7 +414,11 @@ function App() {
   return (
     <>
       <AppShell
-        toolbar={<Toolbar onZoomToModel={handleZoomToModel} />}
+        toolbar={
+          <Toolbar 
+            onZoomToModel={handleZoomToModel}
+          />
+        }
         aiPanel={<AIPanel />}
         sketchCanvas={
           <SketchCanvas
@@ -456,6 +462,7 @@ function App() {
             mode={rightTab === 'tools' ? 'tools' : 'operations'}
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={setSelectedOperationId}
+            onExport={() => setShowExportDialog(true)}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
           />
         }
@@ -466,6 +473,14 @@ function App() {
         rightTab={rightTab}
         onRightTabChange={setRightTab}
       />
+      
+      {showExportDialog && (
+        <ExportDialog 
+          onClose={() => setShowExportDialog(false)} 
+          generateToolpath={generateToolpathForOperation}
+        />
+      )}
+
       {treeContextMenu && menuPosition && (menuFeature || menuTab || menuClamp) ? (
         <div
           ref={menuRef}

@@ -20,6 +20,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Flat shading fixed the worst artifacts.
   - The final look likely still needs another pass once the modeling flow stabilizes.
 
+### Origin placement preview responsiveness
+- Status: Open
+- Priority: Low
+- Summary: Smooth out the temporary origin marker during sketch placement.
+- Notes:
+  - Current first pass origin placement works, but the preview point updates inconsistently and can appear to lag until mouse motion slows or stops.
+  - Revisit the sketch-canvas preview update path so origin placement feels as responsive as other placement interactions.
+
 ### Sketch legend review / removal
 - Status: Open
 - Priority: Low
@@ -389,3 +397,11 @@ This file tracks follow-up work, open issues, and design questions that come up 
 ### Copy / Duplicate / Move
 - Status: Done
 - Summary: Features, tabs, and clamps support duplicate/copy/move workflows, including direct manipulation and context-menu entry points.
+
+### G-code Export
+- Status: Done
+- Summary: Implemented machine-definition-driven post-processor with modal tracking, template substitution, and an Export Dialog featuring machine selection, debounced live preview, and G-code download.
+
+### Machine Origin improvements
+- Status: Done
+- Summary: Added a persistent machine origin object to the project tree, with full property editing, axis triad visualization in 2D/3D, and quick-set presets (top-left, center-top, bottom-left).

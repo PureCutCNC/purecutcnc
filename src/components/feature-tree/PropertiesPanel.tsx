@@ -128,6 +128,7 @@ export function PropertiesPanel() {
     setProjectName,
     setProjectClearances,
     setOrigin,
+    startPlaceOrigin,
     setGrid,
     setStock,
     setUnits,
@@ -420,6 +421,8 @@ export function PropertiesPanel() {
   }
 
   if (selection.selectedNode?.type === 'origin') {
+    const bounds = getStockBounds(project.stock)
+
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -429,24 +432,6 @@ export function PropertiesPanel() {
               key={`origin-name-${project.origin.name}`}
               value={project.origin.name}
               onCommit={(next) => setOrigin({ ...project.origin, name: next })}
-            />
-          </label>
-          <label className="properties-field">
-            <span>X</span>
-            <DraftNumberInput
-              key={`origin-x-${project.origin.x}`}
-              value={project.origin.x}
-              units={units}
-              onCommit={(next) => setOrigin({ ...project.origin, x: next })}
-            />
-          </label>
-          <label className="properties-field">
-            <span>Y</span>
-            <DraftNumberInput
-              key={`origin-y-${project.origin.y}`}
-              value={project.origin.y}
-              units={units}
-              onCommit={(next) => setOrigin({ ...project.origin, y: next })}
             />
           </label>
           <label className="properties-field">
@@ -466,6 +451,39 @@ export function PropertiesPanel() {
             />
             <span>Visible</span>
           </label>
+        </div>
+
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => startPlaceOrigin()}>
+            Place Origin
+          </button>
+        </div>
+
+        <div className="properties-group">
+          <span className="dialog-section-title" style={{ fontSize: '11px', marginBottom: '4px', display: 'block' }}>Presets</span>
+          <div className="properties-actions">
+            <button 
+              className="feat-btn" 
+              type="button"
+              onClick={() => setOrigin({ ...project.origin, x: bounds.minX, y: bounds.minY, z: project.stock.thickness })}
+            >
+              Top Left
+            </button>
+            <button 
+              className="feat-btn" 
+              type="button"
+              onClick={() => setOrigin({ ...project.origin, x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2, z: project.stock.thickness })}
+            >
+              Center Top
+            </button>
+            <button 
+              className="feat-btn" 
+              type="button"
+              onClick={() => setOrigin({ ...project.origin, x: bounds.minX, y: bounds.maxY, z: 0 })}
+            >
+              Bottom Left
+            </button>
+          </div>
         </div>
       </div>
     )

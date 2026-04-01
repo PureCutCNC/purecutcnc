@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { MachineDefinition } from '../engine/gcode/types'
 import {
   type Segment,
   defaultStock,
@@ -89,6 +90,10 @@ export interface ProjectStore {
   setProjectName: (name: string) => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
+  startPlaceOrigin: () => void
+  placeOriginAt: (point: Point) => void
+  setMachineId: (id: string | null) => void
+  setCustomMachineDefinition: (definition: MachineDefinition | null) => void
   loadProject: (p: Project) => void
   saveProject: () => string   // returns JSON string
   undo: () => void
@@ -207,6 +212,7 @@ export interface ProjectStore {
 }
 
 export type PendingAddTool =
+  | { shape: 'origin'; session: number }
   | { shape: 'rect'; anchor: Point | null; session: number }
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'tab'; anchor: Point | null; session: number }
@@ -1440,6 +1446,82 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
       if (s.history.transactionStart) {
         return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  startPlaceOrigin: () =>
+    set((s) => ({
+      pendingAdd: { shape: 'origin', session: nextPlacementSession() },
+      pendingMove: null,
+      sketchEditSession: null,
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'origin' },
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+    })),
+
+  placeOriginAt: (point) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        origin: {
+          ...s.project.origin,
+          x: point.x,
+          y: point.y,
+        },
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        pendingAdd: null,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setMachineId: (id) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: { ...s.project.meta, machineId: id, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setCustomMachineDefinition: (definition) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: { ...s.project.meta, customMachineDefinition: definition, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
       }
       return {
         project: nextProject,
