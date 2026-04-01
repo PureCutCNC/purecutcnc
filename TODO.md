@@ -121,6 +121,16 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current finish supports separate wall and floor toggles.
   - Future improvements include smarter floor-finish patterns, better finish ordering, and richer finish linking.
 
+### Configurable arc / chord tolerance for CAM flattening
+- Status: Open
+- Priority: Medium
+- Summary: Replace the current hardcoded curve sampling and arc step settings with an explicit CAM flattening tolerance.
+- Notes:
+  - Toolpath preview and exported G-code currently share the same pre-flattened toolpath geometry.
+  - The current CAM defaults are hardcoded in `flattenProfile(...)` (`curveSamples = 24`, `arcStepRadians = Math.PI / 36`).
+  - This should become a named tolerance or resolution setting instead of an implicit sampling constant.
+  - Longer term, machine definitions may want their own export tolerance if we keep linearized output for some controllers.
+
 ### Operation-specific cleanup strategies
 - Status: Open
 - Priority: Medium
