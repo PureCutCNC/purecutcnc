@@ -251,14 +251,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current outside edge routing can machine through the inside of overlapping selected add features.
   - This is a resolver/toolpath correctness issue, not just a preview issue.
 
-### New operations visible by default
-- Status: Open
-- Priority: Low
-- Summary: Newly created operations should default to `showToolpath = true` so the preview appears immediately without extra user action.
-- Notes:
-  - This is a CAM UI/default-behavior improvement.
-  - It should apply consistently across rough, finish, and paired operation creation.
-
 ### Reduce irrelevant tab warnings
 - Status: Open
 - Priority: Medium

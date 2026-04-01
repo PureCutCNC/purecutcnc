@@ -722,7 +722,7 @@ export function CAMPanel({
                 <span className="feature-count">{project.operations.length}</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-toolbar">
+                <div className="cam-section-toolbar cam-section-toolbar--end">
                   <div className="cam-section-header-actions" ref={addOperationMenuRef}>
                   <button
                     className="tree-action-btn tree-action-btn--visibility"

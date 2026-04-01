@@ -348,6 +348,10 @@
   overflow: auto;
 }
 
+.panel-tabs > .panel-content {
+  overflow: visible;
+}
+
 .panel-empty {
   margin: 8px;
   padding: 10px;
@@ -1351,6 +1355,7 @@
   border-radius: 8px;
   background: rgba(22, 29, 39, 0.86);
   color: var(--muted);
+  font-size: 12px;
   cursor: pointer;
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
@@ -1464,7 +1469,7 @@
   top: calc(100% + 8px);
   right: 0;
   z-index: 10;
-  width: 220px;
+  width: 248px;
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -1519,14 +1524,14 @@
 
 .cam-section-content {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
   border-radius: 0 0 12px 12px;
 }
 
 .cam-section-content--stack {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .cam-section-toolbar {

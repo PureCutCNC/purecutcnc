@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { buildSimulationGeometry } from '../../engine/simulation/mesh'
@@ -66,6 +66,10 @@ interface SimulationViewportProps {
   selectedClampId: string | null
   collidingClampIds: string[]
   origin: MachineOrigin
+}
+
+export interface SimulationViewportHandle {
+  zoomToModel: () => void
 }
 
 const SIMULATION_DETAIL_MIN = 240
@@ -259,7 +263,7 @@ function createOrbitControls(
   }
 }
 
-export function SimulationViewport({
+export const SimulationViewport = forwardRef<SimulationViewportHandle, SimulationViewportProps>(function SimulationViewport({
   operation,
   simulation,
   detailCells,
@@ -271,7 +275,7 @@ export function SimulationViewport({
   selectedClampId,
   collidingClampIds,
   origin,
-}: SimulationViewportProps) {
+}, ref) {
   const [showOverlay, setShowOverlay] = useState(false)
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -327,6 +331,30 @@ export function SimulationViewport({
     })
     originObjectRef.current = null
   }, [])
+
+  const zoomToModel = useCallback(() => {
+    const controls = controlsRef.current
+    const object = objectRef.current
+    if (!controls || !(object instanceof THREE.Mesh)) {
+      return
+    }
+
+    const bounds = new THREE.Box3().setFromObject(object)
+    for (const clamp of clampObjectsRef.current) {
+      if (clamp.visible) {
+        bounds.expandByObject(clamp)
+      }
+    }
+    if (origin.visible && originObjectRef.current) {
+      bounds.expandByObject(originObjectRef.current)
+    }
+
+    if (bounds.isEmpty()) {
+      return
+    }
+
+    controls.fitToBounds(bounds)
+  }, [origin.visible])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -477,6 +505,10 @@ export function SimulationViewport({
     }
   }, [disposeOriginMesh, origin, simulation])
 
+  useImperativeHandle(ref, () => ({
+    zoomToModel,
+  }), [zoomToModel])
+
   return (
     <div className="simulation-viewport">
       <div ref={mountRef} className="simulation-viewport__canvas" />
@@ -593,4 +625,4 @@ export function SimulationViewport({
       ) : null}
     </div>
   )
-}
+})

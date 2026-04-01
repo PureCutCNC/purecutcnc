@@ -794,7 +794,7 @@ function defaultOperationForTarget(
     kind,
     pass,
     enabled: true,
-    showToolpath: false,
+    showToolpath: true,
     target,
     toolRef,
     stepdown: tool.defaultStepdown,
@@ -1934,7 +1934,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const operation: Operation = {
       ...template,
       id: nextId,
-      showToolpath: false,
+      showToolpath: true,
       pass,
     }
 
@@ -2038,6 +2038,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ...sourceOperation,
       id: nextId,
       name: duplicateOperationName(sourceOperation.name, state.project.operations),
+      showToolpath: true,
     }
 
     set((s) => ({

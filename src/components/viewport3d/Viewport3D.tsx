@@ -385,7 +385,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     }
 
     if (!hasRenderableObject || bounds.isEmpty()) return
-    controls.fitToBounds(bounds, true)
+    controls.fitToBounds(bounds)
   }, [])
 
   useEffect(() => {

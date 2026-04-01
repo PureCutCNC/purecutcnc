@@ -10,7 +10,7 @@ import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
 import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Toolbar'
-import { SimulationViewport } from './components/simulation/SimulationViewport'
+import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { ExportDialog } from './components/export/ExportDialog'
 import { useProjectStore } from './store/projectStore'
@@ -50,6 +50,7 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
+  const simulationViewportRef = useRef<SimulationViewportHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const {
@@ -337,6 +338,11 @@ function App() {
       return
     }
 
+    if (centerTab === 'simulation') {
+      simulationViewportRef.current?.zoomToModel()
+      return
+    }
+
     sketchCanvasRef.current?.zoomToModel()
   }
 
@@ -485,6 +491,7 @@ function App() {
         }
         simulationViewport={
           <SimulationViewport
+            ref={simulationViewportRef}
             operation={selectedOperation}
             simulation={simulationResult}
             detailCells={simulationDetailCells}
