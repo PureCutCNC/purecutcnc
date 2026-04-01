@@ -24,6 +24,7 @@ const NODE_HIT_RADIUS = 9
 const HANDLE_RADIUS = 4
 const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
+const MIN_SKETCH_ZOOM = 0.02
 
 interface ViewTransform {
   scale: number
@@ -431,6 +432,7 @@ function drawFeature(
   feature: SketchFeature,
   vt: ViewTransform,
   units: 'mm' | 'inch',
+  showInfo: boolean,
   selected: boolean,
   hovered: boolean,
   editing: boolean,
@@ -478,18 +480,20 @@ function drawFeature(
   ctx.lineWidth = editing || selected ? 2.5 : 1.8
   ctx.stroke()
 
-  const bounds = getProfileBounds(feature.sketch.profile)
-  const center = worldToCanvas(
-    { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
-    vt,
-  )
+  if (showInfo) {
+    const bounds = getProfileBounds(feature.sketch.profile)
+    const center = worldToCanvas(
+      { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
+      vt,
+    )
 
-  ctx.fillStyle = 'rgba(228, 236, 244, 0.9)'
-  ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
-  ctx.textAlign = 'center'
-  ctx.fillText(feature.name, center.cx, center.cy - 5)
-  ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
-  ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
+    ctx.fillStyle = 'rgba(228, 236, 244, 0.9)'
+    ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText(feature.name, center.cx, center.cy - 5)
+    ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
+    ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
+  }
 }
 
 function drawPreviewProfile(
@@ -1345,7 +1349,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const hovered = feature.id === selection.hoveredFeatureId
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
 
-      drawFeature(ctx, feature, vt, project.meta.units, selected, hovered, editing)
+      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
 
       if (editing) {
         drawSketchControls(ctx, feature.sketch.profile, vt, selection.activeControl)
@@ -2083,7 +2087,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const worldBefore = canvasToWorld(point.cx, point.cy, vt)
     const zoomFactor = Math.exp(-event.deltaY * 0.0015)
-    const nextZoom = Math.max(0.35, Math.min(24, viewState.zoom * zoomFactor))
+    const nextZoom = Math.max(MIN_SKETCH_ZOOM, viewState.zoom * zoomFactor)
     const nextScale = base.scale * nextZoom
 
     setViewState({

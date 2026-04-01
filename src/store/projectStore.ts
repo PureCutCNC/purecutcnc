@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
+import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName, type ImportedShape, type ImportSourceType } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -92,6 +93,7 @@ export interface ProjectStore {
   // Project ops
   createNewProject: (template?: Project, name?: string) => void
   setProjectName: (name: string) => void
+  setShowFeatureInfo: (visible: boolean) => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
@@ -121,6 +123,7 @@ export interface ProjectStore {
   reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
   setAllFeaturesVisible: (visible: boolean) => void
   addFeature: (feature: SketchFeature) => void
+  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
   deleteFeatures: (ids: string[]) => void
@@ -873,6 +876,10 @@ function duplicateFeatureName(name: string, features: SketchFeature[]): string {
   return `${baseName} ${index}`
 }
 
+function uniqueFolderName(preferred: string, folders: FeatureFolder[]): string {
+  return uniqueName(preferred, folders.map((folder) => folder.name))
+}
+
 function duplicateClampName(name: string, clamps: Clamp[]): string {
   const baseName = `${name} Copy`
   if (!clamps.some((clamp) => clamp.name === baseName)) {
@@ -1604,6 +1611,7 @@ function normalizeProject(project: Project): Project {
   const normalizedMachines = normalizeMachineDefinitions(project)
   const meta = {
     ...project.meta,
+    showFeatureInfo: project.meta.showFeatureInfo ?? true,
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
@@ -1847,6 +1855,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         meta: {
           ...s.project.meta,
           ...patch,
+          modified: new Date().toISOString(),
+        },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setShowFeatureInfo: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          showFeatureInfo: visible,
           modified: new Date().toISOString(),
         },
       }
@@ -2808,6 +2842,85 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         },
       }
     }),
+
+  importShapes: (input) => {
+    const state = get()
+    const sourceShapes = input.shapes.filter((shape) => !isProfileDegenerate(shape.profile))
+    if (sourceShapes.length === 0) {
+      return []
+    }
+
+    const folderId = nextUniqueGeneratedId(state.project, 'fd')
+    const folderName = uniqueFolderName(stripFileExtension(input.fileName), state.project.featureFolders)
+    const folder: FeatureFolder = {
+      id: folderId,
+      name: folderName,
+      collapsed: false,
+    }
+
+    const existingNames = state.project.features.map((feature) => feature.name)
+    const createdFeatures: SketchFeature[] = []
+    let nextProjectLike: Project = {
+      ...state.project,
+      features: [...state.project.features],
+      featureFolders: [...state.project.featureFolders, folder],
+    }
+
+    sourceShapes.forEach((shape, index) => {
+      const featureName = uniqueName(
+        shape.name || `${input.sourceType.toUpperCase()} ${index + 1}`,
+        [...existingNames, ...createdFeatures.map((feature) => feature.name)],
+      )
+      const isFirstFeature = state.project.features.length === 0 && createdFeatures.length === 0
+
+      const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
+      const feature = normalizeFeatureZRange({
+        ...createImportedFeature(shape, state.project, folderId, featureName, isFirstFeature ? 'add' : 'subtract'),
+        id: nextId,
+      })
+
+      createdFeatures.push(feature)
+      nextProjectLike = {
+        ...nextProjectLike,
+        features: [...nextProjectLike.features, feature],
+      }
+    })
+
+    if (createdFeatures.length === 0) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        featureFolders: [...s.project.featureFolders, folder],
+        featureTree: [...s.project.featureTree, { type: 'folder', folderId }],
+        features: [...s.project.features, ...createdFeatures],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : { type: 'folder', folderId },
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
 
   updateFeature: (id, patch) =>
     set((s) => {

@@ -9,6 +9,11 @@
   <symbol id="open" viewBox="0 0 24 24">
     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
   </symbol>
+  <symbol id="import" viewBox="0 0 24 24">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="17 9 12 4 7 9"/>
+    <line x1="12" y1="4" x2="12" y2="16"/>
+  </symbol>
   <symbol id="save" viewBox="0 0 24 24">
     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
     <polyline points="17 21 17 13 7 13 7 21"/>

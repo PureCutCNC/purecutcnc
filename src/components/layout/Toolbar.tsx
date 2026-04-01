@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../Icon'
+import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'copy' | 'move' | 'trash' | 'resize' | 'rotate'
+type ToolbarIconName = 'new' | 'open' | 'import' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'copy' | 'move' | 'trash' | 'resize' | 'rotate'
 
 interface ToolbarActionButtonProps {
   icon: ToolbarIconName
@@ -16,6 +17,7 @@ interface ToolbarActionButtonProps {
 
 interface ToolbarProps {
   onZoomToModel: () => void
+  onImportComplete?: () => void
 }
 
 interface CreationToolbarProps {
@@ -48,7 +50,8 @@ function ToolbarActionButton({
   )
 }
 
-function useToolbarState(onZoomToModel: () => void) {
+function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => void) {
+  void onImportComplete
   const {
     project,
     pendingAdd,
@@ -79,6 +82,7 @@ function useToolbarState(onZoomToModel: () => void) {
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
 
   useEffect(() => {
     if (!editingName) {
@@ -121,6 +125,10 @@ function useToolbarState(onZoomToModel: () => void) {
       reader.readAsText(file)
     }
     input.click()
+  }
+
+  function handleImport() {
+    setShowImportDialog(true)
   }
 
   function togglePlacement(shape: 'rect' | 'circle' | 'polygon' | 'spline' | 'composite', start: () => void) {
@@ -209,15 +217,18 @@ function useToolbarState(onZoomToModel: () => void) {
     editingName,
     nameVal,
     showNewProjectDialog,
+    showImportDialog,
     hasSelectedFeatures,
     hasLockedSelectedFeatures,
     setProjectName,
     setEditingName,
     setNameVal,
     setShowNewProjectDialog,
+    setShowImportDialog,
     handleNewProject,
     handleSave,
     handleLoad,
+    handleImport,
     handleZoomToModel: onZoomToModel,
     handleUndo: undo,
     handleRedo: redo,
@@ -295,6 +306,7 @@ function GlobalActions({
   historyLengthFuture,
   onNew,
   onOpen,
+  onImport,
   onSave,
   onUndo,
   onRedo,
@@ -304,6 +316,7 @@ function GlobalActions({
   historyLengthFuture: number
   onNew: () => void
   onOpen: () => void
+  onImport: () => void
   onSave: () => void
   onUndo: () => void
   onRedo: () => void
@@ -314,6 +327,7 @@ function GlobalActions({
       <div className="toolbar-group">
         <ToolbarActionButton icon="new" label="New Project" onClick={onNew} />
         <ToolbarActionButton icon="open" label="Open Project" onClick={onOpen} />
+        <ToolbarActionButton icon="import" label="Import Geometry" onClick={onImport} />
         <ToolbarActionButton icon="save" label="Save Project" onClick={onSave} />
       </div>
       <div className="toolbar-group">
@@ -450,17 +464,28 @@ function FeatureEditActions({
 }
 
 function ToolbarDialog({
-  open,
-  onClose,
+  showNewProjectDialog,
+  showImportDialog,
+  onCloseNewProject,
+  onCloseImport,
+  onImportComplete,
 }: {
-  open: boolean
-  onClose: () => void
+  showNewProjectDialog: boolean
+  showImportDialog: boolean
+  onCloseNewProject: () => void
+  onCloseImport: () => void
+  onImportComplete?: () => void
 }) {
-  return open ? <NewProjectDialog onClose={onClose} /> : null
+  return (
+    <>
+      {showNewProjectDialog ? <NewProjectDialog onClose={onCloseNewProject} /> : null}
+      {showImportDialog ? <ImportGeometryDialog onClose={onCloseImport} onImportComplete={onImportComplete} /> : null}
+    </>
+  )
 }
 
-export function GlobalToolbar({ onZoomToModel }: ToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel)
+export function GlobalToolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
     <>
@@ -478,6 +503,7 @@ export function GlobalToolbar({ onZoomToModel }: ToolbarProps) {
           historyLengthFuture={toolbar.history.future.length}
           onNew={toolbar.handleNewProject}
           onOpen={toolbar.handleLoad}
+          onImport={toolbar.handleImport}
           onSave={toolbar.handleSave}
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}
@@ -485,19 +511,22 @@ export function GlobalToolbar({ onZoomToModel }: ToolbarProps) {
         />
       </div>
       <ToolbarDialog
-        open={toolbar.showNewProjectDialog}
-        onClose={() => {
+        showNewProjectDialog={toolbar.showNewProjectDialog}
+        showImportDialog={toolbar.showImportDialog}
+        onCloseNewProject={() => {
           toolbar.setNameVal(useProjectStore.getState().project.meta.name)
           toolbar.setEditingName(false)
           toolbar.setShowNewProjectDialog(false)
         }}
+        onCloseImport={() => toolbar.setShowImportDialog(false)}
+        onImportComplete={onImportComplete}
       />
     </>
   )
 }
 
-export function CreationToolbar({ onZoomToModel, layout = 'horizontal' }: ToolbarProps & CreationToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel)
+export function CreationToolbar({ onZoomToModel, onImportComplete, layout = 'horizontal' }: ToolbarProps & CreationToolbarProps) {
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
     <div className={`toolbar toolbar--creation toolbar--${layout}`}>
@@ -527,8 +556,8 @@ export function CreationToolbar({ onZoomToModel, layout = 'horizontal' }: Toolba
   )
 }
 
-export function Toolbar({ onZoomToModel }: ToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel)
+export function Toolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
     <>
@@ -546,6 +575,7 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
           historyLengthFuture={toolbar.history.future.length}
           onNew={toolbar.handleNewProject}
           onOpen={toolbar.handleLoad}
+          onImport={toolbar.handleImport}
           onSave={toolbar.handleSave}
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}
@@ -573,12 +603,15 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
         ) : null}
       </div>
       <ToolbarDialog
-        open={toolbar.showNewProjectDialog}
-        onClose={() => {
+        showNewProjectDialog={toolbar.showNewProjectDialog}
+        showImportDialog={toolbar.showImportDialog}
+        onCloseNewProject={() => {
           toolbar.setNameVal(useProjectStore.getState().project.meta.name)
           toolbar.setEditingName(false)
           toolbar.setShowNewProjectDialog(false)
         }}
+        onCloseImport={() => toolbar.setShowImportDialog(false)}
+        onImportComplete={onImportComplete}
       />
     </>
   )

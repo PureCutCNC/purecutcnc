@@ -129,6 +129,7 @@ export function PropertiesPanel() {
     deleteClamp,
     deleteFeatureFolder,
     setProjectName,
+    setShowFeatureInfo,
     setProjectClearances,
     setSelectedMachineId,
     addMachineDefinition,
@@ -244,6 +245,14 @@ export function PropertiesPanel() {
               <option value="mm">Millimeters</option>
               <option value="inch">Inches</option>
             </select>
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={project.meta.showFeatureInfo}
+              onChange={(event) => setShowFeatureInfo(event.target.checked)}
+            />
+            Show feature info in sketch
           </label>
           <label className="properties-field">
             <span>Safe Z</span>

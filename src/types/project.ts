@@ -261,6 +261,7 @@ export interface ProjectMeta {
   created: string    // ISO 8601
   modified: string
   units: 'mm' | 'inch'
+  showFeatureInfo: boolean
   maxTravelZ: number
   operationClearanceZ: number
   clampClearanceXY: number
@@ -749,6 +750,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'mm'
       created: now,
       modified: now,
       units,
+      showFeatureInfo: true,
       maxTravelZ: defaultMaxTravelZ(units),
       operationClearanceZ: defaultOperationClearanceZ(units),
       clampClearanceXY: defaultClampClearanceXY(units),

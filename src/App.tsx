@@ -346,6 +346,13 @@ function App() {
     sketchCanvasRef.current?.zoomToModel()
   }
 
+  function handleImportComplete() {
+    setCenterTab('sketch')
+    window.requestAnimationFrame(() => {
+      sketchCanvasRef.current?.zoomToModel()
+    })
+  }
+
   function openFeatureContextMenu(featureId: string, x: number, y: number) {
     const nextSelection = useProjectStore.getState().selection
     const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
@@ -455,11 +462,13 @@ function App() {
         toolbar={
           <Toolbar 
             onZoomToModel={handleZoomToModel}
+            onImportComplete={handleImportComplete}
           />
         }
         globalToolbar={
           <GlobalToolbar
             onZoomToModel={handleZoomToModel}
+            onImportComplete={handleImportComplete}
           />
         }
         creationToolbar={
