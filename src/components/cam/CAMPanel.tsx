@@ -719,8 +719,11 @@ export function CAMPanel({
             <section className="cam-section cam-section--tree">
               <div className="cam-section-header">
                 <span>Operations</span>
-                <div className="cam-section-header-actions" ref={addOperationMenuRef}>
-                  <span className="feature-count">{project.operations.length}</span>
+                <span className="feature-count">{project.operations.length}</span>
+              </div>
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-toolbar">
+                  <div className="cam-section-header-actions" ref={addOperationMenuRef}>
                   <button
                     className="tree-action-btn tree-action-btn--visibility"
                     type="button"
@@ -757,56 +760,56 @@ export function CAMPanel({
                   >
                     Add
                   </button>
-                  {showAddOperationMenu ? (
-                    <div className="cam-add-menu" role="dialog" aria-label="Add operation">
-                      <div className="cam-add-menu__section">
-                        <span className="cam-add-menu__label">Pass</span>
-                        <div className="cam-pass-toggle">
-                          <button
-                            className={`cam-subtab ${newOperationMode === 'rough' ? 'cam-subtab--active' : ''}`}
-                            type="button"
-                            onClick={() => setNewOperationMode('rough')}
-                          >
-                            Rough
-                          </button>
-                          <button
-                            className={`cam-subtab ${newOperationMode === 'finish' ? 'cam-subtab--active' : ''}`}
-                            type="button"
-                            onClick={() => setNewOperationMode('finish')}
-                          >
-                            Finish
-                          </button>
-                          <button
-                            className={`cam-subtab ${newOperationMode === 'pair' ? 'cam-subtab--active' : ''}`}
-                            type="button"
-                            onClick={() => setNewOperationMode('pair')}
-                          >
-                            Rough + Finish
-                          </button>
-                        </div>
-                      </div>
-                      <div className="cam-add-menu__section">
-                        <span className="cam-add-menu__label">Operation</span>
-                        <div className="cam-add-menu__buttons">
-                          {operationButtons.map((button) => (
+                    {showAddOperationMenu ? (
+                      <div className="cam-add-menu" role="dialog" aria-label="Add operation">
+                        <div className="cam-add-menu__section">
+                          <span className="cam-add-menu__label">Pass</span>
+                          <div className="cam-pass-toggle">
                             <button
-                              key={button.kind}
-                              className="feat-btn"
+                              className={`cam-subtab ${newOperationMode === 'rough' ? 'cam-subtab--active' : ''}`}
                               type="button"
-                              disabled={button.disabled}
-                              title={button.hint}
-                              onClick={() => handleAddOperation(button.kind)}
+                              onClick={() => setNewOperationMode('rough')}
                             >
-                              {button.label}
+                              Rough
                             </button>
-                          ))}
+                            <button
+                              className={`cam-subtab ${newOperationMode === 'finish' ? 'cam-subtab--active' : ''}`}
+                              type="button"
+                              onClick={() => setNewOperationMode('finish')}
+                            >
+                              Finish
+                            </button>
+                            <button
+                              className={`cam-subtab ${newOperationMode === 'pair' ? 'cam-subtab--active' : ''}`}
+                              type="button"
+                              onClick={() => setNewOperationMode('pair')}
+                            >
+                              Rough + Finish
+                            </button>
+                          </div>
+                        </div>
+                        <div className="cam-add-menu__section">
+                          <span className="cam-add-menu__label">Operation</span>
+                          <div className="cam-add-menu__buttons">
+                            {operationButtons.map((button) => (
+                              <button
+                                key={button.kind}
+                                className="feat-btn"
+                                type="button"
+                                disabled={button.disabled}
+                                title={button.hint}
+                                onClick={() => handleAddOperation(button.kind)}
+                              >
+                                {button.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-              <div className="cam-section-content">
+                <div className="cam-section-body">
                 {project.operations.length === 0 ? (
                   <div className="panel-empty">
                     Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
@@ -864,22 +867,26 @@ export function CAMPanel({
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             </section>
 
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
                 <span>Properties</span>
-                <div className="cam-section-header-actions">
+              </div>
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-toolbar cam-section-toolbar--end">
+                  <div className="cam-section-header-actions">
                   <button className="cam-header-action" type="button" onClick={handleDuplicateOperation} disabled={!selectedOperation}>
                     Duplicate
                   </button>
                   <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteOperation} disabled={!selectedOperation}>
                     Delete
                   </button>
+                  </div>
                 </div>
-              </div>
-              <div className="cam-section-content">
+                <div className="cam-section-body">
                 {selectedOperation ? (
                   <div key={selectedOperation.id} className="properties-panel cam-tool-properties">
                     <div className="properties-group">
@@ -1071,83 +1078,79 @@ export function CAMPanel({
                 ) : (
                   <div className="panel-empty">Select an operation to edit its parameters.</div>
                 )}
+                </div>
               </div>
             </section>
           </div>
         </div>
       ) : (
         <div className="cam-tools">
-          <div className="cam-toolbar">
-            <button className="feat-btn" type="button" onClick={handleAddTool}>
-              Add Tool
-            </button>
-            <button
-              className="feat-btn"
-              type="button"
-              onClick={handleImportLibrary}
-              disabled={libraryLoading || (libraryTools.length > 0 && missingLibraryTools.length === 0)}
-              title={libraryLoading ? 'Loading bundled tool library' : undefined}
-            >
-              Import Library
-            </button>
-            <button className="feat-btn" type="button" onClick={handleDuplicateTool} disabled={!selectedTool}>
-              Duplicate
-            </button>
-            <button className="feat-btn feat-btn--delete" type="button" onClick={handleDeleteTool} disabled={!selectedTool}>
-              Delete
-            </button>
-          </div>
-
-          <div className="cam-toolbar-note">
-            {libraryLoading
-              ? 'Loading bundled tool library...'
-              : libraryError
-                ? `Tool library: ${libraryError}`
-                : libraryTools.length > 0
-                  ? `${libraryName}: ${libraryTools.length} tools, ${missingLibraryTools.length} missing from project.`
-                  : 'Bundled tool library not loaded yet.'}
-          </div>
-
           <div className="cam-tools-layout">
             <section className="cam-section">
               <div className="cam-section-header">
                 <span>Tools</span>
+                <span className="feature-count">{project.tools.length}</span>
               </div>
-              <div className="cam-section-content">
-                <div className="feature-tree-panel cam-tool-tree">
-                  {project.tools.length === 0 ? (
-                    <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
-                  ) : (
-                    <div className="tree-list">
-                      {project.tools.map((tool) => (
-                        <div
-                          key={tool.id}
-                          className={[
-                            'tree-row',
-                            'tree-row--feature',
-                            tool.id === selectedToolId ? 'tree-row--selected' : '',
-                          ].join(' ')}
-                        onClick={() => setSelectedToolId(tool.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              setSelectedToolId(tool.id)
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <span className="tree-branch" aria-hidden="true" />
-                          <span className="tree-label cam-tool-label" title={tool.name}>
-                            <span className="cam-tool-label__name">{tool.name}</span>
-                            <span className="cam-tool-label__meta">
-                              {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-toolbar">
+                  <button className="cam-header-action" type="button" onClick={handleAddTool}>
+                    Add Tool
+                  </button>
+                  <button
+                    className="cam-header-action"
+                    type="button"
+                    onClick={handleImportLibrary}
+                    disabled={libraryLoading || (libraryTools.length > 0 && missingLibraryTools.length === 0)}
+                    title={libraryLoading ? 'Loading bundled tool library' : undefined}
+                  >
+                    Import Library
+                  </button>
+                </div>
+                <div className="cam-section-body cam-section-body--stack">
+                  <div className="cam-section-note">
+                    {libraryLoading
+                      ? 'Loading bundled tool library...'
+                      : libraryError
+                        ? `Tool library: ${libraryError}`
+                        : libraryTools.length > 0
+                          ? `${libraryName}: ${libraryTools.length} tools, ${missingLibraryTools.length} missing from project.`
+                          : 'Bundled tool library not loaded yet.'}
+                  </div>
+                  <div className="feature-tree-panel cam-tool-tree">
+                    {project.tools.length === 0 ? (
+                      <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
+                    ) : (
+                      <div className="tree-list">
+                        {project.tools.map((tool) => (
+                          <div
+                            key={tool.id}
+                            className={[
+                              'tree-row',
+                              'tree-row--feature',
+                              tool.id === selectedToolId ? 'tree-row--selected' : '',
+                            ].join(' ')}
+                            onClick={() => setSelectedToolId(tool.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                setSelectedToolId(tool.id)
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <span className="tree-branch" aria-hidden="true" />
+                            <span className="tree-label cam-tool-label" title={tool.name}>
+                              <span className="cam-tool-label__name">{tool.name}</span>
+                              <span className="cam-tool-label__meta">
+                                {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
+                              </span>
                             </span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -1156,10 +1159,21 @@ export function CAMPanel({
               <div className="cam-section-header">
                 <span>Properties</span>
               </div>
-              <div className="cam-section-content">
-                {selectedTool ? (
-                  <div key={selectedTool.id} className="properties-panel cam-tool-properties">
-                    <div className="properties-group">
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-toolbar cam-section-toolbar--end">
+                  <div className="cam-section-header-actions">
+                    <button className="cam-header-action" type="button" onClick={handleDuplicateTool} disabled={!selectedTool}>
+                      Duplicate
+                    </button>
+                    <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteTool} disabled={!selectedTool}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <div className="cam-section-body">
+                  {selectedTool ? (
+                    <div key={selectedTool.id} className="properties-panel cam-tool-properties">
+                      <div className="properties-group">
                       <label className="properties-field">
                         <span>Name</span>
                         <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
@@ -1275,11 +1289,12 @@ export function CAMPanel({
                           onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
                         />
                       </label>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="panel-empty">Select a tool to edit its properties.</div>
-                )}
+                  ) : (
+                    <div className="panel-empty">Select a tool to edit its properties.</div>
+                  )}
+                </div>
               </div>
             </section>
           </div>

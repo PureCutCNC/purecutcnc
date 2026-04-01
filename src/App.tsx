@@ -9,7 +9,7 @@ import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItems
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
-import { Toolbar } from './components/layout/Toolbar'
+import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Toolbar'
 import { SimulationViewport } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { ExportDialog } from './components/export/ExportDialog'
@@ -23,9 +23,25 @@ interface TreeContextMenuState {
   y: number
 }
 
+type ToolbarOrientation = 'top' | 'left'
+
+const TOOLBAR_ORIENTATION_STORAGE_KEY = 'camcam.toolbarOrientation'
+const TOOLBAR_LEFT_BREAKPOINT = 1100
+
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
+  const [toolbarOrientationPreference, setToolbarOrientationPreference] = useState<ToolbarOrientation>(() => {
+    if (typeof window === 'undefined') {
+      return 'top'
+    }
+
+    const saved = window.localStorage.getItem(TOOLBAR_ORIENTATION_STORAGE_KEY)
+    return saved === 'left' ? 'left' : 'top'
+  })
+  const [isToolbarForcedTop, setIsToolbarForcedTop] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth <= TOOLBAR_LEFT_BREAKPOINT : false
+  ))
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
@@ -97,6 +113,8 @@ function App() {
     selection.selectedNode?.type === 'clamp'
       ? selection.selectedNode.clampId
       : null
+
+  const effectiveToolbarOrientation: ToolbarOrientation = isToolbarForcedTop ? 'top' : toolbarOrientationPreference
 
   const generateToolpathForOperation = useMemo(
     () => (operation: typeof selectedOperation): ToolpathResult | null => {
@@ -235,6 +253,20 @@ function App() {
       window.cancelAnimationFrame(frame2)
     }
   }, [centerTab])
+
+  useEffect(() => {
+    function updateForcedToolbarState() {
+      setIsToolbarForcedTop(window.innerWidth <= TOOLBAR_LEFT_BREAKPOINT)
+    }
+
+    updateForcedToolbarState()
+    window.addEventListener('resize', updateForcedToolbarState)
+    return () => window.removeEventListener('resize', updateForcedToolbarState)
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(TOOLBAR_ORIENTATION_STORAGE_KEY, toolbarOrientationPreference)
+  }, [toolbarOrientationPreference])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -419,6 +451,17 @@ function App() {
             onZoomToModel={handleZoomToModel}
           />
         }
+        globalToolbar={
+          <GlobalToolbar
+            onZoomToModel={handleZoomToModel}
+          />
+        }
+        creationToolbar={
+          <CreationToolbar
+            onZoomToModel={handleZoomToModel}
+            layout="vertical"
+          />
+        }
         aiPanel={<AIPanel />}
         sketchCanvas={
           <SketchCanvas
@@ -470,6 +513,9 @@ function App() {
         onCenterTabChange={setCenterTab}
         workspaceLayout={workspaceLayout}
         onWorkspaceLayoutChange={setWorkspaceLayout}
+        toolbarOrientation={effectiveToolbarOrientation}
+        toolbarOrientationForced={isToolbarForcedTop}
+        onToolbarOrientationChange={setToolbarOrientationPreference}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
       />

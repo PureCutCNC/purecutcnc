@@ -118,43 +118,43 @@ Important:
 
 ## Implementation Phases
 ### TL1. Toolbar orientation state
-- `[ ]` add `toolbarOrientation` as app-local UI state
-- `[ ]` optionally persist it in `localStorage`
-- `[ ]` apply small-screen override to force `top`
+- `[x]` add `toolbarOrientation` as app-local UI state
+- `[x]` optionally persist it in `localStorage`
+- `[x]` apply small-screen override to force `top`
 
 ### TL2. AppShell rail slot
-- `[ ]` add a dedicated left-rail slot to `AppShell`
-- `[ ]` update layout CSS to support:
+- `[x]` add a dedicated left-rail slot to `AppShell`
+- `[x]` update layout CSS to support:
   - top mode with no rail
   - left mode with docked rail
-- `[ ]` preserve current left project/properties panel behavior
+- `[x]` preserve current left project/properties panel behavior
 
 ### TL3. Toolbar split
-- `[ ]` split current toolbar into:
+- `[x]` split current toolbar into:
   - `GlobalToolbar`
   - `CreationToolbar`
-- `[ ]` render both together in top mode
-- `[ ]` render only global tools in the header in left mode
-- `[ ]` render only creation tools in the left rail in left mode
+- `[x]` render both together in top mode
+- `[x]` render only global tools in the header in left mode
+- `[x]` render only creation tools in the left rail in left mode
 
 ### TL4. Orientation toggle UI
-- `[ ]` add toolbar-orientation controls near the workspace layout controls
-- `[ ]` keep the two control groups visually distinct
-- `[ ]` ensure keyboard and tooltip behavior remain usable
+- `[x]` add toolbar-orientation controls near the workspace layout controls
+- `[x]` keep the two control groups visually distinct
+- `[x]` ensure keyboard and tooltip behavior remain usable
 
 ### TL5. Vertical rail polish
-- `[ ]` tune spacing for the `44px` rail target
-- `[ ]` move tooltips to the right in left mode
-- `[ ]` ensure active tool state remains visually obvious
+- `[~]` tune spacing for the `44px` rail target
+- `[x]` move tooltips to the right in left mode
+- `[x]` ensure active tool state remains visually obvious
 - `[ ]` prevent tooltip clipping near the canvas edge
 
 ### TL6. Responsive behavior
-- `[ ]` force top mode below the chosen width threshold
-- `[ ]` ensure the toggle reflects the forced state clearly
+- `[x]` force top mode below the chosen width threshold
+- `[x]` ensure the toggle reflects the forced state clearly
 - `[ ]` avoid layout jitter when crossing the breakpoint
 
 ### TL7. Optional icon cleanup
-- `[ ]` use the shared `Icon` component in toolbar-related UI where it helps
+- `[x]` use the shared `Icon` component in toolbar-related UI where it helps
 - `[>]` full toolbar/icon-system migration outside this layout change
 
 ## Risks / Edge Cases

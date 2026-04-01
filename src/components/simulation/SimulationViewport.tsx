@@ -481,50 +481,54 @@ export function SimulationViewport({
     <div className="simulation-viewport">
       <div ref={mountRef} className="simulation-viewport__canvas" />
       <div className="viewport-presets">
-        <button
-          className={`preset-btn ${showOverlay ? 'preset-btn--active' : ''}`}
-          onClick={() => setShowOverlay((current) => !current)}
-          title="Show simulation stats"
-          type="button"
-        >
-          Info
-        </button>
-        <div className="simulation-mode-toggle" role="tablist" aria-label="Simulation mode">
+        <div className="viewport-presets__group viewport-presets__group--status">
           <button
-            className={`simulation-mode-toggle__btn ${mode === 'selected' ? 'simulation-mode-toggle__btn--active' : ''}`}
+            className={`preset-btn ${showOverlay ? 'preset-btn--active' : ''}`}
+            onClick={() => setShowOverlay((current) => !current)}
+            title="Show simulation stats"
             type="button"
-            onClick={() => onModeChange('selected')}
           >
-            Selected
+            Info
           </button>
-          <button
-            className={`simulation-mode-toggle__btn ${mode === 'visible' ? 'simulation-mode-toggle__btn--active' : ''}`}
-            type="button"
-            onClick={() => onModeChange('visible')}
-          >
-            Visible
-          </button>
+          <div className="simulation-mode-toggle" role="tablist" aria-label="Simulation mode">
+            <button
+              className={`simulation-mode-toggle__btn ${mode === 'selected' ? 'simulation-mode-toggle__btn--active' : ''}`}
+              type="button"
+              onClick={() => onModeChange('selected')}
+            >
+              Selected
+            </button>
+            <button
+              className={`simulation-mode-toggle__btn ${mode === 'visible' ? 'simulation-mode-toggle__btn--active' : ''}`}
+              type="button"
+              onClick={() => onModeChange('visible')}
+            >
+              Visible
+            </button>
+          </div>
+          <label className="simulation-detail-control" title="Simulation detail">
+            <span className="simulation-detail-control__label">Detail</span>
+            <input
+              className="simulation-detail-control__slider"
+              type="range"
+              min={SIMULATION_DETAIL_MIN}
+              max={SIMULATION_DETAIL_MAX}
+              step={SIMULATION_DETAIL_STEP}
+              value={detailCells}
+              onChange={(event) => onDetailCellsChange(Number(event.target.value))}
+            />
+            <span className="simulation-detail-control__value">{detailCells}</span>
+          </label>
         </div>
-        <label className="simulation-detail-control" title="Simulation detail">
-          <span className="simulation-detail-control__label">Detail</span>
-          <input
-            className="simulation-detail-control__slider"
-            type="range"
-            min={SIMULATION_DETAIL_MIN}
-            max={SIMULATION_DETAIL_MAX}
-            step={SIMULATION_DETAIL_STEP}
-            value={detailCells}
-            onChange={(event) => onDetailCellsChange(Number(event.target.value))}
-          />
-          <span className="simulation-detail-control__value">{detailCells}</span>
-        </label>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">Top</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">Bottom</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">Front</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">Back</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">Right</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">Left</button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">Iso</button>
+        <div className="viewport-presets__group viewport-presets__group--views">
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">Top</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">Bottom</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">Front</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">Back</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">Right</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">Left</button>
+          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">Iso</button>
+        </div>
       </div>
       {showOverlay ? (
         <div className="simulation-viewport__overlay">

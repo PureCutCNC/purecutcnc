@@ -212,7 +212,7 @@ export function PropertiesPanel() {
             </select>
           </label>
           <label className="properties-field">
-            <span>Max Z</span>
+            <span>Safe Z</span>
             <DraftNumberInput
               key={`project-max-travel-z-${project.meta.maxTravelZ}`}
               value={project.meta.maxTravelZ}
@@ -222,7 +222,7 @@ export function PropertiesPanel() {
             />
           </label>
           <label className="properties-field">
-            <span>Op clearance Z</span>
+            <span>Op Clear Z</span>
             <DraftNumberInput
               key={`project-operation-clearance-z-${project.meta.operationClearanceZ}`}
               value={project.meta.operationClearanceZ}
@@ -232,7 +232,7 @@ export function PropertiesPanel() {
             />
           </label>
           <label className="properties-field">
-            <span>Clamp clearance XY</span>
+            <span>Clamp Clear XY</span>
             <DraftNumberInput
               key={`project-clamp-clearance-xy-${project.meta.clampClearanceXY}`}
               value={project.meta.clampClearanceXY}
@@ -242,7 +242,7 @@ export function PropertiesPanel() {
             />
           </label>
           <label className="properties-field">
-            <span>Clamp clearance Z</span>
+            <span>Clamp Clear Z</span>
             <DraftNumberInput
               key={`project-clamp-clearance-z-${project.meta.clampClearanceZ}`}
               value={project.meta.clampClearanceZ}

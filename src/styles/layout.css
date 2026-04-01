@@ -8,28 +8,52 @@
 
 .app-toolbar {
   border-bottom: 1px solid var(--line);
-  background: color-mix(in oklab, var(--bg-elev-2) 92%, black);
-  padding: 10px 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
+    color-mix(in oklab, var(--bg-elev-2) 94%, black);
+  padding: 8px 10px;
+}
+
+.app-toolbar--left {
+  padding: 6px 10px;
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 10px;
+}
+
+.toolbar--global {
+  flex-wrap: nowrap;
+}
+
+.toolbar--creation.toolbar--vertical {
+  display: grid;
+  justify-items: center;
+  align-content: start;
   gap: 8px;
+  width: 100%;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-icon-btn {
+  width: 32px;
+  height: 32px;
 }
 
 .toolbar-project-block {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding-right: 8px;
-  border-right: 1px solid var(--line);
+  min-height: 32px;
+  padding: 0;
 }
 
 .toolbar-project-label {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -37,14 +61,16 @@
 .toolbar-group {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding-right: 8px;
-  border-right: 1px solid var(--line);
+  gap: 0;
+  min-height: 32px;
 }
 
-.toolbar-group:last-child {
-  border-right: none;
-  padding-right: 0;
+.toolbar--creation.toolbar--vertical .toolbar-group {
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
 }
 
 .toolbar-action {
@@ -52,15 +78,22 @@
   display: inline-flex;
 }
 
+.icon-sprite {
+  display: block;
+}
+
 .toolbar-project-name,
 .toolbar-btn {
-  border: 1px solid var(--line-strong);
-  background: linear-gradient(180deg, #213243, #182430);
+  border: 1px solid rgba(104, 129, 151, 0.48);
+  background: linear-gradient(180deg, #26384a, #182430);
   color: var(--text);
   border-radius: 8px;
-  height: 34px;
+  height: 30px;
   padding: 0 12px;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28);
 }
 
 .toolbar-project-name {
@@ -68,27 +101,47 @@
 }
 
 .toolbar-icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line-strong);
-  background: linear-gradient(180deg, #213243, #182430);
+  border: 1px solid rgba(104, 129, 151, 0.44);
+  background: linear-gradient(180deg, #2a3a4c, #17232f);
   color: var(--text);
-  border-radius: 9px;
+  border-radius: 0;
   cursor: pointer;
   padding: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28);
 }
 
-.toolbar-icon-btn svg {
+.toolbar-group .toolbar-action:first-child .toolbar-icon-btn {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.toolbar-group .toolbar-action:last-child .toolbar-icon-btn {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:first-child .toolbar-icon-btn {
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  border-bottom-left-radius: 0;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:last-child .toolbar-icon-btn {
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+  border-top-right-radius: 0;
+}
+
+.toolbar-icon-btn .icon-sprite {
   width: 18px;
   height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .toolbar-btn:hover,
@@ -119,7 +172,7 @@
 .toolbar-icon-btn--active {
   border-color: var(--accent);
   color: #fff;
-  background: linear-gradient(180deg, #334558, #1c2c39);
+  background: linear-gradient(180deg, #3d4f61, #202d3a);
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, var(--accent) 42%, transparent),
     0 0 0 1px rgba(220, 165, 106, 0.12);
@@ -128,8 +181,9 @@
 .toolbar-tooltip {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translate(-50%, 4px);
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform: translate(-50%, -4px);
   padding: 6px 8px;
   border-radius: 7px;
   border: 1px solid rgba(94, 121, 142, 0.72);
@@ -148,11 +202,29 @@
   z-index: 10;
 }
 
+.toolbar-tooltip--bottom {
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform: translate(-50%, -4px);
+}
+
+.toolbar-tooltip--right {
+  left: calc(100% + 8px);
+  top: 50%;
+  bottom: auto;
+  transform: translate(4px, -50%);
+}
+
 .toolbar-action:hover .toolbar-tooltip,
 .toolbar-action:focus-within .toolbar-tooltip {
   opacity: 1;
   visibility: visible;
   transform: translate(-50%, 0);
+}
+
+.toolbar-action:hover .toolbar-tooltip--right,
+.toolbar-action:focus-within .toolbar-tooltip--right {
+  transform: translate(0, -50%);
 }
 
 .toolbar-btn-apply {
@@ -196,19 +268,45 @@
   display: grid;
   grid-template-columns: minmax(220px, 17%) minmax(540px, 1fr) minmax(290px, 22%);
   gap: 10px;
-  padding: 10px;
+  padding: 10px 6px;
+}
+
+.app-body--toolbar-left {
+  grid-template-columns: 32px minmax(220px, 17%) minmax(540px, 1fr) minmax(290px, 22%);
+  gap: 4px;
 }
 
 .app-body--lc {
   grid-template-columns: minmax(220px, 17%) minmax(540px, 1fr);
 }
 
+.app-body--toolbar-left.app-body--lc {
+  grid-template-columns: 32px minmax(220px, 17%) minmax(540px, 1fr);
+}
+
 .app-body--c {
   grid-template-columns: minmax(540px, 1fr);
 }
 
+.app-body--toolbar-left.app-body--c {
+  grid-template-columns: 32px minmax(540px, 1fr);
+}
+
 .app-body--cr {
   grid-template-columns: minmax(540px, 1fr) minmax(290px, 22%);
+}
+
+.app-body--toolbar-left.app-body--cr {
+  grid-template-columns: 32px minmax(540px, 1fr) minmax(290px, 22%);
+}
+
+.app-left-rail {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  padding: 0;
+  overflow: visible;
 }
 
 .panel-left {
@@ -230,7 +328,7 @@
 
 .panel-header {
   border-bottom: 1px solid var(--line);
-  padding: 10px 12px;
+  padding: 8px 10px;
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -251,8 +349,8 @@
 }
 
 .panel-empty {
-  margin: 12px;
-  padding: 12px;
+  margin: 8px;
+  padding: 10px;
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
   color: var(--text-dim);
@@ -406,7 +504,7 @@
 }
 
 .simulation-detail-control__slider {
-  width: 120px;
+  width: clamp(80px, 16vw, 120px);
   accent-color: var(--accent);
 }
 
@@ -450,15 +548,20 @@
 
 .panel-tabs {
   height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panel-tabs-header {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  padding: 8px 8px 0;
+  padding: 8px 6px 0;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.015);
+  background: transparent;
 }
 
 .panel-tabs-spacer {
@@ -499,9 +602,19 @@
 .workspace-layout-controls {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   margin-left: auto;
   padding-bottom: 6px;
+}
+
+.toolbar-orientation-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-left: 10px;
+  padding-left: 10px;
+  padding-bottom: 6px;
+  border-left: 1px solid var(--line);
 }
 
 .workspace-layout-btn {
@@ -511,7 +624,7 @@
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 0;
   background: rgba(18, 25, 34, 0.72);
   color: var(--text-dim);
   cursor: pointer;
@@ -527,6 +640,91 @@
   color: var(--text);
   border-color: rgba(220, 165, 106, 0.75);
   background: rgba(15, 22, 31, 0.96);
+}
+
+.toolbar-orientation-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: rgba(18, 25, 34, 0.72);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+}
+
+.toolbar-orientation-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line-bright);
+}
+
+.toolbar-orientation-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.toolbar-orientation-btn--active {
+  color: var(--text);
+  border-color: rgba(220, 165, 106, 0.75);
+  background: rgba(15, 22, 31, 0.96);
+}
+
+.workspace-layout-controls .workspace-layout-btn:first-child,
+.toolbar-orientation-controls .toolbar-orientation-btn:first-child {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.workspace-layout-controls .workspace-layout-btn:last-child,
+.toolbar-orientation-controls .toolbar-orientation-btn:last-child {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.toolbar-orientation-icon {
+  display: grid;
+  gap: 3px;
+}
+
+.toolbar-orientation-icon span {
+  display: block;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.toolbar-orientation-icon--top {
+  width: 14px;
+}
+
+.toolbar-orientation-icon--top span:first-child {
+  width: 14px;
+  height: 3px;
+}
+
+.toolbar-orientation-icon--top span:last-child {
+  width: 14px;
+  height: 8px;
+  opacity: 0.55;
+}
+
+.toolbar-orientation-icon--left {
+  grid-template-columns: 3px 8px;
+  width: 14px;
+  height: 12px;
+}
+
+.toolbar-orientation-icon--left span:first-child {
+  width: 3px;
+  height: 12px;
+}
+
+.toolbar-orientation-icon--left span:last-child {
+  width: 8px;
+  height: 12px;
+  opacity: 0.55;
 }
 
 .workspace-layout-icon {
@@ -673,7 +871,7 @@
 }
 
 .feature-tree-panel {
-  padding: 10px 12px 14px;
+  padding: 4px 6px 8px;
 }
 
 .tree-root-label {
@@ -914,20 +1112,20 @@
 
 .properties-panel {
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 8px;
 }
 
 .properties-group {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .properties-field {
   display: grid;
-  grid-template-columns: minmax(104px, 118px) minmax(0, 1fr);
+  grid-template-columns: minmax(74px, 88px) minmax(0, 1fr);
   align-items: center;
-  gap: 6px 12px;
+  gap: 6px 8px;
   color: var(--text-dim);
   font-size: 12px;
 }
@@ -1035,8 +1233,20 @@
   top: 10px;
   right: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  justify-content: flex-end;
+  max-width: calc(100% - 20px);
+  padding-left: 56px;
+}
+
+.viewport-presets__group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .preset-btn {
@@ -1159,33 +1369,15 @@
 .cam-tools {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 8px;
   min-height: 0;
 }
 
 .cam-operations-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 8px;
   min-height: 0;
-}
-
-.cam-toolbar {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.cam-toolbar-note {
-  margin-top: -4px;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.cam-toolbar--stack {
-  display: grid;
-  gap: 8px;
 }
 
 .cam-pass-toggle {
@@ -1197,14 +1389,14 @@
 .cam-tools-layout {
   display: grid;
   grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 12px;
+  gap: 8px;
   min-height: 0;
 }
 
 .cam-operations-layout {
   display: grid;
-  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 12px;
+  grid-template-rows: minmax(220px, 1fr) minmax(220px, 0.85fr);
+  gap: 8px;
   min-height: 0;
   height: 100%;
 }
@@ -1215,14 +1407,14 @@
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(17, 25, 34, 0.72);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0));
   overflow: visible;
 }
 
 .cam-section-header {
   position: relative;
   border-bottom: 1px solid var(--line);
-  padding: 10px 12px;
+  padding: 8px 10px;
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1329,6 +1521,41 @@
   min-height: 0;
   overflow: auto;
   border-radius: 0 0 12px 12px;
+}
+
+.cam-section-content--stack {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.cam-section-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.cam-section-toolbar--end {
+  justify-content: flex-end;
+}
+
+.cam-section-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.cam-section-body--stack {
+  display: grid;
+  align-content: start;
+}
+
+.cam-section-note {
+  padding: 0 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .cam-operation-tree {

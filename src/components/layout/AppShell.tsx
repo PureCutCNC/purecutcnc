@@ -6,6 +6,8 @@ import '../../styles/layout.css'
 
 interface AppShellProps {
   toolbar: ReactNode
+  globalToolbar: ReactNode
+  creationToolbar: ReactNode
   sketchCanvas: ReactNode
   featureTree: ReactNode
   propertiesPanel: ReactNode
@@ -17,6 +19,9 @@ interface AppShellProps {
   onCenterTabChange: (tab: 'sketch' | 'preview3d' | 'simulation') => void
   workspaceLayout: 'lcr' | 'lc' | 'c' | 'cr'
   onWorkspaceLayoutChange: (layout: 'lcr' | 'lc' | 'c' | 'cr') => void
+  toolbarOrientation: 'top' | 'left'
+  toolbarOrientationForced: boolean
+  onToolbarOrientationChange: (orientation: 'top' | 'left') => void
   rightTab: 'operations' | 'tools' | 'ai'
   onRightTabChange: (tab: 'operations' | 'tools' | 'ai') => void
 }
@@ -29,6 +34,8 @@ function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 
 
 export function AppShell({
   toolbar,
+  globalToolbar,
+  creationToolbar,
   sketchCanvas,
   featureTree,
   propertiesPanel,
@@ -40,6 +47,9 @@ export function AppShell({
   onCenterTabChange,
   workspaceLayout,
   onWorkspaceLayoutChange,
+  toolbarOrientation,
+  toolbarOrientationForced,
+  onToolbarOrientationChange,
   rightTab,
   onRightTabChange,
 }: AppShellProps) {
@@ -59,12 +69,18 @@ export function AppShell({
   return (
     <div className="app-shell">
       {/* ── Top toolbar ── */}
-      <header className="app-toolbar">
-        {toolbar}
+      <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
+        {toolbarOrientation === 'left' ? globalToolbar : toolbar}
       </header>
 
       {/* Main work area */}
-      <div className={`app-body app-body--${workspaceLayout}`}>
+      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation}`}>
+        {toolbarOrientation === 'left' ? (
+          <aside className="app-left-rail" aria-label="Creation tools">
+            {creationToolbar}
+          </aside>
+        ) : null}
+
         <aside className="panel-left">
           <section className="panel panel-tree">
             <div className="panel-header">
@@ -183,6 +199,33 @@ export function AppShell({
                     </span>
                   </button>
                 ))}
+              </div>
+              <div className="toolbar-orientation-controls" aria-label="Toolbar orientation">
+                <button
+                  className={`toolbar-orientation-btn ${toolbarOrientation === 'top' ? 'toolbar-orientation-btn--active' : ''}`}
+                  type="button"
+                  title="Use top toolbar"
+                  aria-label="Use top toolbar"
+                  onClick={() => onToolbarOrientationChange('top')}
+                >
+                  <span className="toolbar-orientation-icon toolbar-orientation-icon--top" aria-hidden="true">
+                    <span />
+                    <span />
+                  </span>
+                </button>
+                <button
+                  className={`toolbar-orientation-btn ${toolbarOrientation === 'left' ? 'toolbar-orientation-btn--active' : ''}`}
+                  type="button"
+                  title={toolbarOrientationForced ? 'Left toolbar is disabled below 1100px wide' : 'Use left toolbar'}
+                  aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 1100px wide' : 'Use left toolbar'}
+                  onClick={() => onToolbarOrientationChange('left')}
+                  disabled={toolbarOrientationForced}
+                >
+                  <span className="toolbar-orientation-icon toolbar-orientation-icon--left" aria-hidden="true">
+                    <span />
+                    <span />
+                  </span>
+                </button>
               </div>
             </div>
             <div className="centre-stage">
