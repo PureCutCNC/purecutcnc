@@ -165,6 +165,36 @@ export function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null,
   return safePoint
 }
 
+export function transitionToCutEntry(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  toXY: ToolpathPoint,
+  safeZ: number,
+  maxLinkDistance: number,
+): ToolpathPoint {
+  if (from && from.z === toXY.z) {
+    const dx = toXY.x - from.x
+    const dy = toXY.y - from.y
+    const distance = Math.hypot(dx, dy)
+
+    if (distance === 0) {
+      return toXY
+    }
+
+    if (distance <= maxLinkDistance) {
+      moves.push({
+        kind: 'cut',
+        from,
+        to: toXY,
+      })
+      return toXY
+    }
+  }
+
+  const safePosition = retractToSafe(moves, from, safeZ)
+  return pushRapidAndPlunge(moves, safePosition, toXY, safeZ)
+}
+
 export function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
   if (!(stepdown > 0)) {
     return [bottomZ]
@@ -300,6 +330,7 @@ function generateRoughBandMoves(
   stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
+  maxLinkDistance: number,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -330,15 +361,16 @@ function generateRoughBandMoves(
 
       for (const contour of contours) {
         const entryPoint = contourStartPoint(contour, z)
-        currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
         const cutMoves = toClosedCutMoves(contour, z)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-        currentPosition = retractToSafe(moves, currentPosition, safeZ)
       }
 
       currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
     }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
   return { moves, stepLevels, warnings }
@@ -351,6 +383,7 @@ function generateFinishBandMoves(
   _stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
+  maxLinkDistance: number,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -393,23 +426,25 @@ function generateFinishBandMoves(
   for (const z of wallStepLevels) {
     for (const contour of wallContours) {
       const entryPoint = contourStartPoint(contour, z)
-      currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
   for (const z of floorStepLevels) {
     for (const contour of floorContours) {
       const entryPoint = contourStartPoint(contour, z)
-      currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
   return {
@@ -468,6 +503,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
 
   const safeZ = getOperationSafeZ(project)
   const stepoverDistance = tool.diameter * operation.stepover
+  const maxLinkDistance = tool.diameter
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
@@ -481,6 +517,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
         operation.stepdown,
         tool.radius,
         stepoverDistance,
+        maxLinkDistance,
       )
       : generateRoughBandMoves(
         band,
@@ -489,6 +526,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
         operation.stepdown,
         tool.radius,
         stepoverDistance,
+        maxLinkDistance,
       )
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))

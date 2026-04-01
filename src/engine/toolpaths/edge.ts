@@ -97,6 +97,49 @@ function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null, safeZ:
   return safePoint
 }
 
+function transitionToCutEntry(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  toXY: ToolpathPoint,
+  safeZ: number,
+  maxLinkDistance: number,
+): ToolpathPoint {
+  if (from && from.x === toXY.x && from.y === toXY.y) {
+    if (from.z === toXY.z) {
+      return toXY
+    }
+
+    moves.push({
+      kind: toXY.z < from.z ? 'plunge' : 'rapid',
+      from,
+      to: toXY,
+    })
+    return toXY
+  }
+
+  if (from && from.z === toXY.z) {
+    const dx = toXY.x - from.x
+    const dy = toXY.y - from.y
+    const distance = Math.hypot(dx, dy)
+
+    if (distance === 0) {
+      return toXY
+    }
+
+    if (distance <= maxLinkDistance) {
+      moves.push({
+        kind: 'cut',
+        from,
+        to: toXY,
+      })
+      return toXY
+    }
+  }
+
+  const safePosition = retractToSafe(moves, from, safeZ)
+  return pushRapidAndPlunge(moves, safePosition, toXY, safeZ)
+}
+
 function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
   if (!(stepdown > 0)) {
     return [bottomZ]
@@ -252,6 +295,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
 
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
+  const maxLinkDistance = tool.diameter
 
   for (const feature of closedTargetFeatures) {
     const contours = resolveContourTarget(feature, offsetDistance)
@@ -275,14 +319,15 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     for (const z of levels) {
       for (const contour of contours) {
         const entryPoint = contourStartPoint(contour, z)
-        currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
         const cutMoves = toClosedCutMoves(contour, z)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-        currentPosition = retractToSafe(moves, currentPosition, safeZ)
       }
     }
   }
+
+  currentPosition = retractToSafe(moves, currentPosition, safeZ)
 
   let bounds: ToolpathBounds | null = null
   for (const move of moves) {
