@@ -253,6 +253,24 @@ export interface Tab {
 }
 
 // ============================================================
+// Backdrop
+// ============================================================
+
+export interface BackdropImage {
+  name: string
+  mimeType: string
+  imageDataUrl: string
+  intrinsicWidth: number
+  intrinsicHeight: number
+  center: Point
+  width: number
+  height: number
+  orientationAngle: number
+  opacity: number
+  visible: boolean
+}
+
+// ============================================================
 // Project — top-level .camj document
 // ============================================================
 
@@ -284,6 +302,7 @@ export interface Project {
   grid: GridSettings
   stock: Stock
   origin: MachineOrigin
+  backdrop: BackdropImage | null
   dimensions: Record<string, NamedDimension>
   features: SketchFeature[]
   featureFolders: FeatureFolder[]
@@ -761,6 +780,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'mm'
     grid: defaultGrid(units),
     stock,
     origin: defaultOrigin(stock),
+    backdrop: null,
     dimensions: {},
     features: [],
     featureFolders: [],

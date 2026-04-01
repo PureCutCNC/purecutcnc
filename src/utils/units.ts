@@ -1,4 +1,5 @@
 import type {
+  BackdropImage,
   Clamp,
   DimensionRef,
   GlobalConstraint,
@@ -226,6 +227,15 @@ function convertOrigin(origin: Project['origin'], from: Units, to: Units): Proje
   }
 }
 
+function convertBackdrop(backdrop: BackdropImage, from: Units, to: Units): BackdropImage {
+  return {
+    ...backdrop,
+    center: convertPoint(backdrop.center, from, to),
+    width: convertLength(backdrop.width, from, to),
+    height: convertLength(backdrop.height, from, to),
+  }
+}
+
 export function convertProjectUnits(project: Project, toUnits: Units): Project {
   const fromUnits = project.meta.units
   if (fromUnits === toUnits) {
@@ -245,6 +255,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     grid: convertGrid(project.grid, fromUnits, toUnits),
     stock: convertStock(project.stock, fromUnits, toUnits),
     origin: convertOrigin(project.origin, fromUnits, toUnits),
+    backdrop: project.backdrop ? convertBackdrop(project.backdrop, fromUnits, toUnits) : null,
     dimensions: Object.fromEntries(
       Object.entries(project.dimensions).map(([key, dimension]) => [
         key,

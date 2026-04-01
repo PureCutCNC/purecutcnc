@@ -27,9 +27,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     updateFeature,
     updateTab,
     updateClamp,
+    updateBackdrop,
     selectProject,
     selectGrid,
     selectOrigin,
+    selectBackdrop,
     selectFeaturesRoot,
     selectTabsRoot,
     selectClampsRoot,
@@ -217,6 +219,17 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onToggleVisible={() => setOrigin({ ...project.origin, visible: !project.origin.visible })}
         />
         <TreeRow
+          label={project.backdrop?.name ?? 'Backdrop'}
+          kind="backdrop"
+          isSelected={selection.selectedNode?.type === 'backdrop'}
+          isDragging={false}
+          visible={project.backdrop?.visible}
+          onClick={selectBackdrop}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onToggleVisible={project.backdrop ? () => updateBackdrop({ visible: !project.backdrop!.visible }) : undefined}
+        />
+        <TreeRow
           label="Features"
           kind="features"
           depth={0}
@@ -375,7 +388,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'origin' | 'features' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
+  kind: 'project' | 'grid' | 'stock' | 'origin' | 'backdrop' | 'features' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
   isSelected: boolean
   isDragging: boolean
@@ -468,6 +481,8 @@ function TreeRow({
                 ? 'root'
                 : kind === 'origin'
                   ? 'orig'
+                : kind === 'backdrop'
+                  ? 'back'
                 : kind === 'features'
                   ? 'feat'
                   : kind === 'tabs'

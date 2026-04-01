@@ -24,6 +24,7 @@ import {
   splineProfile,
 } from '../types/project'
 import type {
+  BackdropImage,
   Clamp,
   FeatureFolder,
   FeatureTreeEntry,
@@ -68,6 +69,7 @@ export type SelectedNode =
   | { type: 'grid' }
   | { type: 'stock' }
   | { type: 'origin' }
+  | { type: 'backdrop' }
   | { type: 'features_root' }
   | { type: 'tabs_root' }
   | { type: 'clamps_root' }
@@ -87,6 +89,7 @@ export interface ProjectStore {
   pendingAdd: PendingAddTool | null
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
+  backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   history: ProjectHistory
 
@@ -98,6 +101,11 @@ export interface ProjectStore {
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
   placeOriginAt: (point: Point) => void
+  loadBackdropImage: (input: Pick<BackdropImage, 'name' | 'mimeType' | 'imageDataUrl' | 'intrinsicWidth' | 'intrinsicHeight'>) => void
+  setBackdropImageLoading: (loading: boolean) => void
+  setBackdrop: (backdrop: BackdropImage | null) => void
+  updateBackdrop: (patch: Partial<BackdropImage>) => void
+  deleteBackdrop: () => void
   setSelectedMachineId: (id: string | null) => void
   addMachineDefinition: (definition: MachineDefinition) => void
   removeMachineDefinition: (id: string) => void
@@ -172,6 +180,7 @@ export interface ProjectStore {
   selectGrid: () => void
   selectStock: () => void
   selectOrigin: () => void
+  selectBackdrop: () => void
   selectFeaturesRoot: () => void
   selectTabsRoot: () => void
   selectClampsRoot: () => void
@@ -209,6 +218,9 @@ export interface ProjectStore {
   startCopyFeature: (featureId: string) => void
   startResizeFeature: (featureId: string) => void
   startRotateFeature: (featureId: string) => void
+  startMoveBackdrop: () => void
+  startResizeBackdrop: () => void
+  startRotateBackdrop: () => void
   cancelPendingMove: () => void
   setPendingMoveFrom: (point: Point) => void
   setPendingMoveTo: (point: Point) => void
@@ -248,7 +260,7 @@ export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
-  entityType: 'feature' | 'clamp' | 'tab'
+  entityType: 'feature' | 'clamp' | 'tab' | 'backdrop'
   entityIds: string[]
   fromPoint: Point | null
   toPoint: Point | null
@@ -257,6 +269,7 @@ export interface PendingMoveTool {
 
 export interface PendingTransformTool {
   mode: 'resize' | 'rotate'
+  entityType: 'feature' | 'backdrop'
   entityIds: string[]
   referenceStart: Point | null
   referenceEnd: Point | null
@@ -844,6 +857,87 @@ export function rotateFeatureFromReference(
       ),
       profile,
     },
+  }
+}
+
+function backdropResizeBasis(backdrop: BackdropImage): { u: Point; v: Point } {
+  const orientationAngle = normalizeAngleDegrees(backdrop.orientationAngle ?? 90)
+  return {
+    u: angleToPoint(orientationAngle - 90),
+    v: angleToPoint(orientationAngle),
+  }
+}
+
+export function resizeBackdropFromReference(
+  backdrop: BackdropImage,
+  referenceStart: Point,
+  referenceEnd: Point,
+  previewPoint: Point,
+): BackdropImage | null {
+  const referenceVector = subtractPoint(referenceEnd, referenceStart)
+  const referenceLength = pointLength(referenceVector)
+  if (referenceLength <= 1e-9) {
+    return null
+  }
+
+  const unit = scalePoint(referenceVector, 1 / referenceLength)
+  const projectedLength = dotPoint(subtractPoint(previewPoint, referenceStart), unit)
+  const constrainedPreview = addPoint(referenceStart, scalePoint(unit, projectedLength))
+  const { u, v } = backdropResizeBasis(backdrop)
+  const previewVector = subtractPoint(constrainedPreview, referenceStart)
+  const snappedScales = snappedResizeScales(referenceVector, previewVector, u, v)
+  if (!snappedScales) {
+    return null
+  }
+
+  const { scaleU, scaleV } = snappedScales
+  if (
+    !Number.isFinite(scaleU)
+    || !Number.isFinite(scaleV)
+    || scaleU <= 1e-6
+    || scaleV <= 1e-6
+  ) {
+    return null
+  }
+
+  const local = subtractPoint(backdrop.center, referenceStart)
+  const localU = dotPoint(local, u)
+  const localV = dotPoint(local, v)
+
+  return {
+    ...backdrop,
+    center: {
+      x: referenceStart.x + u.x * localU * scaleU + v.x * localV * scaleV,
+      y: referenceStart.y + u.y * localU * scaleU + v.y * localV * scaleV,
+    },
+    width: backdrop.width * scaleU,
+    height: backdrop.height * scaleV,
+  }
+}
+
+export function rotateBackdropFromReference(
+  backdrop: BackdropImage,
+  referenceStart: Point,
+  referenceEnd: Point,
+  previewPoint: Point,
+): BackdropImage | null {
+  const startVector = subtractPoint(referenceEnd, referenceStart)
+  const endVector = subtractPoint(previewPoint, referenceStart)
+  const startLength = pointLength(startVector)
+  const endLength = pointLength(endVector)
+  if (startLength <= 1e-9 || endLength <= 1e-9) {
+    return null
+  }
+
+  const angle = Math.atan2(crossPoint(startVector, endVector), dotPoint(startVector, endVector))
+  if (!Number.isFinite(angle)) {
+    return null
+  }
+
+  return {
+    ...backdrop,
+    center: rotatePointAround(backdrop.center, referenceStart, angle),
+    orientationAngle: normalizeAngleDegrees(backdrop.orientationAngle + angle * (180 / Math.PI)),
   }
 }
 
@@ -1548,6 +1642,94 @@ function normalizeTab(tab: Tab, units: Project['meta']['units'], index: number):
   }
 }
 
+function fitBackdropSize(
+  sourceWidth: number,
+  sourceHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } {
+  const safeSourceWidth = Math.max(sourceWidth, 1)
+  const safeSourceHeight = Math.max(sourceHeight, 1)
+  const scale = Math.min(maxWidth / safeSourceWidth, maxHeight / safeSourceHeight)
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  return {
+    width: safeSourceWidth * safeScale,
+    height: safeSourceHeight * safeScale,
+  }
+}
+
+function createBackdropFromImage(
+  project: Project,
+  input: Pick<BackdropImage, 'name' | 'mimeType' | 'imageDataUrl' | 'intrinsicWidth' | 'intrinsicHeight'>,
+): BackdropImage {
+  const stockBounds = getStockBounds(project.stock)
+  const maxWidth = Math.max((stockBounds.maxX - stockBounds.minX) * 0.9, convertLength(10, 'mm', project.meta.units))
+  const maxHeight = Math.max((stockBounds.maxY - stockBounds.minY) * 0.9, convertLength(10, 'mm', project.meta.units))
+  const fitted = fitBackdropSize(input.intrinsicWidth, input.intrinsicHeight, maxWidth, maxHeight)
+
+  return {
+    ...input,
+    center: {
+      x: (stockBounds.minX + stockBounds.maxX) / 2,
+      y: (stockBounds.minY + stockBounds.maxY) / 2,
+    },
+    width: fitted.width,
+    height: fitted.height,
+    orientationAngle: 90,
+    opacity: 0.6,
+    visible: true,
+  }
+}
+
+function replaceBackdropImage(existing: BackdropImage, project: Project, input: Pick<BackdropImage, 'name' | 'mimeType' | 'imageDataUrl' | 'intrinsicWidth' | 'intrinsicHeight'>): BackdropImage {
+  const fitted = fitBackdropSize(
+    input.intrinsicWidth,
+    input.intrinsicHeight,
+    Math.max(existing.width, convertLength(10, 'mm', project.meta.units)),
+    Math.max(existing.height, convertLength(10, 'mm', project.meta.units)),
+  )
+
+  return {
+    ...existing,
+    ...input,
+    width: fitted.width,
+    height: fitted.height,
+  }
+}
+
+function normalizeBackdrop(backdrop: BackdropImage | null | undefined, project: Project): BackdropImage | null {
+  if (!backdrop?.imageDataUrl) {
+    return null
+  }
+
+  const stockBounds = getStockBounds(project.stock)
+  const fallbackWidth = Math.max((stockBounds.maxX - stockBounds.minX) * 0.9, convertLength(10, 'mm', project.meta.units))
+  const fallbackHeight = Math.max((stockBounds.maxY - stockBounds.minY) * 0.9, convertLength(10, 'mm', project.meta.units))
+  const fitted = fitBackdropSize(
+    backdrop.intrinsicWidth ?? 1,
+    backdrop.intrinsicHeight ?? 1,
+    backdrop.width ?? fallbackWidth,
+    backdrop.height ?? fallbackHeight,
+  )
+
+  return {
+    name: backdrop.name || 'Backdrop',
+    mimeType: backdrop.mimeType || 'image/png',
+    imageDataUrl: backdrop.imageDataUrl,
+    intrinsicWidth: Math.max(backdrop.intrinsicWidth ?? 1, 1),
+    intrinsicHeight: Math.max(backdrop.intrinsicHeight ?? 1, 1),
+    center: backdrop.center ?? {
+      x: (stockBounds.minX + stockBounds.maxX) / 2,
+      y: (stockBounds.minY + stockBounds.maxY) / 2,
+    },
+    width: Math.max(backdrop.width ?? fitted.width, convertLength(1, 'mm', project.meta.units)),
+    height: Math.max(backdrop.height ?? fitted.height, convertLength(1, 'mm', project.meta.units)),
+    orientationAngle: normalizeAngleDegrees(backdrop.orientationAngle ?? 90),
+    opacity: Math.min(Math.max(backdrop.opacity ?? 0.6, 0), 1),
+    visible: backdrop.visible ?? true,
+  }
+}
+
 function normalizeMachineDefinitions(project: Project): {
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
@@ -1651,6 +1833,7 @@ function normalizeProject(project: Project): Project {
 
   const normalizedProject = {
     ...normalizedBase,
+    backdrop: normalizeBackdrop(project.backdrop, normalizedBase),
     operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
   }
 
@@ -1678,6 +1861,7 @@ function instantiateProjectTemplate(template?: Project, name?: string): Project 
       created: now,
       modified: now,
     },
+    backdrop: null,
     dimensions: {},
     features: [],
     featureFolders: [],
@@ -1754,6 +1938,10 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
         ? selectedNode
       : selectedNode?.type === 'origin'
         ? selectedNode
+      : selectedNode?.type === 'backdrop'
+        ? project.backdrop
+          ? selectedNode
+          : null
       : selectedNode?.type === 'features_root'
         ? selectedNode
         : selectedNode
@@ -1798,6 +1986,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   pendingAdd: null,
   pendingMove: null,
   pendingTransform: null,
+  backdropImageLoading: false,
   sketchEditSession: null,
   history: {
     past: [],
@@ -1955,6 +2144,120 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: nextProject,
         pendingAdd: null,
         pendingTransform: null,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  loadBackdropImage: (input) =>
+    set((s) => {
+      const nextBackdrop = s.project.backdrop
+        ? replaceBackdropImage(s.project.backdrop, s.project, input)
+        : createBackdropFromImage(s.project, input)
+      const nextProject = {
+        ...s.project,
+        backdrop: nextBackdrop,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'backdrop' },
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setBackdropImageLoading: (loading) => set({ backdropImageLoading: loading }),
+
+  setBackdrop: (backdrop) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        backdrop: backdrop ? normalizeBackdrop(backdrop, s.project) : null,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  updateBackdrop: (patch) =>
+    set((s) => {
+      if (!s.project.backdrop) {
+        return {}
+      }
+
+      const nextBackdrop = normalizeBackdrop({ ...s.project.backdrop, ...patch }, s.project)
+      const nextProject = {
+        ...s.project,
+        backdrop: nextBackdrop,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteBackdrop: () =>
+    set((s) => {
+      if (!s.project.backdrop) {
+        return {}
+      }
+
+      return {
+        project: {
+          ...s.project,
+          backdrop: null,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+        selection:
+          s.selection.selectedNode?.type === 'backdrop'
+            ? {
+                ...s.selection,
+                selectedNode: null,
+                selectedFeatureId: null,
+                selectedFeatureIds: [],
+                mode: 'feature',
+                activeControl: null,
+              }
+            : s.selection,
+        pendingMove: s.pendingMove?.entityType === 'backdrop' ? null : s.pendingMove,
+        pendingTransform: s.pendingTransform?.entityType === 'backdrop' ? null : s.pendingTransform,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -3358,6 +3661,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       sketchEditSession: null,
     })),
 
+  selectBackdrop: () =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedNode: { type: 'backdrop' },
+        mode: 'feature',
+        activeControl: null,
+      },
+      sketchEditSession: null,
+    })),
+
   selectFeaturesRoot: () =>
     set((s) => ({
       selection: {
@@ -4433,7 +4749,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         pendingAdd: null,
         pendingMove: null,
-        pendingTransform: { mode: 'resize', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingTransform: { mode: 'resize', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -4462,13 +4778,82 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         pendingAdd: null,
         pendingMove: null,
-        pendingTransform: { mode: 'rotate', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         sketchEditSession: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
           selectedFeatureIds: featureIds,
           selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startMoveBackdrop: () =>
+    set((s) => {
+      if (!s.project.backdrop) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        sketchEditSession: null,
+        pendingMove: { mode: 'move', entityType: 'backdrop', entityIds: ['backdrop'], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'backdrop' },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startResizeBackdrop: () =>
+    set((s) => {
+      if (!s.project.backdrop) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: { mode: 'resize', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'backdrop' },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startRotateBackdrop: () =>
+    set((s) => {
+      if (!s.project.backdrop) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: { mode: 'rotate', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'backdrop' },
           mode: 'feature',
           hoveredFeatureId: null,
           activeControl: null,
@@ -4657,6 +5042,38 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
 
       const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
+      if (entityType === 'backdrop') {
+        if (!s.project.backdrop || mode !== 'move') {
+          return { pendingMove: null }
+        }
+
+        const nextProject = {
+          ...s.project,
+          backdrop: {
+            ...s.project.backdrop,
+            center: {
+              x: s.project.backdrop.center.x + dx,
+              y: s.project.backdrop.center.y + dy,
+            },
+          },
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+
+        if (projectsEqual(nextProject, s.project)) {
+          return { pendingMove: null }
+        }
+
+        return {
+          project: nextProject,
+          pendingMove: null,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }
+
       if (entityType === 'feature') {
         const sourceFeatures = entityIds
           .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
@@ -4824,6 +5241,41 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const pendingTransform = s.pendingTransform
       if (!pendingTransform?.referenceStart || !pendingTransform.referenceEnd) {
         return {}
+      }
+
+      if (pendingTransform.entityType === 'backdrop') {
+        if (!s.project.backdrop) {
+          return { pendingTransform: null }
+        }
+
+        const nextBackdrop =
+          pendingTransform.mode === 'resize'
+            ? resizeBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+            : rotateBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+
+        if (!nextBackdrop) {
+          return { pendingTransform: null }
+        }
+
+        const nextProject = {
+          ...s.project,
+          backdrop: nextBackdrop,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+
+        if (projectsEqual(nextProject, s.project)) {
+          return { pendingTransform: null }
+        }
+
+        return {
+          project: nextProject,
+          pendingTransform: null,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
       }
 
       const sourceFeatures = pendingTransform.entityIds

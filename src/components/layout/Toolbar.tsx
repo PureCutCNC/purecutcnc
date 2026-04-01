@@ -70,6 +70,10 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startCopyFeature,
     startResizeFeature,
     startRotateFeature,
+    startMoveBackdrop,
+    startResizeBackdrop,
+    startRotateBackdrop,
+    deleteBackdrop,
     deleteFeatures,
     cancelPendingAdd,
     pendingMove,
@@ -146,6 +150,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is NonNullable<typeof project.features[number]> => feature !== null)
   const hasSelectedFeatures = selectedFeatureIds.length > 0
+  const hasSelectedBackdrop = selection.selectedNode?.type === 'backdrop' && !!project.backdrop
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
 
   function handleFeatureMove() {
@@ -208,6 +213,49 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     deleteFeatures(selectedFeatureIds)
   }
 
+  function handleBackdropMove() {
+    if (!project.backdrop) {
+      return
+    }
+
+    if (pendingMove?.entityType === 'backdrop' && pendingMove.mode === 'move') {
+      cancelPendingMove()
+      return
+    }
+
+    startMoveBackdrop()
+  }
+
+  function handleBackdropResize() {
+    if (!project.backdrop) {
+      return
+    }
+
+    if (pendingTransform?.entityType === 'backdrop' && pendingTransform.mode === 'resize') {
+      cancelPendingTransform()
+      return
+    }
+
+    startResizeBackdrop()
+  }
+
+  function handleBackdropRotate() {
+    if (!project.backdrop) {
+      return
+    }
+
+    if (pendingTransform?.entityType === 'backdrop' && pendingTransform.mode === 'rotate') {
+      cancelPendingTransform()
+      return
+    }
+
+    startRotateBackdrop()
+  }
+
+  function handleBackdropDelete() {
+    deleteBackdrop()
+  }
+
   return {
     project,
     pendingAdd,
@@ -219,6 +267,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     showNewProjectDialog,
     showImportDialog,
     hasSelectedFeatures,
+    hasSelectedBackdrop,
     hasLockedSelectedFeatures,
     setProjectName,
     setEditingName,
@@ -242,6 +291,10 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleFeatureResize,
     handleFeatureRotate,
     handleDeleteSelectedFeatures,
+    handleBackdropMove,
+    handleBackdropResize,
+    handleBackdropRotate,
+    handleBackdropDelete,
   }
 }
 
@@ -463,6 +516,56 @@ function FeatureEditActions({
   )
 }
 
+function BackdropEditActions({
+  pendingMoveMode,
+  pendingTransformMode,
+  tooltipSide,
+  onMove,
+  onDelete,
+  onResize,
+  onRotate,
+}: {
+  pendingMoveMode: 'move' | null
+  pendingTransformMode: 'resize' | 'rotate' | null
+  tooltipSide?: 'bottom' | 'right'
+  onMove: () => void
+  onDelete: () => void
+  onResize: () => void
+  onRotate: () => void
+}) {
+  return (
+    <div className="toolbar-group">
+      <ToolbarActionButton
+        icon="move"
+        label={pendingMoveMode === 'move' ? 'Cancel Move Backdrop' : 'Move Backdrop'}
+        active={pendingMoveMode === 'move'}
+        tooltipSide={tooltipSide}
+        onClick={onMove}
+      />
+      <ToolbarActionButton
+        icon="trash"
+        label="Delete Backdrop"
+        tooltipSide={tooltipSide}
+        onClick={onDelete}
+      />
+      <ToolbarActionButton
+        icon="resize"
+        label={pendingTransformMode === 'resize' ? 'Cancel Resize Backdrop' : 'Resize Backdrop'}
+        active={pendingTransformMode === 'resize'}
+        tooltipSide={tooltipSide}
+        onClick={onResize}
+      />
+      <ToolbarActionButton
+        icon="rotate"
+        label={pendingTransformMode === 'rotate' ? 'Cancel Rotate Backdrop' : 'Rotate Backdrop'}
+        active={pendingTransformMode === 'rotate'}
+        tooltipSide={tooltipSide}
+        onClick={onRotate}
+      />
+    </div>
+  )
+}
+
 function ToolbarDialog({
   showNewProjectDialog,
   showImportDialog,
@@ -543,13 +646,23 @@ export function CreationToolbar({ onZoomToModel, onImportComplete, layout = 'hor
         <FeatureEditActions
           hasLockedSelection={toolbar.hasLockedSelectedFeatures}
           pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-          pendingTransformMode={toolbar.pendingTransform?.mode ?? null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
           onCopy={toolbar.handleFeatureCopy}
           onMove={toolbar.handleFeatureMove}
           onDelete={toolbar.handleDeleteSelectedFeatures}
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
+        />
+      ) : toolbar.hasSelectedBackdrop ? (
+        <BackdropEditActions
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onMove={toolbar.handleBackdropMove}
+          onDelete={toolbar.handleBackdropDelete}
+          onResize={toolbar.handleBackdropResize}
+          onRotate={toolbar.handleBackdropRotate}
         />
       ) : null}
     </div>
@@ -593,12 +706,21 @@ export function Toolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
           <FeatureEditActions
             hasLockedSelection={toolbar.hasLockedSelectedFeatures}
             pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-            pendingTransformMode={toolbar.pendingTransform?.mode ?? null}
+            pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
             onCopy={toolbar.handleFeatureCopy}
             onMove={toolbar.handleFeatureMove}
             onDelete={toolbar.handleDeleteSelectedFeatures}
             onResize={toolbar.handleFeatureResize}
             onRotate={toolbar.handleFeatureRotate}
+          />
+        ) : toolbar.hasSelectedBackdrop ? (
+          <BackdropEditActions
+            pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
+            pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+            onMove={toolbar.handleBackdropMove}
+            onDelete={toolbar.handleBackdropDelete}
+            onResize={toolbar.handleBackdropResize}
+            onRotate={toolbar.handleBackdropRotate}
           />
         ) : null}
       </div>

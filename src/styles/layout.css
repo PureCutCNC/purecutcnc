@@ -1185,6 +1185,30 @@
   gap: 6px;
 }
 
+.properties-inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.inline-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(132, 155, 176, 0.28);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: inline-spinner-spin 700ms linear infinite;
+}
+
+@keyframes inline-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .properties-warning {
   padding: 8px 10px;
   border-radius: 7px;

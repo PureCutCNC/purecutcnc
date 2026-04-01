@@ -28,6 +28,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current first pass origin placement works, but the preview point updates inconsistently and can appear to lag until mouse motion slows or stops.
   - Revisit the sketch-canvas preview update path so origin placement feels as responsive as other placement interactions.
 
+### Backdrop image loading feedback
+- Status: Open
+- Priority: Low
+- Summary: Make backdrop load/replace progress feedback match the actual moment the new image becomes visible in the sketch.
+- Notes:
+  - Current first pass loading state is still not reliable enough.
+  - The Properties panel can revert from `Loading Image...` before the user feels the image is fully ready.
+  - Revisit this with a more explicit render-ready handshake or a small backdrop-specific loading overlay.
+
 ### Sketch legend review / removal
 - Status: Open
 - Priority: Low

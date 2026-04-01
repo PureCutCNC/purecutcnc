@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SketchControlRef } from '../../store/projectStore'
-import { resizeFeatureFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import { resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   circleProfile,
   getProfileBounds,
@@ -16,6 +16,7 @@ import {
   splineProfile,
 } from '../../types/project'
 import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock, Tab } from '../../types/project'
+import type { BackdropImage } from '../../types/project'
 import { convertLength, formatLength } from '../../utils/units'
 
 const PADDING = 42
@@ -188,6 +189,15 @@ function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getS
     maxX = Math.max(maxX, project.origin.x)
     minY = Math.min(minY, project.origin.y)
     maxY = Math.max(maxY, project.origin.y)
+  }
+
+  if (project.backdrop?.visible) {
+    const halfW = project.backdrop.width / 2
+    const halfH = project.backdrop.height / 2
+    minX = Math.min(minX, project.backdrop.center.x - halfW)
+    maxX = Math.max(maxX, project.backdrop.center.x + halfW)
+    minY = Math.min(minY, project.backdrop.center.y - halfH)
+    maxY = Math.max(maxY, project.backdrop.center.y + halfH)
   }
 
   return { minX, maxX, minY, maxY }
@@ -730,6 +740,73 @@ function drawOriginMarker(
   ctx.restore()
 }
 
+function backdropRotationRadians(backdrop: BackdropImage): number {
+  return ((backdrop.orientationAngle ?? 90) - 90) * (Math.PI / 180)
+}
+
+function drawBackdropImage(
+  ctx: CanvasRenderingContext2D,
+  backdrop: BackdropImage,
+  image: HTMLImageElement,
+  vt: ViewTransform,
+  selected: boolean,
+  label = 'Backdrop',
+): void {
+  const center = worldToCanvas(backdrop.center, vt)
+  const width = backdrop.width * vt.scale
+  const height = backdrop.height * vt.scale
+  const rotation = backdropRotationRadians(backdrop)
+
+  ctx.save()
+  ctx.translate(center.cx, center.cy)
+  ctx.rotate(rotation)
+  ctx.globalAlpha = Math.min(Math.max(backdrop.opacity, 0), 1)
+  ctx.drawImage(image, -width / 2, -height / 2, width, height)
+  ctx.restore()
+
+  if (selected) {
+    ctx.save()
+    ctx.translate(center.cx, center.cy)
+    ctx.rotate(rotation)
+    ctx.beginPath()
+    ctx.rect(-width / 2, -height / 2, width, height)
+    ctx.strokeStyle = '#efbc7a'
+    ctx.lineWidth = 2
+    ctx.setLineDash([8, 5])
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = 'rgba(239, 188, 122, 0.06)'
+    ctx.fill()
+    ctx.restore()
+
+    ctx.fillStyle = 'rgba(18, 22, 29, 0.8)'
+    ctx.fillRect(center.cx - 38, center.cy - 14, 76, 18)
+    ctx.fillStyle = '#d8e4f0'
+    ctx.font = '11px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText(label, center.cx, center.cy - 1)
+  }
+}
+
+function hitBackdrop(point: Point, backdrop: BackdropImage): boolean {
+  const angle = -backdropRotationRadians(backdrop)
+  const local = {
+    x: point.x - backdrop.center.x,
+    y: point.y - backdrop.center.y,
+  }
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const rotated = {
+    x: local.x * cos - local.y * sin,
+    y: local.x * sin + local.y * cos,
+  }
+
+  return (
+    Math.abs(rotated.x) <= backdrop.width / 2
+    && Math.abs(rotated.y) <= backdrop.height / 2
+  )
+}
+
 function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
   if (points.length === 0) {
     return []
@@ -1261,6 +1338,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [pendingTransformPreviewPoint, setPendingTransformPreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
+  const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
 
   const {
@@ -1270,6 +1348,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingTransform,
     selection,
     selectFeature,
+    selectBackdrop,
     selectTab,
     selectClamp,
     hoverFeature,
@@ -1304,8 +1383,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformReferenceEnd,
     completePendingTransform,
     cancelPendingTransform,
+    setBackdropImageLoading,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
+
+  useEffect(() => {
+    if (!project.backdrop?.imageDataUrl) {
+      setBackdropImage(null)
+      setBackdropImageLoading(false)
+      return
+    }
+
+    setBackdropImage(null)
+    const image = new Image()
+    image.onload = () => {
+      setBackdropImage(image)
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setBackdropImageLoading(false)
+        })
+      })
+    }
+    image.onerror = () => {
+      setBackdropImage(null)
+      setBackdropImageLoading(false)
+    }
+    image.src = project.backdrop.imageDataUrl
+  }, [project.backdrop?.imageDataUrl, setBackdropImageLoading])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -1324,6 +1428,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     ctx.fillRect(0, 0, width, height)
 
     drawGrid(ctx, vt, width, height, project.stock, project.grid)
+
+    if (project.backdrop?.visible && backdropImage) {
+      drawBackdropImage(
+        ctx,
+        project.backdrop,
+        backdropImage,
+        vt,
+        selection.selectedNode?.type === 'backdrop',
+        project.backdrop.name,
+      )
+    }
 
     if (project.stock.visible) {
       traceProfilePath(ctx, project.stock.profile, vt)
@@ -1444,7 +1559,32 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (pendingMove) {
       const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
-      if (pendingMove.entityType === 'feature') {
+      if (pendingMove.entityType === 'backdrop') {
+        if (!project.backdrop || !backdropImage) {
+          return
+        }
+
+        if (pendingMove.fromPoint && targetPoint) {
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          drawBackdropImage(
+            ctx,
+            {
+              ...project.backdrop,
+              center: {
+                x: project.backdrop.center.x + (targetPoint.x - pendingMove.fromPoint.x),
+                y: project.backdrop.center.y + (targetPoint.y - pendingMove.fromPoint.y),
+              },
+            },
+            backdropImage,
+            vt,
+            true,
+            'Move preview',
+          )
+        } else if (currentMovePreviewPoint) {
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+        }
+      } else if (pendingMove.entityType === 'feature') {
         const features = pendingMove.entityIds
           .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
           .filter((feature): feature is SketchFeature => feature !== null)
@@ -1575,6 +1715,45 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingTransform) {
+      if (pendingTransform.entityType === 'backdrop') {
+        if (!project.backdrop || !backdropImage) {
+          return
+        }
+
+        if (pendingTransform.referenceStart) {
+          drawPendingPoint(ctx, pendingTransform.referenceStart, vt)
+        }
+
+        if (pendingTransform.referenceEnd) {
+          drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
+          drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
+        }
+
+        if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+          drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
+          const previewBackdrop =
+            pendingTransform.mode === 'resize'
+              ? resizeBackdropFromReference(project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, currentTransformPreviewPoint)
+              : rotateBackdropFromReference(project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, currentTransformPreviewPoint)
+          if (previewBackdrop) {
+            drawBackdropImage(
+              ctx,
+              previewBackdrop,
+              backdropImage,
+              vt,
+              true,
+              pendingTransform.mode === 'resize' ? 'Resize preview' : 'Rotate preview',
+            )
+          }
+        } else if (currentTransformPreviewPoint) {
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+        }
+
+        drawDepthLegend(ctx, width, height)
+        return
+      }
+
       const features = pendingTransform.entityIds
         .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
@@ -2071,6 +2250,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const hitId = findHitFeatureId(world, project.features, vt)
     if (hitId) {
       selectFeature(hitId, event.metaKey || event.ctrlKey || event.shiftKey)
+    } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
+      selectBackdrop()
     } else if (!(event.metaKey || event.ctrlKey || event.shiftKey)) {
       selectFeature(null)
     }

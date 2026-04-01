@@ -56,6 +56,7 @@ interface DraftNumberInputProps {
   units: 'mm' | 'inch'
   min?: number
   max?: number
+  disabled?: boolean
   onCommit: (value: number) => void
   validate?: (value: number) => boolean
 }
@@ -65,6 +66,7 @@ function DraftNumberInput({
   units,
   min,
   max,
+  disabled = false,
   onCommit,
   validate,
 }: DraftNumberInputProps) {
@@ -99,6 +101,7 @@ function DraftNumberInput({
       type="text"
       inputMode="decimal"
       defaultValue={formatLength(value, units)}
+      disabled={disabled}
       spellCheck={false}
       data-numeric-entry="true"
       onBlur={(event) => commit(event.currentTarget)}
@@ -136,6 +139,14 @@ export function PropertiesPanel() {
     removeMachineDefinition,
     setOrigin,
     startPlaceOrigin,
+    loadBackdropImage,
+    backdropImageLoading,
+    setBackdropImageLoading,
+    updateBackdrop,
+    deleteBackdrop,
+    startMoveBackdrop,
+    startResizeBackdrop,
+    startRotateBackdrop,
     setGrid,
     setStock,
     setUnits,
@@ -150,6 +161,7 @@ export function PropertiesPanel() {
     enterClampEdit,
   } = useProjectStore()
   const machineFileInputRef = useRef<HTMLInputElement>(null)
+  const backdropFileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedFeatureIds = selection.selectedFeatureIds
   const selectedFeatureId = selectedFeatureIds.length === 1 ? selectedFeatureIds[0] : null
@@ -181,8 +193,57 @@ export function PropertiesPanel() {
       ? allSelectedFeatures[0]?.folderId ?? null
       : '__mixed__'
   const selectedMachine = project.meta.selectedMachineId
-    ? project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
-    : null
+      ? project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
+      : null
+
+  function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    if (!file.type.startsWith('image/')) {
+      alert('Backdrop must be a PNG or JPEG image.')
+      event.target.value = ''
+      return
+    }
+
+    setBackdropImageLoading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : null
+      if (!dataUrl) {
+        alert('Failed to read backdrop image.')
+        setBackdropImageLoading(false)
+        event.target.value = ''
+        return
+      }
+
+      const image = new Image()
+      image.onload = () => {
+        loadBackdropImage({
+          name: file.name.replace(/\.[^.]+$/, '') || 'Backdrop',
+          mimeType: file.type || 'image/png',
+          imageDataUrl: dataUrl,
+          intrinsicWidth: image.naturalWidth || image.width || 1,
+          intrinsicHeight: image.naturalHeight || image.height || 1,
+        })
+        event.target.value = ''
+      }
+      image.onerror = () => {
+        alert('Failed to decode backdrop image.')
+        setBackdropImageLoading(false)
+        event.target.value = ''
+      }
+      image.src = dataUrl
+    }
+    reader.onerror = () => {
+      alert('Failed to read backdrop image.')
+      setBackdropImageLoading(false)
+      event.target.value = ''
+    }
+    reader.readAsDataURL(file)
+  }
 
   function handleMachineDefinitionFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -561,6 +622,123 @@ export function PropertiesPanel() {
             </button>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (selection.selectedNode?.type === 'backdrop') {
+    const backdrop = project.backdrop
+
+    return (
+      <div className="properties-panel">
+        <div className="properties-group">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`backdrop-name-${backdrop?.name ?? 'Backdrop'}`}
+              value={backdrop?.name ?? 'Backdrop'}
+              disabled={!backdrop}
+              onCommit={(next) => backdrop && updateBackdrop({ name: next || 'Backdrop' })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Image</span>
+            <DraftTextInput
+              key={`backdrop-image-${backdrop?.imageDataUrl ?? 'none'}-${backdrop?.intrinsicWidth ?? 0}-${backdrop?.intrinsicHeight ?? 0}`}
+              value={backdrop ? `${backdrop.name} (${backdrop.intrinsicWidth} × ${backdrop.intrinsicHeight})` : 'No image loaded'}
+              disabled
+            />
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={backdrop?.visible ?? false}
+              disabled={!backdrop}
+              onChange={(event) => updateBackdrop({ visible: event.target.checked })}
+            />
+            <span>Visible</span>
+          </label>
+          <label className="properties-field">
+            <span>Opacity</span>
+            <input
+              type="range"
+              min="5"
+              max="100"
+              step="1"
+              value={Math.round((backdrop?.opacity ?? 0.6) * 100)}
+              disabled={!backdrop}
+              onChange={(event) => updateBackdrop({ opacity: Number(event.target.value) / 100 })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Width</span>
+            <DraftNumberInput
+              key={`backdrop-width-${backdrop?.width ?? 0}`}
+              value={backdrop?.width ?? 0}
+              units={units}
+              min={minimumLength}
+              disabled={!backdrop}
+              onCommit={(next) => updateBackdrop({ width: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Height</span>
+            <DraftNumberInput
+              key={`backdrop-height-${backdrop?.height ?? 0}`}
+              value={backdrop?.height ?? 0}
+              units={units}
+              min={minimumLength}
+              disabled={!backdrop}
+              onCommit={(next) => updateBackdrop({ height: next })}
+            />
+          </label>
+          <label className="properties-field">
+            <span>Angle</span>
+            <DraftTextInput
+              key={`backdrop-angle-${backdrop?.orientationAngle ?? 90}`}
+              value={String(Math.round((backdrop?.orientationAngle ?? 90) * 1000) / 1000)}
+              disabled={!backdrop}
+              onCommit={(next) => {
+                const parsed = Number(next)
+                if (Number.isFinite(parsed)) {
+                  updateBackdrop({ orientationAngle: parsed })
+                }
+              }}
+            />
+          </label>
+        </div>
+
+        <div className="properties-actions">
+          <button className="feat-btn" type="button" onClick={() => backdropFileInputRef.current?.click()} disabled={backdropImageLoading}>
+            {backdropImageLoading ? 'Loading Image...' : backdrop ? 'Replace Image' : 'Load Image'}
+          </button>
+          <button className="feat-btn" type="button" onClick={() => startMoveBackdrop()} disabled={!backdrop || backdropImageLoading}>
+            Move
+          </button>
+          <button className="feat-btn" type="button" onClick={() => startResizeBackdrop()} disabled={!backdrop || backdropImageLoading}>
+            Resize
+          </button>
+          <button className="feat-btn" type="button" onClick={() => startRotateBackdrop()} disabled={!backdrop || backdropImageLoading}>
+            Rotate
+          </button>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteBackdrop()} disabled={!backdrop || backdropImageLoading}>
+            Delete
+          </button>
+        </div>
+        {backdropImageLoading ? (
+          <div className="properties-inline-status" role="status" aria-live="polite">
+            <span className="inline-spinner" aria-hidden="true" />
+            Decoding backdrop image...
+          </div>
+        ) : null}
+
+        <input
+          ref={backdropFileInputRef}
+          type="file"
+          accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+          style={{ display: 'none' }}
+          onChange={handleBackdropFileChange}
+        />
       </div>
     )
   }
