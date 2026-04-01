@@ -1396,37 +1396,66 @@
   min-width: 0;
 }
 
-.cam-tool-row {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: rgba(18, 24, 33, 0.82);
-  color: var(--text);
+.cam-tool-tree {
+  padding-top: 8px;
+  min-height: 0;
+}
+
+.cam-tool-tree .tree-row {
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
   text-align: left;
-  cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease;
+  font: inherit;
+  outline: none;
+  box-shadow: none;
 }
 
-.cam-tool-row:hover {
-  border-color: var(--line-bright);
-  background: rgba(24, 31, 43, 0.9);
+.cam-tool-tree .tree-row:hover {
+  background: rgba(220, 165, 106, 0.06);
 }
 
-.cam-tool-row--active {
-  border-color: var(--accent);
-  background: rgba(74, 53, 27, 0.26);
+.cam-tool-tree .tree-row:focus-visible {
+  background: rgba(220, 165, 106, 0.12);
 }
 
-.cam-tool-row__name {
-  font-size: 13px;
+.cam-tool-tree .tree-row--selected,
+.cam-tool-tree .tree-row--selected:hover,
+.cam-tool-tree .tree-row--selected:focus-visible,
+.cam-tool-tree .tree-row--selected:active {
+  background: rgba(220, 165, 106, 0.12);
+}
+
+.cam-tool-tree .tree-row--selected .cam-tool-label__name {
+  color: #fff;
+}
+
+.cam-tool-tree .tree-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  white-space: normal;
+}
+
+.cam-tool-label__name,
+.cam-tool-label__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cam-tool-label__name {
+  color: var(--text);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.cam-tool-row__meta {
+.cam-tool-label__meta {
+  color: var(--text-dim);
   font-size: 11px;
-  color: var(--muted);
 }
 
 .cam-tool-properties {

@@ -455,6 +455,14 @@ export function CAMPanel({
     }
   }, [libraryLoading, libraryTools])
 
+  useEffect(() => {
+    if (mode !== 'tools' || libraryLoading || libraryTools.length > 0 || libraryError) {
+      return
+    }
+
+    void ensureBundledLibraryLoaded()
+  }, [ensureBundledLibraryLoaded, libraryError, libraryLoading, libraryTools.length, mode])
+
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
     () => ([
       {
@@ -1106,23 +1114,39 @@ export function CAMPanel({
                 <span>Tools</span>
               </div>
               <div className="cam-section-content">
-                <div className="cam-tool-list">
+                <div className="feature-tree-panel cam-tool-tree">
                   {project.tools.length === 0 ? (
                     <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
                   ) : (
-                    project.tools.map((tool) => (
-                      <button
-                        key={tool.id}
-                        className={`cam-tool-row ${tool.id === selectedToolId ? 'cam-tool-row--active' : ''}`}
-                        type="button"
+                    <div className="tree-list">
+                      {project.tools.map((tool) => (
+                        <div
+                          key={tool.id}
+                          className={[
+                            'tree-row',
+                            'tree-row--feature',
+                            tool.id === selectedToolId ? 'tree-row--selected' : '',
+                          ].join(' ')}
                         onClick={() => setSelectedToolId(tool.id)}
-                      >
-                        <span className="cam-tool-row__name">{tool.name}</span>
-                        <span className="cam-tool-row__meta">
-                          {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
-                        </span>
-                      </button>
-                    ))
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setSelectedToolId(tool.id)
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <span className="tree-branch" aria-hidden="true" />
+                          <span className="tree-label cam-tool-label" title={tool.name}>
+                            <span className="cam-tool-label__name">{tool.name}</span>
+                            <span className="cam-tool-label__meta">
+                              {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>

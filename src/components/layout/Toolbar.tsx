@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { NewProjectDialog } from '../project/NewProjectDialog'
 import { useProjectStore } from '../../store/projectStore'
 
 type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite'
@@ -133,7 +134,6 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
   const {
     project,
     pendingAdd,
-    createNewProject,
     history,
     setProjectName,
     saveProject,
@@ -150,11 +150,10 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
 
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
 
   function handleNewProject() {
-    createNewProject()
-    setNameVal('Untitled')
-    setEditingName(false)
+    setShowNewProjectDialog(true)
   }
 
   function handleSave() {
@@ -200,96 +199,107 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
   }
 
   return (
-    <div className="toolbar">
-      <div className="toolbar-project-block">
-        <span className="toolbar-project-label">Project</span>
-        {editingName ? (
-          <input
-            className="toolbar-name-input"
-            value={nameVal}
-            onChange={(event) => setNameVal(event.target.value)}
-            onBlur={() => {
-              setProjectName(nameVal.trim() || 'Untitled')
-              setEditingName(false)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
+    <>
+      <div className="toolbar">
+        <div className="toolbar-project-block">
+          <span className="toolbar-project-label">Project</span>
+          {editingName ? (
+            <input
+              className="toolbar-name-input"
+              value={nameVal}
+              onChange={(event) => setNameVal(event.target.value)}
+              onBlur={() => {
                 setProjectName(nameVal.trim() || 'Untitled')
                 setEditingName(false)
-              }
-              if (event.key === 'Escape') {
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setProjectName(nameVal.trim() || 'Untitled')
+                  setEditingName(false)
+                }
+                if (event.key === 'Escape') {
+                  setNameVal(project.meta.name)
+                  setEditingName(false)
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <button
+              className="toolbar-project-name"
+              onClick={() => {
                 setNameVal(project.meta.name)
-                setEditingName(false)
-              }
-            }}
-            autoFocus
+                setEditingName(true)
+              }}
+              title="Rename project"
+              type="button"
+            >
+              {project.meta.name}
+            </button>
+          )}
+        </div>
+
+        <div className="toolbar-group">
+          <ToolbarActionButton icon="new" label="New Project" onClick={handleNewProject} />
+          <ToolbarActionButton icon="open" label="Open Project" onClick={handleLoad} />
+          <ToolbarActionButton icon="save" label="Save Project" onClick={handleSave} />
+          <ToolbarActionButton
+            icon="undo"
+            label="Undo"
+            onClick={undo}
+            disabled={history.past.length === 0}
           />
-        ) : (
-          <button
-            className="toolbar-project-name"
-            onClick={() => {
-              setNameVal(project.meta.name)
-              setEditingName(true)
-            }}
-            title="Rename project"
-            type="button"
-          >
-            {project.meta.name}
-          </button>
-        )}
-      </div>
+          <ToolbarActionButton
+            icon="redo"
+            label="Redo"
+            onClick={redo}
+            disabled={history.future.length === 0}
+          />
+          <ToolbarActionButton icon="fit" label="Zoom to Model" onClick={onZoomToModel} />
+        </div>
 
-      <div className="toolbar-group">
-        <ToolbarActionButton icon="new" label="New Project" onClick={handleNewProject} />
-        <ToolbarActionButton icon="open" label="Open Project" onClick={handleLoad} />
-        <ToolbarActionButton icon="save" label="Save Project" onClick={handleSave} />
-        <ToolbarActionButton
-          icon="undo"
-          label="Undo"
-          onClick={undo}
-          disabled={history.past.length === 0}
-        />
-        <ToolbarActionButton
-          icon="redo"
-          label="Redo"
-          onClick={redo}
-          disabled={history.future.length === 0}
-        />
-        <ToolbarActionButton icon="fit" label="Zoom to Model" onClick={onZoomToModel} />
+        <div className="toolbar-group">
+          <ToolbarActionButton
+            icon="rect"
+            label={pendingAdd?.shape === 'rect' ? 'Cancel Rectangle Tool' : 'Add Rectangle'}
+            active={pendingAdd?.shape === 'rect'}
+            onClick={() => togglePlacement('rect', startAddRectPlacement)}
+          />
+          <ToolbarActionButton
+            icon="circle"
+            label={pendingAdd?.shape === 'circle' ? 'Cancel Circle Tool' : 'Add Circle'}
+            active={pendingAdd?.shape === 'circle'}
+            onClick={() => togglePlacement('circle', startAddCirclePlacement)}
+          />
+          <ToolbarActionButton
+            icon="polygon"
+            label={pendingAdd?.shape === 'polygon' ? 'Cancel Polygon Tool' : 'Add Polygon'}
+            active={pendingAdd?.shape === 'polygon'}
+            onClick={() => togglePlacement('polygon', startAddPolygonPlacement)}
+          />
+          <ToolbarActionButton
+            icon="spline"
+            label={pendingAdd?.shape === 'spline' ? 'Cancel Spline Tool' : 'Add Spline'}
+            active={pendingAdd?.shape === 'spline'}
+            onClick={() => togglePlacement('spline', startAddSplinePlacement)}
+          />
+          <ToolbarActionButton
+            icon="composite"
+            label={pendingAdd?.shape === 'composite' ? 'Cancel Composite Tool' : 'Add Composite'}
+            active={pendingAdd?.shape === 'composite'}
+            onClick={() => togglePlacement('composite', startAddCompositePlacement)}
+          />
+        </div>
       </div>
-
-      <div className="toolbar-group">
-        <ToolbarActionButton
-          icon="rect"
-          label={pendingAdd?.shape === 'rect' ? 'Cancel Rectangle Tool' : 'Add Rectangle'}
-          active={pendingAdd?.shape === 'rect'}
-          onClick={() => togglePlacement('rect', startAddRectPlacement)}
+      {showNewProjectDialog ? (
+        <NewProjectDialog
+          onClose={() => {
+            setNameVal(useProjectStore.getState().project.meta.name)
+            setEditingName(false)
+            setShowNewProjectDialog(false)
+          }}
         />
-        <ToolbarActionButton
-          icon="circle"
-          label={pendingAdd?.shape === 'circle' ? 'Cancel Circle Tool' : 'Add Circle'}
-          active={pendingAdd?.shape === 'circle'}
-          onClick={() => togglePlacement('circle', startAddCirclePlacement)}
-        />
-        <ToolbarActionButton
-          icon="polygon"
-          label={pendingAdd?.shape === 'polygon' ? 'Cancel Polygon Tool' : 'Add Polygon'}
-          active={pendingAdd?.shape === 'polygon'}
-          onClick={() => togglePlacement('polygon', startAddPolygonPlacement)}
-        />
-        <ToolbarActionButton
-          icon="spline"
-          label={pendingAdd?.shape === 'spline' ? 'Cancel Spline Tool' : 'Add Spline'}
-          active={pendingAdd?.shape === 'spline'}
-          onClick={() => togglePlacement('spline', startAddSplinePlacement)}
-        />
-        <ToolbarActionButton
-          icon="composite"
-          label={pendingAdd?.shape === 'composite' ? 'Cancel Composite Tool' : 'Add Composite'}
-          active={pendingAdd?.shape === 'composite'}
-          onClick={() => togglePlacement('composite', startAddCompositePlacement)}
-        />
-      </div>
-    </div>
+      ) : null}
+    </>
   )
 }

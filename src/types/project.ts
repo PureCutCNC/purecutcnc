@@ -461,10 +461,19 @@ export function splineProfile(points: Point[]): SketchProfile {
   }
 }
 
-export function defaultStock(w = 100, h = 80, thickness = 20): Stock {
+export function defaultStock(
+  w = 100,
+  h = 80,
+  thickness = 20,
+  units: ProjectMeta['units'] = 'mm',
+): Stock {
+  const width = units === 'inch' ? 4 : w
+  const height = units === 'inch' ? 3 : h
+  const stockThickness = units === 'inch' ? 0.75 : thickness
+
   return {
-    profile: rectProfile(0, 0, w, h),
-    thickness,
+    profile: rectProfile(0, 0, width, height),
+    thickness: stockThickness,
     material: 'aluminum_6061',
     color: '#8899aa',
     visible: true,
@@ -472,7 +481,18 @@ export function defaultStock(w = 100, h = 80, thickness = 20): Stock {
   }
 }
 
-export function defaultGrid(): GridSettings {
+export function defaultGrid(units: ProjectMeta['units'] = 'mm'): GridSettings {
+  if (units === 'inch') {
+    return {
+      extent: 8,
+      majorSpacing: 1,
+      minorSpacing: 0.25,
+      snapEnabled: true,
+      snapIncrement: 0.125,
+      visible: true,
+    }
+  }
+
   return {
     extent: 200,
     majorSpacing: 10,
@@ -717,24 +737,24 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
   )
 }
 
-export function newProject(name = 'Untitled'): Project {
+export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'mm'): Project {
   const now = new Date().toISOString()
-  const stock = defaultStock()
+  const stock = defaultStock(undefined, undefined, undefined, units)
   return {
     version: '1.0',
     meta: {
       name,
       created: now,
       modified: now,
-      units: 'mm',
-      maxTravelZ: defaultMaxTravelZ('mm'),
-      operationClearanceZ: defaultOperationClearanceZ('mm'),
-      clampClearanceXY: defaultClampClearanceXY('mm'),
-      clampClearanceZ: defaultClampClearanceZ('mm'),
+      units,
+      maxTravelZ: defaultMaxTravelZ(units),
+      operationClearanceZ: defaultOperationClearanceZ(units),
+      clampClearanceXY: defaultClampClearanceXY(units),
+      clampClearanceZ: defaultClampClearanceZ(units),
       machineId: null,
       customMachineDefinition: null,
     },
-    grid: defaultGrid(),
+    grid: defaultGrid(units),
     stock,
     origin: defaultOrigin(stock),
     dimensions: {},

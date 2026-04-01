@@ -86,7 +86,7 @@ export interface ProjectStore {
   history: ProjectHistory
 
   // Project ops
-  createNewProject: () => void
+  createNewProject: (template?: Project, name?: string) => void
   setProjectName: (name: string) => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
@@ -1253,6 +1253,35 @@ function cloneProject(project: Project): Project {
   return structuredClone(project)
 }
 
+function instantiateProjectTemplate(template?: Project, name?: string): Project {
+  const now = new Date().toISOString()
+
+  if (!template) {
+    return newProject(name)
+  }
+
+  const cloned = cloneProject(template)
+  return {
+    ...cloned,
+    meta: {
+      ...cloned.meta,
+      name: name?.trim() || 'Untitled',
+      created: now,
+      modified: now,
+    },
+    dimensions: {},
+    features: [],
+    featureFolders: [],
+    featureTree: [],
+    global_constraints: [],
+    tools: [],
+    operations: [],
+    tabs: [],
+    clamps: [],
+    ai_history: [],
+  }
+}
+
 function projectsEqual(a: Project, b: Project): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
@@ -1370,9 +1399,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // ── Project ──────────────────────────────────────────────
 
-  createNewProject: () =>
+  createNewProject: (template, name) =>
     set((state) => {
-      const nextProject = normalizeProject(newProject())
+      const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
       return {
         project: nextProject,
         pendingAdd: null,
@@ -1535,9 +1564,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadProject: (p) =>
     set((state) => {
-      const stockDefaults = defaultStock()
-      const gridDefaults = defaultGrid()
       const normalizedProject = normalizeProject(p)
+      const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
+      const gridDefaults = defaultGrid(normalizedProject.meta.units)
       const nextProject = {
         ...normalizedProject,
         grid: {

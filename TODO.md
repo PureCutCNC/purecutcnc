@@ -131,6 +131,25 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - This should become a named tolerance or resolution setting instead of an implicit sampling constant.
   - Longer term, machine definitions may want their own export tolerance if we keep linearized output for some controllers.
 
+### Unit-specific G-code number formatting
+- Status: Open
+- Priority: Medium
+- Summary: Make G-code numeric precision depend on export units instead of one fixed decimal count per machine definition.
+- Notes:
+  - The current `numberFormat.decimalPlaces` model is too coarse because inch and mm exports need different practical precision.
+  - Example: bundled `grbl` is currently `3` decimals for both unit systems, which is acceptable for mm but too coarse for inch.
+  - Update the machine-definition schema and formatter so unit-specific precision is explicit rather than implied.
+  - Coordinate this with CAM flattening tolerance so exported point spacing is not finer than controller formatting can represent.
+
+### Move machine selection into project settings
+- Status: Open
+- Priority: Medium
+- Summary: Move machine/post selection out of the export dialog and into the project settings/origin setup area.
+- Notes:
+  - Machine choice is part of project CAM setup, not a per-export surprise setting.
+  - The export dialog should focus on confirming/exporting with the already selected machine.
+  - This should align with the broader direction of treating origin and machine configuration as setup objects rather than export-only controls.
+
 ### Operation-specific cleanup strategies
 - Status: Open
 - Priority: Medium
