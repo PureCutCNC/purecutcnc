@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { copyBundledDefinitions } from '../engine/gcode/definitions'
+import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
 import {
   type Segment,
@@ -94,8 +96,9 @@ export interface ProjectStore {
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
   placeOriginAt: (point: Point) => void
-  setMachineId: (id: string | null) => void
-  setCustomMachineDefinition: (definition: MachineDefinition | null) => void
+  setSelectedMachineId: (id: string | null) => void
+  addMachineDefinition: (definition: MachineDefinition) => void
+  removeMachineDefinition: (id: string) => void
   loadProject: (p: Project) => void
   saveProject: () => string   // returns JSON string
   undo: () => void
@@ -1538,13 +1541,75 @@ function normalizeTab(tab: Tab, units: Project['meta']['units'], index: number):
   }
 }
 
+function normalizeMachineDefinitions(project: Project): {
+  machineDefinitions: MachineDefinition[]
+  selectedMachineId: string | null
+} {
+  const legacyMeta = project.meta as Project['meta'] & {
+    machineId?: string | null
+    customMachineDefinition?: MachineDefinition | null
+  }
+
+  const rawDefinitions = Array.isArray(project.meta.machineDefinitions)
+    ? project.meta.machineDefinitions
+    : null
+
+  if (!rawDefinitions) {
+    const machineDefinitions = copyBundledDefinitions()
+    let selectedMachineId: string | null = legacyMeta.machineId ?? null
+
+    if (legacyMeta.customMachineDefinition) {
+      const customDefinition = validateMachineDefinition({
+        ...legacyMeta.customMachineDefinition,
+        builtin: false,
+      })
+      machineDefinitions.push(customDefinition)
+      selectedMachineId = customDefinition.id
+    }
+
+    return {
+      machineDefinitions,
+      selectedMachineId: machineDefinitions.some((definition) => definition.id === selectedMachineId)
+        ? selectedMachineId
+        : null,
+    }
+  }
+
+  const definitions: MachineDefinition[] = []
+  const seenIds = new Set<string>()
+  for (const rawDefinition of rawDefinitions) {
+    try {
+      const definition = validateMachineDefinition(rawDefinition)
+      if (seenIds.has(definition.id)) {
+        continue
+      }
+      seenIds.add(definition.id)
+      definitions.push(definition)
+    } catch {
+      continue
+    }
+  }
+
+  const selectedMachineId = project.meta.selectedMachineId ?? null
+
+  return {
+    machineDefinitions: definitions,
+    selectedMachineId: definitions.some((definition) => definition.id === selectedMachineId)
+      ? selectedMachineId
+      : null,
+  }
+}
+
 function normalizeProject(project: Project): Project {
+  const normalizedMachines = normalizeMachineDefinitions(project)
   const meta = {
     ...project.meta,
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
     clampClearanceZ: project.meta.clampClearanceZ ?? defaultClampClearanceZ(project.meta.units),
+    machineDefinitions: normalizedMachines.machineDefinitions,
+    selectedMachineId: normalizedMachines.selectedMachineId,
   }
 
   const stockBounds = getStockBounds(project.stock)
@@ -1864,11 +1929,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
-  setMachineId: (id) =>
+  setSelectedMachineId: (id) =>
     set((s) => {
+      const nextId = id && s.project.meta.machineDefinitions.some((definition) => definition.id === id)
+        ? id
+        : null
       const nextProject = {
         ...s.project,
-        meta: { ...s.project.meta, machineId: id, modified: new Date().toISOString() },
+        meta: { ...s.project.meta, selectedMachineId: nextId, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
         return {}
@@ -1883,15 +1951,59 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
-  setCustomMachineDefinition: (definition) =>
+  addMachineDefinition: (definition) =>
     set((s) => {
+      const normalizedDefinition = validateMachineDefinition({
+        ...definition,
+        builtin: false,
+      })
+      const machineDefinitions = [
+        ...s.project.meta.machineDefinitions.filter((entry) => entry.id !== normalizedDefinition.id),
+        normalizedDefinition,
+      ]
       const nextProject = {
         ...s.project,
-        meta: { ...s.project.meta, customMachineDefinition: definition, modified: new Date().toISOString() },
+        meta: {
+          ...s.project.meta,
+          machineDefinitions,
+          selectedMachineId: normalizedDefinition.id,
+          modified: new Date().toISOString(),
+        },
       }
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  removeMachineDefinition: (id) =>
+    set((s) => {
+      const definition = s.project.meta.machineDefinitions.find((entry) => entry.id === id)
+      if (!definition || definition.builtin) {
+        return {}
+      }
+
+      const machineDefinitions = s.project.meta.machineDefinitions.filter((entry) => entry.id !== id)
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          machineDefinitions,
+          selectedMachineId: s.project.meta.selectedMachineId === id ? null : s.project.meta.selectedMachineId,
+          modified: new Date().toISOString(),
+        },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
       return {
         project: nextProject,
         history: {

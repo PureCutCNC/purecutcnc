@@ -7,6 +7,7 @@ export const MachineDefinitionSchema = z.object({
   name: z.string(),
   description: z.string(),
   vendor: z.string().optional(),
+  builtin: z.boolean().default(false),
   fileExtension: z.string(),
   coordinateSystem: z.object({
     xAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),

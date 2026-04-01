@@ -113,7 +113,9 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
         features: activeTemplate.features.length,
         tools: activeTemplate.tools.length,
         operations: activeTemplate.operations.length,
-        machine: activeTemplate.meta.machineId ?? (activeTemplate.meta.customMachineDefinition ? `Custom: ${activeTemplate.meta.customMachineDefinition.name}` : 'None'),
+        machine: activeTemplate.meta.selectedMachineId
+          ? (activeTemplate.meta.machineDefinitions.find((definition) => definition.id === activeTemplate.meta.selectedMachineId)?.name ?? 'None')
+          : 'None',
       }
     } catch {
       return null

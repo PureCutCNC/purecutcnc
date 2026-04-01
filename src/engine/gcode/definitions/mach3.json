@@ -2,6 +2,7 @@
   "id": "mach3",
   "name": "Mach3",
   "description": "Mach3 — Windows-based CNC controller",
+  "builtin": true,
   "fileExtension": "tap",
   "coordinateSystem": {
     "xAxis": "X",

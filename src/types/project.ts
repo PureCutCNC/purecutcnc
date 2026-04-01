@@ -1,4 +1,5 @@
 import type { MachineDefinition } from '../engine/gcode/types'
+import { copyBundledDefinitions } from '../engine/gcode/definitions'
 
 // ============================================================
 // Core geometry primitives
@@ -264,8 +265,8 @@ export interface ProjectMeta {
   operationClearanceZ: number
   clampClearanceXY: number
   clampClearanceZ: number
-  machineId: string | null
-  customMachineDefinition: MachineDefinition | null
+  machineDefinitions: MachineDefinition[]
+  selectedMachineId: string | null
 }
 
 export interface MachineOrigin {
@@ -752,8 +753,8 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'mm'
       operationClearanceZ: defaultOperationClearanceZ(units),
       clampClearanceXY: defaultClampClearanceXY(units),
       clampClearanceZ: defaultClampClearanceZ(units),
-      machineId: null,
-      customMachineDefinition: null,
+      machineDefinitions: copyBundledDefinitions(),
+      selectedMachineId: null,
     },
     grid: defaultGrid(units),
     stock,

@@ -141,14 +141,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Update the machine-definition schema and formatter so unit-specific precision is explicit rather than implied.
   - Coordinate this with CAM flattening tolerance so exported point spacing is not finer than controller formatting can represent.
 
-### Move machine selection into project settings
+### Machine add/remove validation
 - Status: Open
-- Priority: Medium
-- Summary: Move machine/post selection out of the export dialog and into the project settings/origin setup area.
+- Priority: Low
+- Summary: Test the project-settings machine add/remove flow and harden any edge cases.
 - Notes:
-  - Machine choice is part of project CAM setup, not a per-export surprise setting.
-  - The export dialog should focus on confirming/exporting with the already selected machine.
-  - This should align with the broader direction of treating origin and machine configuration as setup objects rather than export-only controls.
+  - The machine-definition refactor is implemented, but add/remove behavior still needs direct UI testing.
+  - Verify custom JSON import, selection persistence, builtin deletion protection, and removal of the currently selected custom definition.
+  - If issues show up, fix them in the project settings panel/store path rather than reintroducing export-dialog machine state.
 
 ### Operation-specific cleanup strategies
 - Status: Open

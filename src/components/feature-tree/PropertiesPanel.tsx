@@ -1,3 +1,6 @@
+import { useRef } from 'react'
+import type { ChangeEvent } from 'react'
+import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
@@ -127,6 +130,9 @@ export function PropertiesPanel() {
     deleteFeatureFolder,
     setProjectName,
     setProjectClearances,
+    setSelectedMachineId,
+    addMachineDefinition,
+    removeMachineDefinition,
     setOrigin,
     startPlaceOrigin,
     setGrid,
@@ -142,6 +148,7 @@ export function PropertiesPanel() {
     enterTabEdit,
     enterClampEdit,
   } = useProjectStore()
+  const machineFileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedFeatureIds = selection.selectedFeatureIds
   const selectedFeatureId = selectedFeatureIds.length === 1 ? selectedFeatureIds[0] : null
@@ -172,6 +179,33 @@ export function PropertiesPanel() {
     allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
       ? allSelectedFeatures[0]?.folderId ?? null
       : '__mixed__'
+  const selectedMachine = project.meta.selectedMachineId
+    ? project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
+    : null
+
+  function handleMachineDefinitionFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (readerEvent) => {
+      try {
+        const parsed = JSON.parse(readerEvent.target?.result as string)
+        const validated = validateMachineDefinition({
+          ...parsed,
+          builtin: false,
+        })
+        addMachineDefinition(validated)
+      } catch (error) {
+        alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        event.target.value = ''
+      }
+    }
+    reader.readAsText(file)
+  }
 
   function renderFolderSelect(value: string | null, onChange: (folderId: string | null) => void) {
     return (
@@ -251,6 +285,39 @@ export function PropertiesPanel() {
               onCommit={(next) => setProjectClearances({ clampClearanceZ: next })}
             />
           </label>
+          <label className="properties-field">
+            <span>Machine</span>
+            <select
+              value={project.meta.selectedMachineId ?? ''}
+              onChange={(event) => setSelectedMachineId(event.target.value || null)}
+            >
+              <option value="">None</option>
+              {project.meta.machineDefinitions.map((definition) => (
+                <option key={definition.id} value={definition.id}>
+                  {definition.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="properties-actions">
+            <button type="button" onClick={() => machineFileInputRef.current?.click()}>
+              Add Machine
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedMachine && removeMachineDefinition(selectedMachine.id)}
+              disabled={!selectedMachine || selectedMachine.builtin}
+            >
+              Remove
+            </button>
+          </div>
+          <input
+            ref={machineFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={handleMachineDefinitionFileChange}
+          />
         </div>
       </div>
     )

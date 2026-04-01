@@ -2,6 +2,7 @@
   "id": "grbl",
   "name": "GRBL 1.1",
   "description": "GRBL 1.1 — common hobby CNC controller (Arduino-based)",
+  "builtin": true,
   "fileExtension": "nc",
   "coordinateSystem": {
     "xAxis": "X",

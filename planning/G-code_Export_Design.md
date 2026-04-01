@@ -510,15 +510,12 @@ src/engine/gcode/
 }
 ```
 
-### 4.3 Custom Definitions
+### 4.3 Project-Stored Machine Library
 
-Users can load a custom definition JSON from disk following the same schema.
-This is the escape hatch for machines not in the bundled library (Centroid,
-Fanuc, Haas, proprietary dialects).
-
-Custom definitions are stored in the project file under
-`meta.customMachineDefinition`. The bundled library definition is referenced
-only by ID.
+Users can load additional machine definition JSON files into the project using
+the same schema. Bundled definitions and user-added definitions are both stored
+in `meta.machineDefinitions`, with the active machine referenced by
+`meta.selectedMachineId`.
 
 ---
 
@@ -683,15 +680,16 @@ interface Project {
 // In ProjectMeta:
 interface ProjectMeta {
   // ... existing fields ...
-  machineId: string | null                       // "grbl", "mach3", etc.
-  customMachineDefinition: MachineDefinition | null  // user-provided definition
+  machineDefinitions: MachineDefinition[]   // bundled + user-added
+  selectedMachineId: string | null
 }
 ```
 
 ### 6.2 Load-Time Defaults
 
 Files without `origin` receive `defaultOrigin(project.stock)` on load.
-Files without `meta.machineId` receive `null` (user selects before export).
+Files without `meta.machineDefinitions` are migrated by seeding bundled
+definitions and carrying forward any legacy machine selection/custom definition.
 
 ---
 
@@ -707,8 +705,7 @@ persistent panel — it is modal, opened on demand.
 │  Export G-code                                 [✕]  │
 ├─────────────────────────────────────────────────────┤
 │                                                     │
-│  Machine:  [GRBL 1.1                          ▼]   │
-│            [Load custom definition...]              │
+│  Machine:   GRBL 1.1                  [Change ↗]   │
 │                                                     │
 │  Origin:   Using current CAM origin as X0 Y0 Z0    │
 │            (place/edit in sketch or project tree)  │
@@ -744,11 +741,11 @@ persistent panel — it is modal, opened on demand.
 └─────────────────────────────────────────────────────┘
 ```
 
-### 7.2 Machine Picker
+### 7.2 Machine Source
 
-The machine picker lists bundled definitions by name. It remembers the last
-used machine per project (`meta.machineId`). The "Load custom definition..."
-option opens a file picker for a `.json` file.
+Machine selection is managed from Project Settings, not inline in the export
+dialog. The dialog shows the active machine name read-only and links back to
+project settings for changes.
 
 ### 7.3 Operations Set
 

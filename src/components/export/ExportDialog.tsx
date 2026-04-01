@@ -1,11 +1,9 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useProjectStore } from '../../store/projectStore'
-import { 
-  BUNDLED_DEFINITIONS, 
-  type MachineDefinition, 
-  runPostProcessor, 
+import {
+  getActiveMachineDefinition,
+  runPostProcessor,
   type PostProcessorResult,
-  validateMachineDefinition
 } from '../../engine/gcode'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
@@ -17,102 +15,91 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
-  const { project, setMachineId, setCustomMachineDefinition } = useProjectStore()
-  
-  const [selectedMachineId, setSelectedMachineId] = useState<string>(project.meta.machineId || BUNDLED_DEFINITIONS[0].id)
-  const [customDefinition, setCustomDefinition] = useState<MachineDefinition | null>(project.meta.customMachineDefinition)
+  const { project, selectProject } = useProjectStore()
+
   const [emitToolChanges, setEmitToolChanges] = useState(true)
   const [emitCoolant, setEmitCoolant] = useState(false)
   const [previewResult, setPreviewResult] = useState<PostProcessorResult | null>(null)
 
-  const activeDefinition = useMemo(() => {
-    if (selectedMachineId === 'custom' && customDefinition) {
-      return customDefinition
-    }
-    return BUNDLED_DEFINITIONS.find(d => d.id === selectedMachineId) || BUNDLED_DEFINITIONS[0]
-  }, [selectedMachineId, customDefinition])
+  const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
 
-  // Prepare post-processor input
-  const postProcessorInput = useMemo(() => {
-    const activeOperations = project.operations
-      .filter(op => op.enabled && op.showToolpath && op.toolRef)
-      .map(op => {
+  const activeOperations = useMemo(() => (
+    project.operations
+      .filter((op) => op.enabled && op.showToolpath && op.toolRef)
+      .map((op) => {
         const toolpath = generateToolpath(op)
-        const toolRecord = project.tools.find(t => t.id === op.toolRef)
-        if (!toolpath || !toolRecord) return null
-        
+        const toolRecord = project.tools.find((tool) => tool.id === op.toolRef)
+        if (!toolpath || !toolRecord) {
+          return null
+        }
+
         return {
           operation: op,
           tool: normalizeToolForProject(toolRecord, project),
-          toolpath
+          toolpath,
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
+  ), [generateToolpath, project])
 
-    return {
-      project,
-      operations: activeOperations,
-      definition: activeDefinition,
-      options: {
-        emitToolChanges,
-        emitCoolant,
-        programName: project.meta.name
-      }
+  const previewWarnings = useMemo(() => {
+    const warnings = [...(previewResult?.warnings ?? [])]
+    if (!activeDefinition) {
+      warnings.unshift('No machine selected. Select one in Project Settings before exporting.')
     }
-  }, [project, activeDefinition, emitToolChanges, emitCoolant, generateToolpath])
+    return warnings
+  }, [activeDefinition, previewResult])
 
-  // Run post-processor for preview (debounced)
   useEffect(() => {
+    if (!activeDefinition) {
+      setPreviewResult(null)
+      return
+    }
+
     const timer = setTimeout(() => {
-      const result = runPostProcessor(postProcessorInput)
+      const result = runPostProcessor({
+        project,
+        operations: activeOperations,
+        definition: activeDefinition,
+        options: {
+          emitToolChanges,
+          emitCoolant,
+          programName: project.meta.name,
+        },
+      })
       setPreviewResult(result)
     }, 300)
+
     return () => clearTimeout(timer)
-  }, [postProcessorInput])
+  }, [activeDefinition, activeOperations, emitCoolant, emitToolChanges, project])
 
   function handleDownload() {
-    if (!previewResult) return
-
-    // Save machine settings to project store
-    setMachineId(selectedMachineId === 'custom' ? null : selectedMachineId)
-    if (selectedMachineId === 'custom') {
-      setCustomMachineDefinition(customDefinition)
+    if (!previewResult || !activeDefinition) {
+      return
     }
 
     const blob = new Blob([previewResult.gcode], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    const ext = activeDefinition.fileExtension
-    anchor.download = `${project.meta.name.replace(/\s+/g, '_')}.${ext}`
+    anchor.download = `${project.meta.name.replace(/\s+/g, '_')}.${activeDefinition.fileExtension}`
     anchor.click()
     URL.revokeObjectURL(url)
     onClose()
   }
 
-  function handleLoadCustom(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const json = JSON.parse(e.target?.result as string)
-        const validated = validateMachineDefinition(json)
-        setCustomDefinition(validated)
-        setSelectedMachineId('custom')
-      } catch (err) {
-        alert('Invalid machine definition JSON: ' + (err instanceof Error ? err.message : String(err)))
-      }
-    }
-    reader.readAsText(file)
+  function handleChangeMachine() {
+    selectProject()
+    onClose()
   }
 
-  const previewLines = previewResult?.gcode.split('\n').slice(0, 30).join('\n') || 'Generating preview...'
+  const previewLines = previewResult
+    ? previewResult.gcode.split('\n').slice(0, 30).join('\n')
+    : 'Select a machine in Project Settings to generate G-code preview.'
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={e => e.stopPropagation()}>
+      <div className="dialog" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">Export G-code</h2>
           <button className="dialog-close" onClick={onClose} aria-label="Close">
@@ -125,24 +112,15 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Machine Controller</label>
-              <div className="properties-field">
-                <select 
-                  value={selectedMachineId} 
-                  onChange={e => setSelectedMachineId(e.target.value)}
-                  style={{ width: '100%' }}
-                >
-                  {BUNDLED_DEFINITIONS.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                  <option value="custom">{customDefinition ? `Custom: ${customDefinition.name}` : 'Load Custom...'}</option>
-                </select>
-              </div>
-              {selectedMachineId === 'custom' && (
-                <div style={{ marginTop: '8px' }}>
-                  <input type="file" accept=".json" onChange={handleLoadCustom} style={{ fontSize: '12px' }} />
+              <label className="dialog-section-title">Machine</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+                  {activeDefinition?.name ?? 'None selected'}
                 </div>
-              )}
+                <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ height: '32px', padding: '0 12px' }}>
+                  Change
+                </button>
+              </div>
             </div>
 
             <div className="dialog-section-group">
@@ -150,7 +128,7 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
               <div style={{ fontSize: '13px', color: 'var(--text)', display: 'grid', gap: '6px' }}>
                 <div>Export uses the current project origin as machine X0 Y0 Z0.</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                  Edit Origin in the Project Tree to change the work zero used for export.
+                  Edit Origin in the sketch or project tree to change the work zero used for export.
                 </div>
               </div>
             </div>
@@ -166,30 +144,30 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
               <label className="dialog-section-title">Options</label>
               <div className="export-option-group">
                 <label className="export-option">
-                  <input 
-                    type="checkbox" 
-                    checked={emitToolChanges} 
-                    onChange={e => setEmitToolChanges(e.target.checked)} 
+                  <input
+                    type="checkbox"
+                    checked={emitToolChanges}
+                    onChange={(event) => setEmitToolChanges(event.target.checked)}
                   />
                   Emit tool changes (M6)
                 </label>
                 <label className="export-option">
-                  <input 
-                    type="checkbox" 
-                    checked={emitCoolant} 
-                    onChange={e => setEmitCoolant(e.target.checked)} 
+                  <input
+                    type="checkbox"
+                    checked={emitCoolant}
+                    onChange={(event) => setEmitCoolant(event.target.checked)}
                   />
                   Emit coolant commands
                 </label>
               </div>
             </div>
 
-            {previewResult && previewResult.warnings.length > 0 && (
+            {previewWarnings.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">Warnings</label>
                 <div className="export-warning-list">
-                  {previewResult.warnings.map((w, i) => (
-                    <div key={i} className="export-warning">{w}</div>
+                  {previewWarnings.map((warning, index) => (
+                    <div key={index} className="export-warning">{warning}</div>
                   ))}
                 </div>
               </div>
@@ -211,13 +189,14 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
         </div>
 
         <div className="dialog-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button 
-            className="btn-primary" 
+          <button className="btn-secondary" onClick={onClose} type="button">Cancel</button>
+          <button
+            className="btn-primary"
             onClick={handleDownload}
-            disabled={!previewResult || (selectedMachineId === 'custom' && !customDefinition)}
+            disabled={!previewResult || !activeDefinition}
+            type="button"
           >
-            Download .{activeDefinition.fileExtension}
+            Download {activeDefinition ? `.${activeDefinition.fileExtension}` : ''}
           </button>
         </div>
       </div>

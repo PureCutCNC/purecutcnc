@@ -2,6 +2,7 @@
   "id": "linuxcnc",
   "name": "LinuxCNC",
   "description": "LinuxCNC — professional open-source CNC controller",
+  "builtin": true,
   "fileExtension": "ngc",
   "coordinateSystem": {
     "xAxis": "X",
