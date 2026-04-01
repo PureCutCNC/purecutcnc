@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SketchControlRef } from '../../store/projectStore'
-import { useProjectStore } from '../../store/projectStore'
+import { resizeFeatureFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   circleProfile,
   getProfileBounds,
@@ -979,6 +979,21 @@ function scalePoint(point: Point, scale: number): Point {
   return { x: point.x * scale, y: point.y * scale }
 }
 
+function projectPointOntoLine(point: Point, lineStart: Point, lineEnd: Point): Point {
+  const direction = subtractPoint(lineEnd, lineStart)
+  const lengthSq = dotPoint(direction, direction)
+  if (lengthSq <= 1e-9) {
+    return lineStart
+  }
+
+  const t = dotPoint(subtractPoint(point, lineStart), direction) / lengthSq
+  return addPoint(lineStart, scalePoint(direction, t))
+}
+
+function dotPoint(a: Point, b: Point): number {
+  return a.x * b.x + a.y * b.y
+}
+
 function appendSplineDraftSegment(
   start: Point,
   segments: Segment[],
@@ -1239,6 +1254,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const drawFrameRef = useRef<number | null>(null)
   const [pendingPreviewPoint, setPendingPreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [pendingMovePreviewPoint, setPendingMovePreviewPoint] = useState<PendingPreviewPoint | null>(null)
+  const [pendingTransformPreviewPoint, setPendingTransformPreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const copyCountInputRef = useRef<HTMLInputElement>(null)
@@ -1247,6 +1263,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     project,
     pendingAdd,
     pendingMove,
+    pendingTransform,
     selection,
     selectFeature,
     selectTab,
@@ -1279,6 +1296,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingMoveTo,
     completePendingMove,
     cancelPendingMove,
+    setPendingTransformReferenceStart,
+    setPendingTransformReferenceEnd,
+    completePendingTransform,
+    cancelPendingTransform,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
 
@@ -1410,6 +1431,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const currentMovePreviewPoint =
       pendingMove && pendingMovePreviewPoint?.session === pendingMove.session
         ? pendingMovePreviewPoint.point
+        : null
+    const currentTransformPreviewPoint =
+      pendingTransform && pendingTransformPreviewPoint?.session === pendingTransform.session
+        ? pendingTransformPreviewPoint.point
         : null
 
     if (pendingMove) {
@@ -1545,8 +1570,48 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    if (pendingTransform) {
+      const features = pendingTransform.entityIds
+        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+
+      if (features.length === 0) {
+        return
+      }
+
+      if (pendingTransform.referenceStart) {
+        drawPendingPoint(ctx, pendingTransform.referenceStart, vt)
+      }
+
+      if (pendingTransform.referenceEnd) {
+        drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
+        drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
+      }
+
+      if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+        drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
+        for (const feature of features) {
+          const previewFeature =
+            pendingTransform.mode === 'resize'
+              ? resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, currentTransformPreviewPoint)
+              : rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, currentTransformPreviewPoint)
+          if (previewFeature) {
+            drawPreviewProfile(
+              ctx,
+              previewFeature.sketch.profile,
+              vt,
+              pendingTransform.mode === 'resize' ? 'Resize preview' : 'Rotate preview',
+            )
+          }
+        }
+      } else if (currentTransformPreviewPoint) {
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+      }
+    }
+
     drawDepthLegend(ctx, width, height)
-  }, [collidingClampIds, copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
+  }, [collidingClampIds, copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, pendingTransform, pendingTransformPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
 
   useEffect(() => {
     draw()
@@ -1622,7 +1687,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (selection.mode !== 'sketch_edit' && !pendingMove) {
+    if (selection.mode !== 'sketch_edit' && !pendingMove && !pendingTransform) {
       return
     }
 
@@ -1631,7 +1696,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, pendingMove, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [copyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>): CanvasPoint {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -1794,6 +1859,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingTransform) {
+      hoverFeature(null)
+      const constrainedPoint =
+        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
+          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+          : snapped
+      setPendingTransformPreviewPoint({ point: constrainedPoint, session: pendingTransform.session })
+      return
+    }
+
     if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
       moveFeatureControl(selection.selectedFeatureId, selection.activeControl, snapped)
       return
@@ -1857,6 +1932,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       })
     } else {
       setPendingMovePreviewPoint(null)
+    }
+    if (pendingTransform?.referenceStart) {
+      setPendingTransformPreviewPoint({
+        point: pendingTransform.referenceEnd ?? pendingTransform.referenceStart,
+        session: pendingTransform.session,
+      })
+    } else {
+      setPendingTransformPreviewPoint(null)
     }
   }
 
@@ -1946,6 +2029,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingTransform) {
+      const snapped = {
+        x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
+        y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
+      }
+      const constrainedPoint =
+        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
+          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+          : snapped
+
+      if (!pendingTransform.referenceStart) {
+        setPendingTransformReferenceStart(snapped)
+        setPendingTransformPreviewPoint({ point: snapped, session: pendingTransform.session })
+      } else if (!pendingTransform.referenceEnd) {
+        setPendingTransformReferenceEnd(snapped)
+        setPendingTransformPreviewPoint({ point: snapped, session: pendingTransform.session })
+      } else {
+        completePendingTransform(constrainedPoint)
+        setPendingTransformPreviewPoint(null)
+      }
+      return
+    }
+
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
       selectClamp(hitClampId)
@@ -1997,6 +2103,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingMove || pendingTransform) {
+      return
+    }
+
     const point = canvasCoordinates(event)
     const canvas = canvasRef.current
     if (!canvas) return
@@ -2030,6 +2140,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingMove) {
+      return
+    }
+
+    if (pendingTransform) {
       return
     }
 
@@ -2117,6 +2231,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (event.key === 'Escape' && pendingTransform) {
+      cancelPendingTransform()
+      setPendingTransformPreviewPoint(null)
+      return
+    }
+
     if (
       event.key === 'Enter'
       && pendingMove?.mode === 'copy'
@@ -2198,7 +2318,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd || pendingMove ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform ? 'sketch-canvas--placing' : ''}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -2309,6 +2429,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? 'Click the copy from point, then click the copy to point. Press Esc to cancel.'
                 : 'Click the move from point, then click the move to point. Press Esc to cancel.'
           )}
+        </div>
+      )}
+      {pendingTransform && (
+        <div className="sketch-place-banner">
+          {pendingTransform.mode === 'resize'
+            ? !pendingTransform.referenceStart
+              ? 'Click the first resize reference point. Press Esc to cancel.'
+              : !pendingTransform.referenceEnd
+                ? 'Click the second resize reference point. Press Esc to cancel.'
+                : 'Move along the reference line to preview the resized feature, then click to commit. Press Esc to cancel.'
+            : !pendingTransform.referenceStart
+              ? 'Click the rotation origin. Press Esc to cancel.'
+              : !pendingTransform.referenceEnd
+                ? 'Click the reference direction point. Press Esc to cancel.'
+                : 'Move to preview the rotated feature, then click to commit. Press Esc to cancel.'}
         </div>
       )}
     </div>

@@ -3,7 +3,7 @@ import { Icon } from '../Icon'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite'
+type ToolbarIconName = 'new' | 'open' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'copy' | 'move' | 'trash' | 'resize' | 'rotate'
 
 interface ToolbarActionButtonProps {
   icon: ToolbarIconName
@@ -63,7 +63,17 @@ function useToolbarState(onZoomToModel: () => void) {
     startAddPolygonPlacement,
     startAddSplinePlacement,
     startAddCompositePlacement,
+    startMoveFeature,
+    startCopyFeature,
+    startResizeFeature,
+    startRotateFeature,
+    deleteFeatures,
     cancelPendingAdd,
+    pendingMove,
+    pendingTransform,
+    cancelPendingMove,
+    cancelPendingTransform,
+    selection,
   } = useProjectStore()
 
   const [editingName, setEditingName] = useState(false)
@@ -122,13 +132,85 @@ function useToolbarState(onZoomToModel: () => void) {
     start()
   }
 
+  const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
+  const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
+  const selectedFeatures = selectedFeatureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is NonNullable<typeof project.features[number]> => feature !== null)
+  const hasSelectedFeatures = selectedFeatureIds.length > 0
+  const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
+
+  function handleFeatureMove() {
+    if (!primarySelectedFeatureId) {
+      return
+    }
+
+    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'move') {
+      cancelPendingMove()
+      return
+    }
+
+    startMoveFeature(primarySelectedFeatureId)
+  }
+
+  function handleFeatureCopy() {
+    if (!primarySelectedFeatureId) {
+      return
+    }
+
+    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'copy') {
+      cancelPendingMove()
+      return
+    }
+
+    startCopyFeature(primarySelectedFeatureId)
+  }
+
+  function handleFeatureResize() {
+    if (!primarySelectedFeatureId) {
+      return
+    }
+
+    if (pendingTransform?.mode === 'resize') {
+      cancelPendingTransform()
+      return
+    }
+
+    startResizeFeature(primarySelectedFeatureId)
+  }
+
+  function handleFeatureRotate() {
+    if (!primarySelectedFeatureId) {
+      return
+    }
+
+    if (pendingTransform?.mode === 'rotate') {
+      cancelPendingTransform()
+      return
+    }
+
+    startRotateFeature(primarySelectedFeatureId)
+  }
+
+  function handleDeleteSelectedFeatures() {
+    if (!hasSelectedFeatures) {
+      return
+    }
+
+    deleteFeatures(selectedFeatureIds)
+  }
+
   return {
     project,
     pendingAdd,
+    pendingMove,
+    pendingTransform,
     history,
     editingName,
     nameVal,
     showNewProjectDialog,
+    hasSelectedFeatures,
+    hasLockedSelectedFeatures,
     setProjectName,
     setEditingName,
     setNameVal,
@@ -144,6 +226,11 @@ function useToolbarState(onZoomToModel: () => void) {
     handlePolygon: () => togglePlacement('polygon', startAddPolygonPlacement),
     handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
     handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
+    handleFeatureMove,
+    handleFeatureCopy,
+    handleFeatureResize,
+    handleFeatureRotate,
+    handleDeleteSelectedFeatures,
   }
 }
 
@@ -298,6 +385,70 @@ function CreationActions({
   )
 }
 
+function FeatureEditActions({
+  hasLockedSelection,
+  pendingMoveMode,
+  pendingTransformMode,
+  tooltipSide,
+  onCopy,
+  onMove,
+  onDelete,
+  onResize,
+  onRotate,
+}: {
+  hasLockedSelection: boolean
+  pendingMoveMode: 'move' | 'copy' | null
+  pendingTransformMode: 'resize' | 'rotate' | null
+  tooltipSide?: 'bottom' | 'right'
+  onCopy: () => void
+  onMove: () => void
+  onDelete: () => void
+  onResize: () => void
+  onRotate: () => void
+}) {
+  return (
+    <div className="toolbar-group">
+      <ToolbarActionButton
+        icon="copy"
+        label={pendingMoveMode === 'copy' ? 'Cancel Copy' : 'Copy Selected Features'}
+        active={pendingMoveMode === 'copy'}
+        tooltipSide={tooltipSide}
+        onClick={onCopy}
+      />
+      <ToolbarActionButton
+        icon="move"
+        label={pendingMoveMode === 'move' ? 'Cancel Move' : 'Move Selected Features'}
+        active={pendingMoveMode === 'move'}
+        disabled={hasLockedSelection}
+        tooltipSide={tooltipSide}
+        onClick={onMove}
+      />
+      <ToolbarActionButton
+        icon="trash"
+        label="Delete Selected Features"
+        tooltipSide={tooltipSide}
+        onClick={onDelete}
+      />
+      <ToolbarActionButton
+        icon="resize"
+        label={pendingTransformMode === 'resize' ? 'Cancel Resize' : 'Resize Selected Features'}
+        active={pendingTransformMode === 'resize'}
+        disabled={hasLockedSelection}
+        tooltipSide={tooltipSide}
+        onClick={onResize}
+      />
+      <ToolbarActionButton
+        icon="rotate"
+        label={pendingTransformMode === 'rotate' ? 'Cancel Rotate' : 'Rotate Selected Features'}
+        active={pendingTransformMode === 'rotate'}
+        disabled={hasLockedSelection}
+        tooltipSide={tooltipSide}
+        onClick={onRotate}
+      />
+    </div>
+  )
+}
+
 function ToolbarDialog({
   open,
   onClose,
@@ -359,6 +510,19 @@ export function CreationToolbar({ onZoomToModel, layout = 'horizontal' }: Toolba
         onSpline={toolbar.handleSpline}
         onComposite={toolbar.handleComposite}
       />
+      {toolbar.hasSelectedFeatures ? (
+        <FeatureEditActions
+          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
+          pendingTransformMode={toolbar.pendingTransform?.mode ?? null}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onCopy={toolbar.handleFeatureCopy}
+          onMove={toolbar.handleFeatureMove}
+          onDelete={toolbar.handleDeleteSelectedFeatures}
+          onResize={toolbar.handleFeatureResize}
+          onRotate={toolbar.handleFeatureRotate}
+        />
+      ) : null}
     </div>
   )
 }
@@ -395,6 +559,18 @@ export function Toolbar({ onZoomToModel }: ToolbarProps) {
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
         />
+        {toolbar.hasSelectedFeatures ? (
+          <FeatureEditActions
+            hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+            pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
+            pendingTransformMode={toolbar.pendingTransform?.mode ?? null}
+            onCopy={toolbar.handleFeatureCopy}
+            onMove={toolbar.handleFeatureMove}
+            onDelete={toolbar.handleDeleteSelectedFeatures}
+            onResize={toolbar.handleFeatureResize}
+            onRotate={toolbar.handleFeatureRotate}
+          />
+        ) : null}
       </div>
       <ToolbarDialog
         open={toolbar.showNewProjectDialog}

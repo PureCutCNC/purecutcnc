@@ -14,6 +14,7 @@ import {
   inferFeatureKind,
   getProfileBounds,
   newProject,
+  profileVertices,
   rectProfile,
   circleProfile,
   polygonProfile,
@@ -82,6 +83,7 @@ export interface ProjectStore {
   selection: SelectionState
   pendingAdd: PendingAddTool | null
   pendingMove: PendingMoveTool | null
+  pendingTransform: PendingTransformTool | null
   sketchEditSession: SketchEditSession | null
   history: ProjectHistory
 
@@ -199,10 +201,16 @@ export interface ProjectStore {
   completePendingOpenComposite: () => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string) => void
+  startResizeFeature: (featureId: string) => void
+  startRotateFeature: (featureId: string) => void
   cancelPendingMove: () => void
   setPendingMoveFrom: (point: Point) => void
   setPendingMoveTo: (point: Point) => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
+  cancelPendingTransform: () => void
+  setPendingTransformReferenceStart: (point: Point) => void
+  setPendingTransformReferenceEnd: (point: Point) => void
+  completePendingTransform: (previewPoint: Point) => void
 
   // Convenience: add primitive features
   addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
@@ -238,6 +246,14 @@ export interface PendingMoveTool {
   entityIds: string[]
   fromPoint: Point | null
   toPoint: Point | null
+  session: number
+}
+
+export interface PendingTransformTool {
+  mode: 'resize' | 'rotate'
+  entityIds: string[]
+  referenceStart: Point | null
+  referenceEnd: Point | null
   session: number
 }
 
@@ -321,6 +337,14 @@ function subtractPoint(a: Point, b: Point): Point {
 
 function scalePoint(point: Point, scale: number): Point {
   return { x: point.x * scale, y: point.y * scale }
+}
+
+function dotPoint(a: Point, b: Point): number {
+  return a.x * b.x + a.y * b.y
+}
+
+function crossPoint(a: Point, b: Point): number {
+  return a.x * b.y - a.y * b.x
 }
 
 function pointLength(point: Point): number {
@@ -505,6 +529,315 @@ function translateProfile(profile: SketchFeature['sketch']['profile'], dx: numbe
         to: translatePoint(segment.to, dx, dy),
       }
     }),
+  }
+}
+
+function transformProfile(
+  profile: SketchFeature['sketch']['profile'],
+  transformPoint: (point: Point) => Point,
+): SketchFeature['sketch']['profile'] {
+  return {
+    ...profile,
+    start: transformPoint(profile.start),
+    segments: profile.segments.map((segment) => {
+      if (segment.type === 'arc') {
+        return {
+          ...segment,
+          to: transformPoint(segment.to),
+          center: transformPoint(segment.center),
+        }
+      }
+
+      if (segment.type === 'bezier') {
+        return {
+          ...segment,
+          to: transformPoint(segment.to),
+          control1: transformPoint(segment.control1),
+          control2: transformPoint(segment.control2),
+        }
+      }
+
+      return {
+        ...segment,
+        to: transformPoint(segment.to),
+      }
+    }),
+  }
+}
+
+function arcToBezierSegments(start: Point, segment: Extract<Segment, { type: 'arc' }>): Array<Extract<Segment, { type: 'bezier' }>> {
+  const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+  const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+  const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+
+  let sweep = endAngle - startAngle
+  if (segment.clockwise && sweep > 0) {
+    sweep -= Math.PI * 2
+  } else if (!segment.clockwise && sweep < 0) {
+    sweep += Math.PI * 2
+  }
+
+  const segmentCount = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 2)))
+  const step = sweep / segmentCount
+  const result: Array<Extract<Segment, { type: 'bezier' }>> = []
+
+  for (let index = 0; index < segmentCount; index += 1) {
+    const angle0 = startAngle + step * index
+    const angle1 = angle0 + step
+    const p0 = {
+      x: segment.center.x + Math.cos(angle0) * radius,
+      y: segment.center.y + Math.sin(angle0) * radius,
+    }
+    const p3 = {
+      x: segment.center.x + Math.cos(angle1) * radius,
+      y: segment.center.y + Math.sin(angle1) * radius,
+    }
+    const tangent0 = { x: -Math.sin(angle0), y: Math.cos(angle0) }
+    const tangent1 = { x: -Math.sin(angle1), y: Math.cos(angle1) }
+    const handleScale = (4 / 3) * Math.tan(step / 4) * radius
+
+    result.push({
+      type: 'bezier',
+      control1: {
+        x: p0.x + tangent0.x * handleScale,
+        y: p0.y + tangent0.y * handleScale,
+      },
+      control2: {
+        x: p3.x - tangent1.x * handleScale,
+        y: p3.y - tangent1.y * handleScale,
+      },
+      to: p3,
+    })
+  }
+
+  return result
+}
+
+function transformProfileAffine(
+  profile: SketchFeature['sketch']['profile'],
+  transformPoint: (point: Point) => Point,
+): SketchFeature['sketch']['profile'] {
+  const nextSegments: Segment[] = []
+  let current = profile.start
+
+  for (const segment of profile.segments) {
+    if (segment.type === 'arc') {
+      const beziers = arcToBezierSegments(current, segment)
+      for (const bezier of beziers) {
+        nextSegments.push({
+          type: 'bezier',
+          control1: transformPoint(bezier.control1),
+          control2: transformPoint(bezier.control2),
+          to: transformPoint(bezier.to),
+        })
+      }
+    } else if (segment.type === 'bezier') {
+      nextSegments.push({
+        ...segment,
+        control1: transformPoint(segment.control1),
+        control2: transformPoint(segment.control2),
+        to: transformPoint(segment.to),
+      })
+    } else {
+      nextSegments.push({
+        ...segment,
+        to: transformPoint(segment.to),
+      })
+    }
+
+    current = segment.to
+  }
+
+  return {
+    ...profile,
+    start: transformPoint(profile.start),
+    segments: nextSegments,
+  }
+}
+
+function rotatePointAround(point: Point, origin: Point, angle: number): Point {
+  const local = subtractPoint(point, origin)
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  return {
+    x: origin.x + local.x * cos - local.y * sin,
+    y: origin.y + local.x * sin + local.y * cos,
+  }
+}
+
+function normalizeAngleDegrees(angle: number): number {
+  const normalized = angle % 360
+  return normalized < 0 ? normalized + 360 : normalized
+}
+
+function angleToPoint(angleDegrees: number): Point {
+  const radians = (angleDegrees * Math.PI) / 180
+  return {
+    x: Math.cos(radians),
+    y: Math.sin(radians),
+  }
+}
+
+function inferProfileOrientationAngle(profile: SketchFeature['sketch']['profile']): number {
+  const vertices = profileVertices(profile)
+  let bestDirection: Point | null = null
+  let bestLength = 0
+
+  for (let index = 0; index < vertices.length; index += 1) {
+    const start = vertices[index]
+    const end = vertices[(index + 1) % vertices.length]
+    if (!end || (index === vertices.length - 1 && !profile.closed)) {
+      continue
+    }
+
+    const direction = subtractPoint(end, start)
+    const length = pointLength(direction)
+    if (length > bestLength + 1e-9) {
+      bestDirection = direction
+      bestLength = length
+    }
+  }
+
+  const u = bestDirection ? normalizePoint(bestDirection) : null
+  if (!u) {
+    return 90
+  }
+
+  const xAxisAngle = Math.atan2(u.y, u.x) * (180 / Math.PI)
+  return normalizeAngleDegrees(xAxisAngle + 90)
+}
+
+function featureResizeBasis(feature: SketchFeature): { u: Point; v: Point } {
+  const orientationAngle = normalizeAngleDegrees(
+    feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
+  )
+  const v = angleToPoint(orientationAngle)
+  const u = angleToPoint(orientationAngle - 90)
+  return { u, v }
+}
+
+function snappedResizeScales(
+  referenceVector: Point,
+  previewVector: Point,
+  u: Point,
+  v: Point,
+): { scaleU: number; scaleV: number } | null {
+  const refU = dotPoint(referenceVector, u)
+  const refV = dotPoint(referenceVector, v)
+  const previewU = dotPoint(previewVector, u)
+  const previewV = dotPoint(previewVector, v)
+
+  const scaleU = Math.abs(refU) <= 1e-9 ? 1 : previewU / refU
+  const scaleV = Math.abs(refV) <= 1e-9 ? 1 : previewV / refV
+
+  const unit = normalizePoint(referenceVector)
+  if (!unit) {
+    return null
+  }
+
+  const axisSnapTolerance = Math.cos((12 * Math.PI) / 180)
+  const alignU = Math.abs(dotPoint(unit, u))
+  const alignV = Math.abs(dotPoint(unit, v))
+
+  if (alignU >= axisSnapTolerance && alignU >= alignV) {
+    return { scaleU, scaleV: 1 }
+  }
+
+  if (alignV >= axisSnapTolerance && alignV >= alignU) {
+    return { scaleU: 1, scaleV }
+  }
+
+  return { scaleU, scaleV }
+}
+
+export function resizeFeatureFromReference(
+  feature: SketchFeature,
+  referenceStart: Point,
+  referenceEnd: Point,
+  previewPoint: Point,
+): SketchFeature | null {
+  const referenceVector = subtractPoint(referenceEnd, referenceStart)
+  const referenceLength = pointLength(referenceVector)
+  if (referenceLength <= 1e-9) {
+    return null
+  }
+
+  const unit = scalePoint(referenceVector, 1 / referenceLength)
+  const projectedLength = dotPoint(subtractPoint(previewPoint, referenceStart), unit)
+  const constrainedPreview = addPoint(referenceStart, scalePoint(unit, projectedLength))
+  const { u, v } = featureResizeBasis(feature)
+  const previewVector = subtractPoint(constrainedPreview, referenceStart)
+  const snappedScales = snappedResizeScales(referenceVector, previewVector, u, v)
+  if (!snappedScales) {
+    return null
+  }
+
+  const { scaleU, scaleV } = snappedScales
+  if (
+    !Number.isFinite(scaleU)
+    || !Number.isFinite(scaleV)
+    || scaleU <= 1e-6
+    || scaleV <= 1e-6
+  ) {
+    return null
+  }
+
+  const transformPoint = (point: Point): Point => {
+    const local = subtractPoint(point, referenceStart)
+    const localU = dotPoint(local, u)
+    const localV = dotPoint(local, v)
+    return {
+      x: referenceStart.x + u.x * localU * scaleU + v.x * localV * scaleV,
+      y: referenceStart.y + u.y * localU * scaleU + v.y * localV * scaleV,
+    }
+  }
+
+  const profile = transformProfileAffine(feature.sketch.profile, transformPoint)
+  return {
+    ...feature,
+    kind: inferFeatureKind(profile),
+    sketch: {
+      ...feature.sketch,
+      origin: transformPoint(feature.sketch.origin),
+      orientationAngle: normalizeAngleDegrees(
+        feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
+      ),
+      profile,
+    },
+  }
+}
+
+export function rotateFeatureFromReference(
+  feature: SketchFeature,
+  referenceStart: Point,
+  referenceEnd: Point,
+  previewPoint: Point,
+): SketchFeature | null {
+  const startVector = subtractPoint(referenceEnd, referenceStart)
+  const endVector = subtractPoint(previewPoint, referenceStart)
+  const startLength = pointLength(startVector)
+  const endLength = pointLength(endVector)
+  if (startLength <= 1e-9 || endLength <= 1e-9) {
+    return null
+  }
+
+  const angle = Math.atan2(crossPoint(startVector, endVector), dotPoint(startVector, endVector))
+  if (!Number.isFinite(angle)) {
+    return null
+  }
+
+  const profile = transformProfile(feature.sketch.profile, (point) => rotatePointAround(point, referenceStart, angle))
+  return {
+    ...feature,
+    kind: inferFeatureKind(profile),
+    sketch: {
+      ...feature.sketch,
+      origin: rotatePointAround(feature.sketch.origin, referenceStart, angle),
+      orientationAngle: normalizeAngleDegrees(
+        (feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile)) + angle * (180 / Math.PI),
+      ),
+      profile,
+    },
   }
 }
 
@@ -946,6 +1279,9 @@ function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
     ...feature,
     sketch: {
       ...feature.sketch,
+      orientationAngle: normalizeAngleDegrees(
+        feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
+      ),
       profile: {
         ...feature.sketch.profile,
         closed: feature.sketch.profile.closed ?? true,
@@ -1388,6 +1724,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: normalizeProject(newProject()),
   pendingAdd: null,
   pendingMove: null,
+  pendingTransform: null,
   sketchEditSession: null,
   history: {
     past: [],
@@ -1406,6 +1743,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: nextProject,
         pendingAdd: null,
         pendingMove: null,
+        pendingTransform: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -1490,6 +1828,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'origin', session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -1516,6 +1855,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: nextProject,
         pendingAdd: null,
+        pendingTransform: null,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -1585,6 +1925,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: nextProject,
         pendingAdd: null,
         pendingMove: null,
+        pendingTransform: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -1614,6 +1955,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: restored,
         pendingAdd: null,
         pendingMove: null,
+        pendingTransform: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: state.history.past.slice(0, -1),
@@ -1634,6 +1976,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: restored,
         pendingAdd: null,
         pendingMove: null,
+        pendingTransform: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -1690,6 +2033,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: restored,
         pendingAdd: null,
         pendingMove: null,
+        pendingTransform: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           ...state.history,
@@ -2874,6 +3218,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   enterSketchEdit: (id) =>
     set((s) => ({
+      pendingTransform: null,
       selection: {
         ...s.selection,
         selectedFeatureId: id,
@@ -2892,6 +3237,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   enterClampEdit: (id) =>
     set((s) => ({
+      pendingTransform: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -2910,6 +3256,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   enterTabEdit: (id) =>
     set((s) => ({
+      pendingTransform: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3245,6 +3592,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3258,6 +3606,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'tab', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3274,6 +3623,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3287,6 +3637,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3300,6 +3651,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => ({
       pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3322,6 +3674,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         session: nextPlacementSession(),
       },
       pendingMove: null,
+      pendingTransform: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -3505,6 +3858,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             closed: false,
           },
           origin: { x: 0, y: 0 },
+          orientationAngle: 90,
           dimensions: [],
           constraints: [],
         },
@@ -3535,6 +3889,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             closed: false,
           },
           origin: { x: 0, y: 0 },
+          orientationAngle: 90,
           dimensions: [],
           constraints: [],
         },
@@ -3725,6 +4080,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           closed: true,
         },
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },
@@ -3764,6 +4120,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           closed: false,
         },
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },
@@ -3794,6 +4151,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -3822,6 +4180,65 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: featureIds,
+          selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startResizeFeature: (featureId) =>
+    set((s) => {
+      const featureIds = s.selection.selectedFeatureIds.includes(featureId)
+        ? s.selection.selectedFeatureIds
+        : [featureId]
+      const features = featureIds
+        .map((id) => s.project.features.find((entry) => entry.id === id) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: { mode: 'resize', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: featureIds,
+          selectedNode: { type: 'feature', featureId },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startRotateFeature: (featureId) =>
+    set((s) => {
+      const featureIds = s.selection.selectedFeatureIds.includes(featureId)
+        ? s.selection.selectedFeatureIds
+        : [featureId]
+      const features = featureIds
+        .map((id) => s.project.features.find((entry) => entry.id === id) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: { mode: 'rotate', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        sketchEditSession: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -3845,6 +4262,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3868,6 +4286,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3891,6 +4310,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3914,6 +4334,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
+        pendingTransform: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3974,6 +4395,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   cancelPendingMove: () => set({ pendingMove: null }),
 
+  cancelPendingTransform: () => set({ pendingTransform: null }),
+
   setPendingMoveFrom: (point) =>
     set((s) => ({
       pendingMove: s.pendingMove ? { ...s.pendingMove, fromPoint: point } : null,
@@ -3982,6 +4405,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setPendingMoveTo: (point) =>
     set((s) => ({
       pendingMove: s.pendingMove ? { ...s.pendingMove, toPoint: point } : null,
+    })),
+
+  setPendingTransformReferenceStart: (point) =>
+    set((s) => ({
+      pendingTransform: s.pendingTransform ? { ...s.pendingTransform, referenceStart: point } : null,
+    })),
+
+  setPendingTransformReferenceEnd: (point) =>
+    set((s) => ({
+      pendingTransform: s.pendingTransform ? { ...s.pendingTransform, referenceEnd: point } : null,
     })),
 
   completePendingMove: (toPoint, copyCount = 1) =>
@@ -4161,6 +4594,53 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  completePendingTransform: (previewPoint) =>
+    set((s) => {
+      const pendingTransform = s.pendingTransform
+      if (!pendingTransform?.referenceStart || !pendingTransform.referenceEnd) {
+        return {}
+      }
+
+      const sourceFeatures = pendingTransform.entityIds
+        .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      if (sourceFeatures.length !== pendingTransform.entityIds.length) {
+        return { pendingTransform: null }
+      }
+
+      const transformedFeatures = new Map<string, SketchFeature>()
+      for (const feature of sourceFeatures) {
+        const transformed =
+          pendingTransform.mode === 'resize'
+            ? resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+            : rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+        if (!transformed) {
+          return { pendingTransform: null }
+        }
+        transformedFeatures.set(feature.id, transformed)
+      }
+
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => transformedFeatures.get(feature.id) ?? feature),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (projectsEqual(nextProject, s.project)) {
+        return { pendingTransform: null }
+      }
+
+      return {
+        project: nextProject,
+        pendingTransform: null,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   // ── Convenience constructors ─────────────────────────────
 
   addRectFeature: (name, x, y, w, h, depth) => {
@@ -4173,6 +4653,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketch: {
         profile: rectProfile(x, y, w, h),
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },
@@ -4195,6 +4676,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketch: {
         profile: circleProfile(cx, cy, r),
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },
@@ -4217,6 +4699,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketch: {
         profile: polygonProfile(points),
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },
@@ -4239,6 +4722,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketch: {
         profile: splineProfile(points),
         origin: { x: 0, y: 0 },
+        orientationAngle: 90,
         dimensions: [],
         constraints: [],
       },

@@ -146,12 +146,12 @@ Important:
 - `[~]` tune spacing for the `44px` rail target
 - `[x]` move tooltips to the right in left mode
 - `[x]` ensure active tool state remains visually obvious
-- `[ ]` prevent tooltip clipping near the canvas edge
+- `[>]` prevent tooltip clipping near the canvas edge
 
 ### TL6. Responsive behavior
 - `[x]` force top mode below the chosen width threshold
 - `[x]` ensure the toggle reflects the forced state clearly
-- `[ ]` avoid layout jitter when crossing the breakpoint
+- `[>]` avoid layout jitter when crossing the breakpoint
 
 ### TL7. Optional icon cleanup
 - `[x]` use the shared `Icon` component in toolbar-related UI where it helps
@@ -210,3 +210,7 @@ This work is ready when:
 3. the center workspace gains usable vertical space in left mode
 4. small screens force top mode cleanly
 5. the change does not disturb the existing project tree / properties / CAM panel workflow
+
+## Current Status
+- `[x]` first pass complete
+- `[>]` remaining items are polish follow-ups, not blockers for the current layout direction

@@ -91,6 +91,7 @@ export interface GlobalConstraint {
 export interface Sketch {
   profile: SketchProfile
   origin: Point               // position on stock
+  orientationAngle: number    // local +Y axis angle in degrees, relative to project +X
   dimensions: LocalDimension[]
   constraints: LocalConstraint[]
 }
