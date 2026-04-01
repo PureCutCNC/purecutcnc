@@ -21,7 +21,8 @@ interface DxfBlock {
 }
 
 const IGNORED_INSERT_LAYERS = new Set(['ASHADE', 'HATCH'])
-const IGNORED_INSERT_BLOCKS = new Set(['DRAWINGID', 'STUKLIJST', 'A0', 'AME_NIL', 'AME_SOL', 'AVE_RENDER'])
+const IGNORED_INSERT_BLOCKS = new Set(['AME_NIL', 'AME_SOL', 'AVE_RENDER'])
+const SUPPORTED_INSERT_GEOMETRY = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE', 'POLYLINE', 'INSERT'])
 
 function parsePairs(text: string): DxfPair[] {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
@@ -321,8 +322,8 @@ function shouldExpandInsert(entity: DxfEntity, block: DxfBlock): boolean {
     return false
   }
 
-  const entityTypes = new Set(block.entities.map((entry) => entry.type))
-  if (entityTypes.has('TEXT') || entityTypes.has('ATTRIB') || entityTypes.has('ATTDEF')) {
+  const hasSupportedGeometry = block.entities.some((entry) => SUPPORTED_INSERT_GEOMETRY.has(entry.type))
+  if (!hasSupportedGeometry) {
     return false
   }
 
