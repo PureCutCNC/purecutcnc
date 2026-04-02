@@ -3753,9 +3753,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     })),
 
   hoverFeature: (id) =>
-    set((s) => ({
-      selection: { ...s.selection, hoveredFeatureId: id },
-    })),
+    set((s) => {
+      if (s.selection.hoveredFeatureId === id) {
+        return {}
+      }
+
+      return {
+        selection: { ...s.selection, hoveredFeatureId: id },
+      }
+    }),
 
   enterSketchEdit: (id) =>
     set((s) => ({
