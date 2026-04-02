@@ -7,16 +7,26 @@ Legend:
 - `[>]` deferred / moved to backlog
 
 ## Goal
-Add first-pass interactive feature editing tools so selected features can be edited directly from a contextual toolbar instead of relying only on tree context menus or raw property edits.
+Add interactive feature editing tools so selected features can be edited directly from contextual toolbars instead of relying only on tree context menus or raw property edits.
 
-The first pass should support:
+The first implemented pass supports:
 - `Copy`
 - `Move`
 - `Delete`
 - `Resize`
 - `Rotate`
 
-These tools should work from the sketch and provide live preview before commit.
+The next sketch-edit pass should extend this with direct profile editing:
+- `Add Point`
+- `Delete Point`
+- open-path `Extend`
+- future `Round Corner / Fillet`
+
+The next selected-feature toolbar pass should extend this with shape-generation tools:
+- future `Merge / Cut Overlaps`
+- future `Offset / Repeat`
+
+These tools should work from the sketch and use the same icon-strip toolbar pattern already established elsewhere in the app.
 
 ## First-Pass Scope
 The first pass should support:
@@ -33,7 +43,7 @@ The first pass should **not** include:
 - history of editable transform handles on-screen after commit
 
 ## Confirmed Interaction Model
-### Contextual toolbar
+### Contextual toolbars
 When one or more features are selected, show a dedicated feature-edit toolbar with:
 - `Copy`
 - `Move`
@@ -42,6 +52,25 @@ When one or more features are selected, show a dedicated feature-edit toolbar wi
 - `Rotate`
 
 This toolbar should be contextual, not always visible.
+
+When a single feature enters `Edit Sketch`, replace that strip with a dedicated sketch-edit toolbar with:
+- `Add Point`
+- `Delete Point`
+- future `Round Corner`
+
+First implementation note:
+- only `Add Point` and `Delete Point` need to be wired now
+- `Round Corner / Fillet` remains a planned sketch-edit phase
+
+When one or more closed features are selected in normal feature-selection mode, extend the existing selected-feature toolbar later with:
+- `Merge`
+- `Cut`
+- `Offset`
+
+Reason:
+- these create or derive whole new shapes
+- they are not point-level sketch editing
+- offset especially should be thought of as creating another feature from the selected one(s)
 
 ### Move / Copy
 Use the existing sketch move/copy flow:
@@ -72,6 +101,65 @@ Interpretation:
 - vector `(p2 - p1)` is the starting reference
 - vector `(p3 - p1)` is the target reference
 - the signed angle between those vectors is applied to the selection
+
+### Sketch Edit: Add Point
+`Add Point` is a click tool inside `Edit Sketch`.
+
+Behavior:
+- clicking an existing segment inserts a new anchor on that segment
+- line segments split into two lines
+- bezier segments split into two beziers
+- arc segments split into two arcs
+- on open paths, clicking the start or end anchor arms an extension from that end
+- the next click places the new endpoint
+
+First-pass constraints:
+- insertion is geometry-first, not numeric
+- extension should preserve spline feel when practical
+- if an open path is edited back onto its opposite endpoint, closure should be detected automatically
+- backdrop is not editable through this flow
+
+### Sketch Edit: Delete Point
+`Delete Point` is also a click tool inside `Edit Sketch`.
+
+Behavior:
+- clicking an anchor removes it
+- open-path endpoints can be deleted to shorten the path
+- internal anchors reconnect neighbors
+
+First-pass constraints:
+- reconnect with a straight segment if preserving the original primitive would require a larger solve
+- reject deletions that would leave an invalid profile
+
+### Sketch Edit: Round Corner / Fillet
+Planned tool:
+- click an eligible corner anchor
+- preview a tangent fillet
+- click to commit
+
+Proper term:
+- `Fillet` is the standard CAD term
+- UI can still say `Round Corner` if that reads better to users
+
+### Selected Feature Toolbar: Merge / Cut Overlaps
+Planned tools:
+- `Merge` combines overlapping closed features into one profile set
+- `Cut` subtracts one overlapping profile from another
+
+These should operate on feature profiles, not CAM solids.
+They belong on the normal selected-feature toolbar, not inside `Edit Sketch`.
+
+### Selected Feature Toolbar: Offset
+Planned tools:
+- `Offset`
+- repeated offset count / distance later
+
+This should eventually reuse the same offsetting foundations already used in CAM contour generation, but with sketch-safe output and preview.
+Offset should create a new derived shape rather than mutate point topology one anchor at a time.
+The first interactive version should use a single `Offset` button:
+- move the snapped preview point inside the shape for inward offset
+- move it outside the shape for outward offset
+- click to commit using the current preview distance and direction
 
 ## Core Design Decisions
 ### 1. This is a sketch-space editing system
@@ -132,6 +220,22 @@ The new toolbar should become the primary fast-access path for:
 - delete
 
 Existing context menu entries can remain for now, but the toolbar becomes the standard workflow.
+
+### 7. Sketch edit tools live inside the existing sketch-edit session model
+`Edit Sketch` already creates a reversible session snapshot.
+
+The new direct profile tools should reuse that:
+- `Enter` applies the whole sketch edit session
+- `Esc` restores the original feature
+- point insert/delete should be undoable during the session and also fully revert on `Esc`
+
+### 8. Sketch edit toolbar follows the existing toolbar layout rules
+The sketch-edit toolbar should not float independently.
+
+Rules:
+- top-toolbar layout: render to the right of the creation toolbar
+- left-toolbar layout: render below the creation toolbar
+- use the same square joined-button treatment and sprite icons
 
 ## State Model
 Current store already has:
@@ -257,6 +361,16 @@ Initial buttons:
 - `Resize`
 - `Rotate`
 
+Sketch-edit buttons:
+- `Add Point`
+- `Delete Point`
+- `Round Corner` / `Fillet` (tracked)
+
+Selected-feature toolbar future additions:
+- `Merge` (tracked)
+- `Cut` (tracked)
+- `Offset` (tracked)
+
 ## UI Text / User Guidance
 Resize banner copy:
 - click first point to start reference
@@ -378,3 +492,47 @@ This work is ready when:
 
 ## Current Status
 - `[x]` first pass complete
+
+## Sketch Edit Expansion
+### FE8. Sketch-edit toolbar
+- `[x]` add a dedicated sketch-edit toolbar that appears while a single feature is in `Edit Sketch`
+- `[x]` make it follow the existing top/left toolbar placement rules
+- `[x]` use icon-strip buttons instead of text buttons
+
+### FE9. Insert point
+- `[x]` add `Add Point` tool state
+- `[x]` allow clicking line segments to insert anchors
+- `[x]` allow clicking bezier segments to split them
+- `[x]` allow clicking arc segments to split them
+
+### FE10. Delete point
+- `[x]` add `Delete Point` tool state
+- `[x]` allow deleting anchors from closed profiles when still valid
+- `[x]` allow deleting endpoints from open profiles
+- `[x]` reconnect neighbors conservatively on delete
+
+### FE11. Open-path extension
+- `[x]` allow `Add Point` to extend an open path from its start or end
+- `[x]` preserve spline-style continuity heuristically for bezier-ended paths
+- `[~]` validate imported/open-feature edge cases further
+
+### FE12. Round corner / fillet
+- `[x]` design a first-pass radius interaction using prompted numeric input
+- `[x]` implement tangent fillet solve for line-line corners
+- `[~]` define first-pass behavior for bezier/arc corners
+
+### FE13. Selected-feature merge / cut overlaps
+- `[x]` define first-pass behavior as derived feature creation rather than destructive replace
+- `[x]` implement closed-profile boolean merge
+- `[x]` implement closed-profile cut / subtract
+
+### FE14. Selected-feature offset
+- `[x]` define first-pass offset distance workflow with prompted numeric input
+- `[x]` implement sketch-safe offset out
+- `[x]` implement sketch-safe offset in
+- `[~]` resolve self-intersection / collapse behavior
+
+### FE15. Polish / validation
+- `[~]` improve visual preview for add/delete point targeting
+- `[~]` validate open imported spline/polyline editing
+- `[~]` consider explicit apply/cancel buttons in the sketch-edit toolbar

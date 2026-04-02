@@ -2,8 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { SketchControlRef } from '../../store/projectStore'
-import { resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import type { SketchControlRef, SketchEditTool, SketchInsertTarget } from '../../store/projectStore'
+import { filletFeatureFromPoint, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   bezierPoint,
   circleProfile,
@@ -24,6 +24,7 @@ import { convertLength, formatLength } from '../../utils/units'
 const PADDING = 42
 const NODE_RADIUS = 5
 const NODE_HIT_RADIUS = 9
+const EXTEND_HIT_RADIUS = 14
 const HANDLE_RADIUS = 4
 const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
@@ -43,6 +44,21 @@ interface CanvasPoint {
 interface PendingPreviewPoint {
   point: Point
   session: number
+}
+
+interface SketchEditPreviewPoint {
+  point: Point
+  mode: SketchEditTool
+}
+
+interface PendingSketchExtension {
+  kind: 'extend_start' | 'extend_end'
+  anchor: Point
+}
+
+interface PendingSketchFillet {
+  anchorIndex: number
+  corner: Point
 }
 
 interface SketchViewState {
@@ -304,7 +320,12 @@ function drawSketchControls(
   for (let index = 0; index < profile.segments.length; index += 1) {
     const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
     const outgoingSegment = profile.segments[index]
-    const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+    const incomingSegment =
+      profile.closed
+        ? profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+        : index > 0
+          ? profile.segments[index - 1]
+          : null
 
     if (outgoingSegment.type === 'bezier') {
       const handle = worldToCanvas(outgoingSegment.control1, vt)
@@ -316,7 +337,7 @@ function drawSketchControls(
       ctx.stroke()
     }
 
-    if (incomingSegment.type === 'bezier') {
+    if (incomingSegment?.type === 'bezier') {
       const handle = worldToCanvas(incomingSegment.control2, vt)
       ctx.beginPath()
       ctx.moveTo(anchor.cx, anchor.cy)
@@ -360,7 +381,12 @@ function drawSketchControls(
 
   for (let index = 0; index < profile.segments.length; index += 1) {
     const outgoingSegment = profile.segments[index]
-    const incomingSegment = profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+    const incomingSegment =
+      profile.closed
+        ? profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+        : index > 0
+          ? profile.segments[index - 1]
+          : null
 
     if (outgoingSegment.type === 'bezier') {
       const point = worldToCanvas(outgoingSegment.control1, vt)
@@ -373,7 +399,7 @@ function drawSketchControls(
       ctx.stroke()
     }
 
-    if (incomingSegment.type === 'bezier') {
+    if (incomingSegment?.type === 'bezier') {
       const point = worldToCanvas(incomingSegment.control2, vt)
       const active = activeControl?.kind === 'in_handle' && activeControl.index === index
       drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
@@ -384,6 +410,21 @@ function drawSketchControls(
       ctx.stroke()
     }
   }
+}
+
+function drawSketchEditPreviewPoint(
+  ctx: CanvasRenderingContext2D,
+  preview: SketchEditPreviewPoint,
+  vt: ViewTransform,
+): void {
+  const { cx, cy } = worldToCanvas(preview.point, vt)
+  ctx.beginPath()
+  ctx.arc(cx, cy, NODE_RADIUS + 2, 0, Math.PI * 2)
+  ctx.fillStyle = preview.mode === 'delete_point' ? '#d66c6c' : '#5daeea'
+  ctx.fill()
+  ctx.strokeStyle = preview.mode === 'delete_point' ? '#efb0b0' : '#a9d2f5'
+  ctx.lineWidth = 2
+  ctx.stroke()
 }
 
 function drawGrid(
@@ -989,6 +1030,86 @@ function pointNearProfile(worldPoint: Point, profile: SketchProfile, vt: ViewTra
   return false
 }
 
+function nearestPointOnProfileBoundary(point: Point, profile: SketchProfile, vt: ViewTransform): { point: Point; distance: number } | null {
+  if (profile.segments.length === 0) {
+    return null
+  }
+
+  let bestPoint: Point | null = null
+  let bestDistanceSq = Infinity
+
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const start = anchorPointForIndex(profile, index)
+    const segment = profile.segments[index]
+    const candidate = nearestPointOnSegmentWithT(point, start, segment, vt)
+    const dx = candidate.point.x - point.x
+    const dy = candidate.point.y - point.y
+    const distanceSq = dx * dx + dy * dy
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq
+      bestPoint = candidate.point
+    }
+  }
+
+  return bestPoint ? { point: bestPoint, distance: Math.sqrt(bestDistanceSq) } : null
+}
+
+function resolveOffsetPreviewInput(features: SketchFeature[], point: Point, vt: ViewTransform): {
+  nearestPoint: Point
+  distance: number
+  signedDistance: number
+  direction: 'in' | 'out'
+} | null {
+  let nearestPoint: Point | null = null
+  let nearestDistance = Infinity
+
+  for (const feature of features) {
+    const candidate = nearestPointOnProfileBoundary(point, feature.sketch.profile, vt)
+    if (!candidate) {
+      continue
+    }
+    if (candidate.distance < nearestDistance) {
+      nearestDistance = candidate.distance
+      nearestPoint = candidate.point
+    }
+  }
+
+  if (!nearestPoint || !Number.isFinite(nearestDistance) || nearestDistance <= 1e-9) {
+    return null
+  }
+
+  const direction = features.some((feature) => pointInProfile(point.x, point.y, feature.sketch.profile)) ? 'in' : 'out'
+  return {
+    nearestPoint,
+    distance: nearestDistance,
+    signedDistance: direction === 'in' ? -nearestDistance : nearestDistance,
+    direction,
+  }
+}
+
+function resolveOffsetPreview(
+  features: SketchFeature[],
+  rawPoint: Point,
+  snappedPoint: Point,
+  vt: ViewTransform,
+): {
+  nearestPoint: Point
+  distance: number
+  signedDistance: number
+  direction: 'in' | 'out'
+} | null {
+  const snappedPreview = resolveOffsetPreviewInput(features, snappedPoint, vt)
+  if (!snappedPreview) {
+    return resolveOffsetPreviewInput(features, rawPoint, vt)
+  }
+
+  if (snappedPreview.distance > 1e-5 || pointsEqual(rawPoint, snappedPoint, 1e-9)) {
+    return snappedPreview
+  }
+
+  return resolveOffsetPreviewInput(features, rawPoint, vt) ?? snappedPreview
+}
+
 function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: ViewTransform): string | null {
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
@@ -1059,6 +1180,13 @@ function subtractPoint(a: Point, b: Point): Point {
 
 function scalePoint(point: Point, scale: number): Point {
   return { x: point.x * scale, y: point.y * scale }
+}
+
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+  }
 }
 
 function projectPointOntoLine(point: Point, lineStart: Point, lineEnd: Point): Point {
@@ -1412,6 +1540,127 @@ function nearestPointOnPolyline(point: Point, polyline: Point[]): Point {
   return bestPoint
 }
 
+function segmentPointAt(start: Point, segment: Segment, t: number): Point {
+  if (segment.type === 'line') {
+    return lerpPoint(start, segment.to, t)
+  }
+
+  if (segment.type === 'bezier') {
+    return bezierPoint(start, segment.control1, segment.control2, segment.to, t)
+  }
+
+  const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+  const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+  const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+
+  let sweep = endAngle - startAngle
+  if (segment.clockwise && sweep > 0) {
+    sweep -= Math.PI * 2
+  } else if (!segment.clockwise && sweep < 0) {
+    sweep += Math.PI * 2
+  }
+
+  const angle = startAngle + sweep * t
+  return {
+    x: segment.center.x + Math.cos(angle) * radius,
+    y: segment.center.y + Math.sin(angle) * radius,
+  }
+}
+
+function nearestPointOnSegmentWithT(
+  point: Point,
+  start: Point,
+  segment: Segment,
+  vt: ViewTransform,
+): { point: Point; t: number; distanceSqPx: number } {
+  if (segment.type === 'line') {
+    const direction = subtractPoint(segment.to, start)
+    const lengthSq = dotPoint(direction, direction)
+    const t = lengthSq <= 1e-9 ? 0 : clamp01(dotPoint(subtractPoint(point, start), direction) / lengthSq)
+    const projected = addPoint(start, scalePoint(direction, t))
+    return {
+      point: projected,
+      t,
+      distanceSqPx: distance2(worldToCanvas(projected, vt), worldToCanvas(point, vt)),
+    }
+  }
+
+  let bestT = 0
+  let bestPoint = start
+  let bestDistanceSqPx = Infinity
+
+  for (let step = 1; step < 48; step += 1) {
+    const t = step / 48
+    const candidate = segmentPointAt(start, segment, t)
+    const distanceSqPx = distance2(worldToCanvas(candidate, vt), worldToCanvas(point, vt))
+    if (distanceSqPx < bestDistanceSqPx) {
+      bestT = t
+      bestPoint = candidate
+      bestDistanceSqPx = distanceSqPx
+    }
+  }
+
+  return {
+    point: bestPoint,
+    t: bestT,
+    distanceSqPx: bestDistanceSqPx,
+  }
+}
+
+function findSketchInsertTarget(
+  profile: SketchProfile,
+  snappedPoint: Point,
+  vt: ViewTransform,
+): SketchInsertTarget | null {
+  let best: SketchInsertTarget | null = null
+  let bestDistanceSqPx = NODE_HIT_RADIUS * NODE_HIT_RADIUS
+
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const start = anchorPointForIndex(profile, index)
+    const segment = profile.segments[index]
+    const candidate = nearestPointOnSegmentWithT(snappedPoint, start, segment, vt)
+    if (candidate.t <= 0.001 || candidate.t >= 0.999) {
+      continue
+    }
+
+    if (candidate.distanceSqPx < bestDistanceSqPx) {
+      bestDistanceSqPx = candidate.distanceSqPx
+      best = {
+        kind: 'segment',
+        segmentIndex: index,
+        point: candidate.point,
+        t: candidate.t,
+      }
+    }
+  }
+
+  return best
+}
+
+function findOpenProfileExtensionEndpoint(
+  profile: SketchProfile,
+  rawPoint: Point,
+  vt: ViewTransform,
+): PendingSketchExtension | null {
+  if (profile.closed) {
+    return null
+  }
+
+  const rawCanvas = worldToCanvas(rawPoint, vt)
+  const startCanvas = worldToCanvas(profile.start, vt)
+  if (distance2(rawCanvas, startCanvas) <= EXTEND_HIT_RADIUS * EXTEND_HIT_RADIUS) {
+    return { kind: 'extend_start', anchor: profile.start }
+  }
+
+  const endAnchor = anchorPointForIndex(profile, profile.segments.length)
+  const endCanvas = worldToCanvas(endAnchor, vt)
+  if (distance2(rawCanvas, endCanvas) <= EXTEND_HIT_RADIUS * EXTEND_HIT_RADIUS) {
+    return { kind: 'extend_end', anchor: endAnchor }
+  }
+
+  return null
+}
+
 function snapPriority(mode: SnapMode): number {
   if (mode === 'point' || mode === 'center' || mode === 'midpoint') {
     return 1
@@ -1510,9 +1759,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const activeSnapRef = useRef<ResolvedSnap | null>(null)
+  const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
+  const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
+  const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
   const pendingPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingMovePreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingTransformPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const drawFrameRef = useRef<number | null>(null)
   const drawRef = useRef<() => void>(() => {})
   const [copyCountDraft, setCopyCountDraft] = useState('1')
@@ -1525,6 +1778,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingAdd,
     pendingMove,
     pendingTransform,
+    pendingOffset,
     selection,
     selectFeature,
     selectBackdrop,
@@ -1540,6 +1794,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     beginHistoryTransaction,
     commitHistoryTransaction,
     moveFeatureControl,
+    insertFeaturePoint,
+    deleteFeaturePoint,
+    filletFeaturePoint,
     moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
@@ -1562,6 +1819,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformReferenceEnd,
     completePendingTransform,
     cancelPendingTransform,
+    completePendingOffset,
+    cancelPendingOffset,
     setBackdropImageLoading,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
@@ -1570,6 +1829,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingAddRef = useRef(pendingAdd)
   const pendingMoveRef = useRef(pendingMove)
   const pendingTransformRef = useRef(pendingTransform)
+  const pendingOffsetRef = useRef(pendingOffset)
   const viewStateRef = useRef(viewState)
   const backdropImageRef = useRef(backdropImage)
   const toolpathsRef = useRef(toolpaths)
@@ -1583,6 +1843,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingAddRef.current = pendingAdd
   pendingMoveRef.current = pendingMove
   pendingTransformRef.current = pendingTransform
+  pendingOffsetRef.current = pendingOffset
   viewStateRef.current = viewState
   backdropImageRef.current = backdropImage
   toolpathsRef.current = toolpaths
@@ -1609,6 +1870,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function setPendingTransformPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
     pendingTransformPreviewPointRef.current = nextPoint
+    scheduleDraw()
+  }
+
+  function setPendingOffsetPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+    pendingOffsetPreviewPointRef.current = nextPoint
     scheduleDraw()
   }
 
@@ -1848,7 +2114,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [project, selection, pendingAdd, pendingMove, pendingTransform, viewState, backdropImage, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft])
+  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft])
+
+  useEffect(() => {
+    sketchEditPreviewRef.current = null
+    pendingSketchExtensionRef.current = null
+    pendingSketchFilletRef.current = null
+  }, [selection.mode, selection.sketchEditTool, selection.selectedFeatureId])
+
+  useEffect(() => {
+    pendingOffsetPreviewPointRef.current = null
+  }, [pendingOffset?.session])
 
   drawRef.current = () => {
     const canvas = canvasRef.current
@@ -1862,6 +2138,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
     const viewState = viewStateRef.current
     const backdropImage = backdropImageRef.current
     const toolpaths = toolpathsRef.current
@@ -2006,6 +2283,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const currentTransformPreviewPoint =
       pendingTransform && pendingTransformPreviewPointRef.current?.session === pendingTransform.session
         ? pendingTransformPreviewPointRef.current.point
+        : null
+    const currentOffsetPreviewPoint =
+      pendingOffset && pendingOffsetPreviewPointRef.current?.session === pendingOffset.session
+        ? pendingOffsetPreviewPointRef.current.point
         : null
 
     if (pendingMove) {
@@ -2245,6 +2526,53 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    if (pendingOffset) {
+      const features = pendingOffset.entityIds
+        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+        .filter((feature) => feature.sketch.profile.closed)
+      const snappedOffsetPoint = activeSnapRef.current?.point ?? currentOffsetPreviewPoint
+
+      if (snappedOffsetPoint) {
+        drawPendingPoint(ctx, snappedOffsetPoint, vt, isActiveSnapPoint(snappedOffsetPoint))
+      }
+
+      const previewInput =
+        features.length > 0 && currentOffsetPreviewPoint && snappedOffsetPoint
+          ? resolveOffsetPreview(features, currentOffsetPreviewPoint, snappedOffsetPoint, vt)
+          : null
+
+      if (previewInput) {
+        drawPendingPoint(ctx, previewInput.nearestPoint, vt)
+        drawMoveGuide(ctx, previewInput.nearestPoint, snappedOffsetPoint!, vt)
+        const previewFeatures = previewOffsetFeatures(project, pendingOffset.entityIds, previewInput.signedDistance)
+        for (const feature of previewFeatures) {
+          drawPreviewProfile(
+            ctx,
+            feature.sketch.profile,
+            vt,
+            previewInput.direction === 'in' ? 'Offset in preview' : 'Offset out preview',
+          )
+        }
+      }
+    }
+
+    if (selection.mode === 'sketch_edit' && sketchEditPreviewRef.current) {
+      if (pendingSketchExtensionRef.current) {
+        drawMoveGuide(ctx, pendingSketchExtensionRef.current.anchor, sketchEditPreviewRef.current.point, vt)
+        drawPendingPoint(ctx, pendingSketchExtensionRef.current.anchor, vt)
+      }
+      if (pendingSketchFilletRef.current && editingFeature) {
+        drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
+        drawMoveGuide(ctx, pendingSketchFilletRef.current.corner, sketchEditPreviewRef.current.point, vt)
+        const previewFeature = filletFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+        if (previewFeature) {
+          drawPreviewProfile(ctx, previewFeature.sketch.profile, vt, 'Fillet preview')
+        }
+      }
+      drawSketchEditPreviewPoint(ctx, sketchEditPreviewRef.current, vt)
+    }
+
     drawSnapIndicator(ctx, activeSnapRef.current, vt)
     drawDepthLegend(ctx, width, height)
   }
@@ -2414,9 +2742,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (let index = 0; index < profile.segments.length; index += 1) {
       const outgoingSegment = profile.segments[index]
       const incomingSegment =
-        profile.segments[
-          (index - 1 + profile.segments.length) % profile.segments.length
-        ]
+        profile.closed
+          ? profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
+          : index > 0
+            ? profile.segments[index - 1]
+            : null
 
       if (outgoingSegment.type === 'bezier') {
         const handleCanvas = worldToCanvas(outgoingSegment.control1, vt)
@@ -2427,7 +2757,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
       }
 
-      if (incomingSegment.type === 'bezier') {
+      if (incomingSegment?.type === 'bezier') {
         const handleCanvas = worldToCanvas(incomingSegment.control2, vt)
         const d2 = distance2(point, handleCanvas)
         if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
@@ -2462,6 +2792,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingOffsetRef.current) {
+      return
+    }
+
+    if (selectionRef.current.mode === 'sketch_edit' && selectionRef.current.sketchEditTool) {
+      return
+    }
+
     const control = hitEditableControl(canvasCoordinates(event))
     if (!control) return
 
@@ -2481,8 +2819,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingTransform = pendingTransformRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    const sketchEditTool = selection.sketchEditTool
 
     if (isPanningRef.current && lastPanPointRef.current) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       updateActiveSnap(null)
       const dx = point.cx - lastPanPointRef.current.cx
       const dy = point.cy - lastPanPointRef.current.cy
@@ -2502,12 +2844,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       !!pendingAdd
       || !!pendingMove
       || !!pendingTransform
+      || !!pendingOffset
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
       || isDraggingNodeRef.current
     const resolvedSnap = shouldPreviewSnap ? resolveSketchSnap(world, vt) : { rawPoint: world, point: world, mode: null as null }
     const snapped = resolvedSnap.point
     updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
     if (pendingAdd) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       hoverFeature(null)
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
@@ -2519,12 +2866,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingMove) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       hoverFeature(null)
       setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       return
     }
 
     if (pendingTransform) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       hoverFeature(null)
       const constrainedPoint =
         pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
@@ -2534,20 +2887,97 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingOffset) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      hoverFeature(null)
+      setPendingOffsetPreviewPointRef({ point: world, session: pendingOffset.session })
+      return
+    }
+
     if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       moveFeatureControl(selection.selectedFeatureId, selection.activeControl, snapped)
       return
     }
 
     if (isDraggingNodeRef.current && selection.selectedNode?.type === 'clamp' && selection.activeControl) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       moveClampControl(selection.selectedNode.clampId, selection.activeControl, snapped)
       return
     }
 
     if (isDraggingNodeRef.current && selection.selectedNode?.type === 'tab' && selection.activeControl) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
       moveTabControl(selection.selectedNode.tabId, selection.activeControl, snapped)
       return
     }
+
+    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
+      const feature = editableFeature()
+      if (feature && sketchEditTool === 'add_point') {
+        pendingSketchFilletRef.current = null
+        if (pendingSketchExtensionRef.current) {
+          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+        } else {
+          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
+          if (endpoint) {
+            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
+          } else {
+            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
+            sketchEditPreviewRef.current =
+              target
+                ? { point: target.point, mode: 'add_point' }
+                : null
+          }
+        }
+        scheduleDraw()
+        hoverFeature(null)
+        return
+      }
+
+      if (feature && sketchEditTool === 'delete_point') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const control = hitEditableControl(point)
+        sketchEditPreviewRef.current =
+          control?.kind === 'anchor'
+            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
+            : null
+        scheduleDraw()
+        hoverFeature(null)
+        return
+      }
+
+      if (feature && sketchEditTool === 'fillet') {
+        pendingSketchExtensionRef.current = null
+        if (pendingSketchFilletRef.current) {
+          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+        } else {
+          const control = hitEditableControl(point)
+          if (control?.kind === 'anchor') {
+            const corner = anchorPointForIndex(feature.sketch.profile, control.index)
+            sketchEditPreviewRef.current = { point: corner, mode: 'add_point' }
+          } else {
+            sketchEditPreviewRef.current = null
+          }
+        }
+        scheduleDraw()
+        hoverFeature(null)
+        return
+      }
+    }
+
+    sketchEditPreviewRef.current = null
+    pendingSketchExtensionRef.current = null
+    pendingSketchFilletRef.current = null
 
     const hitTabId = findHitTabId(world, project.tabs)
     if (hitTabId) {
@@ -2579,6 +3009,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function handleMouseLeave() {
     stopNodeDrag()
     stopPan()
+    sketchEditPreviewRef.current = null
+    pendingSketchFilletRef.current = null
+    pendingSketchExtensionRef.current = null
+    setPendingOffsetPreviewPointRef(null)
     hoverFeature(null)
     updateActiveSnap(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
@@ -2620,7 +3054,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
-    if (selection.mode === 'sketch_edit' || isDraggingNodeRef.current) return
+    const pendingOffset = pendingOffsetRef.current
+    if (isDraggingNodeRef.current) return
 
     const point = canvasCoordinates(event)
     const canvas = canvasRef.current
@@ -2629,6 +3064,72 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const resolvedSnap = resolveSketchSnap(world, vt)
+
+    if (selection.mode === 'sketch_edit') {
+      if (selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
+        const feature = editableFeature()
+        if (feature && selection.sketchEditTool === 'add_point') {
+          if (pendingSketchExtensionRef.current) {
+            insertFeaturePoint(selection.selectedFeatureId, {
+              kind: pendingSketchExtensionRef.current.kind,
+              point: resolvedSnap.point,
+            })
+            pendingSketchExtensionRef.current = null
+            sketchEditPreviewRef.current = null
+            scheduleDraw()
+            return
+          }
+
+          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
+          if (endpoint) {
+            pendingSketchExtensionRef.current = endpoint
+            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
+            scheduleDraw()
+            return
+          }
+
+          const target = findSketchInsertTarget(feature.sketch.profile, resolvedSnap.point, vt)
+          if (target?.kind === 'segment') {
+            insertFeaturePoint(selection.selectedFeatureId, target)
+          }
+          return
+        }
+
+        if (feature && selection.sketchEditTool === 'delete_point') {
+          const control = hitEditableControl(point)
+          if (control?.kind === 'anchor') {
+            deleteFeaturePoint(selection.selectedFeatureId, control.index)
+          }
+          return
+        }
+
+        if (feature && selection.sketchEditTool === 'fillet') {
+          if (pendingSketchFilletRef.current) {
+            const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, resolvedSnap.point)
+            if (radius) {
+              filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+            }
+            pendingSketchFilletRef.current = null
+            sketchEditPreviewRef.current = null
+            scheduleDraw()
+            return
+          }
+
+          const control = hitEditableControl(point)
+          if (control?.kind === 'anchor') {
+            pendingSketchFilletRef.current = {
+              anchorIndex: control.index,
+              corner: anchorPointForIndex(feature.sketch.profile, control.index),
+            }
+            sketchEditPreviewRef.current = { point: pendingSketchFilletRef.current.corner, mode: 'add_point' }
+            scheduleDraw()
+          }
+          return
+        }
+      }
+
+      return
+    }
 
     if (pendingAdd) {
       const snapped = resolvedSnap.point
@@ -2715,6 +3216,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingOffset) {
+      const sourceFeatures = pendingOffset.entityIds
+        .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+        .filter((feature) => feature.sketch.profile.closed)
+      const previewInput = resolveOffsetPreview(sourceFeatures, world, resolvedSnap.point, vt)
+      if (previewInput) {
+        completePendingOffset(previewInput.signedDistance)
+      } else {
+        cancelPendingOffset()
+      }
+      setPendingOffsetPreviewPointRef(null)
+      return
+    }
+
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
       selectClamp(hitClampId)
@@ -2765,6 +3281,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
     if (pendingAdd) {
       if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 2) {
         event.preventDefault()
@@ -2774,7 +3291,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (pendingMove || pendingTransform) {
+    if (pendingMove || pendingTransform || pendingOffset) {
       return
     }
 
@@ -2811,6 +3328,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
     if (pendingAdd) {
       return
     }
@@ -2820,6 +3338,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingTransform) {
+      return
+    }
+
+    if (pendingOffset) {
       return
     }
 
@@ -2855,6 +3377,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
+    const pendingOffset = pendingOffsetRef.current
     if (
       event.key === 'Enter'
       && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
@@ -2910,6 +3433,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (event.key === 'Escape' && pendingTransform) {
       cancelPendingTransform()
       setPendingTransformPreviewPointRef(null)
+      return
+    }
+
+    if (event.key === 'Escape' && pendingOffset) {
+      cancelPendingOffset()
+      setPendingOffsetPreviewPointRef(null)
       return
     }
 
@@ -2994,7 +3523,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset ? 'sketch-canvas--placing' : ''}`}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
@@ -3007,13 +3536,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       />
       {selection.mode === 'sketch_edit' && (
         <div className="sketch-edit-banner">
-          <div>Sketch edit mode active. Drag nodes to reshape. Press <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.</div>
+          <div>
+            {selection.sketchEditTool === 'add_point'
+              ? 'Add Point active. Click a segment to insert a point, or click an open-path end first to start an extension. Press '
+              : selection.sketchEditTool === 'delete_point'
+                ? 'Delete Point active. Click anchors to remove them. Press '
+                : selection.sketchEditTool === 'fillet'
+                  ? pendingSketchFilletRef.current
+                    ? 'Fillet active. Click a second point to define the corner round. Press '
+                    : 'Fillet active. Click a line-line corner to start. Press '
+                  : 'Drag nodes to reshape. Press '}
+            <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.
+          </div>
           {editingFeatureHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
           ) : null}
           {editingFeatureExceedsStock ? (
             <div className="sketch-banner-warning">This profile extends outside the stock boundary.</div>
           ) : null}
+        </div>
+      )}
+      {pendingOffset && (
+        <div className="sketch-place-banner">
+          Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Click to commit or press <kbd>Esc</kbd> to cancel.
         </div>
       )}
       {pendingAdd && (

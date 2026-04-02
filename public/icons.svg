@@ -215,6 +215,47 @@
     <path d="M20 3v6h-6"/>
     <path d="m12 8 4 4-4 4-4-4 4-4Z" opacity="0.45"/>
   </symbol>
+  <symbol id="point-add" viewBox="0 0 24 24">
+    <path d="M4 17 20 7"/>
+    <circle cx="12" cy="12" r="2.4"/>
+    <path d="M12 8v8M8 12h8"/>
+  </symbol>
+  <symbol id="point-delete" viewBox="0 0 24 24">
+    <path d="M4 17 20 7"/>
+    <circle cx="12" cy="12" r="2.4"/>
+    <path d="M8 12h8"/>
+  </symbol>
+  <symbol id="merge" viewBox="0 0 24 24">
+    <path d="M5 7h7v7H5z" opacity="0.5"/>
+    <path d="M12 10h7v7h-7z" opacity="0.8"/>
+    <path d="M10 12h4"/>
+  </symbol>
+  <symbol id="cut" viewBox="0 0 24 24">
+    <path d="M5 7h7v10H5z" opacity="0.5"/>
+    <path d="M12 9h7v8h-7" opacity="0.8"/>
+    <path d="M14 6 20 18"/>
+  </symbol>
+  <symbol id="offset" viewBox="0 0 24 24">
+    <rect x="5" y="5" width="10" height="10" rx="1.5" opacity="0.5"/>
+    <path d="M9 19h8a2 2 0 0 0 2-2V9"/>
+    <path d="M17 5h2a2 2 0 0 1 2 2v2"/>
+  </symbol>
+  <symbol id="offset-in" viewBox="0 0 24 24">
+    <rect x="4" y="4" width="16" height="16" rx="2"/>
+    <rect x="8" y="8" width="8" height="8" rx="1" opacity="0.5"/>
+    <path d="M12 5v4M12 19v-4M5 12h4M19 12h-4"/>
+  </symbol>
+  <symbol id="offset-out" viewBox="0 0 24 24">
+    <rect x="8" y="8" width="8" height="8" rx="1" opacity="0.5"/>
+    <rect x="4" y="4" width="16" height="16" rx="2"/>
+    <path d="M12 2v4M12 22v-4M2 12h4M22 12h-4"/>
+  </symbol>
+  <symbol id="fillet" viewBox="0 0 24 24">
+    <path d="M5 18V8h10"/>
+    <path d="M8 18a7 7 0 0 0 7-7"/>
+    <circle cx="15" cy="8" r="1.1"/>
+    <circle cx="8" cy="18" r="1.1"/>
+  </symbol>
   <symbol id="chevron-down" viewBox="0 0 24 24">
     <polyline points="6 9 12 15 18 9"/>
   </symbol>

@@ -3,6 +3,7 @@ import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
+import type { SketchEditTool } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
 
 interface ToolbarActionButtonProps {
@@ -81,16 +82,22 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startCopyFeature,
     startResizeFeature,
     startRotateFeature,
+    mergeSelectedFeatures,
+    cutSelectedFeatures,
+    startOffsetSelectedFeatures,
     startMoveBackdrop,
     startResizeBackdrop,
     startRotateBackdrop,
     deleteBackdrop,
     deleteFeatures,
+    setSketchEditTool,
     cancelPendingAdd,
     pendingMove,
     pendingTransform,
+    pendingOffset,
     cancelPendingMove,
     cancelPendingTransform,
+    cancelPendingOffset,
     selection,
   } = useProjectStore()
 
@@ -163,6 +170,11 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   const hasSelectedFeatures = selectedFeatureIds.length > 0
   const hasSelectedBackdrop = selection.selectedNode?.type === 'backdrop' && !!project.backdrop
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
+  const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((feature) => feature.sketch.profile.closed)
+  const featureSketchEditActive =
+    selection.mode === 'sketch_edit'
+    && selection.selectedNode?.type === 'feature'
+    && !!selection.selectedFeatureId
 
   function handleFeatureMove() {
     if (!primarySelectedFeatureId) {
@@ -267,12 +279,38 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     deleteBackdrop()
   }
 
+  function handleMergeSelectedFeatures() {
+    mergeSelectedFeatures()
+  }
+
+  function handleCutSelectedFeatures() {
+    cutSelectedFeatures()
+  }
+
+  function handleOffsetSelectedFeatures() {
+    if (pendingOffset) {
+      cancelPendingOffset()
+      return
+    }
+
+    startOffsetSelectedFeatures()
+  }
+
+  function toggleSketchEditTool(tool: SketchEditTool) {
+    if (!featureSketchEditActive) {
+      return
+    }
+    setSketchEditTool(selection.sketchEditTool === tool ? null : tool)
+  }
+
   return {
     project,
     pendingAdd,
     pendingMove,
     pendingTransform,
+    pendingOffset,
     history,
+    selection,
     editingName,
     nameVal,
     showNewProjectDialog,
@@ -280,6 +318,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     hasSelectedFeatures,
     hasSelectedBackdrop,
     hasLockedSelectedFeatures,
+    hasClosedSelectedFeatures,
+    featureSketchEditActive,
+    sketchEditTool: selection.sketchEditTool,
     setProjectName,
     setEditingName,
     setNameVal,
@@ -306,6 +347,12 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleBackdropResize,
     handleBackdropRotate,
     handleBackdropDelete,
+    handleMergeSelectedFeatures,
+    handleCutSelectedFeatures,
+    handleOffsetSelectedFeatures,
+    handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
+    handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
+    handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
   }
 }
 
@@ -465,63 +512,141 @@ function CreationActions({
 
 function FeatureEditActions({
   hasLockedSelection,
+  hasClosedSelection,
+  selectionCount,
   pendingMoveMode,
   pendingTransformMode,
+  pendingOffset,
   tooltipSide,
   onCopy,
   onMove,
   onDelete,
   onResize,
   onRotate,
+  onMerge,
+  onCut,
+  onOffset,
 }: {
   hasLockedSelection: boolean
+  hasClosedSelection: boolean
+  selectionCount: number
   pendingMoveMode: 'move' | 'copy' | null
   pendingTransformMode: 'resize' | 'rotate' | null
+  pendingOffset: boolean
   tooltipSide?: 'bottom' | 'right'
   onCopy: () => void
   onMove: () => void
   onDelete: () => void
   onResize: () => void
   onRotate: () => void
+  onMerge: () => void
+  onCut: () => void
+  onOffset: () => void
+}) {
+  return (
+    <>
+      <div className="toolbar-group">
+        <ToolbarActionButton
+          icon="copy"
+          label={pendingMoveMode === 'copy' ? 'Cancel Copy' : 'Copy Selected Features'}
+          active={pendingMoveMode === 'copy'}
+          tooltipSide={tooltipSide}
+          onClick={onCopy}
+        />
+        <ToolbarActionButton
+          icon="move"
+          label={pendingMoveMode === 'move' ? 'Cancel Move' : 'Move Selected Features'}
+          active={pendingMoveMode === 'move'}
+          disabled={hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onMove}
+        />
+        <ToolbarActionButton
+          icon="trash"
+          label="Delete Selected Features"
+          tooltipSide={tooltipSide}
+          onClick={onDelete}
+        />
+        <ToolbarActionButton
+          icon="resize"
+          label={pendingTransformMode === 'resize' ? 'Cancel Resize' : 'Resize Selected Features'}
+          active={pendingTransformMode === 'resize'}
+          disabled={hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onResize}
+        />
+        <ToolbarActionButton
+          icon="rotate"
+          label={pendingTransformMode === 'rotate' ? 'Cancel Rotate' : 'Rotate Selected Features'}
+          active={pendingTransformMode === 'rotate'}
+          disabled={hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onRotate}
+        />
+      </div>
+      <div className="toolbar-group">
+        <ToolbarActionButton
+          icon="merge"
+          label="Merge Selected Closed Features"
+          disabled={hasLockedSelection || !hasClosedSelection || selectionCount < 2}
+          tooltipSide={tooltipSide}
+          onClick={onMerge}
+        />
+        <ToolbarActionButton
+          icon="cut"
+          label="Cut Primary Feature By Other Selected Features"
+          disabled={hasLockedSelection || !hasClosedSelection || selectionCount < 2}
+          tooltipSide={tooltipSide}
+          onClick={onCut}
+        />
+        <ToolbarActionButton
+          icon="offset"
+          label={pendingOffset ? 'Cancel Offset' : 'Create Offset Feature'}
+          active={pendingOffset}
+          disabled={hasLockedSelection || !hasClosedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onOffset}
+        />
+      </div>
+    </>
+  )
+}
+
+function SketchEditActions({
+  activeTool,
+  tooltipSide,
+  onAddPoint,
+  onDeletePoint,
+  onFillet,
+}: {
+  activeTool: SketchEditTool | null
+  tooltipSide?: 'bottom' | 'right'
+  onAddPoint: () => void
+  onDeletePoint: () => void
+  onFillet: () => void
 }) {
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
-        icon="copy"
-        label={pendingMoveMode === 'copy' ? 'Cancel Copy' : 'Copy Selected Features'}
-        active={pendingMoveMode === 'copy'}
+        icon="point-add"
+        label={activeTool === 'add_point' ? 'Cancel Add Point' : 'Add Point'}
+        active={activeTool === 'add_point'}
         tooltipSide={tooltipSide}
-        onClick={onCopy}
+        onClick={onAddPoint}
       />
       <ToolbarActionButton
-        icon="move"
-        label={pendingMoveMode === 'move' ? 'Cancel Move' : 'Move Selected Features'}
-        active={pendingMoveMode === 'move'}
-        disabled={hasLockedSelection}
+        icon="point-delete"
+        label={activeTool === 'delete_point' ? 'Cancel Delete Point' : 'Delete Point'}
+        active={activeTool === 'delete_point'}
         tooltipSide={tooltipSide}
-        onClick={onMove}
+        onClick={onDeletePoint}
       />
       <ToolbarActionButton
-        icon="trash"
-        label="Delete Selected Features"
+        icon="fillet"
+        label={activeTool === 'fillet' ? 'Cancel Fillet' : 'Round Corner / Fillet'}
+        active={activeTool === 'fillet'}
         tooltipSide={tooltipSide}
-        onClick={onDelete}
-      />
-      <ToolbarActionButton
-        icon="resize"
-        label={pendingTransformMode === 'resize' ? 'Cancel Resize' : 'Resize Selected Features'}
-        active={pendingTransformMode === 'resize'}
-        disabled={hasLockedSelection}
-        tooltipSide={tooltipSide}
-        onClick={onResize}
-      />
-      <ToolbarActionButton
-        icon="rotate"
-        label={pendingTransformMode === 'rotate' ? 'Cancel Rotate' : 'Rotate Selected Features'}
-        active={pendingTransformMode === 'rotate'}
-        disabled={hasLockedSelection}
-        tooltipSide={tooltipSide}
-        onClick={onRotate}
+        onClick={onFillet}
       />
     </div>
   )
@@ -736,17 +861,31 @@ export function CreationToolbar({
         onSpline={toolbar.handleSpline}
         onComposite={toolbar.handleComposite}
       />
-      {toolbar.hasSelectedFeatures ? (
+      {toolbar.featureSketchEditActive ? (
+        <SketchEditActions
+          activeTool={toolbar.sketchEditTool}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onAddPoint={toolbar.handleSketchEditAddPoint}
+          onDeletePoint={toolbar.handleSketchEditDeletePoint}
+          onFillet={toolbar.handleSketchEditFillet}
+        />
+      ) : toolbar.hasSelectedFeatures ? (
         <FeatureEditActions
           hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+          hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+          selectionCount={toolbar.selection.selectedFeatureIds.length}
           pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
           pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
+          pendingOffset={!!toolbar.pendingOffset}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
           onCopy={toolbar.handleFeatureCopy}
           onMove={toolbar.handleFeatureMove}
           onDelete={toolbar.handleDeleteSelectedFeatures}
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
+          onMerge={toolbar.handleMergeSelectedFeatures}
+          onCut={toolbar.handleCutSelectedFeatures}
+          onOffset={toolbar.handleOffsetSelectedFeatures}
         />
       ) : toolbar.hasSelectedBackdrop ? (
         <BackdropEditActions
@@ -810,16 +949,29 @@ export function Toolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
         />
-        {toolbar.hasSelectedFeatures ? (
+        {toolbar.featureSketchEditActive ? (
+          <SketchEditActions
+            activeTool={toolbar.sketchEditTool}
+            onAddPoint={toolbar.handleSketchEditAddPoint}
+            onDeletePoint={toolbar.handleSketchEditDeletePoint}
+            onFillet={toolbar.handleSketchEditFillet}
+          />
+        ) : toolbar.hasSelectedFeatures ? (
           <FeatureEditActions
             hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+            hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+            selectionCount={toolbar.project ? toolbar.selection.selectedFeatureIds.length : 0}
             pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
             pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
+            pendingOffset={!!toolbar.pendingOffset}
             onCopy={toolbar.handleFeatureCopy}
             onMove={toolbar.handleFeatureMove}
             onDelete={toolbar.handleDeleteSelectedFeatures}
             onResize={toolbar.handleFeatureResize}
             onRotate={toolbar.handleFeatureRotate}
+            onMerge={toolbar.handleMergeSelectedFeatures}
+            onCut={toolbar.handleCutSelectedFeatures}
+            onOffset={toolbar.handleOffsetSelectedFeatures}
           />
         ) : toolbar.hasSelectedBackdrop ? (
           <BackdropEditActions

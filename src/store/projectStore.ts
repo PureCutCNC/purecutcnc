@@ -1,7 +1,15 @@
 import { create } from 'zustand'
+import ClipperLib from 'clipper-lib'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
+import {
+  DEFAULT_CLIPPER_SCALE,
+  flattenProfile,
+  fromClipperPath,
+  normalizeWinding,
+  toClipperPath,
+} from '../engine/toolpaths/geometry'
 import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName, type ImportedShape, type ImportSourceType } from '../import'
 import {
   type Segment,
@@ -26,6 +34,7 @@ import {
 import type {
   BackdropImage,
   Clamp,
+  FeatureOperation,
   FeatureFolder,
   FeatureTreeEntry,
   GridSettings,
@@ -35,6 +44,7 @@ import type {
   OperationTarget,
   Point,
   Project,
+  SketchProfile,
   SketchFeature,
   Stock,
   Tab,
@@ -55,6 +65,7 @@ export interface SelectionState {
   selectedFeatureIds: string[]
   selectedNode: SelectedNode
   hoveredFeatureId: string | null
+  sketchEditTool: SketchEditTool | null
   // sketch edit mode — which anchor/handle is being dragged
   activeControl: SketchControlRef | null
 }
@@ -63,6 +74,13 @@ export interface SketchControlRef {
   kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle'
   index: number
 }
+
+export type SketchEditTool = 'add_point' | 'delete_point' | 'fillet'
+
+export type SketchInsertTarget =
+  | { kind: 'segment'; segmentIndex: number; point: Point; t: number }
+  | { kind: 'extend_start'; point: Point }
+  | { kind: 'extend_end'; point: Point }
 
 export type SelectedNode =
   | { type: 'project' }
@@ -89,6 +107,7 @@ export interface ProjectStore {
   pendingAdd: PendingAddTool | null
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
+  pendingOffset: PendingOffsetTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   history: ProjectHistory
@@ -135,6 +154,9 @@ export interface ProjectStore {
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
   deleteFeatures: (ids: string[]) => void
+  mergeSelectedFeatures: () => string[]
+  cutSelectedFeatures: () => string[]
+  offsetSelectedFeatures: (distance: number) => string[]
   reorderFeatures: (ids: string[]) => void
 
   // Clamps
@@ -192,8 +214,12 @@ export interface ProjectStore {
   enterClampEdit: (id: string) => void
   applySketchEdit: () => void
   cancelSketchEdit: () => void
+  setSketchEditTool: (tool: SketchEditTool | null) => void
   setActiveControl: (control: SketchControlRef | null) => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
+  insertFeaturePoint: (featureId: string, target: SketchInsertTarget) => void
+  deleteFeaturePoint: (featureId: string, anchorIndex: number) => void
+  filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
   // Feature placement flow
@@ -221,6 +247,9 @@ export interface ProjectStore {
   startMoveBackdrop: () => void
   startResizeBackdrop: () => void
   startRotateBackdrop: () => void
+  startOffsetSelectedFeatures: () => void
+  cancelPendingOffset: () => void
+  completePendingOffset: (distance: number) => string[]
   cancelPendingMove: () => void
   setPendingMoveFrom: (point: Point) => void
   setPendingMoveTo: (point: Point) => void
@@ -276,6 +305,11 @@ export interface PendingTransformTool {
   session: number
 }
 
+export interface PendingOffsetTool {
+  entityIds: string[]
+  session: number
+}
+
 export interface ProjectHistory {
   past: Project[]
   future: Project[]
@@ -287,6 +321,13 @@ export interface SketchEditSession {
   entityId: string
   snapshot: Project
   pastLength: number
+}
+
+interface ClipperPolyNode {
+  IsHole(): boolean
+  Contour(): Array<{ X: number; Y: number }>
+  Childs?: () => ClipperPolyNode[]
+  m_Childs?: ClipperPolyNode[]
 }
 
 // ============================================================
@@ -399,6 +440,563 @@ function cloneSegment(segment: Segment): Segment {
   return {
     ...segment,
     to: clonePoint(segment.to),
+  }
+}
+
+function normalizeEditableProfileClosure(profile: SketchProfile): SketchProfile {
+  if (profile.segments.length === 0) {
+    return {
+      ...profile,
+      closed: false,
+    }
+  }
+
+  const endAnchor = anchorPointForIndex(profile, profile.segments.length)
+  const shouldClose = pointsEqual(profile.start, endAnchor)
+  return {
+    ...profile,
+    closed: shouldClose,
+  }
+}
+
+function getClipperChildren(node: ClipperPolyNode): ClipperPolyNode[] {
+  return node.Childs ? node.Childs() : (node.m_Childs ?? [])
+}
+
+function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE) {
+  const flattened = flattenProfile(feature.sketch.profile)
+  return toClipperPath(normalizeWinding(flattened.points, false), scale)
+}
+
+function executeClipPaths(subjectPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipType: number) {
+  const clipper = new ClipperLib.Clipper()
+  if (subjectPaths.length > 0) {
+    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
+  }
+  if (clipPaths.length > 0) {
+    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
+  }
+
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    clipType,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ReturnType<typeof flattenFeatureToClipperPath>[]
+}
+
+function executeClipTree(subjectPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipType: number): ClipperPolyNode {
+  const clipper = new ClipperLib.Clipper()
+  if (subjectPaths.length > 0) {
+    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
+  }
+  if (clipPaths.length > 0) {
+    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
+  }
+
+  const polyTree = new ClipperLib.PolyTree()
+  clipper.Execute(
+    clipType,
+    polyTree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return polyTree as ClipperPolyNode
+}
+
+function unionClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[]) {
+  if (paths.length === 0) {
+    return []
+  }
+  return executeClipPaths(paths, [], ClipperLib.ClipType.ctUnion)
+}
+
+function offsetClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[], delta: number) {
+  if (paths.length === 0) {
+    return []
+  }
+  const offset = new ClipperLib.ClipperOffset()
+  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  const solution = new ClipperLib.Paths()
+  offset.Execute(solution, delta)
+  return solution as ReturnType<typeof flattenFeatureToClipperPath>[]
+}
+
+function clipperContourToProfile(contour: ReturnType<typeof flattenFeatureToClipperPath>, scale = DEFAULT_CLIPPER_SCALE): SketchProfile | null {
+  const points = fromClipperPath(contour, scale)
+  if (points.length < 3) {
+    return null
+  }
+
+  const first = points[0]
+  const last = points[points.length - 1]
+  const vertices = pointsEqual(first, last) ? points.slice(0, -1) : points
+  if (vertices.length < 3) {
+    return null
+  }
+
+  return polygonProfile(vertices)
+}
+
+function createDerivedFeature(
+  project: Project,
+  baseFeature: SketchFeature,
+  profile: SketchProfile,
+  operation: FeatureOperation,
+  name: string,
+): SketchFeature {
+  return normalizeFeatureZRange({
+    id: nextUniqueGeneratedId(project, 'f'),
+    name,
+    kind: inferFeatureKind(profile),
+    folderId: baseFeature.folderId,
+    sketch: {
+      profile,
+      origin: clonePoint(baseFeature.sketch.origin),
+      orientationAngle: baseFeature.sketch.orientationAngle,
+      dimensions: [],
+      constraints: [],
+    },
+    operation,
+    z_top: baseFeature.z_top,
+    z_bottom: baseFeature.z_bottom,
+    visible: true,
+    locked: false,
+  })
+}
+
+function collectDerivedFeaturesFromPolyTree(
+  project: Project,
+  node: ClipperPolyNode,
+  baseFeature: SketchFeature,
+  baseOperation: FeatureOperation,
+  baseName: string,
+  depth = 0,
+): SketchFeature[] {
+  const created: SketchFeature[] = []
+  const contour = node.Contour()
+
+  if (contour.length > 0) {
+    const profile = clipperContourToProfile(contour)
+    if (profile) {
+      const operation = depth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
+      const name = uniqueName(
+        depth === 0 ? baseName : `${baseName} Hole`,
+        [...project.features.map((feature) => feature.name), ...created.map((feature) => feature.name)],
+      )
+      const nextProject = { ...project, features: [...project.features, ...created] }
+      created.push(createDerivedFeature(nextProject, baseFeature, profile, operation, name))
+    }
+  }
+
+  for (const child of getClipperChildren(node)) {
+    created.push(...collectDerivedFeaturesFromPolyTree(
+      { ...project, features: [...project.features, ...created] },
+      child,
+      baseFeature,
+      baseOperation,
+      baseName,
+      depth + 1,
+    ))
+  }
+
+  return created
+}
+
+function selectedClosedFeaturesFromIds(project: Project, featureIds: string[]): SketchFeature[] {
+  return featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is SketchFeature => feature !== null)
+    .filter((feature) => feature.sketch.profile.closed)
+}
+
+export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): SketchFeature[] {
+  const selectedFeatures = selectedClosedFeaturesFromIds(project, featureIds)
+  if (selectedFeatures.length === 0 || Math.abs(distance) <= 1e-9) {
+    return []
+  }
+
+  const baseFeature = selectedFeatures[selectedFeatures.length - 1]
+  const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
+  const offsetPaths = offsetClipperPaths(unionPaths, distance * DEFAULT_CLIPPER_SCALE)
+  const createdFeatures: SketchFeature[] = []
+
+  for (const [index, path] of offsetPaths.entries()) {
+    const profile = clipperContourToProfile(path)
+    if (!profile) {
+      continue
+    }
+
+    const nextProject = { ...project, features: [...project.features, ...createdFeatures] }
+    createdFeatures.push(createDerivedFeature(
+      nextProject,
+      baseFeature,
+      profile,
+      baseFeature.operation,
+      uniqueName(index === 0 ? `${baseFeature.name} Offset` : `${baseFeature.name} Offset ${index + 1}`, [
+        ...project.features.map((feature) => feature.name),
+        ...createdFeatures.map((feature) => feature.name),
+      ]),
+    ))
+  }
+
+  return createdFeatures
+}
+
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+  }
+}
+
+function anchorPointForIndex(profile: SketchProfile, index: number): Point {
+  if (index <= 0) {
+    return profile.start
+  }
+  return profile.segments[index - 1]?.to ?? profile.start
+}
+
+function splitBezierSegment(start: Point, segment: Extract<Segment, { type: 'bezier' }>, t: number): [Segment, Segment] {
+  const p01 = lerpPoint(start, segment.control1, t)
+  const p12 = lerpPoint(segment.control1, segment.control2, t)
+  const p23 = lerpPoint(segment.control2, segment.to, t)
+  const p012 = lerpPoint(p01, p12, t)
+  const p123 = lerpPoint(p12, p23, t)
+  const splitPoint = lerpPoint(p012, p123, t)
+
+  return [
+    {
+      type: 'bezier',
+      control1: p01,
+      control2: p012,
+      to: splitPoint,
+    },
+    {
+      type: 'bezier',
+      control1: p123,
+      control2: p23,
+      to: clonePoint(segment.to),
+    },
+  ]
+}
+
+function splitArcSegment(segment: Extract<Segment, { type: 'arc' }>, point: Point): [Segment, Segment] {
+  return [
+    {
+      type: 'arc',
+      center: clonePoint(segment.center),
+      clockwise: segment.clockwise,
+      to: clonePoint(point),
+    },
+    {
+      type: 'arc',
+      center: clonePoint(segment.center),
+      clockwise: segment.clockwise,
+      to: clonePoint(segment.to),
+    },
+  ]
+}
+
+function extendOpenProfileAtStart(profile: SketchProfile, point: Point): SketchProfile {
+  const nextPoint = clonePoint(profile.start)
+  const firstSegment = profile.segments[0]
+  const insertedSegment: Segment =
+    firstSegment?.type === 'bezier'
+      ? {
+          type: 'bezier',
+          control1: lerpPoint(point, nextPoint, 1 / 3),
+          control2: {
+            x: nextPoint.x + (nextPoint.x - firstSegment.control1.x),
+            y: nextPoint.y + (nextPoint.y - firstSegment.control1.y),
+          },
+          to: nextPoint,
+        }
+      : {
+          type: 'line',
+          to: nextPoint,
+        }
+
+  return {
+    ...profile,
+    start: clonePoint(point),
+    segments: [insertedSegment, ...profile.segments.map(cloneSegment)],
+  }
+}
+
+function extendOpenProfileAtEnd(profile: SketchProfile, point: Point): SketchProfile {
+  const nextSegments = profile.segments.map(cloneSegment)
+  const lastAnchor = anchorPointForIndex(profile, profile.segments.length)
+  const lastSegment = profile.segments[profile.segments.length - 1]
+  const insertedSegment: Segment =
+    lastSegment?.type === 'bezier'
+      ? {
+          type: 'bezier',
+          control1: {
+            x: lastAnchor.x + (lastAnchor.x - lastSegment.control2.x),
+            y: lastAnchor.y + (lastAnchor.y - lastSegment.control2.y),
+          },
+          control2: lerpPoint(point, lastAnchor, 1 / 3),
+          to: clonePoint(point),
+        }
+      : {
+          type: 'line',
+          to: clonePoint(point),
+        }
+
+  nextSegments.push(insertedSegment)
+  return {
+    ...profile,
+    segments: nextSegments,
+  }
+}
+
+function buildBridgeSegment(
+  previousAnchor: Point,
+  nextAnchor: Point,
+  incomingSegment: Segment,
+  outgoingSegment: Segment,
+): Segment {
+  if (incomingSegment.type === 'bezier' || outgoingSegment.type === 'bezier') {
+    return {
+      type: 'bezier',
+      control1:
+        incomingSegment.type === 'bezier'
+          ? clonePoint(incomingSegment.control1)
+          : lerpPoint(previousAnchor, nextAnchor, 1 / 3),
+      control2:
+        outgoingSegment.type === 'bezier'
+          ? clonePoint(outgoingSegment.control2)
+          : lerpPoint(nextAnchor, previousAnchor, 1 / 3),
+      to: clonePoint(nextAnchor),
+    }
+  }
+
+  return {
+    type: 'line',
+    to: clonePoint(nextAnchor),
+  }
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function createFilletArcSegment(start: Point, end: Point, center: Point): Segment {
+  const startVector = subtractPoint(start, center)
+  const endVector = subtractPoint(end, center)
+  return {
+    type: 'arc',
+    center: clonePoint(center),
+    clockwise: crossPoint(startVector, endVector) < 0,
+    to: clonePoint(end),
+  }
+}
+
+function applyLineCornerFillet(profile: SketchProfile, anchorIndex: number, radius: number): SketchProfile | null {
+  const anchors = profileVertices(profile)
+  const anchorCount = anchors.length
+  if (radius <= 1e-9 || anchorIndex < 0 || anchorIndex >= anchorCount) {
+    return null
+  }
+
+  const hasIncoming = profile.closed || anchorIndex > 0
+  const hasOutgoing = profile.closed || anchorIndex < anchorCount - 1
+  if (!hasIncoming || !hasOutgoing) {
+    return null
+  }
+
+  const incomingIndex = profile.closed ? (anchorIndex - 1 + profile.segments.length) % profile.segments.length : anchorIndex - 1
+  const outgoingIndex = anchorIndex
+  const incomingSegment = profile.segments[incomingIndex]
+  const outgoingSegment = profile.segments[outgoingIndex]
+  if (!incomingSegment || !outgoingSegment || incomingSegment.type !== 'line' || outgoingSegment.type !== 'line') {
+    return null
+  }
+
+  const previousAnchor = anchors[(anchorIndex - 1 + anchorCount) % anchorCount]
+  const corner = anchors[anchorIndex]
+  const nextAnchor = anchors[(anchorIndex + 1) % anchorCount]
+  const incomingDirection = normalizePoint(subtractPoint(previousAnchor, corner))
+  const outgoingDirection = normalizePoint(subtractPoint(nextAnchor, corner))
+  if (!incomingDirection || !outgoingDirection) {
+    return null
+  }
+
+  const turnDot = clampNumber(dotPoint(incomingDirection, outgoingDirection), -1, 1)
+  const interiorAngle = Math.acos(turnDot)
+  if (!Number.isFinite(interiorAngle) || interiorAngle <= 1e-3 || Math.abs(Math.PI - interiorAngle) <= 1e-3) {
+    return null
+  }
+
+  const trim = radius / Math.tan(interiorAngle / 2)
+  const incomingLength = pointLength(subtractPoint(previousAnchor, corner))
+  const outgoingLength = pointLength(subtractPoint(nextAnchor, corner))
+  if (!(trim > 0) || trim >= incomingLength || trim >= outgoingLength) {
+    return null
+  }
+
+  const tangentStart = addPoint(corner, scalePoint(incomingDirection, trim))
+  const tangentEnd = addPoint(corner, scalePoint(outgoingDirection, trim))
+  const bisector = normalizePoint(addPoint(incomingDirection, outgoingDirection))
+  if (!bisector) {
+    return null
+  }
+
+  const centerDistance = radius / Math.sin(interiorAngle / 2)
+  const center = addPoint(corner, scalePoint(bisector, centerDistance))
+  const nextSegments = profile.segments.map(cloneSegment)
+  nextSegments[incomingIndex] = { type: 'line', to: clonePoint(tangentStart) }
+  nextSegments.splice(outgoingIndex, 1, createFilletArcSegment(tangentStart, tangentEnd, center), { type: 'line', to: clonePoint(nextAnchor) })
+
+  if (profile.closed && anchorIndex === 0) {
+    return normalizeEditableProfileClosure({
+      ...profile,
+      start: clonePoint(tangentStart),
+      segments: nextSegments,
+    })
+  }
+
+  if (!profile.closed && anchorIndex === 0) {
+    return normalizeEditableProfileClosure({
+      ...profile,
+      start: clonePoint(tangentStart),
+      segments: nextSegments.slice(1),
+    })
+  }
+
+  return normalizeEditableProfileClosure({
+    ...profile,
+    segments: nextSegments,
+  })
+}
+
+function insertPointIntoProfile(profile: SketchProfile, target: SketchInsertTarget): SketchProfile {
+  if (!profile.closed && target.kind === 'extend_start') {
+    return extendOpenProfileAtStart(profile, target.point)
+  }
+
+  if (!profile.closed && target.kind === 'extend_end') {
+    return extendOpenProfileAtEnd(profile, target.point)
+  }
+
+  if (target.kind !== 'segment') {
+    return profile
+  }
+
+  const segmentIndex = target.segmentIndex
+  const segment = profile.segments[segmentIndex]
+  const start = anchorPointForIndex(profile, segmentIndex)
+
+  if (!segment || pointsEqual(start, target.point) || pointsEqual(segment.to, target.point)) {
+    return profile
+  }
+
+  const nextSegments = profile.segments.map(cloneSegment)
+  const replacements =
+    segment.type === 'line'
+      ? [
+          { type: 'line' as const, to: clonePoint(target.point) },
+          { type: 'line' as const, to: clonePoint(segment.to) },
+        ]
+      : segment.type === 'bezier'
+        ? splitBezierSegment(start, segment, Math.min(0.999, Math.max(0.001, target.t)))
+        : splitArcSegment(segment, target.point)
+
+  nextSegments.splice(segmentIndex, 1, ...replacements)
+  return {
+    ...profile,
+    segments: nextSegments,
+  }
+}
+
+function deleteAnchorFromProfile(profile: SketchProfile, anchorIndex: number): SketchProfile | null {
+  const anchors = profileVertices(profile)
+  const anchorCount = anchors.length
+
+  if (profile.closed) {
+    if (anchorCount <= 3 || anchorIndex < 0 || anchorIndex >= anchorCount) {
+      return null
+    }
+
+    const nextSegments = profile.segments.map(cloneSegment)
+    if (anchorIndex === 0) {
+      const nextStart = anchors[1]
+      const removedOutgoing = nextSegments[0]
+      nextSegments.shift()
+      if (nextSegments.length === 0) {
+        return null
+      }
+      const closingStart = anchors[anchorCount - 1]
+      const previousClosing = nextSegments[nextSegments.length - 1]
+      nextSegments[nextSegments.length - 1] = buildBridgeSegment(closingStart, nextStart, previousClosing, removedOutgoing)
+      return {
+        ...profile,
+        start: clonePoint(nextStart),
+        segments: nextSegments,
+      }
+    }
+
+    const incomingIndex = anchorIndex - 1
+    const outgoingIndex = anchorIndex
+    const nextAnchor = anchors[(anchorIndex + 1) % anchorCount]
+    const previousAnchor = anchors[(anchorIndex - 1 + anchorCount) % anchorCount]
+    nextSegments[incomingIndex] = buildBridgeSegment(
+      previousAnchor,
+      nextAnchor,
+      nextSegments[incomingIndex],
+      nextSegments[outgoingIndex],
+    )
+    nextSegments.splice(outgoingIndex, 1)
+    return {
+      ...profile,
+      segments: nextSegments,
+    }
+  }
+
+  if (anchorCount <= 2 || anchorIndex < 0 || anchorIndex >= anchorCount) {
+    return null
+  }
+
+  const nextSegments = profile.segments.map(cloneSegment)
+
+  if (anchorIndex === 0) {
+    const nextStart = anchors[1]
+    nextSegments.shift()
+    return {
+      ...profile,
+      start: clonePoint(nextStart),
+      segments: nextSegments,
+      closed: false,
+    }
+  }
+
+  if (anchorIndex === anchorCount - 1) {
+    nextSegments.pop()
+    return {
+      ...profile,
+      segments: nextSegments,
+      closed: false,
+    }
+  }
+
+  const incomingIndex = anchorIndex - 1
+  const outgoingIndex = anchorIndex
+  const nextAnchor = anchors[anchorIndex + 1]
+  const previousAnchor = anchors[anchorIndex - 1]
+  nextSegments[incomingIndex] = buildBridgeSegment(
+    previousAnchor,
+    nextAnchor,
+    nextSegments[incomingIndex],
+    nextSegments[outgoingIndex],
+  )
+  nextSegments.splice(outgoingIndex, 1)
+  return {
+    ...profile,
+    segments: nextSegments,
+    closed: false,
   }
 }
 
@@ -938,6 +1536,77 @@ export function rotateBackdropFromReference(
     ...backdrop,
     center: rotatePointAround(backdrop.center, referenceStart, angle),
     orientationAngle: normalizeAngleDegrees(backdrop.orientationAngle + angle * (180 / Math.PI)),
+  }
+}
+
+export function filletRadiusFromPoint(
+  feature: SketchFeature,
+  anchorIndex: number,
+  previewPoint: Point,
+): number | null {
+  const profile = feature.sketch.profile
+  const anchors = profileVertices(profile)
+  const anchorCount = anchors.length
+  const hasIncoming = profile.closed || anchorIndex > 0
+  const hasOutgoing = profile.closed || anchorIndex < anchorCount - 1
+  if (!hasIncoming || !hasOutgoing || anchorIndex < 0 || anchorIndex >= anchorCount) {
+    return null
+  }
+
+  const corner = anchors[anchorIndex]
+  const previousAnchor = anchors[(anchorIndex - 1 + anchorCount) % anchorCount]
+  const nextAnchor = anchors[(anchorIndex + 1) % anchorCount]
+  const incomingDirection = normalizePoint(subtractPoint(previousAnchor, corner))
+  const outgoingDirection = normalizePoint(subtractPoint(nextAnchor, corner))
+  if (!incomingDirection || !outgoingDirection) {
+    return null
+  }
+
+  const incomingIndex = profile.closed ? (anchorIndex - 1 + profile.segments.length) % profile.segments.length : anchorIndex - 1
+  const outgoingIndex = anchorIndex
+  const incomingSegment = profile.segments[incomingIndex]
+  const outgoingSegment = profile.segments[outgoingIndex]
+  if (!incomingSegment || !outgoingSegment || incomingSegment.type !== 'line' || outgoingSegment.type !== 'line') {
+    return null
+  }
+
+  const previewVector = subtractPoint(previewPoint, corner)
+  const trim = Math.max(0, dotPoint(previewVector, incomingDirection), dotPoint(previewVector, outgoingDirection))
+  if (!(trim > 1e-9)) {
+    return null
+  }
+
+  const turnDot = clampNumber(dotPoint(incomingDirection, outgoingDirection), -1, 1)
+  const interiorAngle = Math.acos(turnDot)
+  if (!Number.isFinite(interiorAngle) || interiorAngle <= 1e-3 || Math.abs(Math.PI - interiorAngle) <= 1e-3) {
+    return null
+  }
+
+  return trim * Math.tan(interiorAngle / 2)
+}
+
+export function filletFeatureFromPoint(
+  feature: SketchFeature,
+  anchorIndex: number,
+  previewPoint: Point,
+): SketchFeature | null {
+  const radius = filletRadiusFromPoint(feature, anchorIndex, previewPoint)
+  if (!radius) {
+    return null
+  }
+
+  const profile = applyLineCornerFillet(feature.sketch.profile, anchorIndex, radius)
+  if (!profile) {
+    return null
+  }
+
+  return {
+    ...feature,
+    kind: inferFeatureKind(profile),
+    sketch: {
+      ...feature.sketch,
+      profile,
+    },
   }
 }
 
@@ -1886,6 +2555,7 @@ function emptySelection(): SelectionState {
     selectedFeatureIds: [],
     selectedNode: null,
     hoveredFeatureId: null,
+    sketchEditTool: null,
     activeControl: null,
   }
 }
@@ -1909,6 +2579,7 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
         selectedFeatureIds: [],
         selectedNode: null,
         hoveredFeatureId: null,
+        sketchEditTool: null,
         activeControl: null,
       }
     }
@@ -1961,6 +2632,7 @@ function sanitizeSelection(project: Project, selection: SelectionState): Selecti
           ? null
           : safeSelectedNode,
     hoveredFeatureId,
+    sketchEditTool: selection.mode === 'sketch_edit' ? selection.sketchEditTool : null,
     activeControl: null,
   }
 }
@@ -1986,6 +2658,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   pendingAdd: null,
   pendingMove: null,
   pendingTransform: null,
+  pendingOffset: null,
   backdropImageLoading: false,
   sketchEditSession: null,
   history: {
@@ -2006,6 +2679,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingOffset: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -2375,6 +3049,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingOffset: null,
         selection: emptySelection(),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -2405,6 +3080,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingOffset: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: state.history.past.slice(0, -1),
@@ -2426,6 +3102,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingOffset: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
@@ -2483,6 +3160,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingOffset: null,
         selection: sanitizeSelection(restored, state.selection),
         history: {
           ...state.history,
@@ -3295,6 +3973,168 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  mergeSelectedFeatures: () => {
+    const state = get()
+    const selectedFeatures = state.selection.selectedFeatureIds
+      .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature.sketch.profile.closed)
+
+    if (selectedFeatures.length < 2) {
+      return []
+    }
+
+    const baseFeature = selectedFeatures[selectedFeatures.length - 1]
+    const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
+    const createdFeatures = unionPaths
+      .map((path, index) => {
+        const profile = clipperContourToProfile(path)
+        if (!profile) {
+          return null
+        }
+        const nextProject = { ...state.project, features: [...state.project.features] }
+        return createDerivedFeature(
+          nextProject,
+          baseFeature,
+          profile,
+          baseFeature.operation,
+          uniqueName(index === 0 ? `${baseFeature.name} Merge` : `${baseFeature.name} Merge ${index + 1}`, [
+            ...state.project.features.map((feature) => feature.name),
+          ]),
+        )
+      })
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (createdFeatures.length === 0) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, ...createdFeatures],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
+
+  cutSelectedFeatures: () => {
+    const state = get()
+    const selectedFeatures = state.selection.selectedFeatureIds
+      .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature.sketch.profile.closed)
+
+    if (selectedFeatures.length < 2) {
+      return []
+    }
+
+    const baseFeature = selectedFeatures[selectedFeatures.length - 1]
+    const subjectPaths = [flattenFeatureToClipperPath(baseFeature)]
+    const clipPaths = unionClipperPaths(
+      selectedFeatures
+        .filter((feature) => feature.id !== baseFeature.id)
+        .map((feature) => flattenFeatureToClipperPath(feature)),
+    )
+    const polyTree = executeClipTree(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
+    const createdFeatures = collectDerivedFeaturesFromPolyTree(
+      state.project,
+      polyTree,
+      baseFeature,
+      baseFeature.operation,
+      `${baseFeature.name} Cut`,
+    )
+
+    if (createdFeatures.length === 0) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, ...createdFeatures],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
+
+  offsetSelectedFeatures: (distance) => {
+    const state = get()
+    const createdFeatures = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
+
+    if (createdFeatures.length === 0) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, ...createdFeatures],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
+
   reorderFeatures: (ids) =>
     set((s) => {
       const map = new Map(s.project.features.map((f) => [f.id, f]))
@@ -3557,6 +4397,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectFeature: (id, additive = false) =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         ...(id
@@ -3600,6 +4441,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const nextPrimaryId = nextIds.at(-1) ?? null
 
       return {
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: nextPrimaryId,
@@ -3613,6 +4455,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectProject: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3626,6 +4469,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectGrid: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3638,6 +4482,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectStock: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3650,6 +4495,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectOrigin: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3663,6 +4509,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectBackdrop: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3676,6 +4523,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectFeaturesRoot: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3689,6 +4537,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectTabsRoot: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3702,6 +4551,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectClampsRoot: () =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3715,6 +4565,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectFeatureFolder: (id) =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3728,6 +4579,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectTab: (id) =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3741,6 +4593,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   selectClamp: (id) =>
     set((s) => ({
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -3766,12 +4619,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   enterSketchEdit: (id) =>
     set((s) => ({
       pendingTransform: null,
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: id,
         selectedFeatureIds: [id],
         selectedNode: { type: 'feature', featureId: id },
         mode: 'sketch_edit',
+        sketchEditTool: null,
         activeControl: null,
       },
       sketchEditSession: {
@@ -3785,12 +4640,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   enterClampEdit: (id) =>
     set((s) => ({
       pendingTransform: null,
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
         selectedFeatureIds: [],
         selectedNode: { type: 'clamp', clampId: id },
         mode: 'sketch_edit',
+        sketchEditTool: null,
         activeControl: null,
       },
       sketchEditSession: {
@@ -3804,12 +4661,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   enterTabEdit: (id) =>
     set((s) => ({
       pendingTransform: null,
+      pendingOffset: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
         selectedFeatureIds: [],
         selectedNode: { type: 'tab', tabId: id },
         mode: 'sketch_edit',
+        sketchEditTool: null,
         activeControl: null,
       },
       sketchEditSession: {
@@ -3822,7 +4681,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   applySketchEdit: () =>
     set((s) => ({
-      selection: { ...s.selection, mode: 'feature', activeControl: null },
+      selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
       sketchEditSession: null,
     })),
 
@@ -3830,7 +4689,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => {
       if (!s.sketchEditSession) {
         return {
-          selection: { ...s.selection, mode: 'feature', activeControl: null },
+          selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
           sketchEditSession: null,
         }
       }
@@ -3841,6 +4700,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         selection: {
           ...sanitizeSelection(restored, s.selection),
           mode: 'feature',
+          sketchEditTool: null,
           activeControl: null,
         },
         sketchEditSession: null,
@@ -3851,6 +4711,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         },
       }
     }),
+
+  setSketchEditTool: (tool) =>
+    set((s) => ({
+      selection: {
+        ...s.selection,
+        sketchEditTool: s.selection.mode === 'sketch_edit' ? tool : null,
+        activeControl: null,
+      },
+    })),
 
   setActiveControl: (control) =>
     set((s) => ({
@@ -3871,27 +4740,33 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             segments: profile.segments.map(cloneSegment),
           }
 
-          const anchorCount = nextProfile.segments.length
+          const anchorCount = profileVertices(nextProfile).length
+          const segmentCount = nextProfile.segments.length
           if (anchorCount === 0) {
             return feature
           }
 
           if (control.kind === 'anchor') {
-            const currentAnchor =
-              control.index === 0
-                ? nextProfile.start
-                : nextProfile.segments[control.index - 1]?.to
+            const currentAnchor = anchorPointForIndex(nextProfile, control.index)
 
             if (!currentAnchor) {
               return feature
             }
 
-            const incomingIndex = (control.index - 1 + anchorCount) % anchorCount
-            const outgoingIndex = control.index % anchorCount
-            const originalIncoming = nextProfile.segments[incomingIndex]
-            const originalOutgoing = nextProfile.segments[outgoingIndex]
+            const incomingIndex = nextProfile.closed
+              ? (control.index - 1 + segmentCount) % segmentCount
+              : control.index > 0
+                ? control.index - 1
+                : null
+            const outgoingIndex = control.index < segmentCount ? control.index : null
+            const originalIncoming = incomingIndex !== null ? nextProfile.segments[incomingIndex] : null
+            const originalOutgoing = outgoingIndex !== null ? nextProfile.segments[outgoingIndex] : null
             const originalIncomingStart =
-              incomingIndex === 0 ? nextProfile.start : nextProfile.segments[incomingIndex - 1]?.to
+              incomingIndex === null
+                ? null
+                : incomingIndex === 0
+                  ? nextProfile.start
+                  : nextProfile.segments[incomingIndex - 1]?.to
             const originalOutgoingStart = currentAnchor
             const incomingArcThrough =
               originalIncoming?.type === 'arc' && originalIncomingStart
@@ -3907,14 +4782,20 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
             if (control.index === 0) {
               nextProfile.start = point
-              const closingSegment = nextProfile.segments[anchorCount - 1]
+              const closingSegment = nextProfile.closed ? nextProfile.segments[segmentCount - 1] : null
               if (closingSegment) {
                 closingSegment.to = point
                 if (closingSegment.type === 'bezier') {
                   closingSegment.control2 = translatePoint(closingSegment.control2, dx, dy)
                 }
               }
-            } else {
+            } else if (control.index === anchorCount - 1 && !nextProfile.closed) {
+              nextProfile.segments[segmentCount - 1].to = point
+              const incomingSegment = nextProfile.segments[segmentCount - 1]
+              if (incomingSegment.type === 'bezier') {
+                incomingSegment.control2 = translatePoint(incomingSegment.control2, dx, dy)
+              }
+            } else if (control.index > 0) {
               nextProfile.segments[control.index - 1].to = point
               const incomingSegment = nextProfile.segments[control.index - 1]
               if (incomingSegment.type === 'bezier') {
@@ -3922,25 +4803,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               }
             }
 
-            const incomingSegment = nextProfile.segments[incomingIndex]
+            const incomingSegment = incomingIndex !== null ? nextProfile.segments[incomingIndex] : null
             if (incomingSegment?.type === 'arc' && incomingArcThrough) {
               const incomingStart =
-                incomingIndex === 0 ? nextProfile.start : nextProfile.segments[incomingIndex - 1]?.to
+                incomingIndex === 0
+                  ? nextProfile.start
+                  : incomingIndex !== null
+                    ? nextProfile.segments[incomingIndex - 1]?.to
+                    : null
               if (incomingStart) {
                 const rebuiltIncoming = buildArcSegmentFromThreePoints(incomingStart, incomingSegment.to, incomingArcThrough)
-                if (rebuiltIncoming) {
+                if (rebuiltIncoming && incomingIndex !== null) {
                   nextProfile.segments[incomingIndex] = rebuiltIncoming
                 }
               }
             }
 
-            const outgoingSegment = nextProfile.segments[outgoingIndex]
+            const outgoingSegment = outgoingIndex !== null ? nextProfile.segments[outgoingIndex] : null
             if (outgoingSegment?.type === 'arc' && outgoingArcThrough) {
               const outgoingStart =
                 control.index === 0 ? nextProfile.start : nextProfile.segments[control.index - 1]?.to
               if (outgoingStart) {
                 const rebuiltOutgoing = buildArcSegmentFromThreePoints(outgoingStart, outgoingSegment.to, outgoingArcThrough)
-                if (rebuiltOutgoing) {
+                if (rebuiltOutgoing && outgoingIndex !== null) {
                   nextProfile.segments[outgoingIndex] = rebuiltOutgoing
                 }
               }
@@ -3950,15 +4835,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               outgoingSegment.control1 = translatePoint(outgoingSegment.control1, dx, dy)
             }
           } else if (control.kind === 'out_handle') {
-            const outgoingSegment = nextProfile.segments[control.index % anchorCount]
+            const outgoingSegment = nextProfile.segments[control.index]
             if (outgoingSegment?.type === 'bezier') {
               outgoingSegment.control1 = point
 
-              const incomingSegment = nextProfile.segments[(control.index - 1 + anchorCount) % anchorCount]
-              const anchor =
-                control.index === 0
-                  ? nextProfile.start
-                  : nextProfile.segments[control.index - 1]?.to
+              const incomingSegment =
+                nextProfile.closed
+                  ? nextProfile.segments[(control.index - 1 + segmentCount) % segmentCount]
+                  : control.index > 0
+                    ? nextProfile.segments[control.index - 1]
+                    : null
+              const anchor = anchorPointForIndex(nextProfile, control.index)
 
               if (incomingSegment?.type === 'bezier' && anchor) {
                 const oppositeLength = pointLength(subtractPoint(incomingSegment.control2, anchor))
@@ -3969,7 +4856,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               }
             }
           } else if (control.kind === 'arc_handle') {
-            const segmentIndex = control.index % anchorCount
+            const segmentIndex = control.index
             const arcSegment = nextProfile.segments[segmentIndex]
             if (arcSegment?.type === 'arc') {
               const arcStart =
@@ -3984,15 +4871,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               }
             }
           } else {
-            const incomingSegment = nextProfile.segments[(control.index - 1 + anchorCount) % anchorCount]
+            const incomingSegment =
+              nextProfile.closed
+                ? nextProfile.segments[(control.index - 1 + segmentCount) % segmentCount]
+                : control.index > 0
+                  ? nextProfile.segments[control.index - 1]
+                  : null
             if (incomingSegment?.type === 'bezier') {
               incomingSegment.control2 = point
 
-              const outgoingSegment = nextProfile.segments[control.index % anchorCount]
-              const anchor =
-                control.index === 0
-                  ? nextProfile.start
-                  : nextProfile.segments[control.index - 1]?.to
+              const outgoingSegment = nextProfile.segments[control.index]
+              const anchor = anchorPointForIndex(nextProfile, control.index)
 
               if (outgoingSegment?.type === 'bezier' && anchor) {
                 const oppositeLength = pointLength(subtractPoint(outgoingSegment.control1, anchor))
@@ -4004,12 +4893,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             }
           }
 
+          const normalizedProfile = normalizeEditableProfileClosure(nextProfile)
           return {
             ...feature,
             sketch: {
               ...feature.sketch,
-              profile: nextProfile,
+              profile: normalizedProfile,
             },
+            kind: inferFeatureKind(normalizedProfile),
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -4022,6 +4913,145 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
       return {
         project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  insertFeaturePoint: (featureId, target) =>
+    set((s) => {
+      let changed = false
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== featureId || feature.locked) {
+            return feature
+          }
+
+          const nextProfile = normalizeEditableProfileClosure(insertPointIntoProfile(feature.sketch.profile, target))
+          if (JSON.stringify(nextProfile) === JSON.stringify(feature.sketch.profile)) {
+            return feature
+          }
+
+          changed = true
+          return {
+            ...feature,
+            kind: inferFeatureKind(nextProfile),
+            sketch: {
+              ...feature.sketch,
+              profile: nextProfile,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  deleteFeaturePoint: (featureId, anchorIndex) =>
+    set((s) => {
+      let changed = false
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== featureId || feature.locked) {
+            return feature
+          }
+
+          const nextProfileResult = deleteAnchorFromProfile(feature.sketch.profile, anchorIndex)
+          const nextProfile = nextProfileResult ? normalizeEditableProfileClosure(nextProfileResult) : null
+          if (!nextProfile) {
+            return feature
+          }
+
+          changed = true
+          return {
+            ...feature,
+            kind: inferFeatureKind(nextProfile),
+            sketch: {
+              ...feature.sketch,
+              profile: nextProfile,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  filletFeaturePoint: (featureId, anchorIndex, radius) =>
+    set((s) => {
+      let changed = false
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== featureId || feature.locked) {
+            return feature
+          }
+
+          const nextProfile = applyLineCornerFillet(feature.sketch.profile, anchorIndex, radius)
+          if (!nextProfile || JSON.stringify(nextProfile) === JSON.stringify(feature.sketch.profile)) {
+            return feature
+          }
+
+          changed = true
+          return {
+            ...feature,
+            kind: inferFeatureKind(nextProfile),
+            sketch: {
+              ...feature.sketch,
+              profile: nextProfile,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          activeControl: null,
+        },
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -4140,6 +5170,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4154,6 +5185,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       pendingAdd: { shape: 'tab', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4171,6 +5203,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4185,6 +5218,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4199,6 +5233,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4222,6 +5257,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       pendingMove: null,
       pendingTransform: null,
+      pendingOffset: null,
       sketchEditSession: null,
       selection: {
         ...s.selection,
@@ -4699,6 +5735,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -4728,6 +5765,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -4756,6 +5794,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: { mode: 'resize', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingOffset: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -4785,6 +5824,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingOffset: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -4809,6 +5849,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'backdrop', entityIds: ['backdrop'], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -4831,6 +5872,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: { mode: 'resize', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingOffset: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -4854,12 +5896,39 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: { mode: 'rotate', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+        pendingOffset: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
           selectedNode: { type: 'backdrop' },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startOffsetSelectedFeatures: () =>
+    set((s) => {
+      const featureIds = s.selection.selectedFeatureIds
+      const features = selectedClosedFeaturesFromIds(s.project, featureIds)
+      if (features.length === 0 || features.some((feature) => feature.locked)) {
+        return {}
+      }
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: { entityIds: featureIds, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureIds.at(-1) ?? null,
+          selectedFeatureIds: featureIds,
+          selectedNode: featureIds.at(-1) ? { type: 'feature', featureId: featureIds.at(-1)! } : null,
           mode: 'feature',
           hoveredFeatureId: null,
           activeControl: null,
@@ -4879,6 +5948,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -4903,6 +5973,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'clamp', entityIds: [clampId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -4927,6 +5998,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'move', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -4951,6 +6023,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         sketchEditSession: null,
         pendingMove: { mode: 'copy', entityType: 'tab', entityIds: [tabId], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
+        pendingOffset: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -5012,6 +6085,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   cancelPendingMove: () => set({ pendingMove: null }),
 
   cancelPendingTransform: () => set({ pendingTransform: null }),
+
+  cancelPendingOffset: () => set({ pendingOffset: null }),
 
   setPendingMoveFrom: (point) =>
     set((s) => ({
@@ -5323,6 +6398,48 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         },
       }
     }),
+
+  completePendingOffset: (distance) => {
+    const state = get()
+    if (!state.pendingOffset) {
+      return []
+    }
+
+    const createdFeatures = previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
+    if (createdFeatures.length === 0) {
+      set({ pendingOffset: null })
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, ...createdFeatures],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        pendingOffset: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
 
   // ── Convenience constructors ─────────────────────────────
 
