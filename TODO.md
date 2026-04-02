@@ -45,6 +45,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current legend text overlaps visually and adds little value.
   - Revisit whether feature coloring/labels already communicate enough without a legend.
 
+### Grid snap inconsistency on new project
+- Status: Open
+- Priority: Medium
+- Summary: Test and fix reports that grid snap does not always behave correctly immediately after creating a new project and placing the first feature.
+- Notes:
+  - Needs more direct testing to confirm the exact repro.
+  - Current suspicion is an initialization or first-tool-state issue rather than a general snap failure.
+  - Revisit after the recent sketch preview responsiveness changes have settled.
+
 ## Backlog
 
 ### Refactor UI to use SVG Sprite Icon system
