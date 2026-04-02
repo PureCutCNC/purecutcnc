@@ -1926,6 +1926,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return null
   }
 
+  function requiresResolvedSnapForPointPick(): boolean {
+    const snapSettings = snapSettingsRef.current
+    return snapSettings.enabled && snapSettings.modes.length > 0
+  }
+
   function pushSnapCandidate(
     candidates: SnapCandidate[],
     rawPoint: Point,
@@ -2039,9 +2044,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
   }
 
-  function resolveSketchSnap(rawPoint: Point, vt: ViewTransform): ResolvedSnap {
+  function resolveSketchSnap(
+    rawPoint: Point,
+    vt: ViewTransform,
+    options?: {
+      excludeActiveEditGeometry?: boolean
+    },
+  ): ResolvedSnap {
     const snapSettings = snapSettingsRef.current
     const project = projectRef.current
+    const selection = selectionRef.current
 
     if (!snapSettings.enabled || snapSettings.modes.length === 0) {
       return { rawPoint, point: rawPoint, mode: null }
@@ -2051,6 +2063,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const snapRadiusPx = snapSettings.pixelRadius
     const candidates: SnapCandidate[] = []
     const referencePoint = currentSnapReferencePoint()
+    const excludedFeatureId =
+      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'feature'
+        ? selection.selectedNode.featureId
+        : null
+    const excludedTabId =
+      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'tab'
+        ? selection.selectedNode.tabId
+        : null
+    const excludedClampId =
+      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'clamp'
+        ? selection.selectedNode.clampId
+        : null
 
     if (activeModes.has('grid') && project.grid.snapEnabled) {
       const gridPoint = {
@@ -2063,21 +2087,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
 
     for (const feature of project.features) {
-      if (!feature.visible) {
+      if (!feature.visible || feature.id === excludedFeatureId) {
         continue
       }
       addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
     }
 
     for (const tab of project.tabs) {
-      if (!tab.visible) {
+      if (!tab.visible || tab.id === excludedTabId) {
         continue
       }
       addProfileSnapCandidates(candidates, rectProfile(tab.x, tab.y, tab.w, tab.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
     }
 
     for (const clamp of project.clamps) {
-      if (!clamp.visible) {
+      if (!clamp.visible || clamp.id === excludedClampId) {
         continue
       }
       addProfileSnapCandidates(candidates, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
@@ -2164,7 +2188,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const resolvedSnap = resolveSketchSnap(livePoint, vt)
+    const resolvedSnap = resolveSketchSnap(livePoint, vt, {
+      excludeActiveEditGeometry: isDraggingNodeRef.current,
+    })
     const snapped = resolvedSnap.point
     const sketchEditTool = selection.sketchEditTool
 
@@ -2965,8 +2991,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || !!pendingOffset
       || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
       || isDraggingNodeRef.current
-    const resolvedSnap = shouldPreviewSnap ? resolveSketchSnap(world, vt) : { rawPoint: world, point: world, mode: null as null }
+    const resolvedSnap = shouldPreviewSnap
+      ? resolveSketchSnap(world, vt, {
+          excludeActiveEditGeometry: isDraggingNodeRef.current,
+        })
+      : { rawPoint: world, point: world, mode: null as null }
     const snapped = resolvedSnap.point
+    const constrainedPoint =
+      requiresResolvedSnapForPointPick() && !resolvedSnap.mode
+        ? null
+        : snapped
     updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
     if (pendingAdd) {
@@ -3019,7 +3053,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
-      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, snapped)
+      if (!constrainedPoint) {
+        scheduleDraw()
+        return
+      }
+      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, constrainedPoint)
       return
     }
 
@@ -3027,7 +3065,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
-      moveClampControl(selection.selectedNode.clampId, selection.activeControl, snapped)
+      if (!constrainedPoint) {
+        scheduleDraw()
+        return
+      }
+      moveClampControl(selection.selectedNode.clampId, selection.activeControl, constrainedPoint)
       return
     }
 
@@ -3035,7 +3077,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
-      moveTabControl(selection.selectedNode.tabId, selection.activeControl, snapped)
+      if (!constrainedPoint) {
+        scheduleDraw()
+        return
+      }
+      moveTabControl(selection.selectedNode.tabId, selection.activeControl, constrainedPoint)
       return
     }
 
@@ -3185,15 +3231,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const resolvedSnap = resolveSketchSnap(world, vt)
+    const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
 
     if (selection.mode === 'sketch_edit') {
       if (selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
         const feature = editableFeature()
         if (feature && selection.sketchEditTool === 'add_point') {
           if (pendingSketchExtensionRef.current) {
+            if (!pickedPoint) {
+              return
+            }
             insertFeaturePoint(selection.selectedFeatureId, {
               kind: pendingSketchExtensionRef.current.kind,
-              point: resolvedSnap.point,
+              point: pickedPoint,
             })
             pendingSketchExtensionRef.current = null
             sketchEditPreviewRef.current = null
@@ -3209,7 +3259,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             return
           }
 
-          const target = findSketchInsertTarget(feature.sketch.profile, resolvedSnap.point, vt)
+          if (!pickedPoint) {
+            return
+          }
+
+          const target = findSketchInsertTarget(feature.sketch.profile, pickedPoint, vt)
           if (target?.kind === 'segment') {
             insertFeaturePoint(selection.selectedFeatureId, target)
           }
@@ -3226,7 +3280,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
         if (feature && selection.sketchEditTool === 'fillet') {
           if (pendingSketchFilletRef.current) {
-            const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, resolvedSnap.point)
+            if (!pickedPoint) {
+              return
+            }
+            const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
             if (radius) {
               filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
             }
@@ -3253,7 +3310,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingAdd) {
-      const snapped = resolvedSnap.point
+      if (!pickedPoint) {
+        return
+      }
+
+      const snapped = pickedPoint
 
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = null
@@ -3300,7 +3361,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingMove) {
-      const snapped = resolvedSnap.point
+      if (!pickedPoint) {
+        return
+      }
+
+      const snapped = pickedPoint
 
       if (!pendingMove.fromPoint) {
         setPendingMoveFrom(snapped)
@@ -3318,7 +3383,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingTransform) {
-      const snapped = resolvedSnap.point
+      if (!pickedPoint) {
+        return
+      }
+
+      const snapped = pickedPoint
       const constrainedPoint =
         pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
           ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
@@ -3342,7 +3411,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
         .filter((feature) => feature.sketch.profile.closed)
-      const previewInput = resolveOffsetPreview(sourceFeatures, world, resolvedSnap.point, resolvedSnap.mode, vt)
+      if (!pickedPoint) {
+        return
+      }
+      const previewInput = resolveOffsetPreview(sourceFeatures, world, pickedPoint, resolvedSnap.mode, vt)
       if (previewInput) {
         completePendingOffset(previewInput.signedDistance)
       } else {

@@ -211,6 +211,12 @@ Return:
 - snapped world point
 - candidate metadata for drawing
 
+When snapping is enabled, active point-pick tools should commit only to a resolved snap.
+That means:
+- click-to-place workflows ignore clicks that do not currently resolve a snap
+- commit uses the resolved snapped point, not the unsnapped cursor location
+- turning snapping off restores free point picking immediately
+
 ## Geometry Rules
 ### Point snap
 Sources:
@@ -368,3 +374,4 @@ This work is ready when:
 3. point/line/midpoint/center/perpendicular snapping works in the main sketch workflows
 4. visual feedback makes the chosen snap unambiguous
 5. existing grid snapping behavior is preserved when richer modes are disabled
+6. active point-pick tools commit only on resolved snaps while snapping is enabled
