@@ -1,9 +1,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchControlRef } from '../../store/projectStore'
 import { resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
+  bezierPoint,
   circleProfile,
   getProfileBounds,
   getStockBounds,
@@ -542,14 +544,18 @@ function drawPendingPoint(
   ctx: CanvasRenderingContext2D,
   point: Point,
   vt: ViewTransform,
+  highlighted = false,
 ): void {
   const { cx, cy } = worldToCanvas(point, vt)
+  const strokeColor = highlighted ? '#8fd6ff' : '#efbc7a'
+  const fillColor = highlighted ? 'rgba(143, 214, 255, 0.28)' : 'rgba(239, 188, 122, 0.25)'
+  const crossColor = highlighted ? 'rgba(170, 233, 255, 0.95)' : 'rgba(239, 188, 122, 0.9)'
 
   ctx.beginPath()
   ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(239, 188, 122, 0.25)'
+  ctx.fillStyle = fillColor
   ctx.fill()
-  ctx.strokeStyle = '#efbc7a'
+  ctx.strokeStyle = strokeColor
   ctx.lineWidth = 2
   ctx.stroke()
 
@@ -558,7 +564,7 @@ function drawPendingPoint(
   ctx.lineTo(cx + 10, cy)
   ctx.moveTo(cx, cy - 10)
   ctx.lineTo(cx, cy + 10)
-  ctx.strokeStyle = 'rgba(239, 188, 122, 0.9)'
+  ctx.strokeStyle = crossColor
   ctx.lineWidth = 1
   ctx.stroke()
 }
@@ -590,6 +596,7 @@ function drawPendingPathLoop(
   closePreview: boolean,
   previewProfileFactory: (points: Point[]) => SketchProfile,
   label: string,
+  previewHighlighted = false,
 ): void {
   if (points.length === 0) return
 
@@ -614,14 +621,7 @@ function drawPendingPathLoop(
   ctx.setLineDash([])
 
   if (previewPoint && !closePreview) {
-    const preview = worldToCanvas(previewPoint, vt)
-    ctx.beginPath()
-    ctx.arc(preview.cx, preview.cy, 5.5, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(239, 188, 122, 0.25)'
-    ctx.fill()
-    ctx.strokeStyle = '#efbc7a'
-    ctx.lineWidth = 2
-    ctx.stroke()
+    drawPendingPoint(ctx, previewPoint, vt, previewHighlighted)
   }
 
   if (points.length >= 3 && previewPoint && closePreview) {
@@ -830,6 +830,7 @@ function drawPendingSplineLoop(
   previewPoint: Point | null,
   vt: ViewTransform,
   closePreview: boolean,
+  previewHighlighted = false,
 ): void {
   if (points.length === 0) return
 
@@ -844,7 +845,7 @@ function drawPendingSplineLoop(
   }
 
   if (previewPoint && !closePreview) {
-    drawPendingPoint(ctx, previewPoint, vt)
+    drawPendingPoint(ctx, previewPoint, vt, previewHighlighted)
   }
 
   if (points.length >= 3 && previewPoint && closePreview) {
@@ -1212,10 +1213,11 @@ function drawCompositeDraft(
   pendingAdd: CompositePendingAdd,
   previewPoint: Point | null,
   vt: ViewTransform,
+  previewHighlighted = false,
 ): void {
   if (!pendingAdd.start) {
     if (previewPoint) {
-      drawPendingPoint(ctx, previewPoint, vt)
+      drawPendingPoint(ctx, previewPoint, vt, previewHighlighted)
     }
     return
   }
@@ -1276,7 +1278,7 @@ function drawCompositeDraft(
   if (pendingAdd.pendingArcEnd) {
     drawPendingPoint(ctx, pendingAdd.pendingArcEnd, vt)
   } else if (previewPoint && !pendingAdd.closed) {
-    drawPendingPoint(ctx, previewPoint, vt)
+    drawPendingPoint(ctx, previewPoint, vt, previewHighlighted)
   }
 }
 
@@ -1312,6 +1314,179 @@ function isLoopCloseCandidate(
   return distance2(point, start) <= POLYGON_CLOSE_RADIUS * POLYGON_CLOSE_RADIUS
 }
 
+interface SnapGuide {
+  kind: 'projection' | 'perpendicular'
+  from: Point
+  to: Point
+}
+
+interface SnapCandidate {
+  mode: SnapMode
+  point: Point
+  distancePx: number
+  priority: number
+  guide?: SnapGuide
+}
+
+interface ResolvedSnap {
+  rawPoint: Point
+  point: Point
+  mode: SnapMode | null
+  guide?: SnapGuide
+}
+
+function distanceToCanvas(a: CanvasPoint, b: CanvasPoint): number {
+  return Math.sqrt(distance2(a, b))
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  }
+}
+
+function segmentMidpoint(start: Point, segment: Segment): Point {
+  if (segment.type === 'line') {
+    return midpoint(start, segment.to)
+  }
+
+  if (segment.type === 'bezier') {
+    return bezierPoint(start, segment.control1, segment.control2, segment.to, 0.5)
+  }
+
+  return arcControlPoint(start, segment)
+}
+
+function projectPointOntoSegment(point: Point, lineStart: Point, lineEnd: Point): Point {
+  const direction = subtractPoint(lineEnd, lineStart)
+  const lengthSq = dotPoint(direction, direction)
+  if (lengthSq <= 1e-9) {
+    return lineStart
+  }
+
+  const t = clamp01(dotPoint(subtractPoint(point, lineStart), direction) / lengthSq)
+  return addPoint(lineStart, scalePoint(direction, t))
+}
+
+function sampleSegmentPolyline(start: Point, segment: Segment): Point[] {
+  if (segment.type === 'line') {
+    return [start, segment.to]
+  }
+
+  if (segment.type === 'bezier') {
+    const points: Point[] = [start]
+    for (let sample = 1; sample <= 12; sample += 1) {
+      points.push(bezierPoint(start, segment.control1, segment.control2, segment.to, sample / 12))
+    }
+    return points
+  }
+
+  const profile: SketchProfile = {
+    start,
+    segments: [segment],
+    closed: false,
+  }
+  return sampleProfilePoints(profile, 12, Math.PI / 18)
+}
+
+function nearestPointOnPolyline(point: Point, polyline: Point[]): Point {
+  let bestPoint = polyline[0]
+  let bestDistanceSq = Infinity
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const projected = projectPointOntoSegment(point, polyline[index], polyline[index + 1])
+    const dx = projected.x - point.x
+    const dy = projected.y - point.y
+    const distanceSq = dx * dx + dy * dy
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq
+      bestPoint = projected
+    }
+  }
+
+  return bestPoint
+}
+
+function snapPriority(mode: SnapMode): number {
+  if (mode === 'point' || mode === 'center' || mode === 'midpoint') {
+    return 1
+  }
+
+  if (mode === 'perpendicular') {
+    return 2
+  }
+
+  if (mode === 'line') {
+    return 3
+  }
+
+  return 4
+}
+
+function drawSnapIndicator(
+  ctx: CanvasRenderingContext2D,
+  resolvedSnap: ResolvedSnap | null,
+  vt: ViewTransform,
+): void {
+  if (!resolvedSnap?.mode) {
+    return
+  }
+
+  if (resolvedSnap.guide) {
+    const from = worldToCanvas(resolvedSnap.guide.from, vt)
+    const to = worldToCanvas(resolvedSnap.guide.to, vt)
+    ctx.save()
+    ctx.setLineDash(resolvedSnap.mode === 'perpendicular' ? [4, 3] : [6, 4])
+    ctx.strokeStyle = resolvedSnap.mode === 'perpendicular' ? 'rgba(170, 221, 255, 0.9)' : 'rgba(242, 185, 92, 0.72)'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(from.cx, from.cy)
+    ctx.lineTo(to.cx, to.cy)
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  const { cx, cy } = worldToCanvas(resolvedSnap.point, vt)
+  ctx.save()
+  ctx.strokeStyle = '#f7d394'
+  ctx.fillStyle = 'rgba(242, 185, 92, 0.18)'
+  ctx.lineWidth = 2
+
+  if (resolvedSnap.mode === 'midpoint') {
+    drawDiamond(ctx, cx, cy, 6)
+    ctx.fill()
+    ctx.stroke()
+  } else if (resolvedSnap.mode === 'center') {
+    ctx.beginPath()
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx - 4, cy)
+    ctx.lineTo(cx + 4, cy)
+    ctx.moveTo(cx, cy - 4)
+    ctx.lineTo(cx, cy + 4)
+    ctx.stroke()
+  } else if (resolvedSnap.mode === 'perpendicular') {
+    ctx.beginPath()
+    ctx.rect(cx - 4, cy - 4, 8, 8)
+    ctx.fill()
+    ctx.stroke()
+  } else {
+    ctx.beginPath()
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
 interface SketchCanvasProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
   onTabContextMenu?: (tabId: string, x: number, y: number) => void
@@ -1319,10 +1494,12 @@ interface SketchCanvasProps {
   toolpaths?: ToolpathResult[]
   selectedOperationId?: string | null
   collidingClampIds?: string[]
+  snapSettings: SnapSettings
+  onActiveSnapModeChange?: (mode: SnapMode | null) => void
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null, collidingClampIds = [] },
+  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null, collidingClampIds = [], snapSettings, onActiveSnapModeChange },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1332,6 +1509,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const activeSnapRef = useRef<ResolvedSnap | null>(null)
   const drawFrameRef = useRef<number | null>(null)
   const [pendingPreviewPoint, setPendingPreviewPoint] = useState<PendingPreviewPoint | null>(null)
   const [pendingMovePreviewPoint, setPendingMovePreviewPoint] = useState<PendingPreviewPoint | null>(null)
@@ -1387,6 +1565,216 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
 
+  function updateActiveSnap(nextSnap: ResolvedSnap | null) {
+    activeSnapRef.current = nextSnap?.mode ? nextSnap : null
+    onActiveSnapModeChange?.(nextSnap?.mode ?? null)
+    scheduleDraw()
+  }
+
+  function isActiveSnapPoint(point: Point | null | undefined): boolean {
+    return !!point && !!activeSnapRef.current?.mode && pointsEqual(point, activeSnapRef.current.point, 1e-6)
+  }
+
+  function currentSnapReferencePoint(): Point | null {
+    if (pendingMove?.fromPoint) {
+      return pendingMove.fromPoint
+    }
+
+    if (pendingTransform?.mode === 'rotate') {
+      return pendingTransform.referenceStart
+    }
+
+    if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
+      return pendingAdd.anchor
+    }
+
+    if ((pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') && pendingAdd.points.length > 0) {
+      return pendingAdd.points[pendingAdd.points.length - 1]
+    }
+
+    if (pendingAdd?.shape === 'composite') {
+      return pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start ?? null
+    }
+
+    return null
+  }
+
+  function pushSnapCandidate(
+    candidates: SnapCandidate[],
+    rawPoint: Point,
+    vt: ViewTransform,
+    snapRadiusPx: number,
+    mode: SnapMode,
+    point: Point,
+    guide?: SnapGuide,
+  ) {
+    const distancePx = distanceToCanvas(worldToCanvas(rawPoint, vt), worldToCanvas(point, vt))
+    if (distancePx > snapRadiusPx) {
+      return
+    }
+
+    candidates.push({
+      mode,
+      point,
+      distancePx,
+      priority: snapPriority(mode),
+      guide,
+    })
+  }
+
+  function addProfileSnapCandidates(
+    candidates: SnapCandidate[],
+    profile: SketchProfile,
+    rawPoint: Point,
+    vt: ViewTransform,
+    snapRadiusPx: number,
+    activeModes: Set<SnapMode>,
+    referencePoint: Point | null,
+  ) {
+    const vertices = profileVertices(profile)
+    if (activeModes.has('point')) {
+      for (const vertex of vertices) {
+        pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', vertex)
+      }
+    }
+
+    for (let index = 0; index < profile.segments.length; index += 1) {
+      const start = anchorPointForIndex(profile, index)
+      const segment = profile.segments[index]
+
+      if (activeModes.has('midpoint')) {
+        pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'midpoint', segmentMidpoint(start, segment))
+      }
+
+      if (activeModes.has('center') && segment.type === 'arc') {
+        pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'center', segment.center)
+      }
+
+      if (!activeModes.has('line') && !(activeModes.has('perpendicular') && referencePoint)) {
+        continue
+      }
+
+      if (segment.type === 'line') {
+        if (activeModes.has('line')) {
+          const projected = projectPointOntoSegment(rawPoint, start, segment.to)
+          pushSnapCandidate(
+            candidates,
+            rawPoint,
+            vt,
+            snapRadiusPx,
+            'line',
+            projected,
+            { kind: 'projection', from: rawPoint, to: projected },
+          )
+        }
+        if (activeModes.has('perpendicular') && referencePoint) {
+          const perpendicularPoint = projectPointOntoSegment(referencePoint, start, segment.to)
+          pushSnapCandidate(
+            candidates,
+            rawPoint,
+            vt,
+            snapRadiusPx,
+            'perpendicular',
+            perpendicularPoint,
+            { kind: 'perpendicular', from: referencePoint, to: perpendicularPoint },
+          )
+        }
+        continue
+      }
+
+      const polyline = sampleSegmentPolyline(start, segment)
+
+      if (activeModes.has('line')) {
+        const projected = nearestPointOnPolyline(rawPoint, polyline)
+        pushSnapCandidate(
+          candidates,
+          rawPoint,
+          vt,
+          snapRadiusPx,
+          'line',
+          projected,
+          { kind: 'projection', from: rawPoint, to: projected },
+        )
+      }
+
+      if (activeModes.has('perpendicular') && referencePoint) {
+        const perpendicularPoint = nearestPointOnPolyline(referencePoint, polyline)
+        pushSnapCandidate(
+          candidates,
+          rawPoint,
+          vt,
+          snapRadiusPx,
+          'perpendicular',
+          perpendicularPoint,
+          { kind: 'perpendicular', from: referencePoint, to: perpendicularPoint },
+        )
+      }
+    }
+  }
+
+  function resolveSketchSnap(rawPoint: Point, vt: ViewTransform): ResolvedSnap {
+    if (!snapSettings.enabled || snapSettings.modes.length === 0) {
+      return { rawPoint, point: rawPoint, mode: null }
+    }
+
+    const activeModes = new Set(snapSettings.modes)
+    const snapRadiusPx = snapSettings.pixelRadius
+    const candidates: SnapCandidate[] = []
+    const referencePoint = currentSnapReferencePoint()
+
+    if (activeModes.has('grid') && project.grid.snapEnabled) {
+      const gridPoint = {
+        x: snap(rawPoint.x, project.grid.snapIncrement),
+        y: snap(rawPoint.y, project.grid.snapIncrement),
+      }
+      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'grid', gridPoint)
+    }
+
+    addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+
+    for (const feature of project.features) {
+      if (!feature.visible) {
+        continue
+      }
+      addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    }
+
+    for (const tab of project.tabs) {
+      if (!tab.visible) {
+        continue
+      }
+      addProfileSnapCandidates(candidates, rectProfile(tab.x, tab.y, tab.w, tab.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    }
+
+    for (const clamp of project.clamps) {
+      if (!clamp.visible) {
+        continue
+      }
+      addProfileSnapCandidates(candidates, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    }
+
+    if (activeModes.has('point') && project.origin.visible) {
+      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y })
+    }
+
+    if (candidates.length === 0) {
+      return { rawPoint, point: rawPoint, mode: null }
+    }
+
+    candidates.sort((a, b) => (
+      a.priority - b.priority
+      || a.distancePx - b.distancePx
+    ))
+
+    const best = candidates[0]
+    return {
+      rawPoint,
+      point: best.point,
+      mode: best.mode,
+      guide: best.guide,
+    }
+  }
+
   useEffect(() => {
     if (!project.backdrop?.imageDataUrl) {
       setBackdropImage(null)
@@ -1410,6 +1798,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
     image.src = project.backdrop.imageDataUrl
   }, [project.backdrop?.imageDataUrl, setBackdropImageLoading])
+
+  useEffect(() => {
+    return () => {
+      onActiveSnapModeChange?.(null)
+    }
+  }, [onActiveSnapModeChange])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -1513,7 +1907,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : false
       if (pendingAdd.points.length > 0) {
         if (pendingAdd.shape === 'spline') {
-          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview)
+          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, isActiveSnapPoint(currentPreviewPoint))
         } else {
           drawPendingPathLoop(
             ctx,
@@ -1523,13 +1917,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             closePreview,
             polygonProfile,
             'Pending polygon',
+            isActiveSnapPoint(currentPreviewPoint),
           )
         }
       } else if (currentPreviewPoint) {
-        drawPendingPoint(ctx, currentPreviewPoint, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
       }
     } else if (pendingAdd?.shape === 'composite') {
-      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt)
+      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
@@ -1542,9 +1937,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
       drawPendingPoint(ctx, pendingAdd.anchor, vt)
-      drawPendingPoint(ctx, currentPreviewPoint, vt)
+      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     } else if (pendingAdd && currentPreviewPoint) {
-      drawPendingPoint(ctx, currentPreviewPoint, vt)
+      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     }
 
     const currentMovePreviewPoint =
@@ -1582,7 +1977,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             'Move preview',
           )
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else if (pendingMove.entityType === 'feature') {
         const features = pendingMove.entityIds
@@ -1617,7 +2012,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else if (pendingMove.entityType === 'clamp') {
         const clamps = pendingMove.entityIds
@@ -1664,7 +2059,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else {
         const tabs = pendingMove.entityIds
@@ -1709,7 +2104,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt)
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
         }
       }
     }
@@ -1730,7 +2125,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
-          drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
           drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
           const previewBackdrop =
             pendingTransform.mode === 'resize'
@@ -1747,7 +2142,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             )
           }
         } else if (currentTransformPreviewPoint) {
-          drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
         }
 
         drawDepthLegend(ctx, width, height)
@@ -1772,7 +2167,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
 
       if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
-        drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
         drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
         for (const feature of features) {
           const previewFeature =
@@ -1789,12 +2184,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
       } else if (currentTransformPreviewPoint) {
-        drawPendingPoint(ctx, currentTransformPreviewPoint, vt)
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
       }
     }
 
+    drawSnapIndicator(ctx, activeSnapRef.current, vt)
     drawDepthLegend(ctx, width, height)
-  }, [collidingClampIds, copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, pendingTransform, pendingTransformPreviewPoint, project, selection, selectedOperationId, toolpaths, viewState])
+  }, [collidingClampIds, copyCountDraft, pendingAdd, pendingMove, pendingMovePreviewPoint, pendingPreviewPoint, pendingTransform, pendingTransformPreviewPoint, project, selection, selectedOperationId, snapSettings, toolpaths, viewState])
 
   useEffect(() => {
     draw()
@@ -2004,13 +2400,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const snapStep = project.grid.snapEnabled ? project.grid.snapIncrement : 0
-    const snapped = {
-      x: snapStep > 0 ? snap(world.x, snapStep) : world.x,
-      y: snapStep > 0 ? snap(world.y, snapStep) : world.y,
-    }
 
     if (isPanningRef.current && lastPanPointRef.current) {
+      updateActiveSnap(null)
       const dx = point.cx - lastPanPointRef.current.cx
       const dy = point.cy - lastPanPointRef.current.cy
       if (dx !== 0 || dy !== 0) {
@@ -2024,6 +2416,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }))
       return
     }
+
+    const shouldPreviewSnap =
+      !!pendingAdd
+      || !!pendingMove
+      || !!pendingTransform
+      || isDraggingNodeRef.current
+    const resolvedSnap = shouldPreviewSnap ? resolveSketchSnap(world, vt) : { rawPoint: world, point: world, mode: null as null }
+    const snapped = resolvedSnap.point
+    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
     if (pendingAdd) {
       hoverFeature(null)
@@ -2098,6 +2499,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     stopNodeDrag()
     stopPan()
     hoverFeature(null)
+    updateActiveSnap(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
       setPendingPreviewPoint(null)
     } else if (pendingAdd?.shape === 'origin') {
@@ -2140,12 +2542,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    const resolvedSnap = resolveSketchSnap(world, vt)
 
     if (pendingAdd) {
-      const snapped = {
-        x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
-        y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
-      }
+      const snapped = resolvedSnap.point
 
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = null
@@ -2192,10 +2592,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingMove) {
-      const snapped = {
-        x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
-        y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
-      }
+      const snapped = resolvedSnap.point
 
       if (!pendingMove.fromPoint) {
         setPendingMoveFrom(snapped)
@@ -2213,10 +2610,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingTransform) {
-      const snapped = {
-        x: project.grid.snapEnabled ? snap(world.x, project.grid.snapIncrement) : world.x,
-        y: project.grid.snapEnabled ? snap(world.y, project.grid.snapIncrement) : world.y,
-      }
+      const snapped = resolvedSnap.point
       const constrainedPoint =
         pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
           ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)

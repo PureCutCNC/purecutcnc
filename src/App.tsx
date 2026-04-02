@@ -13,6 +13,7 @@ import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Too
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { ExportDialog } from './components/export/ExportDialog'
+import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
 
 interface TreeContextMenuState {
@@ -48,6 +49,23 @@ function App() {
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
+  const [snapSettings, setSnapSettings] = useState<SnapSettings>(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_SNAP_SETTINGS
+    }
+
+    const saved = window.localStorage.getItem(SNAP_SETTINGS_STORAGE_KEY)
+    if (!saved) {
+      return DEFAULT_SNAP_SETTINGS
+    }
+
+    try {
+      return normalizeSnapSettings(JSON.parse(saved))
+    } catch {
+      return DEFAULT_SNAP_SETTINGS
+    }
+  })
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const simulationViewportRef = useRef<SimulationViewportHandle>(null)
@@ -270,6 +288,10 @@ function App() {
   }, [toolbarOrientationPreference])
 
   useEffect(() => {
+    window.localStorage.setItem(SNAP_SETTINGS_STORAGE_KEY, JSON.stringify(snapSettings))
+  }, [snapSettings])
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
       if (
@@ -350,6 +372,19 @@ function App() {
     setCenterTab('sketch')
     window.requestAnimationFrame(() => {
       sketchCanvasRef.current?.zoomToModel()
+    })
+  }
+
+  function handleToggleSnapEnabled() {
+    setSnapSettings((previous) => ({ ...previous, enabled: !previous.enabled }))
+  }
+
+  function handleToggleSnapMode(mode: SnapMode) {
+    setSnapSettings((previous) => {
+      const modes = previous.modes.includes(mode)
+        ? previous.modes.filter((entry) => entry !== mode)
+        : [...previous.modes, mode]
+      return { ...previous, modes }
     })
   }
 
@@ -463,6 +498,10 @@ function App() {
           <Toolbar 
             onZoomToModel={handleZoomToModel}
             onImportComplete={handleImportComplete}
+            snapSettings={snapSettings}
+            activeSnapMode={activeSnapMode}
+            onToggleSnapEnabled={handleToggleSnapEnabled}
+            onToggleSnapMode={handleToggleSnapMode}
           />
         }
         globalToolbar={
@@ -475,6 +514,10 @@ function App() {
           <CreationToolbar
             onZoomToModel={handleZoomToModel}
             layout="vertical"
+            snapSettings={snapSettings}
+            activeSnapMode={activeSnapMode}
+            onToggleSnapEnabled={handleToggleSnapEnabled}
+            onToggleSnapMode={handleToggleSnapMode}
           />
         }
         aiPanel={<AIPanel />}
@@ -487,6 +530,8 @@ function App() {
             toolpaths={visibleToolpaths}
             selectedOperationId={effectiveSelectedOperationId}
             collidingClampIds={collidingClampIds}
+            snapSettings={snapSettings}
+            onActiveSnapModeChange={setActiveSnapMode}
           />
         }
         viewport3d={

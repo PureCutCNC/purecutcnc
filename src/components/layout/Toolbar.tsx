@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
+import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { useProjectStore } from '../../store/projectStore'
 
-type ToolbarIconName = 'new' | 'open' | 'import' | 'save' | 'undo' | 'redo' | 'fit' | 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'copy' | 'move' | 'trash' | 'resize' | 'rotate'
-
 interface ToolbarActionButtonProps {
-  icon: ToolbarIconName
+  icon: string
   label: string
   active?: boolean
+  emphasized?: boolean
   disabled?: boolean
   tooltipSide?: 'bottom' | 'right'
   onClick: () => void
@@ -20,6 +20,13 @@ interface ToolbarProps {
   onImportComplete?: () => void
 }
 
+interface SnapToolbarProps {
+  snapSettings: SnapSettings
+  activeSnapMode?: SnapMode | null
+  onToggleSnapEnabled: () => void
+  onToggleSnapMode: (mode: SnapMode) => void
+}
+
 interface CreationToolbarProps {
   layout?: 'horizontal' | 'vertical'
 }
@@ -28,6 +35,7 @@ function ToolbarActionButton({
   icon,
   label,
   active = false,
+  emphasized = false,
   disabled = false,
   tooltipSide = 'bottom',
   onClick,
@@ -35,8 +43,11 @@ function ToolbarActionButton({
   return (
     <div className="toolbar-action">
       <button
-        className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''}`}
-        onClick={onClick}
+        className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''} ${emphasized ? 'toolbar-icon-btn--live' : ''}`}
+        onClick={(event) => {
+          onClick()
+          event.currentTarget.blur()
+        }}
         aria-label={label}
         type="button"
         disabled={disabled}
@@ -566,6 +577,81 @@ function BackdropEditActions({
   )
 }
 
+function SnapActions({
+  snapSettings,
+  activeSnapMode,
+  tooltipSide,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: SnapToolbarProps & {
+  tooltipSide?: 'bottom' | 'right'
+}) {
+  const snapActive = snapSettings.enabled && snapSettings.modes.length > 0
+  const hasMode = (mode: SnapMode) => snapSettings.modes.includes(mode)
+
+  return (
+    <>
+      <div className="toolbar-group">
+        <ToolbarActionButton
+          icon="snap"
+          label={snapSettings.enabled ? 'Disable Snapping' : 'Enable Snapping'}
+          active={snapActive}
+          tooltipSide={tooltipSide}
+          onClick={onToggleSnapEnabled}
+        />
+        <ToolbarActionButton
+          icon="snap-grid"
+          label="Snap to Grid"
+          active={snapSettings.enabled && hasMode('grid')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'grid'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('grid')}
+        />
+        <ToolbarActionButton
+          icon="snap-point"
+          label="Snap to Point"
+          active={snapSettings.enabled && hasMode('point')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'point'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('point')}
+        />
+        <ToolbarActionButton
+          icon="snap-line"
+          label="Snap to Line"
+          active={snapSettings.enabled && hasMode('line')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'line'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('line')}
+        />
+        <ToolbarActionButton
+          icon="snap-midpoint"
+          label="Snap to Midpoint"
+          active={snapSettings.enabled && hasMode('midpoint')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'midpoint'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('midpoint')}
+        />
+        <ToolbarActionButton
+          icon="snap-center"
+          label="Snap to Center"
+          active={snapSettings.enabled && hasMode('center')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'center'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('center')}
+        />
+        <ToolbarActionButton
+          icon="snap-perpendicular"
+          label="Snap Perpendicular"
+          active={snapSettings.enabled && hasMode('perpendicular')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'perpendicular'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('perpendicular')}
+        />
+      </div>
+    </>
+  )
+}
+
 function ToolbarDialog({
   showNewProjectDialog,
   showImportDialog,
@@ -628,7 +714,15 @@ export function GlobalToolbar({ onZoomToModel, onImportComplete }: ToolbarProps)
   )
 }
 
-export function CreationToolbar({ onZoomToModel, onImportComplete, layout = 'horizontal' }: ToolbarProps & CreationToolbarProps) {
+export function CreationToolbar({
+  onZoomToModel,
+  onImportComplete,
+  layout = 'horizontal',
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: ToolbarProps & CreationToolbarProps & SnapToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
@@ -665,11 +759,25 @@ export function CreationToolbar({ onZoomToModel, onImportComplete, layout = 'hor
           onRotate={toolbar.handleBackdropRotate}
         />
       ) : null}
+      <SnapActions
+        snapSettings={snapSettings}
+        activeSnapMode={activeSnapMode}
+        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+        onToggleSnapEnabled={onToggleSnapEnabled}
+        onToggleSnapMode={onToggleSnapMode}
+      />
     </div>
   )
 }
 
-export function Toolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
+export function Toolbar({
+  onZoomToModel,
+  onImportComplete,
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: ToolbarProps & SnapToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
@@ -723,6 +831,12 @@ export function Toolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
             onRotate={toolbar.handleBackdropRotate}
           />
         ) : null}
+        <SnapActions
+          snapSettings={snapSettings}
+          activeSnapMode={activeSnapMode}
+          onToggleSnapEnabled={onToggleSnapEnabled}
+          onToggleSnapMode={onToggleSnapMode}
+        />
       </div>
       <ToolbarDialog
         showNewProjectDialog={toolbar.showNewProjectDialog}

@@ -178,6 +178,15 @@
     0 0 0 1px rgba(220, 165, 106, 0.12);
 }
 
+.toolbar-icon-btn--live {
+  border-color: #7bc7f6;
+  color: #dff5ff;
+  box-shadow:
+    inset 0 0 0 1px rgba(123, 199, 246, 0.48),
+    0 0 0 1px rgba(123, 199, 246, 0.12),
+    0 0 12px rgba(123, 199, 246, 0.12);
+}
+
 .toolbar-tooltip {
   position: absolute;
   left: 50%;
