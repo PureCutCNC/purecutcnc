@@ -1091,6 +1091,7 @@ function resolveOffsetPreview(
   features: SketchFeature[],
   rawPoint: Point,
   snappedPoint: Point,
+  snapMode: SnapMode | null,
   vt: ViewTransform,
 ): {
   nearestPoint: Point
@@ -1099,6 +1100,10 @@ function resolveOffsetPreview(
   direction: 'in' | 'out'
 } | null {
   const snappedPreview = resolveOffsetPreviewInput(features, snappedPoint, vt)
+  if (snapMode && snapMode !== 'line' && snapMode !== 'perpendicular') {
+    return snappedPreview
+  }
+
   if (!snappedPreview) {
     return resolveOffsetPreviewInput(features, rawPoint, vt)
   }
@@ -1107,7 +1112,11 @@ function resolveOffsetPreview(
     return snappedPreview
   }
 
-  return resolveOffsetPreviewInput(features, rawPoint, vt) ?? snappedPreview
+  if (snapMode === 'line' || snapMode === 'perpendicular') {
+    return resolveOffsetPreviewInput(features, rawPoint, vt) ?? snappedPreview
+  }
+
+  return snappedPreview
 }
 
 function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: ViewTransform): string | null {
@@ -1766,6 +1775,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingMovePreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingTransformPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const pendingOffsetRawPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const livePointerWorldRef = useRef<Point | null>(null)
   const drawFrameRef = useRef<number | null>(null)
   const drawRef = useRef<() => void>(() => {})
   const [copyCountDraft, setCopyCountDraft] = useState('1')
@@ -1878,11 +1889,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     scheduleDraw()
   }
 
+  function setPendingOffsetRawPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+    pendingOffsetRawPreviewPointRef.current = nextPoint
+    scheduleDraw()
+  }
+
   function isActiveSnapPoint(point: Point | null | undefined): boolean {
     return !!point && !!activeSnapRef.current?.mode && pointsEqual(point, activeSnapRef.current.point, 1e-6)
   }
 
   function currentSnapReferencePoint(): Point | null {
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
+    const pendingAdd = pendingAddRef.current
+
     if (pendingMove?.fromPoint) {
       return pendingMove.fromPoint
     }
@@ -2020,6 +2040,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function resolveSketchSnap(rawPoint: Point, vt: ViewTransform): ResolvedSnap {
+    const snapSettings = snapSettingsRef.current
+    const project = projectRef.current
+
     if (!snapSettings.enabled || snapSettings.modes.length === 0) {
       return { rawPoint, point: rawPoint, mode: null }
     }
@@ -2124,7 +2147,95 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     pendingOffsetPreviewPointRef.current = null
+    pendingOffsetRawPreviewPointRef.current = null
   }, [pendingOffset?.session])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const livePoint = livePointerWorldRef.current
+    if (!canvas || !livePoint) {
+      return
+    }
+
+    const project = projectRef.current
+    const selection = selectionRef.current
+    const pendingAdd = pendingAddRef.current
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const resolvedSnap = resolveSketchSnap(livePoint, vt)
+    const snapped = resolvedSnap.point
+    const sketchEditTool = selection.sketchEditTool
+
+    const shouldPreviewSnap =
+      !!pendingAdd
+      || !!pendingMove
+      || !!pendingTransform
+      || !!pendingOffset
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
+      || isDraggingNodeRef.current
+
+    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
+
+    if (pendingAdd) {
+      if (pendingAdd.shape === 'origin') {
+        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
+        scheduleDraw()
+        return
+      }
+      setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+      return
+    }
+
+    if (pendingMove) {
+      setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
+      return
+    }
+
+    if (pendingTransform) {
+      const constrainedPoint =
+        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
+          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+          : snapped
+      setPendingTransformPreviewPointRef({ point: constrainedPoint, session: pendingTransform.session })
+      return
+    }
+
+    if (pendingOffset) {
+      setPendingOffsetRawPreviewPointRef({ point: livePoint, session: pendingOffset.session })
+      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
+      return
+    }
+
+    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
+      const feature = editableFeature()
+      if (feature && sketchEditTool === 'add_point') {
+        pendingSketchFilletRef.current = null
+        if (pendingSketchExtensionRef.current) {
+          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+        } else {
+          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, livePoint, vt)
+          if (endpoint) {
+            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
+          } else {
+            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
+            sketchEditPreviewRef.current = target ? { point: target.point, mode: 'add_point' } : null
+          }
+        }
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'fillet') {
+        pendingSketchExtensionRef.current = null
+        if (pendingSketchFilletRef.current) {
+          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+        }
+        scheduleDraw()
+      }
+    }
+  }, [snapSettings, viewState, pendingAdd, pendingMove, pendingTransform, pendingOffset, selection.mode, selection.sketchEditTool, selection.selectedFeatureId, selection.selectedNode])
 
   drawRef.current = () => {
     const canvas = canvasRef.current
@@ -2287,6 +2398,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const currentOffsetPreviewPoint =
       pendingOffset && pendingOffsetPreviewPointRef.current?.session === pendingOffset.session
         ? pendingOffsetPreviewPointRef.current.point
+        : null
+    const currentOffsetRawPreviewPoint =
+      pendingOffset && pendingOffsetRawPreviewPointRef.current?.session === pendingOffset.session
+        ? pendingOffsetRawPreviewPointRef.current.point
         : null
 
     if (pendingMove) {
@@ -2531,15 +2646,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
         .filter((feature) => feature.sketch.profile.closed)
-      const snappedOffsetPoint = activeSnapRef.current?.point ?? currentOffsetPreviewPoint
+      const rawOffsetPoint = currentOffsetRawPreviewPoint ?? livePointerWorldRef.current ?? activeSnapRef.current?.rawPoint ?? null
+      const snappedOffsetPoint = currentOffsetPreviewPoint ?? activeSnapRef.current?.point ?? rawOffsetPoint
 
       if (snappedOffsetPoint) {
         drawPendingPoint(ctx, snappedOffsetPoint, vt, isActiveSnapPoint(snappedOffsetPoint))
       }
 
       const previewInput =
-        features.length > 0 && currentOffsetPreviewPoint && snappedOffsetPoint
-          ? resolveOffsetPreview(features, currentOffsetPreviewPoint, snappedOffsetPoint, vt)
+        features.length > 0 && rawOffsetPoint && snappedOffsetPoint
+          ? resolveOffsetPreview(features, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
           : null
 
       if (previewInput) {
@@ -2817,8 +2933,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
 
     if (isPanningRef.current && lastPanPointRef.current) {
@@ -2892,7 +3010,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
       hoverFeature(null)
-      setPendingOffsetPreviewPointRef({ point: world, session: pendingOffset.session })
+      setPendingOffsetRawPreviewPointRef({ point: world, session: pendingOffset.session })
+      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
       return
     }
 
@@ -3009,10 +3128,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function handleMouseLeave() {
     stopNodeDrag()
     stopPan()
+    livePointerWorldRef.current = null
     sketchEditPreviewRef.current = null
     pendingSketchFilletRef.current = null
     pendingSketchExtensionRef.current = null
     setPendingOffsetPreviewPointRef(null)
+    setPendingOffsetRawPreviewPointRef(null)
     hoverFeature(null)
     updateActiveSnap(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
@@ -3221,13 +3342,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
         .filter((feature) => feature.sketch.profile.closed)
-      const previewInput = resolveOffsetPreview(sourceFeatures, world, resolvedSnap.point, vt)
+      const previewInput = resolveOffsetPreview(sourceFeatures, world, resolvedSnap.point, resolvedSnap.mode, vt)
       if (previewInput) {
         completePendingOffset(previewInput.signedDistance)
       } else {
         cancelPendingOffset()
       }
       setPendingOffsetPreviewPointRef(null)
+      setPendingOffsetRawPreviewPointRef(null)
       return
     }
 
@@ -3439,6 +3561,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (event.key === 'Escape' && pendingOffset) {
       cancelPendingOffset()
       setPendingOffsetPreviewPointRef(null)
+      setPendingOffsetRawPreviewPointRef(null)
       return
     }
 
