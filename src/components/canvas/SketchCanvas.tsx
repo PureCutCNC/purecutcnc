@@ -638,6 +638,182 @@ function drawMoveGuide(
   ctx.setLineDash([])
 }
 
+function lineLength(start: Point, end: Point): number {
+  return Math.hypot(end.x - start.x, end.y - start.y)
+}
+
+function drawMeasurementLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  cy: number,
+  angle = 0,
+): void {
+  const normalizedAngle =
+    angle > Math.PI / 2 || angle < -Math.PI / 2
+      ? angle + Math.PI
+      : angle
+
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(normalizedAngle)
+  ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const metrics = ctx.measureText(text)
+  const width = metrics.width + 12
+  const height = 18
+  ctx.fillStyle = 'rgba(15, 21, 29, 0.92)'
+  ctx.strokeStyle = 'rgba(239, 188, 122, 0.42)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.roundRect(-width / 2, -height / 2, width, height, 5)
+  ctx.fill()
+  ctx.stroke()
+  ctx.fillStyle = 'rgba(245, 216, 183, 0.96)'
+  ctx.fillText(text, 0, 0)
+  ctx.restore()
+}
+
+function drawLineLengthMeasurement(
+  ctx: CanvasRenderingContext2D,
+  start: Point,
+  end: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const startCanvas = worldToCanvas(start, vt)
+  const endCanvas = worldToCanvas(end, vt)
+  const dx = endCanvas.cx - startCanvas.cx
+  const dy = endCanvas.cy - startCanvas.cy
+  const canvasLength = Math.hypot(dx, dy)
+  if (canvasLength < 28) {
+    return
+  }
+
+  const midX = (startCanvas.cx + endCanvas.cx) / 2
+  const midY = (startCanvas.cy + endCanvas.cy) / 2
+  const offset = 11
+  const normalX = -dy / canvasLength
+  const normalY = dx / canvasLength
+  drawMeasurementLabel(
+    ctx,
+    formatLength(lineLength(start, end), units),
+    midX + normalX * offset,
+    midY + normalY * offset,
+    Math.atan2(dy, dx),
+  )
+}
+
+function drawArcRadiusMeasurement(
+  ctx: CanvasRenderingContext2D,
+  start: Point,
+  segment: Extract<Segment, { type: 'arc' }>,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const midpoint = arcControlPoint(start, segment)
+  const midpointCanvas = worldToCanvas(midpoint, vt)
+  const centerCanvas = worldToCanvas(segment.center, vt)
+  const radiusCanvas = Math.hypot(midpointCanvas.cx - centerCanvas.cx, midpointCanvas.cy - centerCanvas.cy)
+  if (radiusCanvas < 16) {
+    return
+  }
+
+  const angle = Math.atan2(midpointCanvas.cy - centerCanvas.cy, midpointCanvas.cx - centerCanvas.cx)
+  const offset = 14
+  drawMeasurementLabel(
+    ctx,
+    `R ${formatLength(lineLength(start, segment.center), units)}`,
+    midpointCanvas.cx + Math.cos(angle) * offset,
+    midpointCanvas.cy + Math.sin(angle) * offset,
+  )
+}
+
+function drawRadiusMeasurement(
+  ctx: CanvasRenderingContext2D,
+  center: Point,
+  edgePoint: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const centerCanvas = worldToCanvas(center, vt)
+  const edgeCanvas = worldToCanvas(edgePoint, vt)
+  const dx = edgeCanvas.cx - centerCanvas.cx
+  const dy = edgeCanvas.cy - centerCanvas.cy
+  const canvasLength = Math.hypot(dx, dy)
+  if (canvasLength < 16) {
+    return
+  }
+
+  const midX = (centerCanvas.cx + edgeCanvas.cx) / 2
+  const midY = (centerCanvas.cy + edgeCanvas.cy) / 2
+  const offset = 11
+  drawMeasurementLabel(
+    ctx,
+    `R ${formatLength(lineLength(center, edgePoint), units)}`,
+    midX - (dy / canvasLength) * offset,
+    midY + (dx / canvasLength) * offset,
+    Math.atan2(dy, dx),
+  )
+}
+
+function drawProfileLineMeasurements(
+  ctx: CanvasRenderingContext2D,
+  profile: SketchProfile,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+  options?: { segmentIndices?: number[] },
+): void {
+  const allowed = options?.segmentIndices ? new Set(options.segmentIndices) : null
+  let current = profile.start
+
+  for (let index = 0; index < profile.segments.length; index += 1) {
+    const segment = profile.segments[index]
+    if (allowed && !allowed.has(index)) {
+      current = segment.to
+      continue
+    }
+
+    if (segment.type === 'line') {
+      drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
+    }
+
+    current = segment.to
+  }
+}
+
+function drawActiveEditMeasurements(
+  ctx: CanvasRenderingContext2D,
+  profile: SketchProfile,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+  activeControl: SketchControlRef | null,
+): void {
+  if (!activeControl) {
+    return
+  }
+
+  if (activeControl.kind === 'anchor') {
+    const indices: number[] = []
+    if (profile.closed || activeControl.index > 0) {
+      indices.push((activeControl.index - 1 + profile.segments.length) % profile.segments.length)
+    }
+    if (activeControl.index < profile.segments.length) {
+      indices.push(activeControl.index)
+    }
+    drawProfileLineMeasurements(ctx, profile, vt, units, { segmentIndices: indices })
+    return
+  }
+
+  if (activeControl.kind === 'arc_handle') {
+    const segment = profile.segments[activeControl.index]
+    if (segment?.type === 'arc') {
+      drawArcRadiusMeasurement(ctx, anchorPointForIndex(profile, activeControl.index), segment, vt, units)
+    }
+  }
+}
+
 function drawPendingPathLoop(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -646,6 +822,7 @@ function drawPendingPathLoop(
   closePreview: boolean,
   previewProfileFactory: (points: Point[]) => SketchProfile,
   label: string,
+  units: 'mm' | 'inch',
   previewHighlighted = false,
 ): void {
   if (points.length === 0) return
@@ -672,6 +849,14 @@ function drawPendingPathLoop(
 
   if (previewPoint && !closePreview) {
     drawPendingPoint(ctx, previewPoint, vt, previewHighlighted)
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    drawLineLengthMeasurement(ctx, points[index - 1], points[index], vt, units)
+  }
+
+  if (previewPoint) {
+    drawLineLengthMeasurement(ctx, points[points.length - 1], closePreview ? points[0] : previewPoint, vt, units)
   }
 
   if (points.length >= 3 && previewPoint && closePreview) {
@@ -1377,6 +1562,7 @@ function drawCompositeDraft(
   pendingAdd: CompositePendingAdd,
   previewPoint: Point | null,
   vt: ViewTransform,
+  units: 'mm' | 'inch',
   previewHighlighted = false,
 ): void {
   if (!pendingAdd.start) {
@@ -1423,6 +1609,16 @@ function drawCompositeDraft(
     ctx.setLineDash([8, 5])
     ctx.stroke()
     ctx.setLineDash([])
+  }
+
+  let current = pendingAdd.start
+  for (const segment of previewSegments) {
+    if (segment.type === 'line') {
+      drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
+    } else if (segment.type === 'arc') {
+      drawArcRadiusMeasurement(ctx, current, segment, vt, units)
+    }
+    current = segment.to
   }
 
   const points = compositeDraftPoints(pendingAdd)
@@ -2395,6 +2591,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       if (editing) {
         drawSketchControls(ctx, feature.sketch.profile, vt, selection.activeControl)
+        if (isDraggingNodeRef.current) {
+          drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, selection.activeControl)
+        }
       }
     }
 
@@ -2480,6 +2679,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             closePreview,
             polygonProfile,
             'Pending polygon',
+            project.meta.units,
             isActiveSnapPoint(currentPreviewPoint),
           )
         }
@@ -2487,7 +2687,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
       }
     } else if (pendingAdd?.shape === 'composite') {
-      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, isActiveSnapPoint(currentPreviewPoint))
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
@@ -2501,6 +2701,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawPreviewProfile(ctx, previewProfile, vt, label)
       drawPendingPoint(ctx, pendingAdd.anchor, vt)
       drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+      if (pendingAdd.shape === 'circle') {
+        drawMoveGuide(ctx, pendingAdd.anchor, currentPreviewPoint, vt)
+        drawRadiusMeasurement(ctx, pendingAdd.anchor, currentPreviewPoint, vt, project.meta.units)
+      } else {
+        drawProfileLineMeasurements(ctx, previewProfile, vt, project.meta.units)
+      }
     } else if (pendingAdd && currentPreviewPoint) {
       drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     }
