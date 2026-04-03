@@ -1,5 +1,13 @@
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js'
+import helvetikerRegular from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
+import optimerRegular from 'three/examples/fonts/optimer_regular.typeface.json'
+import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json'
+import gentilisRegular from 'three/examples/fonts/gentilis_regular.typeface.json'
+import gentilisBold from 'three/examples/fonts/gentilis_bold.typeface.json'
+import droidSansRegular from 'three/examples/fonts/droid/droid_sans_regular.typeface.json'
+import droidSansBold from 'three/examples/fonts/droid/droid_sans_bold.typeface.json'
+import droidSerifRegular from 'three/examples/fonts/droid/droid_serif_regular.typeface.json'
 import droidSerifBold from 'three/examples/fonts/droid/droid_serif_bold.typeface.json'
 import {
   getProfileBounds,
@@ -56,14 +64,30 @@ const LETTER_SPACING_RATIO = 0.18
 const LINE_HEIGHT_RATIO = 1.45
 const TEXT_FONTS: TextFontDefinition[] = [
   { id: 'simple_stroke', label: 'Simple Stroke', style: 'skeleton' },
-  { id: 'bold_sans', label: 'Bold Sans', style: 'outline' },
-  { id: 'bold_serif', label: 'Bold Serif', style: 'outline' },
+  { id: 'helvetiker_regular', label: 'Helvetiker Regular', style: 'outline' },
+  { id: 'helvetiker_bold', label: 'Helvetiker Bold', style: 'outline' },
+  { id: 'optimer_regular', label: 'Optimer Regular', style: 'outline' },
+  { id: 'optimer_bold', label: 'Optimer Bold', style: 'outline' },
+  { id: 'gentilis_regular', label: 'Gentilis Regular', style: 'outline' },
+  { id: 'gentilis_bold', label: 'Gentilis Bold', style: 'outline' },
+  { id: 'droid_sans_regular', label: 'Droid Sans Regular', style: 'outline' },
+  { id: 'droid_sans_bold', label: 'Droid Sans Bold', style: 'outline' },
+  { id: 'droid_serif_regular', label: 'Droid Serif Regular', style: 'outline' },
+  { id: 'droid_serif_bold', label: 'Droid Serif Bold', style: 'outline' },
 ]
 
 const fontLoader = new FontLoader()
 const OUTLINE_FONTS = {
-  bold_sans: fontLoader.parse(helvetikerBold as any),
-  bold_serif: fontLoader.parse(droidSerifBold as any),
+  helvetiker_regular: fontLoader.parse(helvetikerRegular as any),
+  helvetiker_bold: fontLoader.parse(helvetikerBold as any),
+  optimer_regular: fontLoader.parse(optimerRegular as any),
+  optimer_bold: fontLoader.parse(optimerBold as any),
+  gentilis_regular: fontLoader.parse(gentilisRegular as any),
+  gentilis_bold: fontLoader.parse(gentilisBold as any),
+  droid_sans_regular: fontLoader.parse(droidSansRegular as any),
+  droid_sans_bold: fontLoader.parse(droidSansBold as any),
+  droid_serif_regular: fontLoader.parse(droidSerifRegular as any),
+  droid_serif_bold: fontLoader.parse(droidSerifBold as any),
 } as const
 
 const GLYPHS: Record<string, GlyphDefinition> = {
@@ -129,8 +153,19 @@ export function getTextFontOptions(style?: TextFontStyle): TextFontDefinition[] 
   return style ? TEXT_FONTS.filter((font) => font.style === style) : TEXT_FONTS
 }
 
+export function normalizeTextFontId(fontId: string | null | undefined, style: TextFontStyle): TextFontId {
+  if (fontId && getTextFontOptions(style).some((font) => font.id === fontId)) {
+    return fontId as TextFontId
+  }
+
+  return defaultFontIdForStyle(style)
+}
+
 export function defaultFontIdForStyle(style: TextFontStyle): TextFontId {
-  return getTextFontOptions(style)[0]?.id ?? 'simple_stroke'
+  if (style === 'outline') {
+    return 'helvetiker_bold'
+  }
+  return 'simple_stroke'
 }
 
 function clonePoint(point: Point): Point {
@@ -206,7 +241,7 @@ function flipProfileY(profile: SketchProfile, maxY: number): SketchProfile {
 }
 
 function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId): Array<{ profile: SketchProfile; depth: number }> {
-  const font = OUTLINE_FONTS[fontId as keyof typeof OUTLINE_FONTS] ?? OUTLINE_FONTS.bold_sans
+  const font = OUTLINE_FONTS[fontId as keyof typeof OUTLINE_FONTS] ?? OUTLINE_FONTS.helvetiker_bold
   const shapes = font.generateShapes(normalizeText(text), size)
   const rawProfiles: Array<{ profile: SketchProfile; depth: number }> = []
 

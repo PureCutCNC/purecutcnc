@@ -360,6 +360,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Offset is intentionally disabled for `text` features in the current first pass.
   - When implemented, it should operate on resolved letter contours and preserve the editable text object.
 
+### Lazy-load built-in text fonts
+- Status: Open
+- Priority: High
+- Summary: Lazy-load non-default built-in outline fonts so adding more Three.js typefaces does not bloat the main client bundle.
+- Notes:
+  - The expanded built-in text font set currently increases the main JS bundle significantly.
+  - Keep the default text font available immediately, and load additional font JSONs on demand when selected.
+  - This should preserve deterministic built-in font support without forcing all font data into the initial app load.
+
 ### Variable-width V-carve planning
 - Status: Open
 - Priority: Low

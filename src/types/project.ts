@@ -111,7 +111,18 @@ export interface LocalDimension {
 
 export type FeatureOperation = 'add' | 'subtract'
 export type TextFontStyle = 'skeleton' | 'outline'
-export type TextFontId = 'simple_stroke' | 'bold_sans' | 'bold_serif'
+export type TextFontId =
+  | 'simple_stroke'
+  | 'helvetiker_regular'
+  | 'helvetiker_bold'
+  | 'optimer_regular'
+  | 'optimer_bold'
+  | 'gentilis_regular'
+  | 'gentilis_bold'
+  | 'droid_sans_regular'
+  | 'droid_sans_bold'
+  | 'droid_serif_regular'
+  | 'droid_serif_bold'
 export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text'
 
 export interface TextFeatureData {

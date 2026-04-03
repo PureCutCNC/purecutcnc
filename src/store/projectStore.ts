@@ -54,9 +54,9 @@ import type {
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
 import {
-  defaultFontIdForStyle,
   generateTextShapes,
   getTextFrameProfile,
+  normalizeTextFontId,
   type TextToolConfig,
 } from '../text'
 
@@ -2287,7 +2287,7 @@ function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
       ? {
         ...feature.text,
         text: feature.text.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
-        fontId: feature.text.fontId ?? defaultFontIdForStyle(feature.text.style),
+        fontId: normalizeTextFontId(feature.text.fontId, feature.text.style),
       }
       : null,
     sketch: {
