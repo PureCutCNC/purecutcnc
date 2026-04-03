@@ -32,6 +32,10 @@
   <symbol id="fit" viewBox="0 0 24 24">
     <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6"/>
   </symbol>
+  <symbol id="fit-window" viewBox="0 0 24 24">
+    <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6"/>
+    <rect x="7" y="7" width="10" height="10" rx="1" opacity="0.45"/>
+  </symbol>
 
   <!-- Drawing Tools -->
   <symbol id="select" viewBox="0 0 24 24">

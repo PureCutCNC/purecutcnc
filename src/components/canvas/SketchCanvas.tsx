@@ -226,8 +226,17 @@ function computeFitViewState(
   canvasW: number,
   canvasH: number,
 ): SketchViewState {
-  const base = computeBaseViewTransform(project.stock, canvasW, canvasH)
   const bounds = getVisibleSceneBounds2D(project)
+  return computeFitViewStateForBounds(project.stock, bounds, canvasW, canvasH)
+}
+
+function computeFitViewStateForBounds(
+  stock: Stock,
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  canvasW: number,
+  canvasH: number,
+): SketchViewState {
+  const base = computeBaseViewTransform(stock, canvasW, canvasH)
   const contentW = Math.max(bounds.maxX - bounds.minX, 1)
   const contentH = Math.max(bounds.maxY - bounds.minY, 1)
   const desiredScale = Math.min(
@@ -1138,6 +1147,19 @@ function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: View
   return null
 }
 
+function pointInRect(point: Point, minX: number, minY: number, maxX: number, maxY: number): boolean {
+  return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
+}
+
+function featureFullyInsideRect(feature: SketchFeature, minX: number, minY: number, maxX: number, maxY: number): boolean {
+  const points = sampleProfilePoints(feature.sketch.profile)
+  if (points.length === 0) {
+    return false
+  }
+
+  return points.every((point) => pointInRect(point, minX, minY, maxX, maxY))
+}
+
 function findHitClampId(worldPoint: Point, clamps: Clamp[]): string | null {
   for (let index = clamps.length - 1; index >= 0; index -= 1) {
     const clamp = clamps[index]
@@ -1758,11 +1780,24 @@ interface SketchCanvasProps {
   selectedOperationId?: string | null
   collidingClampIds?: string[]
   snapSettings: SnapSettings
+  zoomWindowActive?: boolean
+  onZoomWindowComplete?: () => void
   onActiveSnapModeChange?: (mode: SnapMode | null) => void
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
-  { onFeatureContextMenu, onTabContextMenu, onClampContextMenu, toolpaths = [], selectedOperationId = null, collidingClampIds = [], snapSettings, onActiveSnapModeChange },
+  {
+    onFeatureContextMenu,
+    onTabContextMenu,
+    onClampContextMenu,
+    toolpaths = [],
+    selectedOperationId = null,
+    collidingClampIds = [],
+    snapSettings,
+    zoomWindowActive = false,
+    onZoomWindowComplete,
+    onActiveSnapModeChange,
+  },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1771,6 +1806,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
+  const marqueeStartRef = useRef<CanvasPoint | null>(null)
+  const marqueeCurrentRef = useRef<CanvasPoint | null>(null)
+  const zoomWindowStartRef = useRef<CanvasPoint | null>(null)
+  const zoomWindowCurrentRef = useRef<CanvasPoint | null>(null)
+  const suppressClickRef = useRef(false)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const activeSnapRef = useRef<ResolvedSnap | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
@@ -1798,6 +1838,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingShapeAction,
     selection,
     selectFeature,
+    selectFeatures,
     selectBackdrop,
     selectTab,
     selectClamp,
@@ -2186,6 +2227,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [pendingOffset?.session])
 
   useEffect(() => {
+    if (zoomWindowActive) {
+      return
+    }
+
+    zoomWindowStartRef.current = null
+    zoomWindowCurrentRef.current = null
+    scheduleDraw()
+  }, [zoomWindowActive])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     const livePoint = livePointerWorldRef.current
     if (!canvas || !livePoint) {
@@ -2369,6 +2420,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (toolpath.moves.length > 0) {
         drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId)
       }
+    }
+
+    if (marqueeStartRef.current && marqueeCurrentRef.current) {
+      const x = Math.min(marqueeStartRef.current.cx, marqueeCurrentRef.current.cx)
+      const y = Math.min(marqueeStartRef.current.cy, marqueeCurrentRef.current.cy)
+      const w = Math.abs(marqueeCurrentRef.current.cx - marqueeStartRef.current.cx)
+      const h = Math.abs(marqueeCurrentRef.current.cy - marqueeStartRef.current.cy)
+      ctx.save()
+      ctx.fillStyle = 'rgba(91, 165, 216, 0.16)'
+      ctx.strokeStyle = 'rgba(123, 199, 246, 0.9)'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([6, 4])
+      ctx.fillRect(x, y, w, h)
+      ctx.strokeRect(x, y, w, h)
+      ctx.restore()
+    }
+
+    if (zoomWindowStartRef.current && zoomWindowCurrentRef.current) {
+      const x = Math.min(zoomWindowStartRef.current.cx, zoomWindowCurrentRef.current.cx)
+      const y = Math.min(zoomWindowStartRef.current.cy, zoomWindowCurrentRef.current.cy)
+      const w = Math.abs(zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx)
+      const h = Math.abs(zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy)
+      ctx.save()
+      ctx.fillStyle = 'rgba(242, 185, 92, 0.16)'
+      ctx.strokeStyle = 'rgba(247, 211, 148, 0.92)'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([7, 4])
+      ctx.fillRect(x, y, w, h)
+      ctx.strokeRect(x, y, w, h)
+      ctx.restore()
     }
 
     const currentPreviewPoint =
@@ -2840,7 +2921,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => {
       canvas.removeEventListener('pointermove', handleNativePointerMove)
     }
-  }, [copyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [copyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length, zoomWindowActive])
 
   function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>): CanvasPoint {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -2952,11 +3033,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function handleMouseDown(event: MouseEvent<HTMLCanvasElement>) {
     const pendingShapeAction = pendingShapeActionRef.current
+    const point = canvasCoordinates(event)
+
+    if (zoomWindowActive && event.button === 0) {
+      zoomWindowStartRef.current = point
+      zoomWindowCurrentRef.current = point
+      hoverFeature(null)
+      updateActiveSnap(null)
+      scheduleDraw()
+      return
+    }
+
     const shiftStartsPan = event.button === 0 && event.shiftKey && !pendingShapeAction
     if (event.button === 1 || event.button === 2 || shiftStartsPan) {
       isPanningRef.current = true
       didPanRef.current = false
-      lastPanPointRef.current = canvasCoordinates(event)
+      lastPanPointRef.current = point
       return
     }
 
@@ -2968,8 +3060,28 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    const control = hitEditableControl(canvasCoordinates(event))
-    if (!control) return
+    const canvas = canvasRef.current
+    if (!canvas) {
+      return
+    }
+
+    const project = projectRef.current
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const world = canvasToWorld(point.cx, point.cy, vt)
+    const control = hitEditableControl(point)
+    const hitClampId = findHitClampId(world, project.clamps)
+    const hitTabId = findHitTabId(world, project.tabs)
+    const hitFeatureId = findHitFeatureId(world, project.features, vt)
+    if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
+      marqueeStartRef.current = point
+      marqueeCurrentRef.current = point
+      scheduleDraw()
+      return
+    }
+
+    if (!control) {
+      return
+    }
 
     beginHistoryTransaction()
     setActiveControl(control)
@@ -3010,13 +3122,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (marqueeStartRef.current) {
+      marqueeCurrentRef.current = point
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      hoverFeature(null)
+      updateActiveSnap(null)
+      scheduleDraw()
+      return
+    }
+
+    if (zoomWindowStartRef.current) {
+      zoomWindowCurrentRef.current = point
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      hoverFeature(null)
+      updateActiveSnap(null)
+      scheduleDraw()
+      return
+    }
+
     const shouldPreviewSnap =
-      !!pendingAdd
-      || !!pendingMove
-      || !!pendingTransform
-      || !!pendingOffset
-      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
-      || isDraggingNodeRef.current
+      !zoomWindowActive && (
+        !!pendingAdd
+        || !!pendingMove
+        || !!pendingTransform
+        || !!pendingOffset
+        || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
+        || isDraggingNodeRef.current
+      )
     const resolvedSnap = shouldPreviewSnap
       ? resolveSketchSnap(world, vt, {
           excludeActiveEditGeometry: isDraggingNodeRef.current,
@@ -3193,11 +3329,73 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleMouseUp() {
+    const canvas = canvasRef.current
+    const project = projectRef.current
+    if (canvas && zoomWindowStartRef.current && zoomWindowCurrentRef.current) {
+      const dx = zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx
+      const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
+      const movedEnough = Math.hypot(dx, dy) >= 6
+      if (movedEnough) {
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+        const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
+        const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
+        setViewState(
+          computeFitViewStateForBounds(
+            project.stock,
+            {
+              minX: Math.min(startWorld.x, endWorld.x),
+              maxX: Math.max(startWorld.x, endWorld.x),
+              minY: Math.min(startWorld.y, endWorld.y),
+              maxY: Math.max(startWorld.y, endWorld.y),
+            },
+            canvas.width,
+            canvas.height,
+          ),
+        )
+      }
+      suppressClickRef.current = true
+      zoomWindowStartRef.current = null
+      zoomWindowCurrentRef.current = null
+      scheduleDraw()
+      onZoomWindowComplete?.()
+    }
+
+    if (canvas && marqueeStartRef.current && marqueeCurrentRef.current) {
+      const dx = marqueeCurrentRef.current.cx - marqueeStartRef.current.cx
+      const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
+      const movedEnough = Math.hypot(dx, dy) >= 6
+      if (movedEnough) {
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+        const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
+        const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
+        const minX = Math.min(startWorld.x, endWorld.x)
+        const minY = Math.min(startWorld.y, endWorld.y)
+        const maxX = Math.max(startWorld.x, endWorld.x)
+        const maxY = Math.max(startWorld.y, endWorld.y)
+        const enclosedIds = project.features
+          .filter((feature) => feature.visible)
+          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
+          .map((feature) => feature.id)
+        const nextIds = [...selectionRef.current.selectedFeatureIds, ...enclosedIds]
+          .filter((id, index, array) => array.indexOf(id) === index)
+        if (nextIds.length > 0) {
+          selectFeatures(nextIds)
+        }
+        suppressClickRef.current = true
+      }
+      marqueeStartRef.current = null
+      marqueeCurrentRef.current = null
+      scheduleDraw()
+    }
     stopNodeDrag()
     stopPan()
   }
 
   function handleMouseLeave() {
+    marqueeStartRef.current = null
+    marqueeCurrentRef.current = null
+    zoomWindowStartRef.current = null
+    zoomWindowCurrentRef.current = null
     stopNodeDrag()
     stopPan()
     livePointerWorldRef.current = null
@@ -3237,6 +3435,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleClick(event: MouseEvent<HTMLCanvasElement>) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+
+    if (zoomWindowActive) {
+      return
+    }
+
     if (didPanRef.current) {
       didPanRef.current = false
       return
@@ -3474,6 +3681,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleWheel(event: WheelEvent<HTMLCanvasElement>) {
+    if (zoomWindowActive) {
+      return
+    }
+
     event.preventDefault()
 
     const canvas = canvasRef.current
@@ -3497,6 +3708,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleDoubleClick(event: MouseEvent<HTMLCanvasElement>) {
+    if (zoomWindowActive) {
+      return
+    }
+
     const project = projectRef.current
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
@@ -3537,6 +3752,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
     event.preventDefault()
+
+    if (zoomWindowActive) {
+      return
+    }
 
     if (didPanRef.current) {
       didPanRef.current = false

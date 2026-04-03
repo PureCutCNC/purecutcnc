@@ -18,6 +18,8 @@ interface ToolbarActionButtonProps {
 
 interface ToolbarProps {
   onZoomToModel: () => void
+  onZoomWindow: () => void
+  zoomWindowActive?: boolean
   onImportComplete?: () => void
 }
 
@@ -433,6 +435,8 @@ function GlobalActions({
   onUndo,
   onRedo,
   onZoomToModel,
+  onZoomWindow,
+  zoomWindowActive,
 }: {
   historyLengthPast: number
   historyLengthFuture: number
@@ -443,6 +447,8 @@ function GlobalActions({
   onUndo: () => void
   onRedo: () => void
   onZoomToModel: () => void
+  onZoomWindow: () => void
+  zoomWindowActive: boolean
 }) {
   return (
     <>
@@ -458,6 +464,12 @@ function GlobalActions({
       </div>
       <div className="toolbar-group">
         <ToolbarActionButton icon="fit" label="Zoom to model" onClick={onZoomToModel} />
+        <ToolbarActionButton
+          icon="fit-window"
+          label={zoomWindowActive ? 'Cancel zoom selected' : 'Zoom selected'}
+          active={zoomWindowActive}
+          onClick={onZoomWindow}
+        />
       </div>
     </>
   )
@@ -834,6 +846,8 @@ function ToolbarDialog({
 
 export function GlobalToolbar({
   onZoomToModel,
+  onZoomWindow,
+  zoomWindowActive = false,
   onImportComplete,
   snapSettings,
   activeSnapMode,
@@ -863,6 +877,8 @@ export function GlobalToolbar({
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}
           onZoomToModel={toolbar.handleZoomToModel}
+          onZoomWindow={onZoomWindow}
+          zoomWindowActive={zoomWindowActive}
         />
         <SnapActions
           snapSettings={snapSettings}
@@ -890,7 +906,7 @@ export function CreationToolbar({
   onZoomToModel,
   onImportComplete,
   layout = 'horizontal',
-}: ToolbarProps & CreationToolbarProps) {
+}: Pick<ToolbarProps, 'onZoomToModel' | 'onImportComplete'> & CreationToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
@@ -949,6 +965,8 @@ export function CreationToolbar({
 
 export function Toolbar({
   onZoomToModel,
+  onZoomWindow,
+  zoomWindowActive = false,
   onImportComplete,
   snapSettings,
   activeSnapMode,
@@ -978,6 +996,8 @@ export function Toolbar({
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}
           onZoomToModel={toolbar.handleZoomToModel}
+          onZoomWindow={onZoomWindow}
+          zoomWindowActive={zoomWindowActive}
         />
         <SnapActions
           snapSettings={snapSettings}

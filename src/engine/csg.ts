@@ -248,7 +248,7 @@ export function buildOriginTriad(origin: MachineOrigin, size: number): THREE.Gro
     { direction: new THREE.Vector3(0, 0, -1), color: 0x63c07a },
     { direction: new THREE.Vector3(0, 1, 0), color: 0x5b90e3 },
   ]
-  const shaftRadius = Math.max(size * 0.025, 0.08)
+  const shaftRadius = Math.max(size * 0.025, 0.005)
   const tipRadius = Math.max(size * 0.055, shaftRadius * 1.5)
   const tipLength = Math.max(size * 0.18, shaftRadius * 4)
   const shaftLength = Math.max(size - tipLength, size * 0.55)
@@ -287,7 +287,7 @@ export function buildOriginTriad(origin: MachineOrigin, size: number): THREE.Gro
     group.add(tip)
   }
 
-  const centerGeometry = new THREE.SphereGeometry(Math.max(size * 0.1, 0.06), 14, 14)
+  const centerGeometry = new THREE.SphereGeometry(Math.max(size * 0.1, shaftRadius * 1.2), 14, 14)
   const centerMaterial = new THREE.MeshStandardMaterial({
     color: 0xe6edf5,
     roughness: 0.4,

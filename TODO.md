@@ -46,14 +46,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Revisit whether feature coloring/labels already communicate enough without a legend.
   - If it stays, it likely needs a lighter visual treatment or a better location.
 
-### Grid snap inconsistency on new project
+### Marquee selection inside enclosing features
 - Status: Open
-- Priority: Medium
-- Summary: Test and fix reports that grid snap does not always behave correctly immediately after creating a new project and placing the first feature.
+- Priority: Low
+- Summary: Improve marquee selection so users can start a window inside a larger enclosing feature without that containing feature taking the click first.
 - Notes:
-  - Needs more direct testing to confirm the exact repro.
-  - Current suspicion is an initialization or first-tool-state issue rather than a general snap failure.
-  - Revisit after the recent sketch preview responsiveness changes have settled.
+  - Current first pass marquee works well from empty sketch space.
+  - Limitation: clicking inside a closed enclosing feature still selects that feature instead of arming marquee.
+  - This is workable for now, but later we may want a modifier key, delayed-drag threshold, or explicit select tool behavior.
 
 ## Backlog
 
@@ -109,14 +109,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Current behavior should be made explicit before more folder-heavy projects appear.
   - This is mainly a safety/UX cleanup item.
 
-### Marquee multi-selection
-- Status: Open
-- Priority: Medium
-- Summary: Allow selecting multiple features in the sketch by dragging a rectangular window around them.
-- Notes:
-  - Should complement the current modifier-click multi-select flow.
-  - Need to define whether window selection means fully enclosed only or any overlap.
-
 ### Pocket toolpath ordering and linking
 - Status: Open
 - Priority: Medium
@@ -124,14 +116,7 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Notes:
   - Finish one connected region before jumping to another when possible.
   - Add nearest-entry or region-aware contour ordering later.
-
-### Pocket linking without unnecessary safe-Z retracts
-- Status: Open
-- Priority: Medium
-- Summary: Reduce conservative retract-to-safe behavior between contours and levels when a local in-material link or direct stepdown is safe.
-- Notes:
-  - Current first pass retracts too often for disconnected and connected regions alike.
-  - This should be coordinated with smarter contour ordering.
+  - Add an option in the operation for user to select which way to handle it
 
 ### Pocket finish refinement
 - Status: Open
@@ -424,6 +409,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Status: Done
 - Summary: Features, tabs, and clamps support duplicate/copy/move workflows, including direct manipulation and context-menu entry points.
 
+### Marquee multi-selection
+- Status: Done
+- Summary: Added first-pass sketch marquee selection from empty-space drag, with live rectangle preview and fully enclosed feature selection.
+
+### Pocket linking without unnecessary safe-Z retracts
+- Status: Done
+- Summary: Pocket, surface, and edge-route toolpaths now keep the tool down for local same-level links and same-XY stepdown continuations instead of always retracting to safe Z.
+
 ### G-code Export
 - Status: Done
 - Summary: Implemented machine-definition-driven post-processor with template substitution, project-scoped machine definitions, simplified Export Dialog preview/download, and shared toolpath/export selection behavior.
@@ -434,4 +427,4 @@ This file tracks follow-up work, open issues, and design questions that come up 
 
 ### Viewport zoom extent
 - Status: Done
-- Summary: `Zoom to model` now works in both `3D View` and `Simulation`, while preserving the current camera direction instead of forcing iso.
+- Summary: `Zoom to model` now works in `Sketch`, `3D View`, and `Simulation`, and `Zoom selected` provides drag-window fit in all three views while preserving the current 3D/simulation camera direction.

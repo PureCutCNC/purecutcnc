@@ -49,6 +49,7 @@ function App() {
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
   const [snapSettings, setSnapSettings] = useState<SnapSettings>(() => {
     if (typeof window === 'undefined') {
@@ -328,6 +329,21 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!zoomWindowActive) {
+      return
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setZoomWindowActive(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [zoomWindowActive])
+
+  useEffect(() => {
     if (!treeContextMenu) {
       return
     }
@@ -373,6 +389,10 @@ function App() {
     window.requestAnimationFrame(() => {
       sketchCanvasRef.current?.zoomToModel()
     })
+  }
+
+  function handleZoomWindow() {
+    setZoomWindowActive((previous) => !previous)
   }
 
   function handleToggleSnapEnabled() {
@@ -497,6 +517,8 @@ function App() {
         toolbar={
           <Toolbar 
             onZoomToModel={handleZoomToModel}
+            onZoomWindow={handleZoomWindow}
+            zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
@@ -507,6 +529,8 @@ function App() {
         globalToolbar={
           <GlobalToolbar
             onZoomToModel={handleZoomToModel}
+            onZoomWindow={handleZoomWindow}
+            zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
@@ -531,6 +555,8 @@ function App() {
             selectedOperationId={effectiveSelectedOperationId}
             collidingClampIds={collidingClampIds}
             snapSettings={snapSettings}
+            zoomWindowActive={zoomWindowActive && centerTab === 'sketch'}
+            onZoomWindowComplete={() => setZoomWindowActive(false)}
             onActiveSnapModeChange={setActiveSnapMode}
           />
         }
@@ -541,6 +567,8 @@ function App() {
             selectedOperationId={effectiveSelectedOperationId}
             collidingClampIds={collidingClampIds}
             originVisible={project.origin.visible}
+            zoomWindowActive={zoomWindowActive && centerTab === 'preview3d'}
+            onZoomWindowComplete={() => setZoomWindowActive(false)}
           />
         }
         simulationViewport={
@@ -557,6 +585,8 @@ function App() {
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin}
+            zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
+            onZoomWindowComplete={() => setZoomWindowActive(false)}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

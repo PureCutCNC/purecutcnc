@@ -1322,6 +1322,22 @@
   justify-content: flex-end;
 }
 
+.viewport-zoom-select-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.viewport-zoom-select-box {
+  position: absolute;
+  border: 1.5px dashed rgba(247, 211, 148, 0.92);
+  background: rgba(242, 185, 92, 0.16);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
 .preset-btn {
   border: 1px solid var(--line-strong);
   border-radius: 7px;

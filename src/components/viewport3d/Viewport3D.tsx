@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
@@ -74,6 +74,8 @@ interface Viewport3DProps {
   selectedOperationId?: string | null
   collidingClampIds?: string[]
   originVisible?: boolean
+  zoomWindowActive?: boolean
+  onZoomWindowComplete?: () => void
 }
 
 function disposeObject3D(object: THREE.Object3D) {
@@ -148,7 +150,8 @@ function createOrbitControls(
   camera: THREE.PerspectiveCamera,
   domElement: HTMLElement,
   onChange: () => void,
-  onPresetChange: (preset: ViewPreset | null) => void
+  onPresetChange: (preset: ViewPreset | null) => void,
+  isInteractionBlocked: () => boolean,
 ) {
   let dragMode: 'rotate' | 'pan' | null = null
   let lastX = 0
@@ -229,6 +232,10 @@ function createOrbitControls(
   }
 
   function onPointerDown(e: PointerEvent) {
+    if (isInteractionBlocked()) {
+      return
+    }
+
     const nextDragMode =
       e.button === 0 && !e.shiftKey ? 'rotate'
       : e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey) ? 'pan'
@@ -253,6 +260,10 @@ function createOrbitControls(
   }
 
   function onPointerMove(e: PointerEvent) {
+    if (isInteractionBlocked()) {
+      return
+    }
+
     if (!dragMode) return
     e.preventDefault()
     const dx = e.clientX - lastX
@@ -273,6 +284,10 @@ function createOrbitControls(
   }
 
   function onWheel(e: WheelEvent) {
+    if (isInteractionBlocked()) {
+      return
+    }
+
     e.preventDefault()
     e.stopPropagation()
     onPresetChange(null)
@@ -341,6 +356,49 @@ function createOrbitControls(
       target.copy(center)
       updateCamera()
     },
+    fitToScreenRect: (startX: number, startY: number, endX: number, endY: number) => {
+      const minX = Math.min(startX, endX)
+      const maxX = Math.max(startX, endX)
+      const minY = Math.min(startY, endY)
+      const maxY = Math.max(startY, endY)
+      const rectWidth = maxX - minX
+      const rectHeight = maxY - minY
+      if (rectWidth < 6 || rectHeight < 6) {
+        return
+      }
+
+      const bounds = domElement.getBoundingClientRect()
+      if (bounds.width <= 0 || bounds.height <= 0) {
+        return
+      }
+
+      const viewCenterX = bounds.width / 2
+      const viewCenterY = bounds.height / 2
+      const rectCenterX = minX + rectWidth / 2
+      const rectCenterY = minY + rectHeight / 2
+      const deltaX = rectCenterX - viewCenterX
+      const deltaY = rectCenterY - viewCenterY
+      const scaleFactor = Math.min(bounds.width / rectWidth, bounds.height / rectHeight)
+      if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+        return
+      }
+
+      const worldUnitsPerPixel =
+        (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * spherical.radius) / bounds.height
+
+      camera.getWorldDirection(cameraDirection)
+      panRight.crossVectors(cameraDirection, camera.up).normalize()
+      panUp.crossVectors(panRight, cameraDirection).normalize()
+
+      onPresetChange(null)
+      target.addScaledVector(panRight, deltaX * worldUnitsPerPixel)
+      target.addScaledVector(panUp, -deltaY * worldUnitsPerPixel)
+      spherical.radius = Math.max(
+        MIN_CAMERA_RADIUS,
+        Math.min(MAX_CAMERA_RADIUS, spherical.radius / scaleFactor),
+      )
+      updateCamera()
+    },
   }
 }
 
@@ -349,6 +407,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   selectedOperationId = null,
   collidingClampIds = [],
   originVisible = true,
+  zoomWindowActive = false,
+  onZoomWindowComplete,
 }, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -362,8 +422,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const originObjectRef = useRef<THREE.Object3D | null>(null)
   const buildRequestRef = useRef(0)
   const activePresetRef = useRef<ViewPreset | null>('iso')
+  const zoomWindowActiveRef = useRef(zoomWindowActive)
+  const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
+  const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
   const { project, selection } = useProjectStore()
+  zoomWindowActiveRef.current = zoomWindowActive
+  zoomWindowBoxRef.current = zoomWindowBox
 
   const syncGridVisibility = useCallback(() => {
     const gridGroup = gridRef.current
@@ -435,7 +500,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     }, (preset) => {
       activePresetRef.current = preset
       syncGridVisibility()
-    })
+    }, () => zoomWindowActiveRef.current)
     controlsRef.current = controls
 
     function animate() {
@@ -707,7 +772,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     const stockBounds = getStockBounds(project.stock)
     const stockWidth = stockBounds.maxX - stockBounds.minX
     const stockHeight = stockBounds.maxY - stockBounds.minY
-    const axisSize = Math.max(Math.max(stockWidth, stockHeight, project.stock.thickness) * 0.08, 1)
+    const axisSize = Math.max(Math.max(stockWidth, stockHeight, project.stock.thickness) * 0.05, 0.05)
     const triad = buildOriginTriad(project.origin, axisSize)
     scene.add(triad)
     originObjectRef.current = triad
@@ -721,9 +786,74 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     zoomToModel,
   }), [zoomToModel])
 
+  useEffect(() => {
+    if (!zoomWindowActive) {
+      zoomWindowBoxRef.current = null
+      setZoomWindowBox(null)
+    }
+  }, [zoomWindowActive])
+
+  const zoomBoxStyle = zoomWindowBox
+    ? {
+        left: Math.min(zoomWindowBox.startX, zoomWindowBox.currentX),
+        top: Math.min(zoomWindowBox.startY, zoomWindowBox.currentY),
+        width: Math.abs(zoomWindowBox.currentX - zoomWindowBox.startX),
+        height: Math.abs(zoomWindowBox.currentY - zoomWindowBox.startY),
+      }
+    : null
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+      {zoomWindowActive && (
+        <div
+          className="viewport-zoom-select-overlay"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            const bounds = event.currentTarget.getBoundingClientRect()
+            const x = event.clientX - bounds.left
+            const y = event.clientY - bounds.top
+            const nextBox = { startX: x, startY: y, currentX: x, currentY: y }
+            zoomWindowBoxRef.current = nextBox
+            setZoomWindowBox(nextBox)
+          }}
+          onPointerMove={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            const nextX = event.clientX - bounds.left
+            const nextY = event.clientY - bounds.top
+            setZoomWindowBox((current) => {
+              if (!current) {
+                return current
+              }
+              const nextBox = {
+                ...current,
+                currentX: nextX,
+                currentY: nextY,
+              }
+              zoomWindowBoxRef.current = nextBox
+              return nextBox
+            })
+          }}
+          onPointerUp={() => {
+            const nextBox = zoomWindowBoxRef.current
+            if (nextBox) {
+              controlsRef.current?.fitToScreenRect(nextBox.startX, nextBox.startY, nextBox.currentX, nextBox.currentY)
+            }
+            zoomWindowBoxRef.current = null
+            setZoomWindowBox(null)
+            onZoomWindowComplete?.()
+          }}
+          onPointerLeave={() => {
+            if (!zoomWindowBoxRef.current) {
+              return
+            }
+            zoomWindowBoxRef.current = null
+            setZoomWindowBox(null)
+          }}
+        >
+          {zoomBoxStyle && <div className="viewport-zoom-select-box" style={zoomBoxStyle} />}
+        </div>
+      )}
       <div className="viewport-presets">
         <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">
           Top
