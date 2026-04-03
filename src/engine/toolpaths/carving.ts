@@ -1,4 +1,5 @@
 import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import { expandFeatureGeometry } from '../../text'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   flattenProfile,
@@ -145,6 +146,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   const targetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+    .flatMap((feature) => expandFeatureGeometry(feature))
 
   const warnings: string[] = []
   if (targetFeatures.length !== operation.target.featureIds.length) {

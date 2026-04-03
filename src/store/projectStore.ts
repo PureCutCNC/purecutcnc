@@ -30,6 +30,7 @@ import {
   circleProfile,
   polygonProfile,
   splineProfile,
+  type TextFeatureData,
 } from '../types/project'
 import type {
   BackdropImage,
@@ -52,6 +53,12 @@ import type {
 } from '../types/project'
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
+import {
+  defaultFontIdForStyle,
+  generateTextShapes,
+  getTextFrameProfile,
+  type TextToolConfig,
+} from '../text'
 
 // ============================================================
 // Selection state
@@ -229,9 +236,11 @@ export interface ProjectStore {
   startAddPolygonPlacement: () => void
   startAddSplinePlacement: () => void
   startAddCompositePlacement: () => void
+  startAddTextPlacement: (config: TextToolConfig) => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
+  placePendingTextAt: (point: Point) => string[]
   addPendingPolygonPoint: (point: Point) => void
   completePendingPolygon: () => void
   completePendingOpenPath: () => void
@@ -278,6 +287,7 @@ export type PendingAddTool =
   | { shape: 'circle'; anchor: Point | null; session: number }
   | { shape: 'tab'; anchor: Point | null; session: number }
   | { shape: 'clamp'; anchor: Point | null; session: number }
+  | { shape: 'text'; config: TextToolConfig; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
   | {
@@ -1591,7 +1601,7 @@ export function resizeFeatureFromReference(
   const profile = transformProfileAffine(feature.sketch.profile, transformPoint)
   return {
     ...feature,
-    kind: inferFeatureKind(profile),
+    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
     sketch: {
       ...feature.sketch,
       origin: transformPoint(feature.sketch.origin),
@@ -1625,7 +1635,7 @@ export function rotateFeatureFromReference(
   const profile = transformProfile(feature.sketch.profile, (point) => rotatePointAround(point, referenceStart, angle))
   return {
     ...feature,
-    kind: inferFeatureKind(profile),
+    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
     sketch: {
       ...feature.sketch,
       origin: rotatePointAround(feature.sketch.origin, referenceStart, angle),
@@ -1820,6 +1830,50 @@ function duplicateFeatureName(name: string, features: SketchFeature[]): string {
 
 function uniqueFolderName(preferred: string, folders: FeatureFolder[]): string {
   return uniqueName(preferred, folders.map((folder) => folder.name))
+}
+
+function textFolderBaseName(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return 'Text'
+  }
+  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized
+}
+
+function createTextFeatureAt(project: Project, config: TextToolConfig, anchor: Point): SketchFeature | null {
+  const generatedShapes = generateTextShapes(config, { x: 0, y: 0 }).filter((shape) => !isProfileDegenerate(shape.profile))
+  if (generatedShapes.length === 0) {
+    return null
+  }
+
+  const featureName = uniqueName(textFolderBaseName(config.text), project.features.map((feature) => feature.name))
+  const isFirstFeature = project.features.length === 0
+  const textData: TextFeatureData = {
+    text: config.text,
+    style: config.style,
+    fontId: config.fontId,
+    size: config.size,
+  }
+
+  return normalizeFeatureZRange({
+    id: nextUniqueGeneratedId(project, 'f'),
+    name: featureName,
+    kind: 'text',
+    text: textData,
+    folderId: null,
+    sketch: {
+      profile: getTextFrameProfile(config, anchor),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 90,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: isFirstFeature ? 'add' : config.operation,
+    z_top: project.stock.thickness,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  })
 }
 
 function duplicateClampName(name: string, clamps: Clamp[]): string {
@@ -2229,6 +2283,13 @@ function buildCopiedTabs(
 function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const safeFeature = {
     ...feature,
+    text: feature.kind === 'text' && feature.text
+      ? {
+        ...feature.text,
+        text: feature.text.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
+        fontId: feature.text.fontId ?? defaultFontIdForStyle(feature.text.style),
+      }
+      : null,
     sketch: {
       ...feature.sketch,
       orientationAngle: normalizeAngleDegrees(
@@ -5594,6 +5655,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
     })),
 
+  startAddTextPlacement: (config) =>
+    set((s) => ({
+      pendingAdd: { shape: 'text', config, session: nextPlacementSession() },
+      pendingMove: null,
+      pendingTransform: null,
+      pendingOffset: null,
+      sketchEditSession: null,
+      selection: {
+        ...s.selection,
+        mode: 'feature',
+        hoveredFeatureId: null,
+        activeControl: null,
+      },
+    })),
+
   cancelPendingAdd: () => set({ pendingAdd: null }),
 
   setPendingAddAnchor: (point) =>
@@ -5711,6 +5787,48 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     set({ pendingAdd: null })
+  },
+
+  placePendingTextAt: (point) => {
+    const state = get()
+    if (state.pendingAdd?.shape !== 'text') {
+      return []
+    }
+
+    const createdFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
+    if (!createdFeature) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, createdFeature],
+        featureTree: [...s.project.featureTree, { type: 'feature', featureId: createdFeature.id }],
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = [createdFeature.id]
+      const primaryId = createdFeature.id
+      return {
+        project: nextProject,
+        pendingAdd: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return [createdFeature.id]
   },
 
   addPendingPolygonPoint: (point) =>
@@ -6292,7 +6410,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set((s) => {
       const featureIds = s.selection.selectedFeatureIds
       const features = selectedClosedFeaturesFromIds(s.project, featureIds)
-      if (features.length === 0 || features.some((feature) => feature.locked)) {
+      if (features.length === 0 || features.some((feature) => feature.locked || feature.kind === 'text')) {
         return {}
       }
 

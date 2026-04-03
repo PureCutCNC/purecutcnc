@@ -4,6 +4,7 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchControlRef, SketchEditTool, SketchInsertTarget } from '../../store/projectStore'
 import { filletFeatureFromPoint, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import { generateTextShapes, getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   bezierPoint,
   circleProfile,
@@ -169,7 +170,7 @@ function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getS
 
   for (const feature of project.features) {
     if (feature.visible) {
-      profiles.push(feature.sketch.profile)
+      profiles.push(...getFeatureGeometryProfiles(feature))
     }
   }
 
@@ -532,18 +533,21 @@ function drawFeature(
     fill = `rgba(78, ${g}, ${b}, 0.44)`
   }
 
-  traceProfilePath(ctx, feature.sketch.profile, vt)
-  if (feature.sketch.profile.closed) {
-    ctx.fillStyle = fill
-    ctx.fill()
+  const profiles = getFeatureGeometryProfiles(feature)
+  for (const profile of profiles) {
+    traceProfilePath(ctx, profile, vt)
+    if (profile.closed) {
+      ctx.fillStyle = fill
+      ctx.fill()
+    }
+
+    ctx.strokeStyle = stroke
+    ctx.lineWidth = editing || selected ? 2.5 : 1.8
+    ctx.stroke()
   }
 
-  ctx.strokeStyle = stroke
-  ctx.lineWidth = editing || selected ? 2.5 : 1.8
-  ctx.stroke()
-
   if (showInfo) {
-    const bounds = getProfileBounds(feature.sketch.profile)
+    const bounds = getFeatureGeometryBounds(feature)
     const center = worldToCanvas(
       { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
       vt,
@@ -587,7 +591,9 @@ function drawPreviewProfile(
   ctx.fillStyle = 'rgba(245, 216, 183, 0.95)'
   ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
   ctx.textAlign = 'center'
-  ctx.fillText(label, center.cx, center.cy)
+  if (label) {
+    ctx.fillText(label, center.cx, center.cy)
+  }
 }
 
 function drawPendingPoint(
@@ -2092,6 +2098,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
     completePendingPolygon,
@@ -2744,6 +2751,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       } else {
         drawProfileLineMeasurements(ctx, previewProfile, vt, project.meta.units)
       }
+    } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
+      const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
+      for (const shape of previewShapes) {
+        drawPreviewProfile(ctx, shape.profile, vt, '')
+      }
+      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     } else if (pendingAdd && currentPreviewPoint) {
       drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
     }
@@ -3873,6 +3886,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
         placePendingAddAt(snapped)
         setPendingPreviewPointRef(null)
+      } else if (pendingAdd.shape === 'text') {
+        placePendingTextAt(snapped)
+        setPendingPreviewPointRef(null)
       } else if (pendingAdd.shape === 'composite') {
         const draftPoints = compositeDraftPoints(pendingAdd)
         const closeCandidate =
@@ -4359,6 +4375,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     : 'Click to add vertices. Click the first point to close, or press Enter / double-click to finish open.'
             : pendingAdd.shape === 'origin'
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
+            : pendingAdd.shape === 'text'
+              ? 'Move the mouse to preview the text, then click to place it.'
             : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner.'

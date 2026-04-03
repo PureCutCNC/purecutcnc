@@ -344,13 +344,21 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Intended as a separate carving mode from `Follow Line`.
   - First pass should support operation-defined width/depth, rough/finish behavior, and open/closed targets.
 
-### Text feature planning
+### Text outline contour cleanup
+- Status: Open
+- Priority: Medium
+- Summary: Remove internal seam/sliver contours from rasterized outline text so preview, toolpaths, and 3D do not show ghost lines inside letters.
+- Notes:
+  - Current first pass can still leave traceable internal artifacts in some outline letters.
+  - This likely needs a more robust contour extraction/cleanup pass than simple threshold filtering.
+
+### Text offset support
 - Status: Open
 - Priority: Low
-- Summary: Add text features for carving, including skeleton fonts and outline fonts for constant-width carving.
+- Summary: Support derived offset geometry for text features instead of offsetting the internal text frame.
 - Notes:
-  - This was deferred from the carving first pass.
-  - Should integrate with carving operations rather than the solid-model CSG pipeline by default.
+  - Offset is intentionally disabled for `text` features in the current first pass.
+  - When implemented, it should operate on resolved letter contours and preserve the editable text object.
 
 ### Variable-width V-carve planning
 - Status: Open

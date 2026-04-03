@@ -1192,6 +1192,7 @@
 
 .properties-field input,
 .properties-field select,
+.properties-field textarea,
 .properties-field button {
   background: #0f1820;
   border: 1px solid var(--line-strong);
@@ -1200,6 +1201,14 @@
   height: 32px;
   padding: 0 8px;
   min-width: 0;
+}
+
+.properties-field textarea {
+  min-height: 88px;
+  padding: 8px;
+  resize: vertical;
+  line-height: 1.4;
+  font: inherit;
 }
 
 .properties-field input[type='color'] {

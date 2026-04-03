@@ -30,6 +30,7 @@ import {
   toClosedCutMoves,
   updateBounds,
 } from './pocket'
+import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -258,20 +259,25 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
     }
   }
 
-  const targetFeatures = operation.target.featureIds
+  const selectedTargetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+  const validTargetSourceFeatures = selectedTargetFeatures
+    .filter((feature) => feature.operation === 'add')
+
+  const targetFeatures = validTargetSourceFeatures
+    .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add')
     .map((feature) => {
       const span = resolveFeatureZSpan(project, feature)
       return { feature, top: span.max }
     })
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
+  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing or are not add features')
   }
 
-  const closedTargetFeatures = targetFeatures.filter(({ feature }) => feature.sketch.profile.closed)
+  const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
   if (closedTargetFeatures.length !== targetFeatures.length) {
     warnings.push('Surface-clean operations only support closed target profiles')
   }
@@ -286,7 +292,8 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
   }
 
   const allAddFeatures = project.features
-    .filter((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
     .map((feature) => {
       const span = resolveFeatureZSpan(project, feature)
       return { feature, top: span.max }

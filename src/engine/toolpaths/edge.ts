@@ -1,5 +1,6 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -265,6 +266,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   const targetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+    .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === expectedFeatureOperation)
 
   const warnings: string[] = []
@@ -272,7 +274,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation} features`)
   }
 
-  const closedTargetFeatures = targetFeatures.filter((feature) => feature.sketch.profile.closed)
+  const closedTargetFeatures = targetFeatures.filter((feature) => featureHasClosedGeometry(feature))
   if (closedTargetFeatures.length !== targetFeatures.length) {
     warnings.push('Edge-route operations only support closed target profiles')
   }

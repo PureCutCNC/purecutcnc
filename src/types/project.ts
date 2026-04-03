@@ -110,12 +110,22 @@ export interface LocalDimension {
 // ============================================================
 
 export type FeatureOperation = 'add' | 'subtract'
-export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite'
+export type TextFontStyle = 'skeleton' | 'outline'
+export type TextFontId = 'simple_stroke' | 'bold_sans' | 'bold_serif'
+export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text'
+
+export interface TextFeatureData {
+  text: string
+  style: TextFontStyle
+  fontId: TextFontId
+  size: number
+}
 
 export interface SketchFeature {
   id: string
   name: string
   kind: FeatureKind
+  text?: TextFeatureData | null
   folderId: string | null
   sketch: Sketch
   operation: FeatureOperation

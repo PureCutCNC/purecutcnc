@@ -1,6 +1,7 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { rectProfile } from '../../types/project'
+import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import type {
   ClipperPath,
   ResolvedFeatureZSpan,
@@ -194,20 +195,25 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     }
   }
 
-  const targetFeatures = operation.target.featureIds
+  const selectedTargetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+  const validTargetSourceFeatures = selectedTargetFeatures
+    .filter((feature) => feature.operation === 'subtract')
+
+  const targetFeatures = validTargetSourceFeatures
+    .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract')
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
+  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing or are not subtract features')
   }
 
-  const closedTargetFeatures = targetFeatures.filter(({ feature }) => feature.sketch.profile.closed)
+  const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
   if (closedTargetFeatures.length !== targetFeatures.length) {
     warnings.push('Pocket operations only support closed target profiles')
   }
@@ -222,7 +228,8 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   }
 
   const candidateIslands = project.features
-    .filter((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
@@ -243,6 +250,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   ])
   const bands: ResolvedPocketBand[] = []
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
+  const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
   for (let index = 0; index < depths.length - 1; index += 1) {
     const topZ = depths[index]
@@ -264,7 +272,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     ])
     let resolvedPaths: ClipperPath[] = []
 
-    for (const feature of project.features) {
+    for (const feature of expandedFeaturesInOrder) {
       if (!activeBandFeatureIds.has(feature.id)) {
         continue
       }

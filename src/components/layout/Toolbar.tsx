@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
+import { TextToolDialog } from '../project/TextToolDialog'
+import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchEditTool } from '../../store/projectStore'
 import { useProjectStore } from '../../store/projectStore'
+import type { TextToolConfig } from '../../text'
 
 interface ToolbarActionButtonProps {
   icon: string
@@ -80,6 +83,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startAddPolygonPlacement,
     startAddSplinePlacement,
     startAddCompositePlacement,
+    startAddTextPlacement,
     startMoveFeature,
     startCopyFeature,
     startResizeFeature,
@@ -109,6 +113,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   const [nameVal, setNameVal] = useState(project.meta.name)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [showTextDialog, setShowTextDialog] = useState(false)
 
   useEffect(() => {
     if (!editingName) {
@@ -166,6 +171,19 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     start()
   }
 
+  function handleTextTool() {
+    if (pendingAdd?.shape === 'text') {
+      cancelPendingAdd()
+      return
+    }
+    setShowTextDialog(true)
+  }
+
+  function confirmTextTool(config: TextToolConfig) {
+    startAddTextPlacement(config)
+    setShowTextDialog(false)
+  }
+
   const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
   const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
   const selectedFeatures = selectedFeatureIds
@@ -174,7 +192,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   const hasSelectedFeatures = selectedFeatureIds.length > 0
   const hasSelectedBackdrop = selection.selectedNode?.type === 'backdrop' && !!project.backdrop
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
-  const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((feature) => feature.sketch.profile.closed)
+  const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
+  const hasOffsetEligibleSelectedFeatures =
+    hasClosedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
   const featureSketchEditActive =
     selection.mode === 'sketch_edit'
     && selection.selectedNode?.type === 'feature'
@@ -327,11 +347,13 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     nameVal,
     showNewProjectDialog,
     showImportDialog,
+    showTextDialog,
     pendingShapeAction,
     hasSelectedFeatures,
     hasSelectedBackdrop,
     hasLockedSelectedFeatures,
     hasClosedSelectedFeatures,
+    hasOffsetEligibleSelectedFeatures,
     featureSketchEditActive,
     sketchEditTool: selection.sketchEditTool,
     setProjectName,
@@ -339,6 +361,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     setNameVal,
     setShowNewProjectDialog,
     setShowImportDialog,
+    setShowTextDialog,
     handleNewProject,
     handleSave,
     handleLoad,
@@ -351,6 +374,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handlePolygon: () => togglePlacement('polygon', startAddPolygonPlacement),
     handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
     handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
+    handleTextTool,
+    confirmTextTool,
     handleFeatureMove,
     handleFeatureCopy,
     handleFeatureResize,
@@ -483,6 +508,7 @@ function CreationActions({
   onPolygon,
   onSpline,
   onComposite,
+  onText,
 }: {
   pendingShape: string | null
   tooltipSide?: 'bottom' | 'right'
@@ -491,6 +517,7 @@ function CreationActions({
   onPolygon: () => void
   onSpline: () => void
   onComposite: () => void
+  onText: () => void
 }) {
   return (
     <div className="toolbar-group">
@@ -528,6 +555,13 @@ function CreationActions({
         active={pendingShape === 'composite'}
         tooltipSide={tooltipSide}
         onClick={onComposite}
+      />
+      <ToolbarActionButton
+        icon="text"
+        label={pendingShape === 'text' ? 'Cancel text tool' : 'Add text'}
+        active={pendingShape === 'text'}
+        tooltipSide={tooltipSide}
+        onClick={onText}
       />
     </div>
   )
@@ -826,20 +860,27 @@ function SnapActions({
 function ToolbarDialog({
   showNewProjectDialog,
   showImportDialog,
+  showTextDialog,
   onCloseNewProject,
   onCloseImport,
+  onCloseText,
+  onConfirmText,
   onImportComplete,
 }: {
   showNewProjectDialog: boolean
   showImportDialog: boolean
+  showTextDialog: boolean
   onCloseNewProject: () => void
   onCloseImport: () => void
+  onCloseText: () => void
+  onConfirmText: (config: TextToolConfig) => void
   onImportComplete?: () => void
 }) {
   return (
     <>
       {showNewProjectDialog ? <NewProjectDialog onClose={onCloseNewProject} /> : null}
       {showImportDialog ? <ImportGeometryDialog onClose={onCloseImport} onImportComplete={onImportComplete} /> : null}
+      {showTextDialog ? <TextToolDialog onClose={onCloseText} onConfirm={onConfirmText} /> : null}
     </>
   )
 }
@@ -890,12 +931,15 @@ export function GlobalToolbar({
       <ToolbarDialog
         showNewProjectDialog={toolbar.showNewProjectDialog}
         showImportDialog={toolbar.showImportDialog}
+        showTextDialog={toolbar.showTextDialog}
         onCloseNewProject={() => {
           toolbar.setNameVal(useProjectStore.getState().project.meta.name)
           toolbar.setEditingName(false)
           toolbar.setShowNewProjectDialog(false)
         }}
         onCloseImport={() => toolbar.setShowImportDialog(false)}
+        onCloseText={() => toolbar.setShowTextDialog(false)}
+        onConfirmText={toolbar.confirmTextTool}
         onImportComplete={onImportComplete}
       />
     </>
@@ -919,6 +963,7 @@ export function CreationToolbar({
         onPolygon={toolbar.handlePolygon}
         onSpline={toolbar.handleSpline}
         onComposite={toolbar.handleComposite}
+        onText={toolbar.handleTextTool}
       />
       <ShapeToolActions
         pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
@@ -929,7 +974,7 @@ export function CreationToolbar({
       <FeatureEditActions
         enabled={toolbar.hasSelectedFeatures}
         hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-        hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+        hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
         pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
         pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
         pendingOffset={!!toolbar.pendingOffset}
@@ -1012,6 +1057,7 @@ export function Toolbar({
           onPolygon={toolbar.handlePolygon}
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
+          onText={toolbar.handleTextTool}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
@@ -1021,7 +1067,7 @@ export function Toolbar({
         <FeatureEditActions
           enabled={toolbar.hasSelectedFeatures}
           hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-          hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+          hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
           pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
           pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
           pendingOffset={!!toolbar.pendingOffset}
@@ -1052,12 +1098,15 @@ export function Toolbar({
       <ToolbarDialog
         showNewProjectDialog={toolbar.showNewProjectDialog}
         showImportDialog={toolbar.showImportDialog}
+        showTextDialog={toolbar.showTextDialog}
         onCloseNewProject={() => {
           toolbar.setNameVal(useProjectStore.getState().project.meta.name)
           toolbar.setEditingName(false)
           toolbar.setShowNewProjectDialog(false)
         }}
         onCloseImport={() => toolbar.setShowImportDialog(false)}
+        onCloseText={() => toolbar.setShowTextDialog(false)}
+        onConfirmText={toolbar.confirmTextTool}
         onImportComplete={onImportComplete}
       />
     </>

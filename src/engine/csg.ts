@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import { expandFeatureGeometry } from '../text'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
@@ -355,9 +356,10 @@ async function buildBooleanModel(
 ): Promise<THREE.Mesh | null> {
   const module = await getManifoldModule()
   let current: ManifoldSolid | null = null
+  const expandedFeatures = visibleFeatures.flatMap((feature) => expandFeatureGeometry(feature))
 
   try {
-    for (const feature of visibleFeatures) {
+    for (const feature of expandedFeatures) {
       let solid: ManifoldSolid | null = null
 
       try {
@@ -459,7 +461,7 @@ export async function buildScene(
       modelMesh = await buildBooleanModel(project, visibleFeatures)
     } catch (error) {
       console.error('Failed to build boolean 3D preview, falling back to feature meshes.', error)
-      for (const feature of visibleFeatures) {
+      for (const feature of visibleFeatures.flatMap((entry) => expandFeatureGeometry(entry))) {
         featureMeshes.set(feature.id, buildFeatureMesh(feature))
       }
     }

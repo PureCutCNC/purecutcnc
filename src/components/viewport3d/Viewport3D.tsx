@@ -4,6 +4,7 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
+import { getFeatureGeometryProfiles } from '../../text'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -679,7 +680,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           const profiles =
             visibleFeatures.length > 0 || visibleTabs.length > 0 || visibleClamps.length > 0
               ? [
-                  ...visibleFeatures.map((feature) => feature.sketch.profile),
+                  ...visibleFeatures.flatMap((feature) => getFeatureGeometryProfiles(feature)),
                   ...visibleTabs.map((tab) => ({
                     start: { x: tab.x, y: tab.y },
                     segments: rectProfile(tab.x, tab.y, tab.w, tab.h).segments,

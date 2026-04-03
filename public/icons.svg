@@ -66,6 +66,11 @@
     <circle cx="9" cy="7" r="1.1"/>
     <circle cx="15" cy="10" r="1.1"/>
   </symbol>
+  <symbol id="text" viewBox="0 0 24 24">
+    <path d="M4 6h16"/>
+    <path d="M12 6v12"/>
+    <path d="M8 18h8"/>
+  </symbol>
 
   <!-- CAM Operations -->
   <symbol id="pocket" viewBox="0 0 24 24">

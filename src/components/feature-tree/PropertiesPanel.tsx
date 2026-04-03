@@ -3,6 +3,7 @@ import type { ChangeEvent } from 'react'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
 interface DraftTextInputProps {
@@ -1010,8 +1011,11 @@ export function PropertiesPanel() {
 
   const zTop = typeof selectedFeature.z_top === 'number' ? selectedFeature.z_top : 0
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
-  const hasSelfIntersection = profileHasSelfIntersection(selectedFeature.sketch.profile)
-  const exceedsStock = profileExceedsStock(selectedFeature.sketch.profile, project.stock)
+  const isTextFeature = selectedFeature.kind === 'text' && !!selectedFeature.text
+  const textFeature = isTextFeature ? selectedFeature.text : null
+  const hasSelfIntersection = isTextFeature ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
+  const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
+  const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
   // First feature in the tree must always be 'add' — lock the operation field
   const isFirstFeature =
@@ -1054,6 +1058,62 @@ export function PropertiesPanel() {
             assignFeaturesToFolder([selectedFeature.id], folderId),
           )}
         </label>
+        {textFeature ? (
+          <>
+            <label className="properties-field">
+              <span>Text</span>
+              <DraftTextInput
+                key={`text-feature-text-${selectedFeature.id}-${textFeature.text}`}
+                value={textFeature.text}
+                onCommit={(next) =>
+                  updateFeature(selectedFeature.id, {
+                    text: {
+                      ...textFeature,
+                      text: next.replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
+                    },
+                  })}
+              />
+            </label>
+            <label className="properties-field">
+              <span>Style</span>
+              <select
+                value={textFeature.style}
+                onChange={(event) => {
+                  const style = event.target.value as typeof textFeature.style
+                  updateFeature(selectedFeature.id, {
+                    text: {
+                      ...textFeature,
+                      style,
+                      fontId: defaultFontIdForStyle(style),
+                    },
+                  })
+                }}
+              >
+                <option value="skeleton">Skeleton</option>
+                <option value="outline">Outline</option>
+              </select>
+            </label>
+            <label className="properties-field">
+              <span>Font</span>
+              <select
+                value={textFeature.fontId}
+                onChange={(event) =>
+                  updateFeature(selectedFeature.id, {
+                    text: {
+                      ...textFeature,
+                      fontId: event.target.value as typeof textFeature.fontId,
+                    },
+                  })}
+              >
+                {textFontOptions.map((font) => (
+                  <option key={font.id} value={font.id}>
+                    {font.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
         <label className="properties-field">
           <span>Z Top</span>
           <DraftNumberInput
@@ -1104,7 +1164,7 @@ export function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button className="feat-btn" type="button" onClick={() => enterSketchEdit(selectedFeature.id)}>
+        <button className="feat-btn" type="button" onClick={() => enterSketchEdit(selectedFeature.id)} disabled={isTextFeature}>
           Edit Sketch
         </button>
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeature(selectedFeature.id)}>

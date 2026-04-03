@@ -11,6 +11,7 @@ import type {
   Tool,
   ToolType,
 } from '../../types/project'
+import { featureHasClosedGeometry } from '../../text'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 
 interface CAMPanelProps {
@@ -268,7 +269,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.operation === 'add' && (!operationRequiresClosedProfiles(kind) || feature.sketch.profile.closed))
+    return features.every((feature) => feature.operation === 'add' && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -291,7 +292,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
     return null
   }
 
-  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => feature.sketch.profile.closed)) {
+  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {
     return null
   }
 
@@ -319,7 +320,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       return 'Surface clean only accepts add features'
     }
 
-    return features.every((feature) => feature.sketch.profile.closed)
+    return features.every((feature) => featureHasClosedGeometry(feature))
       ? null
       : 'Surface clean only accepts closed profiles'
   }
@@ -340,7 +341,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       : 'This operation only accepts add features'
   }
 
-  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => feature.sketch.profile.closed)) {
+  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {
     return `${operationKindLabel(kind)} only accepts closed profiles`
   }
 
