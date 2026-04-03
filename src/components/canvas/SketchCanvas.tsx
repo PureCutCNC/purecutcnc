@@ -681,6 +681,7 @@ function drawLineLengthMeasurement(
   end: Point,
   vt: ViewTransform,
   units: 'mm' | 'inch',
+  options?: { prefix?: string; offset?: number },
 ): void {
   const startCanvas = worldToCanvas(start, vt)
   const endCanvas = worldToCanvas(end, vt)
@@ -693,12 +694,13 @@ function drawLineLengthMeasurement(
 
   const midX = (startCanvas.cx + endCanvas.cx) / 2
   const midY = (startCanvas.cy + endCanvas.cy) / 2
-  const offset = 11
+  const offset = options?.offset ?? 11
   const normalX = -dy / canvasLength
   const normalY = dx / canvasLength
+  const value = formatLength(lineLength(start, end), units)
   drawMeasurementLabel(
     ctx,
-    formatLength(lineLength(start, end), units),
+    options?.prefix ? `${options.prefix} ${value}` : value,
     midX + normalX * offset,
     midY + normalY * offset,
     Math.atan2(dy, dx),
@@ -781,6 +783,41 @@ function drawProfileLineMeasurements(
 
     current = segment.to
   }
+}
+
+function drawAngleMeasurement(
+  ctx: CanvasRenderingContext2D,
+  origin: Point,
+  fromPoint: Point,
+  toPoint: Point,
+  vt: ViewTransform,
+): void {
+  const startAngle = Math.atan2(fromPoint.y - origin.y, fromPoint.x - origin.x)
+  const endAngle = Math.atan2(toPoint.y - origin.y, toPoint.x - origin.x)
+  let delta = (endAngle - startAngle) * (180 / Math.PI)
+  while (delta <= -180) delta += 360
+  while (delta > 180) delta -= 360
+  if (Math.abs(delta) < 0.1) {
+    return
+  }
+
+  const originCanvas = worldToCanvas(origin, vt)
+  const angleMid = startAngle + ((delta * Math.PI) / 180) / 2
+  const radius =
+    Math.min(
+      Math.max(
+        (Math.hypot(fromPoint.x - origin.x, fromPoint.y - origin.y) + Math.hypot(toPoint.x - origin.x, toPoint.y - origin.y)) * vt.scale * 0.2,
+        24,
+      ),
+      56,
+    )
+
+  drawMeasurementLabel(
+    ctx,
+    `${delta >= 0 ? '+' : ''}${delta.toFixed(1).replace(/\.0$/, '')}°`,
+    originCanvas.cx + Math.cos(angleMid) * radius,
+    originCanvas.cy + Math.sin(angleMid) * radius,
+  )
 }
 
 function drawActiveEditMeasurements(
@@ -2739,6 +2776,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           drawBackdropImage(
             ctx,
             {
@@ -2767,6 +2805,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const feature of features) {
             const previewProfile = translateProfile(
               feature.sketch.profile,
@@ -2804,6 +2843,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const clamp of clamps) {
             drawClampFootprint(
               ctx,
@@ -2851,6 +2891,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
+          drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const tab of tabs) {
             drawTabFootprint(
               ctx,
@@ -2899,11 +2940,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingTransform.referenceEnd) {
           drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
           drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
+          drawLineLengthMeasurement(
+            ctx,
+            pendingTransform.referenceStart!,
+            pendingTransform.referenceEnd,
+            vt,
+            project.meta.units,
+            { prefix: pendingTransform.mode === 'resize' ? 'Ref' : undefined },
+          )
         }
 
         if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
           drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
           drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
+          if (pendingTransform.mode === 'resize') {
+            drawLineLengthMeasurement(
+              ctx,
+              pendingTransform.referenceStart,
+              currentTransformPreviewPoint,
+              vt,
+              project.meta.units,
+              { prefix: 'Size' },
+            )
+          } else {
+            drawAngleMeasurement(
+              ctx,
+              pendingTransform.referenceStart,
+              pendingTransform.referenceEnd,
+              currentTransformPreviewPoint,
+              vt,
+            )
+          }
           const previewBackdrop =
             pendingTransform.mode === 'resize'
               ? resizeBackdropFromReference(project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, currentTransformPreviewPoint)
@@ -2941,11 +3008,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (pendingTransform.referenceEnd) {
         drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
         drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
+        drawLineLengthMeasurement(
+          ctx,
+          pendingTransform.referenceStart!,
+          pendingTransform.referenceEnd,
+          vt,
+          project.meta.units,
+          { prefix: pendingTransform.mode === 'resize' ? 'Ref' : undefined },
+        )
       }
 
       if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
         drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
         drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
+        if (pendingTransform.mode === 'resize') {
+          drawLineLengthMeasurement(
+            ctx,
+            pendingTransform.referenceStart,
+            currentTransformPreviewPoint,
+            vt,
+            project.meta.units,
+            { prefix: 'Size' },
+          )
+        } else {
+          drawAngleMeasurement(
+            ctx,
+            pendingTransform.referenceStart,
+            pendingTransform.referenceEnd,
+            currentTransformPreviewPoint,
+            vt,
+          )
+        }
         for (const feature of features) {
           const previewFeature =
             pendingTransform.mode === 'resize'
@@ -2985,6 +3078,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (previewInput) {
         drawPendingPoint(ctx, previewInput.nearestPoint, vt)
         drawMoveGuide(ctx, previewInput.nearestPoint, snappedOffsetPoint!, vt)
+        drawLineLengthMeasurement(ctx, previewInput.nearestPoint, snappedOffsetPoint!, vt, project.meta.units)
         const previewFeatures = previewOffsetFeatures(project, pendingOffset.entityIds, previewInput.signedDistance)
         for (const feature of previewFeatures) {
           drawPreviewProfile(
