@@ -23,7 +23,7 @@ The next sketch-edit pass should extend this with direct profile editing:
 - future `Round Corner / Fillet`
 
 The next selected-feature toolbar pass should extend this with shape-generation tools:
-- future `Merge / Cut Overlaps`
+- future `Join / Cut Overlaps`
 - future `Offset / Repeat`
 
 These tools should work from the sketch and use the same icon-strip toolbar pattern already established elsewhere in the app.
@@ -63,7 +63,7 @@ First implementation note:
 - `Round Corner / Fillet` remains a planned sketch-edit phase
 
 When one or more closed features are selected in normal feature-selection mode, extend the existing selected-feature toolbar later with:
-- `Merge`
+- `Join`
 - `Cut`
 - `Offset`
 
@@ -141,9 +141,9 @@ Proper term:
 - `Fillet` is the standard CAD term
 - UI can still say `Round Corner` if that reads better to users
 
-### Selected Feature Toolbar: Merge / Cut Overlaps
+### Selected Feature Toolbar: Join / Cut Overlaps
 Planned tools:
-- `Merge` combines overlapping closed features into one profile set
+- `Join` combines overlapping closed features into one profile set
 - `Cut` subtracts one overlapping profile from another
 
 These should operate on feature profiles, not CAM solids.
@@ -367,7 +367,7 @@ Sketch-edit buttons:
 - `Round Corner` / `Fillet` (tracked)
 
 Selected-feature toolbar future additions:
-- `Merge` (tracked)
+- `Join` (tracked)
 - `Cut` (tracked)
 - `Offset` (tracked)
 
@@ -521,9 +521,9 @@ This work is ready when:
 - `[x]` implement tangent fillet solve for line-line corners
 - `[~]` define first-pass behavior for bezier/arc corners
 
-### FE13. Selected-feature merge / cut overlaps
+### FE13. Selected-feature join / cut overlaps
 - `[x]` define first-pass behavior as derived feature creation rather than destructive replace
-- `[x]` implement closed-profile boolean merge
+- `[x]` implement closed-profile boolean join
 - `[x]` implement closed-profile cut / subtract
 
 ### FE14. Selected-feature offset

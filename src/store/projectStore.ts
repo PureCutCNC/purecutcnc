@@ -108,6 +108,7 @@ export interface ProjectStore {
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
+  pendingShapeAction: PendingShapeActionTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   history: ProjectHistory
@@ -154,8 +155,8 @@ export interface ProjectStore {
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
   deleteFeatures: (ids: string[]) => void
-  mergeSelectedFeatures: () => string[]
-  cutSelectedFeatures: () => string[]
+  mergeSelectedFeatures: (keepOriginals?: boolean) => string[]
+  cutSelectedFeatures: (keepOriginals?: boolean) => string[]
   offsetSelectedFeatures: (distance: number) => string[]
   reorderFeatures: (ids: string[]) => void
 
@@ -247,6 +248,11 @@ export interface ProjectStore {
   startMoveBackdrop: () => void
   startResizeBackdrop: () => void
   startRotateBackdrop: () => void
+  startJoinSelectedFeatures: () => void
+  startCutSelectedFeatures: () => void
+  cancelPendingShapeAction: () => void
+  setPendingShapeActionKeepOriginals: (keepOriginals: boolean) => void
+  completePendingShapeAction: () => string[]
   startOffsetSelectedFeatures: () => void
   cancelPendingOffset: () => void
   completePendingOffset: (distance: number) => string[]
@@ -309,6 +315,21 @@ export interface PendingOffsetTool {
   entityIds: string[]
   session: number
 }
+
+export type PendingShapeActionTool =
+  | {
+      kind: 'join'
+      entityIds: string[]
+      keepOriginals: boolean
+      session: number
+    }
+  | {
+      kind: 'cut'
+      cutterId: string | null
+      targetIds: string[]
+      keepOriginals: boolean
+      session: number
+    }
 
 export interface ProjectHistory {
   past: Project[]
@@ -513,6 +534,162 @@ function unionClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>
   return executeClipPaths(paths, [], ClipperLib.ClipType.ctUnion)
 }
 
+function rangesOverlap(minA: number, maxA: number, minB: number, maxB: number): boolean {
+  return maxA >= minB && maxB >= minA
+}
+
+function featuresOverlap(a: SketchFeature, b: SketchFeature): boolean {
+  if (!a.sketch.profile.closed || !b.sketch.profile.closed) {
+    return false
+  }
+
+  const boundsA = getProfileBounds(a.sketch.profile)
+  const boundsB = getProfileBounds(b.sketch.profile)
+  if (
+    !rangesOverlap(boundsA.minX, boundsA.maxX, boundsB.minX, boundsB.maxX)
+    || !rangesOverlap(boundsA.minY, boundsA.maxY, boundsB.minY, boundsB.maxY)
+  ) {
+    return false
+  }
+
+  const intersections = executeClipPaths(
+    [flattenFeatureToClipperPath(a)],
+    [flattenFeatureToClipperPath(b)],
+    0, // ctIntersection is available at runtime but omitted from the local Clipper typings.
+  )
+
+  return intersections.length > 0
+}
+
+function featuresFormConnectedOverlapGroup(features: SketchFeature[]): boolean {
+  if (features.length <= 1) {
+    return true
+  }
+
+  const visited = new Set<number>([0])
+  const stack = [0]
+
+  while (stack.length > 0) {
+    const currentIndex = stack.pop()!
+    for (let index = 0; index < features.length; index += 1) {
+      if (visited.has(index)) {
+        continue
+      }
+      if (featuresOverlap(features[currentIndex], features[index])) {
+        visited.add(index)
+        stack.push(index)
+      }
+    }
+  }
+
+  return visited.size === features.length
+}
+
+interface DerivedFeatureGroup {
+  sourceId: string
+  features: SketchFeature[]
+}
+
+function normalizeDerivedFeatureNameStem(name: string) {
+  return name
+    .replace(/(?: Join(?: \d+)?)$/u, '')
+    .replace(/(?: Offset(?: \d+)?)$/u, '')
+    .replace(/(?: Cut(?: Hole)?(?: \d+)?)$/u, '')
+    .trim()
+}
+
+function cutFeaturesByCutterGrouped(
+  project: Project,
+  cutter: SketchFeature,
+  targets: SketchFeature[],
+): DerivedFeatureGroup[] {
+  const clipPaths = [flattenFeatureToClipperPath(cutter)]
+  const existingNames = [...project.features.map((feature) => feature.name)]
+  const groups: DerivedFeatureGroup[] = []
+
+  for (const target of targets) {
+    const subjectPaths = [flattenFeatureToClipperPath(target)]
+    const polyTree = executeClipTree(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
+    const cutNameStem = normalizeDerivedFeatureNameStem(target.name)
+    const nextFeatures = collectDerivedFeaturesFromPolyTree(
+      project,
+      polyTree,
+      target,
+      target.operation,
+      `${cutNameStem} Cut`,
+    )
+
+    const groupedFeatures: SketchFeature[] = []
+    for (const feature of nextFeatures) {
+      const uniqueFeature = {
+        ...feature,
+        name: uniqueName(feature.name, [...existingNames, ...groupedFeatures.map((entry) => entry.name)]),
+      }
+      groupedFeatures.push(uniqueFeature)
+      existingNames.push(uniqueFeature.name)
+    }
+    groups.push({ sourceId: target.id, features: groupedFeatures })
+  }
+
+  return groups
+}
+
+function insertDerivedFeaturesAfterSources(
+  features: SketchFeature[],
+  groups: DerivedFeatureGroup[],
+  removeIds: Set<string>,
+): SketchFeature[] {
+  const groupMap = new Map(groups.map((group) => [group.sourceId, group.features]))
+  const nextFeatures: SketchFeature[] = []
+
+  for (const feature of features) {
+    if (!removeIds.has(feature.id)) {
+      nextFeatures.push(feature)
+    }
+    const derived = groupMap.get(feature.id)
+    if (derived?.length) {
+      nextFeatures.push(...derived)
+    }
+  }
+
+  return nextFeatures
+}
+
+function insertDerivedFeatureTreeEntries(
+  featureTree: FeatureTreeEntry[],
+  features: SketchFeature[],
+  groups: DerivedFeatureGroup[],
+  removeIds: Set<string>,
+): FeatureTreeEntry[] {
+  const featureMap = new Map(features.map((feature) => [feature.id, feature]))
+  const rootGroupMap = new Map(
+    groups
+      .filter((group) => {
+        const source = featureMap.get(group.sourceId)
+        return source?.folderId === null
+      })
+      .map((group) => [
+        group.sourceId,
+        group.features
+          .filter((feature) => feature.folderId === null)
+          .map((feature) => ({ type: 'feature', featureId: feature.id } as FeatureTreeEntry)),
+      ]),
+  )
+
+  return featureTree.flatMap((entry) => {
+    if (entry.type !== 'feature') {
+      return [entry]
+    }
+
+    const appended = rootGroupMap.get(entry.featureId) ?? []
+    if (removeIds.has(entry.featureId)) {
+      return appended
+    }
+
+    return [entry, ...appended]
+  })
+}
+
 function offsetClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[], delta: number) {
   if (paths.length === 0) {
     return []
@@ -573,17 +750,19 @@ function collectDerivedFeaturesFromPolyTree(
   baseFeature: SketchFeature,
   baseOperation: FeatureOperation,
   baseName: string,
-  depth = 0,
+  contourDepth = 0,
 ): SketchFeature[] {
   const created: SketchFeature[] = []
   const contour = node.Contour()
+  const nextContourDepth = contour.length > 0 ? contourDepth + 1 : contourDepth
 
   if (contour.length > 0) {
     const profile = clipperContourToProfile(contour)
     if (profile) {
-      const operation = depth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
+      const logicalDepth = nextContourDepth - 1
+      const operation = logicalDepth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
       const name = uniqueName(
-        depth === 0 ? baseName : `${baseName} Hole`,
+        logicalDepth === 0 ? baseName : `${baseName} Hole`,
         [...project.features.map((feature) => feature.name), ...created.map((feature) => feature.name)],
       )
       const nextProject = { ...project, features: [...project.features, ...created] }
@@ -598,7 +777,7 @@ function collectDerivedFeaturesFromPolyTree(
       baseFeature,
       baseOperation,
       baseName,
-      depth + 1,
+      nextContourDepth,
     ))
   }
 
@@ -2659,6 +2838,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   pendingMove: null,
   pendingTransform: null,
   pendingOffset: null,
+  pendingShapeAction: null,
   backdropImageLoading: false,
   sketchEditSession: null,
   history: {
@@ -2838,6 +3018,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
       return {
         project: nextProject,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3575,6 +3756,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       })
       return {
         project: nextProject,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -3973,18 +4155,20 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
-  mergeSelectedFeatures: () => {
+  mergeSelectedFeatures: (keepOriginals = false) => {
     const state = get()
-    const selectedFeatures = state.selection.selectedFeatureIds
-      .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+    const selectedIdSet = new Set(state.selection.selectedFeatureIds)
+    const selectedFeatures = state.project.features
+      .filter((feature) => selectedIdSet.has(feature.id))
       .filter((feature) => feature.sketch.profile.closed)
 
     if (selectedFeatures.length < 2) {
       return []
     }
 
-    const baseFeature = selectedFeatures[selectedFeatures.length - 1]
+    const anchorFeature = selectedFeatures[0]
+    const baseFeature = anchorFeature
+    const joinNameStem = normalizeDerivedFeatureNameStem(baseFeature.name)
     const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
     const createdFeatures = unionPaths
       .map((path, index) => {
@@ -3998,7 +4182,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           baseFeature,
           profile,
           baseFeature.operation,
-          uniqueName(index === 0 ? `${baseFeature.name} Merge` : `${baseFeature.name} Merge ${index + 1}`, [
+          uniqueName(index === 0 ? `${joinNameStem} Join` : `${joinNameStem} Join ${index + 1}`, [
             ...state.project.features.map((feature) => feature.name),
           ]),
         )
@@ -4010,9 +4194,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
 
     set((s) => {
+      const idsToReplace = new Set(keepOriginals ? [] : selectedFeatures.map((feature) => feature.id))
+      const createdGroups: DerivedFeatureGroup[] = [{ sourceId: anchorFeature.id, features: createdFeatures }]
       const nextProject = syncFeatureTreeProject({
         ...s.project,
-        features: [...s.project.features, ...createdFeatures],
+        features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
+        featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
       const createdIds = createdFeatures.map((feature) => feature.id)
@@ -4038,7 +4225,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return createdFeatures.map((feature) => feature.id)
   },
 
-  cutSelectedFeatures: () => {
+  cutSelectedFeatures: (keepOriginals = false) => {
     const state = get()
     const selectedFeatures = state.selection.selectedFeatureIds
       .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
@@ -4049,30 +4236,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return []
     }
 
-    const baseFeature = selectedFeatures[selectedFeatures.length - 1]
-    const subjectPaths = [flattenFeatureToClipperPath(baseFeature)]
-    const clipPaths = unionClipperPaths(
-      selectedFeatures
-        .filter((feature) => feature.id !== baseFeature.id)
-        .map((feature) => flattenFeatureToClipperPath(feature)),
-    )
-    const polyTree = executeClipTree(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
-    const createdFeatures = collectDerivedFeaturesFromPolyTree(
-      state.project,
-      polyTree,
-      baseFeature,
-      baseFeature.operation,
-      `${baseFeature.name} Cut`,
-    )
+    const cutter = selectedFeatures[selectedFeatures.length - 1]
+    const targets = selectedFeatures.filter((feature) => feature.id !== cutter.id)
+    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets)
+    const createdFeatures = createdGroups.flatMap((group) => group.features)
 
     if (createdFeatures.length === 0) {
       return []
     }
 
     set((s) => {
+      const idsToReplace = new Set(keepOriginals ? [] : targets.map((feature) => feature.id))
       const nextProject = syncFeatureTreeProject({
         ...s.project,
-        features: [...s.project.features, ...createdFeatures],
+        features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
+        featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
       const createdIds = createdFeatures.map((feature) => feature.id)
@@ -4396,56 +4574,200 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // ── Selection ────────────────────────────────────────────
 
   selectFeature: (id, additive = false) =>
-    set((s) => ({
-      pendingOffset: null,
-      selection: {
-        ...s.selection,
-        ...(id
-          ? additive
-            ? (() => {
-                const nextIds = s.selection.selectedFeatureIds.includes(id)
-                  ? s.selection.selectedFeatureIds.filter((featureId) => featureId !== id)
-                  : [...s.selection.selectedFeatureIds, id]
-                const nextPrimaryId =
-                  nextIds.length === 0
-                    ? null
-                    : s.selection.selectedFeatureId === id && s.selection.selectedFeatureIds.includes(id)
-                      ? nextIds.at(-1) ?? null
-                      : id
-                return {
-                  selectedFeatureId: nextPrimaryId,
-                  selectedFeatureIds: nextIds,
-                  selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
-                }
-              })()
-            : {
-                selectedFeatureId: id,
-                selectedFeatureIds: [id],
-                selectedNode: { type: 'feature', featureId: id },
-              }
-          : {
+    set((s) => {
+      const joinMode = s.pendingShapeAction?.kind === 'join'
+      const cutMode = s.pendingShapeAction?.kind === 'cut'
+      const selectedFeature = id ? s.project.features.find((feature) => feature.id === id) ?? null : null
+
+      if (joinMode) {
+        if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          return {}
+        }
+
+        const proposedIds =
+          !id
+            ? []
+            : additive
+              ? s.selection.selectedFeatureIds.includes(id)
+                ? s.selection.selectedFeatureIds.filter((featureId) => featureId !== id)
+                : [...s.selection.selectedFeatureIds, id]
+              : [id]
+        const proposedFeatures = proposedIds
+          .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
+          .filter((feature): feature is SketchFeature => feature !== null)
+        const nextIds = featuresFormConnectedOverlapGroup(proposedFeatures)
+          ? proposedIds
+          : s.selection.selectedFeatureIds
+        const nextPrimaryId = nextIds.at(-1) ?? null
+
+        return {
+          pendingOffset: null,
+          pendingShapeAction: s.pendingShapeAction ? { ...s.pendingShapeAction, entityIds: nextIds } : null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: nextPrimaryId,
+            selectedFeatureIds: nextIds,
+            selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+          },
+        }
+      }
+
+      if (cutMode) {
+        const pendingShapeAction = s.pendingShapeAction
+        if (!pendingShapeAction || pendingShapeAction.kind !== 'cut') {
+          return {}
+        }
+
+        if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          return {}
+        }
+
+        if (!id) {
+          return {
+            pendingOffset: null,
+            pendingShapeAction: { ...pendingShapeAction, cutterId: null, targetIds: [] },
+            selection: {
+              ...s.selection,
               selectedFeatureId: null,
               selectedFeatureIds: [],
               selectedNode: null,
-            }),
-        mode: 'feature',
-        activeControl: null,
-      },
-    })),
+              mode: 'feature',
+              activeControl: null,
+            },
+          }
+        }
 
-  selectFeatures: (ids) =>
-    set((s) => {
-      const nextIds = ids.filter((id, index) =>
-        s.project.features.some((feature) => feature.id === id) && ids.indexOf(id) === index
-      )
-      const nextPrimaryId = nextIds.at(-1) ?? null
+        if (!pendingShapeAction.cutterId) {
+          return {
+            pendingOffset: null,
+            pendingShapeAction: { ...pendingShapeAction, cutterId: id, targetIds: [] },
+            selection: {
+              ...s.selection,
+              selectedFeatureId: id,
+              selectedFeatureIds: [id],
+              selectedNode: { type: 'feature', featureId: id },
+              mode: 'feature',
+              activeControl: null,
+            },
+          }
+        }
+
+        if (id === pendingShapeAction.cutterId) {
+          if (additive) {
+            return {}
+          }
+          return {
+            pendingOffset: null,
+            pendingShapeAction: { ...pendingShapeAction, cutterId: id, targetIds: [] },
+            selection: {
+              ...s.selection,
+              selectedFeatureId: id,
+              selectedFeatureIds: [id],
+              selectedNode: { type: 'feature', featureId: id },
+              mode: 'feature',
+              activeControl: null,
+            },
+          }
+        }
+
+        const cutter = s.project.features.find((feature) => feature.id === pendingShapeAction.cutterId) ?? null
+        if (!cutter || !selectedFeature || !featuresOverlap(cutter, selectedFeature)) {
+          return {}
+        }
+
+        const nextTargetIds = additive
+          ? pendingShapeAction.targetIds.includes(id)
+            ? pendingShapeAction.targetIds.filter((featureId) => featureId !== id)
+            : [...pendingShapeAction.targetIds, id]
+          : [id]
+        const nextSelectedIds = [pendingShapeAction.cutterId, ...nextTargetIds]
+        const nextPrimaryId = nextTargetIds.at(-1) ?? pendingShapeAction.cutterId
+
+        return {
+          pendingOffset: null,
+          pendingShapeAction: { ...pendingShapeAction, targetIds: nextTargetIds },
+          selection: {
+            ...s.selection,
+            selectedFeatureId: nextPrimaryId,
+            selectedFeatureIds: nextSelectedIds,
+            selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+          },
+        }
+      }
 
       return {
         pendingOffset: null,
+        pendingShapeAction: null,
+        selection: {
+          ...s.selection,
+          ...(id
+            ? additive
+              ? (() => {
+                  const nextIds = s.selection.selectedFeatureIds.includes(id)
+                    ? s.selection.selectedFeatureIds.filter((featureId) => featureId !== id)
+                    : [...s.selection.selectedFeatureIds, id]
+                  const nextPrimaryId =
+                    nextIds.length === 0
+                      ? null
+                      : s.selection.selectedFeatureId === id && s.selection.selectedFeatureIds.includes(id)
+                        ? nextIds.at(-1) ?? null
+                        : id
+                  return {
+                    selectedFeatureId: nextPrimaryId,
+                    selectedFeatureIds: nextIds,
+                    selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+                  }
+                })()
+              : {
+                  selectedFeatureId: id,
+                  selectedFeatureIds: [id],
+                  selectedNode: { type: 'feature', featureId: id },
+                }
+            : {
+                selectedFeatureId: null,
+                selectedFeatureIds: [],
+                selectedNode: null,
+              }),
+          mode: 'feature',
+          activeControl: null,
+        },
+      }
+    }),
+
+  selectFeatures: (ids) =>
+    set((s) => {
+      const joinMode = s.pendingShapeAction?.kind === 'join'
+      const nextIds = ids.filter((id, index) => {
+        const feature = s.project.features.find((entry) => entry.id === id)
+        if (!feature || ids.indexOf(id) !== index) {
+          return false
+        }
+        return joinMode ? feature.sketch.profile.closed && !feature.locked : true
+      })
+      const validJoinIds =
+        joinMode
+          ? (() => {
+              const nextFeatures = nextIds
+                .map((id) => s.project.features.find((feature) => feature.id === id) ?? null)
+                .filter((feature): feature is SketchFeature => feature !== null)
+              return featuresFormConnectedOverlapGroup(nextFeatures)
+                ? nextIds
+                : s.selection.selectedFeatureIds
+            })()
+          : nextIds
+      const nextPrimaryId = validJoinIds.at(-1) ?? null
+
+      return {
+        pendingOffset: null,
+        pendingShapeAction: joinMode && s.pendingShapeAction ? { ...s.pendingShapeAction, entityIds: validJoinIds } : null,
         selection: {
           ...s.selection,
           selectedFeatureId: nextPrimaryId,
-          selectedFeatureIds: nextIds,
+          selectedFeatureIds: validJoinIds,
           selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
           mode: 'feature',
           activeControl: null,
@@ -4456,6 +4778,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectProject: () =>
     set((s) => ({
       pendingOffset: null,
+      pendingShapeAction: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -4470,6 +4793,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectGrid: () =>
     set((s) => ({
       pendingOffset: null,
+      pendingShapeAction: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -4483,6 +4807,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectStock: () =>
     set((s) => ({
       pendingOffset: null,
+      pendingShapeAction: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -4496,6 +4821,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectOrigin: () =>
     set((s) => ({
       pendingOffset: null,
+      pendingShapeAction: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -4510,6 +4836,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectBackdrop: () =>
     set((s) => ({
       pendingOffset: null,
+      pendingShapeAction: null,
       selection: {
         ...s.selection,
         selectedFeatureId: null,
@@ -5736,6 +6063,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: { mode: 'move', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
         pendingOffset: null,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -5766,6 +6094,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
         pendingOffset: null,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: featureId,
@@ -5795,6 +6124,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: null,
         pendingTransform: { mode: 'resize', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         pendingOffset: null,
+        pendingShapeAction: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -5825,6 +6155,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: null,
         pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         pendingOffset: null,
+        pendingShapeAction: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -5850,6 +6181,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: { mode: 'move', entityType: 'backdrop', entityIds: ['backdrop'], fromPoint: null, toPoint: null, session: nextPlacementSession() },
         pendingTransform: null,
         pendingOffset: null,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
@@ -5873,6 +6205,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: null,
         pendingTransform: { mode: 'resize', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         pendingOffset: null,
+        pendingShapeAction: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
@@ -5897,12 +6230,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingMove: null,
         pendingTransform: { mode: 'rotate', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
         pendingOffset: null,
+        pendingShapeAction: null,
         sketchEditSession: null,
         selection: {
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
           selectedNode: { type: 'backdrop' },
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startJoinSelectedFeatures: () =>
+    set((s) => {
+      const featureIds = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds).map((feature) => feature.id)
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: { kind: 'join', entityIds: featureIds, keepOriginals: false, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureIds.at(-1) ?? null,
+          selectedFeatureIds: featureIds,
+          selectedNode: featureIds.at(-1) ? { type: 'feature', featureId: featureIds.at(-1)! } : null,
+          mode: 'feature',
+          hoveredFeatureId: null,
+          activeControl: null,
+        },
+      }
+    }),
+
+  startCutSelectedFeatures: () =>
+    set((s) => {
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: { kind: 'cut', cutterId: null, targetIds: [], keepOriginals: false, session: nextPlacementSession() },
+        sketchEditSession: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: null,
           mode: 'feature',
           hoveredFeatureId: null,
           activeControl: null,
@@ -5922,6 +6300,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
+        pendingShapeAction: null,
         pendingOffset: { entityIds: featureIds, session: nextPlacementSession() },
         sketchEditSession: null,
         selection: {
@@ -6085,6 +6464,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   cancelPendingMove: () => set({ pendingMove: null }),
 
   cancelPendingTransform: () => set({ pendingTransform: null }),
+
+  cancelPendingShapeAction: () => set({ pendingShapeAction: null }),
+
+  setPendingShapeActionKeepOriginals: (keepOriginals) =>
+    set((s) => ({
+      pendingShapeAction: s.pendingShapeAction ? { ...s.pendingShapeAction, keepOriginals } : null,
+    })),
 
   cancelPendingOffset: () => set({ pendingOffset: null }),
 
@@ -6422,6 +6808,80 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: nextProject,
         pendingOffset: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return createdFeatures.map((feature) => feature.id)
+  },
+
+  completePendingShapeAction: () => {
+    const state = get()
+    const pendingShapeAction = state.pendingShapeAction
+    if (!pendingShapeAction) {
+      return []
+    }
+
+    if (pendingShapeAction.kind === 'join') {
+      if (pendingShapeAction.entityIds.length < 2) {
+        return []
+      }
+
+      state.selectFeatures(pendingShapeAction.entityIds)
+      const result = get().mergeSelectedFeatures(pendingShapeAction.keepOriginals)
+      set({ pendingShapeAction: null })
+      return result
+    }
+
+    if (!pendingShapeAction.cutterId || pendingShapeAction.targetIds.length === 0) {
+      return []
+    }
+
+    const cutter = state.project.features.find((feature) => feature.id === pendingShapeAction.cutterId) ?? null
+    const targets = pendingShapeAction.targetIds
+      .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature.sketch.profile.closed)
+    if (!cutter || !cutter.sketch.profile.closed || targets.length !== pendingShapeAction.targetIds.length) {
+      return []
+    }
+
+    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets)
+    const createdFeatures = createdGroups.flatMap((group) => group.features)
+    if (createdFeatures.length === 0) {
+      set({ pendingShapeAction: null })
+      return []
+    }
+
+    set((s) => {
+      const idsToReplace = new Set(
+        pendingShapeAction.keepOriginals
+          ? []
+          : pendingShapeAction.targetIds,
+      )
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
+        featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const primaryId = createdIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        pendingShapeAction: null,
         selection: {
           ...s.selection,
           selectedFeatureId: primaryId,

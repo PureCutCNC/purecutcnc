@@ -860,6 +860,26 @@
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.sketch-place-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 10px 0 8px;
+  color: #f0d3af;
+  white-space: nowrap;
+}
+
+.sketch-place-toggle input {
+  margin: 0;
+  position: relative;
+  top: 1px;
 }
 
 .sketch-place-banner kbd {

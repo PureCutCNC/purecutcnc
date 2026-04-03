@@ -1790,6 +1790,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMove,
     pendingTransform,
     pendingOffset,
+    pendingShapeAction,
     selection,
     selectFeature,
     selectBackdrop,
@@ -1832,6 +1833,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingTransform,
     completePendingOffset,
     cancelPendingOffset,
+    completePendingShapeAction,
+    cancelPendingShapeAction,
+    setPendingShapeActionKeepOriginals,
     setBackdropImageLoading,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
@@ -1841,6 +1845,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingMoveRef = useRef(pendingMove)
   const pendingTransformRef = useRef(pendingTransform)
   const pendingOffsetRef = useRef(pendingOffset)
+  const pendingShapeActionRef = useRef(pendingShapeAction)
   const viewStateRef = useRef(viewState)
   const backdropImageRef = useRef(backdropImage)
   const toolpathsRef = useRef(toolpaths)
@@ -1855,6 +1860,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingMoveRef.current = pendingMove
   pendingTransformRef.current = pendingTransform
   pendingOffsetRef.current = pendingOffset
+  pendingShapeActionRef.current = pendingShapeAction
   viewStateRef.current = viewState
   backdropImageRef.current = backdropImage
   toolpathsRef.current = toolpaths
@@ -2735,6 +2741,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (drawFrameRef.current !== null) {
         window.cancelAnimationFrame(drawFrameRef.current)
       }
+
+      const canvas = canvasRef.current
+      if (!canvas) {
+        return
+      }
+
+      const ctx = canvas.getContext('2d')
+      if (ctx && typeof (ctx as CanvasRenderingContext2D & { reset?: () => void }).reset === 'function') {
+        ;(ctx as CanvasRenderingContext2D & { reset: () => void }).reset()
+      }
+
+      canvas.width = 0
+      canvas.height = 0
     }
   }, [])
 
@@ -2789,7 +2808,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (selection.mode !== 'sketch_edit' && !pendingMove && !pendingTransform) {
+    if (selection.mode !== 'sketch_edit' && !pendingMove && !pendingTransform && !pendingOffset && !pendingShapeAction) {
       return
     }
 
@@ -2798,7 +2817,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [copyCountPromptActive, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -2927,7 +2946,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleMouseDown(event: MouseEvent<HTMLCanvasElement>) {
-    if (event.button === 1 || event.button === 2 || (event.button === 0 && event.shiftKey)) {
+    const pendingShapeAction = pendingShapeActionRef.current
+    const shiftStartsPan = event.button === 0 && event.shiftKey && !pendingShapeAction
+    if (event.button === 1 || event.button === 2 || shiftStartsPan) {
       isPanningRef.current = true
       didPanRef.current = false
       lastPanPointRef.current = canvasCoordinates(event)
@@ -3572,6 +3593,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     const pendingOffset = pendingOffsetRef.current
+    const pendingShapeAction = pendingShapeActionRef.current
     if (
       event.key === 'Enter'
       && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
@@ -3637,6 +3659,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (event.key === 'Escape' && pendingShapeAction) {
+      cancelPendingShapeAction()
+      return
+    }
+
     if (
       event.key === 'Enter'
       && pendingMove?.mode === 'copy'
@@ -3647,6 +3674,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       completePendingMove(pendingMove.toPoint, nextCount)
       setPendingMovePreviewPointRef(null)
       setCopyCountDraft('1')
+      return
+    }
+
+    if (event.key === 'Enter' && pendingShapeAction) {
+      completePendingShapeAction()
       return
     }
 
@@ -3718,7 +3750,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction ? 'sketch-canvas--placing' : ''}`}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
@@ -3754,6 +3786,40 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingOffset && (
         <div className="sketch-place-banner">
           Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Click to commit or press <kbd>Esc</kbd> to cancel.
+        </div>
+      )}
+      {pendingShapeAction && (
+        <div className="sketch-place-banner">
+          <span>
+            {pendingShapeAction.kind === 'join'
+              ? pendingShapeAction.entityIds.length < 2
+                ? 'Join mode. Shift-click closed features to select at least two.'
+                : `Join mode. ${pendingShapeAction.entityIds.length} closed features selected.`
+              : !pendingShapeAction.cutterId
+                ? 'Cut mode. Click one closed feature to use as the cutter.'
+                : pendingShapeAction.targetIds.length === 0
+                  ? 'Cut mode. Shift-click closed features that intersect the cutter to select targets.'
+                  : `Cut mode. 1 cutter and ${pendingShapeAction.targetIds.length} target${pendingShapeAction.targetIds.length === 1 ? '' : 's'} selected.`}
+            {' '}
+          </span>
+          <label className="sketch-place-toggle">
+            <input
+              type="checkbox"
+              checked={pendingShapeAction.keepOriginals}
+              onChange={(event) => setPendingShapeActionKeepOriginals(event.target.checked)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  completePendingShapeAction()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelPendingShapeAction()
+                }
+              }}
+            />
+            <span>Keep originals</span>
+          </label>
+          <span>Press <kbd>Enter</kbd> to confirm or <kbd>Esc</kbd> to cancel.</span>
         </div>
       )}
       {pendingAdd && (
