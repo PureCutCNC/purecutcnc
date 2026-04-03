@@ -172,6 +172,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Example: convert one rectangle edge from a line into an arc without rebuilding the whole feature.
   - This likely needs explicit segment selection in sketch edit mode, not just point/handle selection.
 
+### Rotate-copy instances
+- Status: Open
+- Priority: Medium
+- Summary: Add an option to create copies while rotating, including multiple rotated instances.
+- Notes:
+  - This should mirror the existing copy workflow more closely than the current rotate-in-place tool.
+  - First pass can likely reuse the existing rotate reference flow with a `copy` toggle plus instance count.
+  - Longer term, this could support radial arrays as a more explicit workflow.
+
 ### Clamp naming / type cleanup
 - Status: Open
 - Priority: Low
