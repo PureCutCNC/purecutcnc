@@ -446,14 +446,6 @@ export function PropertiesPanel() {
           <label className="properties-check">
             <input
               type="checkbox"
-              checked={project.grid.snapEnabled}
-              onChange={(event) => setGrid({ ...project.grid, snapEnabled: event.target.checked })}
-            />
-            <span>Snap Enabled</span>
-          </label>
-          <label className="properties-check">
-            <input
-              type="checkbox"
               checked={project.grid.visible}
               onChange={(event) => setGrid({ ...project.grid, visible: event.target.checked })}
             />

@@ -920,17 +920,22 @@ function drawDepthLegend(ctx: CanvasRenderingContext2D, canvasW: number, canvasH
     { color: '#63b176', text: 'Add feature' },
   ]
 
+  ctx.save()
   ctx.fillStyle = 'rgba(16, 22, 30, 0.65)'
   ctx.fillRect(x - 10, y - 10, 150, 68)
 
   ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
   for (let index = 0; index < labels.length; index += 1) {
     const item = labels[index]
+    const rowY = y + index * 18
     ctx.fillStyle = item.color
-    ctx.fillRect(x, y + index * 18, 12, 12)
+    ctx.fillRect(x, rowY, 12, 12)
     ctx.fillStyle = 'rgba(206, 220, 231, 0.95)'
-    ctx.fillText(item.text, x + 18, y + 10 + index * 18)
+    ctx.fillText(item.text, x + 18, rowY + 6)
   }
+  ctx.restore()
 }
 
 function drawToolpath(
@@ -2082,7 +2087,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ? selection.selectedNode.clampId
         : null
 
-    if (activeModes.has('grid') && project.grid.snapEnabled) {
+    if (activeModes.has('grid')) {
       const gridPoint = {
         x: snap(rawPoint.x, project.grid.snapIncrement),
         y: snap(rawPoint.y, project.grid.snapIncrement),

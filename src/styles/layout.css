@@ -7,6 +7,9 @@
 }
 
 .app-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   border-bottom: 1px solid var(--line);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
@@ -27,6 +30,17 @@
 
 .toolbar--global {
   flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.toolbar--combined {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.toolbar--snap {
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
 }
 
 .toolbar--creation.toolbar--vertical {

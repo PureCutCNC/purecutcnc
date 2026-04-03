@@ -522,6 +522,7 @@ function CreationActions({
 }
 
 function FeatureEditActions({
+  enabled,
   hasLockedSelection,
   hasClosedSelection,
   pendingMoveMode,
@@ -535,6 +536,7 @@ function FeatureEditActions({
   onRotate,
   onOffset,
 }: {
+  enabled: boolean
   hasLockedSelection: boolean
   hasClosedSelection: boolean
   pendingMoveMode: 'move' | 'copy' | null
@@ -555,6 +557,7 @@ function FeatureEditActions({
           icon="copy"
           label={pendingMoveMode === 'copy' ? 'Cancel copy' : 'Copy selected features'}
           active={pendingMoveMode === 'copy'}
+          disabled={!enabled}
           tooltipSide={tooltipSide}
           onClick={onCopy}
         />
@@ -562,13 +565,14 @@ function FeatureEditActions({
           icon="move"
           label={pendingMoveMode === 'move' ? 'Cancel move' : 'Move selected features'}
           active={pendingMoveMode === 'move'}
-          disabled={hasLockedSelection}
+          disabled={!enabled || hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onMove}
         />
         <ToolbarActionButton
           icon="trash"
           label="Delete selected features"
+          disabled={!enabled}
           tooltipSide={tooltipSide}
           onClick={onDelete}
         />
@@ -576,7 +580,7 @@ function FeatureEditActions({
           icon="resize"
           label={pendingTransformMode === 'resize' ? 'Cancel resize' : 'Resize selected features'}
           active={pendingTransformMode === 'resize'}
-          disabled={hasLockedSelection}
+          disabled={!enabled || hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onResize}
         />
@@ -584,17 +588,15 @@ function FeatureEditActions({
           icon="rotate"
           label={pendingTransformMode === 'rotate' ? 'Cancel rotate' : 'Rotate selected features'}
           active={pendingTransformMode === 'rotate'}
-          disabled={hasLockedSelection}
+          disabled={!enabled || hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onRotate}
         />
-      </div>
-      <div className="toolbar-group">
         <ToolbarActionButton
           icon="offset"
           label={pendingOffset ? 'Cancel offset' : 'Create offset feature'}
           active={pendingOffset}
-          disabled={hasLockedSelection || !hasClosedSelection}
+          disabled={!enabled || hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
           onClick={onOffset}
         />
@@ -635,12 +637,14 @@ function ShapeToolActions({
 }
 
 function SketchEditActions({
+  enabled,
   activeTool,
   tooltipSide,
   onAddPoint,
   onDeletePoint,
   onFillet,
 }: {
+  enabled: boolean
   activeTool: SketchEditTool | null
   tooltipSide?: 'bottom' | 'right'
   onAddPoint: () => void
@@ -653,6 +657,7 @@ function SketchEditActions({
         icon="point-add"
         label={activeTool === 'add_point' ? 'Cancel add point' : 'Add point'}
         active={activeTool === 'add_point'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onAddPoint}
       />
@@ -660,6 +665,7 @@ function SketchEditActions({
         icon="point-delete"
         label={activeTool === 'delete_point' ? 'Cancel delete point' : 'Delete point'}
         active={activeTool === 'delete_point'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onDeletePoint}
       />
@@ -667,6 +673,7 @@ function SketchEditActions({
         icon="fillet"
         label={activeTool === 'fillet' ? 'Cancel fillet' : 'Round corner / fillet'}
         active={activeTool === 'fillet'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onFillet}
       />
@@ -675,6 +682,7 @@ function SketchEditActions({
 }
 
 function BackdropEditActions({
+  enabled,
   pendingMoveMode,
   pendingTransformMode,
   tooltipSide,
@@ -683,6 +691,7 @@ function BackdropEditActions({
   onResize,
   onRotate,
 }: {
+  enabled: boolean
   pendingMoveMode: 'move' | null
   pendingTransformMode: 'resize' | 'rotate' | null
   tooltipSide?: 'bottom' | 'right'
@@ -697,12 +706,14 @@ function BackdropEditActions({
         icon="move"
         label={pendingMoveMode === 'move' ? 'Cancel move backdrop' : 'Move backdrop'}
         active={pendingMoveMode === 'move'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onMove}
       />
       <ToolbarActionButton
         icon="trash"
         label="Delete backdrop"
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onDelete}
       />
@@ -710,6 +721,7 @@ function BackdropEditActions({
         icon="resize"
         label={pendingTransformMode === 'resize' ? 'Cancel resize backdrop' : 'Resize backdrop'}
         active={pendingTransformMode === 'resize'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onResize}
       />
@@ -717,6 +729,7 @@ function BackdropEditActions({
         icon="rotate"
         label={pendingTransformMode === 'rotate' ? 'Cancel rotate backdrop' : 'Rotate backdrop'}
         active={pendingTransformMode === 'rotate'}
+        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onRotate}
       />
@@ -733,7 +746,6 @@ function SnapActions({
 }: SnapToolbarProps & {
   tooltipSide?: 'bottom' | 'right'
 }) {
-  const snapActive = snapSettings.enabled && snapSettings.modes.length > 0
   const hasMode = (mode: SnapMode) => snapSettings.modes.includes(mode)
 
   return (
@@ -742,7 +754,7 @@ function SnapActions({
         <ToolbarActionButton
           icon="snap"
           label={snapSettings.enabled ? 'Disable snapping' : 'Enable snapping'}
-          active={snapActive}
+          active={snapSettings.enabled}
           tooltipSide={tooltipSide}
           onClick={onToggleSnapEnabled}
         />
@@ -820,7 +832,14 @@ function ToolbarDialog({
   )
 }
 
-export function GlobalToolbar({ onZoomToModel, onImportComplete }: ToolbarProps) {
+export function GlobalToolbar({
+  onZoomToModel,
+  onImportComplete,
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: ToolbarProps & SnapToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
@@ -845,6 +864,12 @@ export function GlobalToolbar({ onZoomToModel, onImportComplete }: ToolbarProps)
           onRedo={toolbar.handleRedo}
           onZoomToModel={toolbar.handleZoomToModel}
         />
+        <SnapActions
+          snapSettings={snapSettings}
+          activeSnapMode={activeSnapMode}
+          onToggleSnapEnabled={onToggleSnapEnabled}
+          onToggleSnapMode={onToggleSnapMode}
+        />
       </div>
       <ToolbarDialog
         showNewProjectDialog={toolbar.showNewProjectDialog}
@@ -865,11 +890,7 @@ export function CreationToolbar({
   onZoomToModel,
   onImportComplete,
   layout = 'horizontal',
-  snapSettings,
-  activeSnapMode,
-  onToggleSnapEnabled,
-  onToggleSnapMode,
-}: ToolbarProps & CreationToolbarProps & SnapToolbarProps) {
+}: ToolbarProps & CreationToolbarProps) {
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
@@ -883,52 +904,44 @@ export function CreationToolbar({
         onSpline={toolbar.handleSpline}
         onComposite={toolbar.handleComposite}
       />
-      {toolbar.featureSketchEditActive ? (
-        <SketchEditActions
-          activeTool={toolbar.sketchEditTool}
-          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onAddPoint={toolbar.handleSketchEditAddPoint}
-          onDeletePoint={toolbar.handleSketchEditDeletePoint}
-          onFillet={toolbar.handleSketchEditFillet}
-        />
-      ) : toolbar.hasSelectedFeatures ? (
-        <FeatureEditActions
-          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-          hasClosedSelection={toolbar.hasClosedSelectedFeatures}
-          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
-          pendingOffset={!!toolbar.pendingOffset}
-          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onCopy={toolbar.handleFeatureCopy}
-          onMove={toolbar.handleFeatureMove}
-          onDelete={toolbar.handleDeleteSelectedFeatures}
-          onResize={toolbar.handleFeatureResize}
-          onRotate={toolbar.handleFeatureRotate}
-          onOffset={toolbar.handleOffsetSelectedFeatures}
-        />
-      ) : toolbar.hasSelectedBackdrop ? (
-        <BackdropEditActions
-          pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
-          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onMove={toolbar.handleBackdropMove}
-          onDelete={toolbar.handleBackdropDelete}
-          onResize={toolbar.handleBackdropResize}
-          onRotate={toolbar.handleBackdropRotate}
-        />
-      ) : null}
       <ShapeToolActions
         pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
         tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
         onJoin={toolbar.handleJoinSelectedFeatures}
         onCut={toolbar.handleCutSelectedFeatures}
       />
-      <SnapActions
-        snapSettings={snapSettings}
-        activeSnapMode={activeSnapMode}
+      <FeatureEditActions
+        enabled={toolbar.hasSelectedFeatures}
+        hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+        hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+        pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
+        pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
+        pendingOffset={!!toolbar.pendingOffset}
         tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onToggleSnapEnabled={onToggleSnapEnabled}
-        onToggleSnapMode={onToggleSnapMode}
+        onCopy={toolbar.handleFeatureCopy}
+        onMove={toolbar.handleFeatureMove}
+        onDelete={toolbar.handleDeleteSelectedFeatures}
+        onResize={toolbar.handleFeatureResize}
+        onRotate={toolbar.handleFeatureRotate}
+        onOffset={toolbar.handleOffsetSelectedFeatures}
+      />
+      <SketchEditActions
+        enabled={toolbar.featureSketchEditActive}
+        activeTool={toolbar.sketchEditTool}
+        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+        onAddPoint={toolbar.handleSketchEditAddPoint}
+        onDeletePoint={toolbar.handleSketchEditDeletePoint}
+        onFillet={toolbar.handleSketchEditFillet}
+      />
+      <BackdropEditActions
+        enabled={toolbar.hasSelectedBackdrop}
+        pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
+        pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+        onMove={toolbar.handleBackdropMove}
+        onDelete={toolbar.handleBackdropDelete}
+        onResize={toolbar.handleBackdropResize}
+        onRotate={toolbar.handleBackdropRotate}
       />
     </div>
   )
@@ -966,6 +979,12 @@ export function Toolbar({
           onRedo={toolbar.handleRedo}
           onZoomToModel={toolbar.handleZoomToModel}
         />
+        <SnapActions
+          snapSettings={snapSettings}
+          activeSnapMode={activeSnapMode}
+          onToggleSnapEnabled={onToggleSnapEnabled}
+          onToggleSnapMode={onToggleSnapMode}
+        />
         <CreationActions
           pendingShape={toolbar.pendingAdd?.shape ?? null}
           onRect={toolbar.handleRect}
@@ -974,47 +993,40 @@ export function Toolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
         />
-        {toolbar.featureSketchEditActive ? (
-          <SketchEditActions
-            activeTool={toolbar.sketchEditTool}
-            onAddPoint={toolbar.handleSketchEditAddPoint}
-            onDeletePoint={toolbar.handleSketchEditDeletePoint}
-            onFillet={toolbar.handleSketchEditFillet}
-          />
-        ) : toolbar.hasSelectedFeatures ? (
-          <FeatureEditActions
-            hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-            hasClosedSelection={toolbar.hasClosedSelectedFeatures}
-            pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-            pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
-            pendingOffset={!!toolbar.pendingOffset}
-            onCopy={toolbar.handleFeatureCopy}
-            onMove={toolbar.handleFeatureMove}
-            onDelete={toolbar.handleDeleteSelectedFeatures}
-            onResize={toolbar.handleFeatureResize}
-            onRotate={toolbar.handleFeatureRotate}
-            onOffset={toolbar.handleOffsetSelectedFeatures}
-          />
-        ) : toolbar.hasSelectedBackdrop ? (
-          <BackdropEditActions
-            pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
-            pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
-            onMove={toolbar.handleBackdropMove}
-            onDelete={toolbar.handleBackdropDelete}
-            onResize={toolbar.handleBackdropResize}
-            onRotate={toolbar.handleBackdropRotate}
-          />
-        ) : null}
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
           onJoin={toolbar.handleJoinSelectedFeatures}
           onCut={toolbar.handleCutSelectedFeatures}
         />
-        <SnapActions
-          snapSettings={snapSettings}
-          activeSnapMode={activeSnapMode}
-          onToggleSnapEnabled={onToggleSnapEnabled}
-          onToggleSnapMode={onToggleSnapMode}
+        <FeatureEditActions
+          enabled={toolbar.hasSelectedFeatures}
+          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+          hasClosedSelection={toolbar.hasClosedSelectedFeatures}
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
+          pendingOffset={!!toolbar.pendingOffset}
+          onCopy={toolbar.handleFeatureCopy}
+          onMove={toolbar.handleFeatureMove}
+          onDelete={toolbar.handleDeleteSelectedFeatures}
+          onResize={toolbar.handleFeatureResize}
+          onRotate={toolbar.handleFeatureRotate}
+          onOffset={toolbar.handleOffsetSelectedFeatures}
+        />
+        <SketchEditActions
+          enabled={toolbar.featureSketchEditActive}
+          activeTool={toolbar.sketchEditTool}
+          onAddPoint={toolbar.handleSketchEditAddPoint}
+          onDeletePoint={toolbar.handleSketchEditDeletePoint}
+          onFillet={toolbar.handleSketchEditFillet}
+        />
+        <BackdropEditActions
+          enabled={toolbar.hasSelectedBackdrop}
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+          onMove={toolbar.handleBackdropMove}
+          onDelete={toolbar.handleBackdropDelete}
+          onResize={toolbar.handleBackdropResize}
+          onRotate={toolbar.handleBackdropRotate}
         />
       </div>
       <ToolbarDialog
@@ -1029,5 +1041,23 @@ export function Toolbar({
         onImportComplete={onImportComplete}
       />
     </>
+  )
+}
+
+export function SnapToolbar({
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: SnapToolbarProps) {
+  return (
+    <div className="toolbar toolbar--snap">
+      <SnapActions
+        snapSettings={snapSettings}
+        activeSnapMode={activeSnapMode}
+        onToggleSnapEnabled={onToggleSnapEnabled}
+        onToggleSnapMode={onToggleSnapMode}
+      />
+    </div>
   )
 }

@@ -42,8 +42,9 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Priority: Low
 - Summary: Remove or redesign the sketch depth legend, which is no longer useful in its current form.
 - Notes:
-  - Current legend text overlaps visually and adds little value.
+  - The immediate text-overlap issue is fixed.
   - Revisit whether feature coloring/labels already communicate enough without a legend.
+  - If it stays, it likely needs a lighter visual treatment or a better location.
 
 ### Grid snap inconsistency on new project
 - Status: Open
@@ -59,10 +60,11 @@ This file tracks follow-up work, open issues, and design questions that come up 
 ### Refactor UI to use SVG Sprite Icon system
 - Status: Open
 - Priority: Medium
-- Summary: Replace all inline SVGs and character-based icons (like ◉, ○, ▸) with the unified `Icon` component.
+- Summary: Finish replacing the remaining inline SVGs and character-based icons with the unified `Icon` component.
 - Notes:
   - Utilize the new `src/components/Icon.tsx` component which pulls from the `public/icons.svg` pool.
-  - Target files for refactoring: `Toolbar.tsx`, `FeatureTree.tsx`, `CAMPanel.tsx`, and `Viewport3D.tsx`.
+  - `Toolbar.tsx` is already migrated.
+  - Remaining likely targets: `FeatureTree.tsx`, `CAMPanel.tsx`, `ExportDialog.tsx`, and `ImportGeometryDialog.tsx`.
   - Standardize icon sizing (e.g., 18px for toolbar, 14-16px for panels).
   - Use CSS (`.icon-sprite` in `layout.css`) for global properties like `stroke-width`, `transition`, and `currentColor` inheritance.
   - Map current character icons (◉, ○) to professional sprite IDs like `eye` and `eye-off`.
@@ -297,21 +299,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Notes:
   - This likely belongs under the same future profile-based approach as richer clamp geometry.
 
-### Simulation zoom extent
-- Status: Open
-- Priority: Low
-- Summary: Make `zoom extent` work in the `Simulation` view.
-- Notes:
-  - The simulation viewport should fit the current simulated stock/overlays the same way the other 3D viewports do.
-
-### Preserve view direction on fit
-- Status: Open
-- Priority: Low
-- Summary: Make viewport fit/zoom extent preserve the current camera direction instead of forcing iso.
-- Notes:
-  - This applies to both `3D View` and `Simulation`.
-  - Current fit behavior resets orientation instead of only adjusting target/radius.
-
 ### Prevent view shift on show/hide
 - Status: Open
 - Priority: Low
@@ -439,8 +426,12 @@ This file tracks follow-up work, open issues, and design questions that come up 
 
 ### G-code Export
 - Status: Done
-- Summary: Implemented machine-definition-driven post-processor with modal tracking, template substitution, and an Export Dialog featuring machine selection, debounced live preview, and G-code download.
+- Summary: Implemented machine-definition-driven post-processor with template substitution, project-scoped machine definitions, simplified Export Dialog preview/download, and shared toolpath/export selection behavior.
 
 ### Machine Origin improvements
 - Status: Done
 - Summary: Added a persistent machine origin object to the project tree, with full property editing, axis triad visualization in 2D/3D, and quick-set presets (top-left, center-top, bottom-left).
+
+### Viewport zoom extent
+- Status: Done
+- Summary: `Zoom to model` now works in both `3D View` and `Simulation`, while preserving the current camera direction instead of forcing iso.

@@ -508,16 +508,16 @@ function App() {
           <GlobalToolbar
             onZoomToModel={handleZoomToModel}
             onImportComplete={handleImportComplete}
+            snapSettings={snapSettings}
+            activeSnapMode={activeSnapMode}
+            onToggleSnapEnabled={handleToggleSnapEnabled}
+            onToggleSnapMode={handleToggleSnapMode}
           />
         }
         creationToolbar={
           <CreationToolbar
             onZoomToModel={handleZoomToModel}
             layout="vertical"
-            snapSettings={snapSettings}
-            activeSnapMode={activeSnapMode}
-            onToggleSnapEnabled={handleToggleSnapEnabled}
-            onToggleSnapMode={handleToggleSnapMode}
           />
         }
         aiPanel={<AIPanel />}
