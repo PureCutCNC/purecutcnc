@@ -245,17 +245,22 @@ Phase 2 can split out:
 
 ## Implementation Phases
 
+### Current state
+- `[x]` Phase 1 contour-parallel `v_carve` is implemented and usable.
+- `[~]` `v_carve_skeleton` now exists as an approximate raster/thinning-based centerline variant.
+- `[ ]` True straight-skeleton / medial-axis solving still remains for a higher-fidelity phase 2.
+
 ### VC1. V-bit tool type
-- `[ ]` Add `v_bit` to the tool kind union
-- `[ ]` Add `VBitTool` interface with included angle and tip diameter
-- `[ ]` Add V-bit creation in the tool library UI
+- `[x]` Add `v_bit` to the tool kind union
+- `[x]` Add `VBitTool` interface with included angle and tip diameter
+- `[x]` Add V-bit creation in the tool library UI
 - `[ ]` Add common presets (60°, 90°)
 
 ### VC2. `v_carve` operation schema and UI
-- `[ ]` Add `v_carve` to operation kind union
-- `[ ]` Add `VCarveOperationParams` with all fields
-- `[ ]` Surface operation controls in CAM panel
-- `[ ]` Validation: reject non-v-bit tools, reject open profiles, enforce depth range
+- `[x]` Add `v_carve` to operation kind union
+- `[x]` Add `VCarveOperationParams` with all fields
+- `[x]` Surface operation controls in CAM panel
+- `[x]` Validation: reject non-v-bit tools, reject open profiles, enforce depth range
 
 ### VC3. Profile flattening and polygon preparation
 - `[ ]` Flat polygon extraction from closed sketch profiles (reuse / extend existing geometry helpers)

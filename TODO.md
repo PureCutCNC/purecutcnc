@@ -377,13 +377,14 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - This is a follow-on carving mode, not part of the current follow-line implementation.
   - It likely needs tool-shape-aware path generation rather than just simulation support.
 
-### True skeleton-based V-carve
+### True straight-skeleton V-carve refinement
 - Status: Open
 - Priority: High
-- Summary: Add a true skeleton/medial-axis V-carve path alongside the current contour-parallel first pass.
+- Summary: Replace or refine the current approximate skeleton V-carve with a true straight-skeleton / medial-axis solver.
 - Notes:
   - The current contour-parallel V-carve works, but it requires tight contour spacing and produces a very busy toolpath.
-  - Keep both variants for now so the skeleton solver can be validated side-by-side before the parallel variant is retired.
+  - A first-pass `V-Carve Skeleton` operation now exists, but it is a raster/thinning approximation rather than a true straight skeleton.
+  - Keep both variants for now so the higher-fidelity skeleton solver can be validated side-by-side before the parallel variant is retired.
   - Long term, this should become the preferred V-carve operation for outline text and artwork.
 
 ### Follow-line ordering / linking refinement

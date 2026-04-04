@@ -176,8 +176,14 @@ function bandHasThickness(topZ: number, bottomZ: number): boolean {
 
 export function resolvePocketRegions(project: Project, operation: Operation): ResolvedPocketResult {
   const warnings: string[] = []
-  const isPocketLike = operation.kind === 'pocket' || operation.kind === 'v_carve'
-  const operationLabel = operation.kind === 'v_carve' ? 'V-carve' : 'Pocket'
+  const isPocketLike =
+    operation.kind === 'pocket' || operation.kind === 'v_carve' || operation.kind === 'v_carve_skeleton'
+  const operationLabel =
+    operation.kind === 'pocket'
+      ? 'Pocket'
+      : operation.kind === 'v_carve_skeleton'
+        ? 'V-carve skeleton'
+        : 'V-carve'
 
   if (!isPocketLike) {
     return {
