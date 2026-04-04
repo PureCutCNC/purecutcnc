@@ -214,6 +214,8 @@ function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
       return 'Pocket'
+    case 'v_carve':
+      return 'V-Carve'
     case 'edge_route_inside':
       return 'Edge Route Inside'
     case 'edge_route_outside':
@@ -238,7 +240,7 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
 }
 
 function operationRequiresClosedProfiles(kind: OperationKind): boolean {
-  return kind === 'pocket' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+  return kind === 'pocket' || kind === 'v_carve' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
@@ -270,6 +272,24 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
     }
 
     return features.every((feature) => feature.operation === 'add' && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
+      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+      : null
+  }
+
+  if (kind === 'v_carve') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -323,6 +343,24 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
     return features.every((feature) => featureHasClosedGeometry(feature))
       ? null
       : 'Surface clean only accepts closed profiles'
+  }
+
+  if (kind === 'v_carve') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select one or more closed subtract features first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (!features.every((feature) => feature.operation === 'subtract')) {
+      return 'V-Carve only accepts subtract features'
+    }
+
+    return features.every((feature) => featureHasClosedGeometry(feature))
+      ? null
+      : 'V-Carve only accepts closed profiles'
   }
 
   if (selection.selectedFeatureIds.length === 0) {
@@ -473,6 +511,12 @@ export function CAMPanel({
         disabled: getValidOperationTarget(project, selection, 'pocket') === null,
       },
       {
+        kind: 'v_carve',
+        label: 'V-Carve',
+        hint: getOperationAddHint(project, selection, 'v_carve') ?? undefined,
+        disabled: getValidOperationTarget(project, selection, 'v_carve') === null,
+      },
+      {
         kind: 'edge_route_inside',
         label: 'Edge In',
         hint: getOperationAddHint(project, selection, 'edge_route_inside') ?? undefined,
@@ -584,6 +628,15 @@ export function CAMPanel({
   function handleAddOperation(kind: OperationKind) {
     const target = getValidOperationTarget(project, selection, kind)
     if (!target) {
+      return
+    }
+
+    if ((kind === 'follow_line' || kind === 'v_carve') && newOperationMode === 'pair') {
+      const operationId = addOperation(kind, 'rough', target)
+      if (operationId) {
+        onSelectedOperationIdChange(operationId)
+        setShowAddOperationMenu(false)
+      }
       return
     }
 
@@ -899,16 +952,29 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  <label className="properties-field">
-                    <span>Pass</span>
-                    <select
-                      value={selectedOperation.pass}
-                      onChange={(event) => updateOperation(selectedOperation.id, { pass: event.target.value as OperationPass })}
-                    >
-                      <option value="rough">Rough</option>
-                      <option value="finish">Finish</option>
-                    </select>
-                  </label>
+                  {selectedOperation.kind !== 'v_carve' ? (
+                    <label className="properties-field">
+                      <span>Pass</span>
+                      <select
+                        value={selectedOperation.pass}
+                        onChange={(event) => updateOperation(selectedOperation.id, { pass: event.target.value as OperationPass })}
+                      >
+                        <option value="rough">Rough</option>
+                        <option value="finish">Finish</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  {selectedOperation.kind === 'v_carve' ? (
+                    <label className="properties-field">
+                      <span>Max Carve Depth</span>
+                      <DraftLengthInput
+                        value={selectedOperation.maxCarveDepth}
+                        units={project.meta.units}
+                        min={0.0001}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { maxCarveDepth: value })}
+                      />
+                    </label>
+                  ) : null}
                   {selectedOperation.kind === 'follow_line' ? (
                     <label className="properties-field">
                       <span>Carve Depth</span>
@@ -991,7 +1057,10 @@ export function CAMPanel({
                       }
                     >
                       <option value="">No Tool</option>
-                      {project.tools.map((tool) => (
+                      {(selectedOperation.kind === 'v_carve'
+                        ? project.tools.filter((tool) => tool.type === 'v_bit')
+                        : project.tools
+                      ).map((tool) => (
                         <option key={tool.id} value={tool.id}>
                           {tool.name}
                         </option>
@@ -1006,18 +1075,20 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  <label className="properties-field">
-                    <span>Stepdown</span>
-                    <DraftLengthInput
-                      value={selectedOperation.stepdown}
-                      units={project.meta.units}
-                      min={0.0001}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
-                    />
-                  </label>
+                  {selectedOperation.kind !== 'v_carve' ? (
+                    <label className="properties-field">
+                      <span>Stepdown</span>
+                      <DraftLengthInput
+                        value={selectedOperation.stepdown}
+                        units={project.meta.units}
+                        min={0.0001}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
+                      />
+                    </label>
+                  ) : null}
                   {selectedOperation.kind !== 'follow_line' ? (
                     <label className="properties-field">
-                      <span>Stepover Ratio</span>
+                      <span>{selectedOperation.kind === 'v_carve' ? 'Contour Spacing' : 'Stepover Ratio'}</span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}
                         min={0.01}
@@ -1052,7 +1123,7 @@ export function CAMPanel({
                       onCommit={(value) => updateOperation(selectedOperation.id, { rpm: Math.round(value) })}
                     />
                   </label>
-                  {selectedOperation.kind !== 'follow_line' ? (
+                  {selectedOperation.kind !== 'follow_line' && selectedOperation.kind !== 'v_carve' ? (
                     <>
                       <label className="properties-field">
                         <span>Stock To Leave Radial</span>

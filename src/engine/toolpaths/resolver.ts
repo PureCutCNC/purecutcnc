@@ -176,13 +176,15 @@ function bandHasThickness(topZ: number, bottomZ: number): boolean {
 
 export function resolvePocketRegions(project: Project, operation: Operation): ResolvedPocketResult {
   const warnings: string[] = []
+  const isPocketLike = operation.kind === 'pocket' || operation.kind === 'v_carve'
+  const operationLabel = operation.kind === 'v_carve' ? 'V-carve' : 'Pocket'
 
-  if (operation.kind !== 'pocket') {
+  if (!isPocketLike) {
     return {
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: ['Only pocket operations can be resolved by the pocket resolver'],
+      warnings: ['Only pocket and V-carve operations can be resolved by this region resolver'],
     }
   }
 
@@ -191,7 +193,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: ['Pocket operation has no feature targets'],
+      warnings: [`${operationLabel} operation has no feature targets`],
     }
   }
 
@@ -215,7 +217,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
 
   const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
   if (closedTargetFeatures.length !== targetFeatures.length) {
-    warnings.push('Pocket operations only support closed target profiles')
+    warnings.push(`${operationLabel} operations only support closed target profiles`)
   }
 
   if (closedTargetFeatures.length === 0) {
@@ -223,7 +225,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, 'No valid subtract features were found for this pocket operation'],
+      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
@@ -329,7 +331,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   }
 
   if (bands.length === 0) {
-    warnings.push('Pocket resolver produced no depth bands')
+    warnings.push(`${operationLabel} resolver produced no depth bands`)
   }
 
   return {
