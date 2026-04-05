@@ -35,16 +35,16 @@ V-carve is a new operation kind that targets **closed profiles** representing th
 
 ## Scope
 
-### Included in first pass
+### Included in the robust implementation target
 - New `v_carve` operation kind
+- Separate contour-parallel fallback operation for comparison and temporary use only
 - V-bit-only validation
-- Contour-parallel variable-depth carving using inward offsets
+- True geometric medial-axis / straight-skeleton solving for the main V-carve path
 - Sketch overlay and 3D linework visualization
 - Simulation support using the existing V-bit surface model
 - Operation validation and user-facing warnings
 
-### Explicitly excluded from first pass
-- Full straight-skeleton / medial-axis solving
+### Explicitly excluded from this milestone
 - Combination V-carve + pocket clearing (for very wide regions where the bit cannot reach full width)
 - Multi-pass V-carve (roughing + finish)
 - Inlay V-carving (complementary male/female V-carve pairs)
@@ -63,16 +63,16 @@ This is consistent with how `outline` text features already work — they produc
 
 Implication: the user does not draw the carving path. They draw the region. The medial axis is computed, not authored.
 
-### 2. First pass uses contour-parallel offsets, not a skeleton solver
+### 2. Contour-parallel V-carve is a fallback, not the end state
 
-The long-term ideal is medial-axis / straight-skeleton V-carving. However, the first shippable implementation should reuse the existing pocket inset engine:
+The existing contour-parallel implementation is useful as a temporary fallback and as a validation reference, but it is not the desired end state:
 
 - resolve the target region as closed polygons with holes
 - generate inward offset contours
 - assign each contour a depth based on its offset distance from the boundary
 - stop when the region collapses or the maximum carve depth is reached
 
-This produces a practical first-pass V-carve for text and artwork without introducing a large new geometry solver up front.
+This approach is acceptable only as a temporary shipping aid. It is too busy, requires overly tight spacing for high-quality text, and is not the operation we should ultimately market as V-carving. The primary implementation target is a robust geometric skeleton solver.
 
 ### 3. Depth clamped by V-bit geometry
 
@@ -81,15 +81,18 @@ The depth computed from the medial axis radius must be clamped:
 - **Minimum depth:** `tipDiameter / 2 / tan(halfAngle)` — the depth at which the tip flat starts cutting. Below this, the bit is cutting with its flat tip, not its V flanks. This depth is the shallowest useful V-carve depth. If the computed depth is less than this, either skip the segment or carve at minimum depth.
 - **Maximum depth:** the operation's `maxCarveDepth` parameter, which the user sets based on material and machine capability. If the computed depth exceeds this, use flat-bottom clearance (outside first-pass scope).
 
-### 4. Toolpath follows inward offset contours in phase 1
+### 4. Main toolpath follows the geometric skeleton, not repeated offsets
 
-For phase 1:
+The main `V-Carve` operation should:
 
-- each inward offset contour is cut at a Z derived from the offset distance
-- the sequence progresses from shallow outer contours toward deeper inner contours
-- rapids link disconnected contours as in pocketing
+- compute a geometric medial graph from the closed region
+- assign each branch node a local half-width and therefore a carve depth
+- traverse that graph with sensible rapid/plunge behavior between disconnected branches
 
-Phase 2 can replace this with true skeleton traversal once a robust straight-skeleton implementation exists.
+The contour-parallel variant remains available only as:
+- a temporary fallback
+- a visual/debug comparison against the true solver
+- an escape hatch while the geometric implementation is being hardened
 
 ### 5. One operation can target multiple features
 
@@ -111,9 +114,14 @@ Tip diameter support can be added later as a refinement.
 
 ### Operation kind
 
-Add:
+Maintain:
 ```ts
 'v_carve'
+```
+
+Temporary comparison/fallback:
+```ts
+'v_carve_skeleton'
 ```
 
 ### Operation parameters
@@ -124,7 +132,7 @@ interface VCarveOperationParams {
   targetFeatureIds: string[]
   toolId: string                // must resolve to a VBitTool
   maxCarveDepth: number         // user safety cap, mm
-  stepover: number              // reused as contour spacing control
+  stepover: number              // contour spacing for fallback op; will become skeleton/path tolerance for the robust op
   feedRate?: number             // override tool default
   plungeRate?: number           // override tool default
   rpm?: number                  // override tool default
@@ -137,9 +145,9 @@ V-carve generates a `ToolpathResult` (existing type) with moves typed as `'cut'`
 
 ---
 
-## Phase 1 Algorithm: Contour-Parallel V-Carve
+## Robust Solver Target: Geometric Medial-Axis / Straight-Skeleton V-Carve
 
-Phase 1 reuses the pocket offset approach:
+The robust target is no longer the contour-parallel solver. The target is a true geometric centerline solve over the closed carved region.
 
 ### Input
 A simple polygon with optional holes (islands), represented as a list of vertices after profile flattening. Winding: outer boundary CCW, holes CW (Clipper convention).
@@ -149,7 +157,23 @@ A simple polygon with optional holes (islands), represented as a list of vertice
 2. Ensure consistent winding using Clipper's orientation utilities.
 3. Remove degenerate edges (zero length, collinear triples).
 
-### Core contour-offset computation
+### Core geometric solve
+
+1. Resolve the closed target region with holes using the existing pocket-like region resolver.
+2. Run a geometric wavefront / straight-skeleton solve over that polygon-with-holes input.
+3. Produce a medial graph whose nodes/edges carry local boundary distance.
+4. For each graph point, compute:
+
+```ts
+depth = distanceToBoundary / tan(halfAngle)
+z = topZ - min(depth, maxCarveDepth)
+```
+
+5. Traverse the resulting graph into cuttable toolpath branches.
+
+### Temporary fallback algorithm
+
+The contour-parallel offset solver remains in the codebase as a fallback/comparison tool:
 
 1. Resolve the closed target region with holes using the existing pocket-like region resolver.
 2. Generate inset contours at repeated spacing intervals.
@@ -161,9 +185,6 @@ z = topZ - min(depth, maxCarveDepth)
 ```
 
 4. Emit contour-following cut moves at that Z.
-5. Stop when:
-   - no further inset contours exist, or
-   - the computed depth exceeds `maxCarveDepth`.
 
 ### Depth mapping
 
@@ -179,19 +200,23 @@ const z = feature.z_top - depth
 
 ## Engine Architecture
 
-Phase 1 should add one top-level generator under `src/engine/toolpaths/`:
+### Main robust path
 
-### `vcarve.ts`
+`src/engine/toolpaths/vcarve.ts`
 - `generateVCarveToolpath(project: Project, operation: Operation): ToolpathResult`
-- Reuses:
-  - pocket region resolution
-  - inset contour generation
-  - safe-Z rapid/plunge helpers
+- orchestrates the robust solver
 
-Phase 2 can split out:
+Suggested split:
+- `vcarve/geometry.ts`
 - `vcarve/skeleton.ts`
 - `vcarve/depth.ts`
 - `vcarve/traverse.ts`
+
+### Temporary fallback path
+
+`src/engine/toolpaths/vcarveParallel.ts` or existing fallback generator
+- contour-parallel inset solver
+- retained temporarily for side-by-side validation
 
 ---
 
@@ -227,6 +252,10 @@ Phase 2 can split out:
 - Feed rate / plunge rate / RPM (with tool defaults prefilled)
 - Safe Z
 
+### Temporary comparison mode
+- Keep `V-Carve Parallel` / fallback visible only while the robust solver is being validated.
+- Once the geometric solver is trusted, retire the fallback or hide it behind an advanced/debug flag.
+
 ### Sketch overlay
 - Show skeleton graph as a dim overlay when the V-carve operation is selected.
 - Show the actual toolpath (variable-depth moves projected to XY) in the standard operation path color.
@@ -246,9 +275,9 @@ Phase 2 can split out:
 ## Implementation Phases
 
 ### Current state
-- `[x]` Phase 1 contour-parallel `v_carve` is implemented and usable.
-- `[~]` `v_carve_skeleton` now exists as an approximate raster/thinning-based centerline variant.
-- `[ ]` True straight-skeleton / medial-axis solving still remains for a higher-fidelity phase 2.
+- `[x]` Contour-parallel fallback `v_carve` is implemented and usable.
+- `[~]` Experimental centerline attempts have been explored and rejected as not good enough.
+- `[ ]` Robust geometric medial-axis / straight-skeleton `v_carve` remains the actual unfinished implementation target.
 
 ### VC1. V-bit tool type
 - `[x]` Add `v_bit` to the tool kind union
@@ -263,26 +292,32 @@ Phase 2 can split out:
 - `[x]` Validation: reject non-v-bit tools, reject open profiles, enforce depth range
 
 ### VC3. Profile flattening and polygon preparation
-- `[ ]` Flat polygon extraction from closed sketch profiles (reuse / extend existing geometry helpers)
-- `[ ]` Winding normalization (outer CCW, holes CW)
-- `[ ]` Degenerate edge removal
+- `[~]` Flat polygon extraction from closed sketch profiles (reuse / extend existing geometry helpers)
+- `[~]` Winding normalization (outer CCW, holes CW)
+- `[~]` Degenerate edge removal
 
-### VC4. Straight skeleton computation
-- `[ ]` Implement `skeleton.ts` — straight skeleton from simple polygon
-- `[ ]` Handle convex polygons (no split events)
-- `[ ]` Handle reflex vertices (split events)
-- `[ ]` Handle polygons with holes
-- `[ ]` Unit tests for known shapes: rectangle → cross skeleton, equilateral triangle → centroid
+### VC4. Geometric skeleton computation
+- `[~]` Initial wavefront data structures and event geometry extracted into dedicated `vcarve/` modules
+- `[~]` `skeleton.ts` foundation in progress — active wavefront state, edge-event timing, split-event candidate detection, ring rebuild/split scaffolding, collapse-node cleanup, and a raised iteration budget exist
+- `[ ]` Handle convex polygons cleanly
+- `[~]` Handle reflex vertices and split events
+- `[~]` Handle polygons with holes
+- `[ ]` Unit tests for known shapes: rectangle → cross skeleton, equilateral triangle → centroid, serif `r` / `k` style glyph branching
+- `[ ]` Reject solver output that misses expected terminal corner branches or produces internal illegal crossings
 
 ### VC5. Depth assignment
-- `[ ]` Implement `depth.ts`
-- `[ ]` Clamp to tip minimum and `maxCarveDepth`
+- `[~]` `depth.ts` foundation in progress — radius-to-depth mapping and branch sampling helpers exist
+- `[x]` Clamp to `maxCarveDepth`
+- `[ ]` Clamp to tip minimum
 - `[ ]` Emit warnings when clamping is significant
 
 ### VC6. Skeleton traversal and toolpath generation
-- `[ ]` Implement `traverse.ts` — depth-first graph walk
-- `[ ]` Insert rapid moves between branches
-- `[ ]` Implement `vcarve.ts` — top-level orchestrator
+- `[~]` `traverse.ts` foundation in progress — skeleton graph to branch polyline conversion exists
+- `[~]` Branch-to-move conversion helper exists with conservative rapid/plunge sequencing
+- `[~]` Internal geometric pipeline helper exists (`prepare -> solve -> cleanup -> branch sampling -> moves`)
+- `[~]` Internal top-level geometric orchestrator exists and is now wired into the experimental `v_carve_skeleton` path for live testing
+- `[~]` Branches now sort by descending max radius for more sensible traversal order
+- `[ ]` Implement `vcarve.ts` — top-level robust orchestrator
 - `[ ]` Multi-feature sequencing with rapids between features
 
 ### VC7. View integration
@@ -304,7 +339,15 @@ Phase 2 can split out:
 ## Risks and Edge Cases
 
 ### Straight skeleton complexity
-The straight skeleton algorithm is non-trivial to implement robustly due to numerical precision at near-coincident events. Consider using an epsilon tolerance for event merging. Robust open-source implementations exist (e.g. CGAL's straight skeleton, or the `polygon-skeletonize` JS library) — evaluate whether to adapt one rather than implementing from scratch.
+The straight skeleton algorithm is non-trivial to implement robustly due to numerical precision at near-coincident events. Use explicit epsilon handling for event merging and edge collapse. For this repo, assume we are implementing this ourselves on top of existing polygon/Clipper infrastructure rather than depending on an external library.
+
+### Rejected approximations
+The following approaches are specifically not considered acceptable end-state solutions for CAMCAM V-carving:
+- coarse raster thinning / image skeletonization
+- contour-parallel paths presented as the primary V-carve mode
+- triangulation dual-graph approximations that create illegal interior crossings
+
+These may be useful as temporary debugging aids, but they are not robust enough for the product we want to ship.
 
 ### Very thin or zero-width regions
 Skeleton radii near zero produce near-zero depth. These branches should be omitted from the toolpath or clamped to the minimum tip depth. Do not attempt to carve regions smaller than the tip diameter.
@@ -316,31 +359,37 @@ When the target feature has interior islands (added `add` features overlapping a
 In very wide strokes, the skeleton center depth will exceed `maxCarveDepth`. All nodes there are clamped. The toolpath will still be generated but the carve floor will be flat, not V-shaped, in those wide areas. This is the expected behavior for the first pass. The correct solution (flat pocket pre-clearing) is a later feature.
 
 ### Performance
-Straight skeleton computation is O(n log n) in the vertex count. For typical engraving text this is fast. For artwork with many vertices, the flattened polygon may be large. Profile the skeleton computation for a 500-vertex polygon and set a practical vertex budget.
+The robust geometric solver must still be practical for text and imported artwork. Profile on:
+- 500-vertex glyph or logo region
+- multi-letter outline text
+- polygon-with-holes examples
+
+Do not accept a solution that requires coarse rasterization or silent internal resolution relaxation to finish.
 
 ---
 
 ## Recommended Build Order
 
-1. VC1 — V-bit tool type (small, unlocks everything else)
-2. VC2 — operation schema and UI (unblocks testing)
-3. VC3 — polygon preparation (reuse existing geometry helpers where possible)
-4. VC4 — straight skeleton (core algorithm; bulk of the work)
-5. VC5 — depth assignment (small, depends on VC4)
-6. VC6 — traversal and toolpath generation (depends on VC4, VC5)
-7. VC7 — view integration (depends on VC6)
-8. VC8 — simulation (depends on VC6; first pass can be approximate)
-9. VC9 — G-code output (verify existing emitter; likely minimal work)
+1. VC3 — polygon preparation hardening
+2. VC4 — geometric skeleton core algorithm
+3. VC5 — depth assignment
+4. VC6 — traversal and toolpath generation
+5. VC7 — view integration
+6. VC8 — simulation
+7. VC9 — G-code output
+8. retire or hide the contour-parallel fallback once the robust solver is trusted
 
 ---
 
 ## Exit Criteria
 
-The first pass is done when:
+This work is done when:
 - User can define a V-bit tool with included angle and tip diameter
 - User can create a `V-Carve` operation targeting one or more closed features
-- The medial axis skeleton is computed and variable-depth toolpath is generated
+- The geometric medial-axis / straight-skeleton is computed and variable-depth toolpath is generated
 - Toolpath is visible in sketch and 3D views
 - Simulation replays the V-carve moves (approximate is acceptable for first pass)
 - Validation clearly rejects open profiles and non-V-bit tools
 - G-code export includes the V-carve moves with correct Z depth variation
+- The result is good enough on serif text and outline artwork that the contour-parallel fallback is no longer the preferred path
+- The robust solver handles realistic text/artwork without requiring hidden internal resolution relaxation or visibly incorrect branch behavior

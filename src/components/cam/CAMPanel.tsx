@@ -1096,10 +1096,16 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind !== 'follow_line' ? (
                     <label className="properties-field">
-                      <span>{selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_skeleton' ? 'Contour Spacing' : 'Stepover Ratio'}</span>
+                      <span>
+                        {selectedOperation.kind === 'v_carve_skeleton'
+                          ? 'Skeleton Resolution'
+                          : selectedOperation.kind === 'v_carve'
+                            ? 'Contour Spacing'
+                            : 'Stepover Ratio'}
+                      </span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}
-                        min={0.01}
+                        min={selectedOperation.kind === 'v_carve_skeleton' ? 0.001 : 0.01}
                         max={1}
                         onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
                       />

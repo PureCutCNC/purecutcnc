@@ -3,6 +3,7 @@ import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { pushRapidAndPlunge, retractToSafe, updateBounds } from './pocket'
 import { resolvePocketRegions } from './resolver'
+import { prepareVCarveRegion } from './vcarve/index'
 
 interface SkeletonCell {
   x: number
@@ -394,9 +395,14 @@ export function generateVCarveSkeletonToolpath(project: Project, operation: Oper
     }
 
     for (const region of band.regions) {
+      const prepared = prepareVCarveRegion(region)
+      if (!prepared) {
+        warnings.push('Skipped a V-carve skeleton region because its prepared polygon was degenerate')
+        continue
+      }
       const skeletonPaths = buildSkeletonPaths(
-        region.outer,
-        region.islands,
+        prepared.outer,
+        prepared.holes,
         band.topZ,
         maxBandDepth,
         slope,
