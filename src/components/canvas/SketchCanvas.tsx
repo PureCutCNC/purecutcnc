@@ -1706,6 +1706,8 @@ function drawCompositeDraft(
       drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
     } else if (segment.type === 'arc') {
       drawArcRadiusMeasurement(ctx, current, segment, vt, units)
+    } else if (segment.type === 'bezier') {
+      drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
     }
     current = segment.to
   }
