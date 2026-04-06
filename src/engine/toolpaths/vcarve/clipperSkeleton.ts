@@ -81,6 +81,37 @@ function pushNode(graph: SkeletonGraph, point: Point, radius: number): void {
   graph.nodes.push({ point: { ...point }, radius })
 }
 
+/**
+ * Emit terminal geometry for a lineage that is ending (collapse or maxRadius).
+ *
+ * Case A — lineage came from a split (fromSplit=true):
+ *   The centroid-path arcs (emitted later from lineage.frames) already trace
+ *   the skeleton arm. Just emit a terminal node at the tip.
+ *
+ * Case B — lineage never split (fromSplit=false):
+ *   The centroid barely moves so the arc sequence is nearly a dot. Instead,
+ *   emit the last surviving polygon boundary as arcs — this polygon IS the
+ *   approximate medial axis for shapes that shrink without splitting (F, T,
+ *   rectangle, circle, triangle).
+ */
+function emitTerminal(graph: SkeletonGraph, lineage: Lineage): void {
+  const last = lineage.frames[lineage.frames.length - 1]
+  if (lineage.fromSplit) {
+    pushNode(graph, last.centroid, last.d)
+  } else {
+    const pts = last.points
+    if (pts.length >= 3) {
+      for (let i = 0; i < pts.length; i++) {
+        pushArc(graph, pts[i], pts[(i + 1) % pts.length], last.d, last.d)
+      }
+    } else if (pts.length === 2) {
+      pushArc(graph, pts[0], pts[1], last.d, last.d)
+    } else {
+      pushNode(graph, last.centroid, last.d)
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Lineage types
 // ---------------------------------------------------------------------------
@@ -88,11 +119,13 @@ function pushNode(graph: SkeletonGraph, point: Point, radius: number): void {
 interface LineageFrame {
   d: number
   centroid: Point
+  points: Point[] // polygon vertices at this frame (for polygon-boundary fallback)
 }
 
 interface Lineage {
   id: number
   frames: LineageFrame[]
+  fromSplit: boolean // true if this lineage was spawned by a split event
 }
 
 // ---------------------------------------------------------------------------
@@ -119,11 +152,14 @@ export function solveClipperSkeleton(
   // are considered collapsed / sliver artifacts and are ignored.
   const minAreaClipper = stepSize * stepSize * scale * scale
 
-  function getValidContours(d: number): Array<{ centroid: Point }> {
+  function getValidContours(d: number): Array<{ centroid: Point; points: Point[] }> {
     const inset = clipperInset(initialPaths, Math.round(d * scale))
     return inset
       .filter(path => clipperPathArea(path) > minAreaClipper)
-      .map(path => ({ centroid: computeCentroid(fromClipperPath(path, scale)) }))
+      .map((path) => {
+        const points = fromClipperPath(path, scale)
+        return { centroid: computeCentroid(points), points }
+      })
   }
 
   // -------------------------------------------------------------------------
@@ -134,9 +170,10 @@ export function solveClipperSkeleton(
 
   let nextId = 0
 
-  let aliveLineages: Lineage[] = firstContours.map(({ centroid }) => ({
+  let aliveLineages: Lineage[] = firstContours.map(({ centroid, points }) => ({
     id: nextId++,
-    frames: [{ d: stepSize, centroid }],
+    frames: [{ d: stepSize, centroid, points }],
+    fromSplit: false,
   }))
 
   // allLineages accumulates every lineage ever created so we can emit arcs at
@@ -199,14 +236,14 @@ export function solveClipperSkeleton(
 
       if (!children || children.length === 0) {
         // ── Collapse: this contour disappeared ──────────────────────────────
-        const last = lineage.frames[lineage.frames.length - 1]
-        pushNode(graph, last.centroid, last.d)
+        emitTerminal(graph, lineage)
         continue
       }
 
       if (children.length === 1) {
         // ── Continuation: one-to-one match ──────────────────────────────────
-        lineage.frames.push({ d, centroid: currContours[children[0]].centroid })
+        const { centroid, points } = currContours[children[0]]
+        lineage.frames.push({ d, centroid, points })
         nextAlive.push(lineage)
         continue
       }
@@ -219,12 +256,14 @@ export function solveClipperSkeleton(
       pushNode(graph, splitFrame.centroid, splitFrame.d)
 
       for (const ci of children) {
+        const { centroid, points } = currContours[ci]
         const child: Lineage = {
           id: nextId++,
           frames: [
-            { d: splitFrame.d, centroid: splitFrame.centroid },
-            { d, centroid: currContours[ci].centroid },
+            { d: splitFrame.d, centroid: splitFrame.centroid, points: splitFrame.points },
+            { d, centroid, points },
           ],
+          fromSplit: true,
         }
         allLineages.push(child)
         nextAlive.push(child)
@@ -235,10 +274,9 @@ export function solveClipperSkeleton(
     if (aliveLineages.length === 0 || d >= maxRadius) break
   }
 
-  // Lineages still alive when we hit maxRadius: emit terminal nodes.
+  // Lineages still alive when we hit maxRadius: emit terminal geometry.
   for (const lineage of aliveLineages) {
-    const last = lineage.frames[lineage.frames.length - 1]
-    pushNode(graph, last.centroid, last.d)
+    emitTerminal(graph, lineage)
   }
 
   // -------------------------------------------------------------------------

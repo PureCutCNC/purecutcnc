@@ -65,11 +65,11 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     }
   }
 
-  if (!(operation.stepover > 0 && operation.stepover <= 1)) {
+  if (!(operation.stepover > 0)) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Operation stepover ratio must be between 0 and 1'],
+      warnings: [...resolved.warnings, 'Contour spacing must be greater than zero'],
       bounds: null,
     }
   }
@@ -86,7 +86,8 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
   }
 
   const safeZ = getOperationSafeZ(project)
-  const stepoverDistance = Math.max(tool.diameter * operation.stepover, 1e-4)
+  // stepover is the absolute contour spacing distance in project units.
+  const stepoverDistance = operation.stepover
   const moves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   let currentPosition: ToolpathPoint | null = null

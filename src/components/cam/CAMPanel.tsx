@@ -1105,8 +1105,7 @@ export function CAMPanel({
                       </span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}
-                        min={selectedOperation.kind === 'v_carve_skeleton' ? 0.001 : 0.01}
-                        max={1}
+                        min={0.001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
                       />
                     </label>

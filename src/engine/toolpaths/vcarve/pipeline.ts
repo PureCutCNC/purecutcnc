@@ -36,10 +36,14 @@ export function buildGeometricVCarveRegionResult(
     return null
   }
 
-  // maxRadius: deepest inscribed circle radius = maxDepth × tan(halfAngle) = maxDepth × slope
+  // maxRadius: explore the full skeleton of the shape. The tool's max depth is
+  // enforced downstream by radiusToDepth — it must not limit how far we trace
+  // the skeleton, or large shapes will stop before their strokes collapse.
+  const { minX, minY, maxX, maxY } = prepared.bounds
+  const regionRadius = Math.hypot(maxX - minX, maxY - minY) / 2
   const rawGraph = solveClipperSkeleton(prepared, {
     stepSize: Math.max(options.segmentLength * 0.5, 0.02),
-    maxRadius: options.maxDepth * options.slope,
+    maxRadius: regionRadius,
   })
 
   const constrainedGraph = constrainSkeletonGraphToRegion(rawGraph, prepared)
