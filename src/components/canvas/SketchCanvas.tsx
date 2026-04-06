@@ -73,7 +73,7 @@ export interface SketchCanvasHandle {
 }
 
 interface DimensionEditState {
-  shape: 'rect' | 'circle' | 'tab' | 'clamp' | 'polygon' | 'composite'
+  shape: 'rect' | 'circle' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite'
   anchor: Point  // for rect-like: anchor corner; for segments: the fromPoint
   signX: number
   signY: number
@@ -1121,6 +1121,7 @@ function drawPendingSplineLoop(
   previewPoint: Point | null,
   vt: ViewTransform,
   closePreview: boolean,
+  units: 'mm' | 'inch',
   previewHighlighted = false,
 ): void {
   if (points.length === 0) return
@@ -1145,6 +1146,13 @@ function drawPendingSplineLoop(
     ctx.globalAlpha = 0.85
     drawPreviewProfile(ctx, profile, vt, 'Pending spline')
     ctx.restore()
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    drawLineLengthMeasurement(ctx, points[index - 1], points[index], vt, units)
+  }
+  if (previewPoint) {
+    drawLineLengthMeasurement(ctx, points[points.length - 1], closePreview ? points[0] : previewPoint, vt, units)
   }
 
   for (let index = 0; index < points.length; index += 1) {
@@ -1553,7 +1561,7 @@ function computeDimensionEditPreviewPoint(
     const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
     return { x: edit.anchor.x + r, y: edit.anchor.y }
   }
-  if (edit.shape === 'polygon' || edit.shape === 'composite') {
+  if (edit.shape === 'polygon' || edit.shape === 'spline' || edit.shape === 'composite') {
     const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
     const angleDeg = parseFloat(edit.angle) || 0
     const angleRad = angleDeg * (Math.PI / 180)
@@ -2760,7 +2768,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : false
       if (pendingAdd.points.length > 0) {
         if (pendingAdd.shape === 'spline') {
-          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, isActiveSnapPoint(currentPreviewPoint))
+          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, project.meta.units, isActiveSnapPoint(currentPreviewPoint))
         } else {
           drawPendingPathLoop(
             ctx,
@@ -4260,7 +4268,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         return
       }
 
-      if (pendingAdd.shape === 'polygon' && pendingAdd.points.length >= 1) {
+      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 1) {
         event.preventDefault()
         const fromPoint = pendingAdd.points[pendingAdd.points.length - 1]
         const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
@@ -4271,7 +4279,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const len = Math.hypot(dx, dy)
           const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
           setDimensionEdit({
-            shape: 'polygon',
+            shape: pendingAdd.shape,
             anchor: fromPoint,
             signX: 1,
             signY: 1,
@@ -4298,6 +4306,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         && (
           (pendingAdd.currentMode === 'line' && !pendingAdd.pendingArcEnd)
           || pendingAdd.currentMode === 'arc'
+          || pendingAdd.currentMode === 'spline'
         )
       ) {
         event.preventDefault()
@@ -4510,7 +4519,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           if (!edit) return
           const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
           const pendingAdd = pendingAddRef.current
-          if (edit.shape === 'polygon' && pendingAdd?.shape === 'polygon') {
+          if ((edit.shape === 'polygon' || edit.shape === 'spline') && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')) {
             addPendingPolygonPoint(pt)
             setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
             setDimensionEdit(null)
@@ -4553,7 +4562,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
 
-        if (dimensionEdit.shape === 'polygon' || dimensionEdit.shape === 'composite') {
+        if (dimensionEdit.shape === 'polygon' || dimensionEdit.shape === 'spline' || dimensionEdit.shape === 'composite') {
           const fromC = worldToCanvas(dimensionEdit.anchor, vt)
           const toC = worldToCanvas(previewPt, vt)
           const rawDx = toC.cx - fromC.cx
@@ -4748,10 +4757,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? pendingAdd.points.length === 0
                 ? `Click to place the first ${pendingAdd.shape} control point.`
                 : pendingAdd.points.length < 2
-                  ? `Click to add one more control point.${pendingAdd.shape !== 'spline' ? ' Press Tab to type length/angle.' : ''}`
-                  : pendingAdd.shape === 'spline'
-                    ? 'Click to add control points. Click the first point to close, or press Enter / double-click to finish open.'
-                    : 'Click to add vertices. Press Tab to type length/angle. Click the first point to close, or press Enter / double-click to finish open.'
+                  ? 'Click to add one more control point. Press Tab to type length/angle.'
+                  : 'Click to add control points. Press Tab to type length/angle. Click the first point to close, or press Enter / double-click to finish open.'
             : pendingAdd.shape === 'origin'
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
             : pendingAdd.shape === 'text'
@@ -4779,7 +4786,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                             ? 'Click a third point on the arc to define curvature. Press Tab to type position, Backspace to undo.'
                             : 'Click to place the arc end point, then click again to define the arc. Press Tab to type position, L or S to switch modes.'
                           : pendingAdd.currentMode === 'spline'
-                            ? 'Click to add a spline segment endpoint. Click the first point to close, or press Enter to finish open.'
+                            ? 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'
                             : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
             {' '}Press <kbd>Esc</kbd> to cancel.
           </div>
