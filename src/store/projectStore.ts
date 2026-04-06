@@ -54,6 +54,7 @@ import type {
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
 import {
+  featureHasClosedGeometry,
   generateTextShapes,
   getTextFrameProfile,
   normalizeTextFontId,
@@ -2030,6 +2031,10 @@ function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
       return 'Pocket'
+    case 'v_carve':
+      return 'V-Carve'
+    case 'v_carve_skeleton':
+      return 'V-Carve Skeleton'
     case 'edge_route_inside':
       return 'Edge Route Inside'
     case 'edge_route_outside':
@@ -2083,6 +2088,22 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
   }
 
+  if (kind === 'v_carve' || kind === 'v_carve_skeleton') {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+  }
+
   if (target.source !== 'features' || target.featureIds.length === 0) {
     return false
   }
@@ -2103,7 +2124,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_skeleton'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -2146,6 +2167,7 @@ function defaultOperationForTarget(
     finishWalls: true,
     finishFloor: true,
     carveDepth: convertLength(1, 'mm', project.meta.units),
+    maxCarveDepth: convertLength(1, 'mm', project.meta.units),
   }
 }
 
@@ -2154,6 +2176,13 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
     const firstFeature = project.features[0]
     return firstFeature
       ? { source: 'features', featureIds: [firstFeature.id] }
+      : { source: 'stock' }
+  }
+
+  if (kind === 'v_carve' || kind === 'v_carve_skeleton') {
+    const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+    return firstSubtractFeature
+      ? { source: 'features', featureIds: [firstSubtractFeature.id] }
       : { source: 'stock' }
   }
 

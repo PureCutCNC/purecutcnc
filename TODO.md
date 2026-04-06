@@ -377,6 +377,17 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - This is a follow-on carving mode, not part of the current follow-line implementation.
   - It likely needs tool-shape-aware path generation rather than just simulation support.
 
+### Proper geometric V-carve solver
+- Status: Open
+- Priority: High
+- Summary: Implement the real robust geometric V-carve solver and retire the current approximate skeleton experiments.
+- Notes:
+  - The current contour-parallel V-carve works, but it requires tight contour spacing and produces a very busy toolpath.
+  - Approximate skeleton experiments are not good enough for the main workflow.
+  - The real target is a robust geometric medial-axis / straight-skeleton implementation that works on serif text and outline artwork.
+  - Keep the contour-parallel fallback only until the robust solver is trusted.
+  - Long term, this should become the preferred V-carve operation for outline text and artwork.
+
 ### Follow-line ordering / linking refinement
 - Status: Open
 - Priority: Low

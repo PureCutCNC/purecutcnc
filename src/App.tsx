@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
-import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath } from './engine/toolpaths'
+import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generateGeometricVCarveToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
 import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation'
@@ -144,6 +144,14 @@ function App() {
 
       if (operation.kind === 'pocket') {
         return applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)), operation)
+      }
+
+      if (operation.kind === 'v_carve') {
+        return applyClampWarnings(project, generateVCarveToolpath(project, operation), operation)
+      }
+
+      if (operation.kind === 'v_carve_skeleton') {
+        return applyClampWarnings(project, generateGeometricVCarveToolpath(project, operation), operation)
       }
 
       if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
