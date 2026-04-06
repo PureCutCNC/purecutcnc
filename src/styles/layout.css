@@ -919,6 +919,27 @@
   border-color: var(--accent);
 }
 
+.sketch-dim-input {
+  position: absolute;
+  z-index: 5;
+  font: 11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  text-align: center;
+  color: rgba(245, 216, 183, 0.96);
+  background: rgba(15, 21, 29, 0.92);
+  border: 1px solid rgba(239, 188, 122, 0.65);
+  border-radius: 5px;
+  outline: none;
+  padding: 0 6px;
+  height: 18px;
+  width: 72px;
+  box-sizing: border-box;
+}
+
+.sketch-dim-input:focus {
+  border-color: rgba(239, 188, 122, 0.95);
+  box-shadow: 0 0 0 2px rgba(239, 188, 122, 0.18);
+}
+
 .feature-tree-panel {
   padding: 4px 6px 8px;
 }

@@ -20,7 +20,7 @@ import {
 } from '../../types/project'
 import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock, Tab } from '../../types/project'
 import type { BackdropImage } from '../../types/project'
-import { convertLength, formatLength } from '../../utils/units'
+import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
 const PADDING = 42
 const NODE_RADIUS = 5
@@ -70,6 +70,19 @@ interface SketchViewState {
 
 export interface SketchCanvasHandle {
   zoomToModel: () => void
+}
+
+interface DimensionEditState {
+  shape: 'rect' | 'circle' | 'tab' | 'clamp' | 'polygon' | 'composite'
+  anchor: Point  // for rect-like: anchor corner; for segments: the fromPoint
+  signX: number
+  signY: number
+  activeField: 'width' | 'height' | 'radius' | 'length' | 'angle'
+  width: string
+  height: string
+  radius: string
+  length: string
+  angle: string  // degrees
 }
 
 function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
@@ -1532,6 +1545,31 @@ function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point
   }
 }
 
+function computeDimensionEditPreviewPoint(
+  edit: DimensionEditState,
+  units: 'mm' | 'inch',
+): Point {
+  if (edit.shape === 'circle') {
+    const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
+    return { x: edit.anchor.x + r, y: edit.anchor.y }
+  }
+  if (edit.shape === 'polygon' || edit.shape === 'composite') {
+    const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
+    const angleDeg = parseFloat(edit.angle) || 0
+    const angleRad = angleDeg * (Math.PI / 180)
+    return {
+      x: edit.anchor.x + len * Math.cos(angleRad),
+      y: edit.anchor.y + len * Math.sin(angleRad),
+    }
+  }
+  const w = Math.max(parseLengthInput(edit.width, units) ?? 0, 0)
+  const h = Math.max(parseLengthInput(edit.height, units) ?? 0, 0)
+  return {
+    x: edit.anchor.x + edit.signX * w,
+    y: edit.anchor.y + edit.signY * h,
+  }
+}
+
 function buildPendingProfile(
   pendingAdd: Extract<NonNullable<ReturnType<typeof useProjectStore.getState>['pendingAdd']>, { shape: 'rect' | 'circle' | 'tab' | 'clamp' }>,
   previewPoint: Point,
@@ -2066,7 +2104,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
+  const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
+  const dimensionEditRef = useRef<DimensionEditState | null>(null)
+  const widthInputRef = useRef<HTMLInputElement>(null)
+  const heightInputRef = useRef<HTMLInputElement>(null)
+  const radiusInputRef = useRef<HTMLInputElement>(null)
 
   const {
     project,
@@ -2154,6 +2197,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   collidingClampIdsRef.current = collidingClampIds
   snapSettingsRef.current = snapSettings
   copyCountDraftRef.current = copyCountDraft
+  dimensionEditRef.current = dimensionEdit
 
   function updateActiveSnap(nextSnap: ResolvedSnap | null) {
     activeSnapRef.current = nextSnap?.mode ? nextSnap : null
@@ -2453,7 +2497,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft])
+  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -2695,16 +2739,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ctx.restore()
     }
 
+    const dimensionEdit = dimensionEditRef.current
     const currentPreviewPoint =
-      pendingAdd?.shape === 'origin'
-        ? (
-            originPreviewPointRef.current && originPreviewPointRef.current.session === pendingAdd.session
-              ? originPreviewPointRef.current.point
-              : null
-          )
-        : pendingAdd && pendingPreviewPointRef.current?.session === pendingAdd.session
-          ? pendingPreviewPointRef.current.point
-          : null
+      dimensionEdit
+        ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
+        : pendingAdd?.shape === 'origin'
+          ? (
+              originPreviewPointRef.current && originPreviewPointRef.current.session === pendingAdd.session
+                ? originPreviewPointRef.current.point
+                : null
+            )
+          : pendingAdd && pendingPreviewPointRef.current?.session === pendingAdd.session
+            ? pendingPreviewPointRef.current.point
+            : null
 
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
       const closePreview =
@@ -3174,6 +3221,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     return () => window.cancelAnimationFrame(frame)
   }, [copyCountPromptActive])
+
+  useEffect(() => {
+    if (!dimensionEdit) return
+    const inputRef =
+      dimensionEdit.activeField === 'width' ? widthInputRef
+      : dimensionEdit.activeField === 'height' ? heightInputRef
+      : dimensionEdit.activeField === 'radius' ? radiusInputRef
+      : dimensionEdit.activeField === 'length' ? widthInputRef
+      : heightInputRef  // angle
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true })
+      inputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [dimensionEdit?.activeField, !dimensionEdit])
+
+  useEffect(() => {
+    if (!pendingAdd) {
+      setDimensionEdit(null)
+    }
+  }, [pendingAdd])
 
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
@@ -3855,6 +3923,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (dimensionEditRef.current) {
+      setDimensionEdit(null)
+      canvasRef.current?.focus({ preventScroll: true })
+      return
+    }
+
     if (pendingAdd) {
       if (!pickedPoint) {
         return
@@ -4134,6 +4208,129 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
+
+    if (event.key === 'Tab' && pendingAdd) {
+      const currentEdit = dimensionEditRef.current
+      const units = projectRef.current.meta.units
+
+      if (
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        && pendingAdd.anchor
+      ) {
+        event.preventDefault()
+        const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+
+        if (!currentEdit) {
+          if (pendingAdd.shape === 'circle') {
+            const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+            setDimensionEdit({
+              shape: 'circle',
+              anchor: pendingAdd.anchor,
+              signX: 1,
+              signY: 1,
+              activeField: 'radius',
+              width: '',
+              height: '',
+              radius: formatLength(r, units),
+              length: '',
+              angle: '',
+            })
+          } else {
+            const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
+            const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
+            setDimensionEdit({
+              shape: pendingAdd.shape,
+              anchor: pendingAdd.anchor,
+              signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1,
+              signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1,
+              activeField: 'width',
+              width: formatLength(w, units),
+              height: formatLength(h, units),
+              radius: '',
+              length: '',
+              angle: '',
+            })
+          }
+        } else if (currentEdit.shape !== 'circle' && currentEdit.activeField === 'width') {
+          setDimensionEdit({ ...currentEdit, activeField: 'height' })
+        } else {
+          setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (pendingAdd.shape === 'polygon' && pendingAdd.points.length >= 1) {
+        event.preventDefault()
+        const fromPoint = pendingAdd.points[pendingAdd.points.length - 1]
+        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
+
+        if (!currentEdit) {
+          const dx = previewPoint.x - fromPoint.x
+          const dy = previewPoint.y - fromPoint.y
+          const len = Math.hypot(dx, dy)
+          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
+          setDimensionEdit({
+            shape: 'polygon',
+            anchor: fromPoint,
+            signX: 1,
+            signY: 1,
+            activeField: 'length',
+            width: '',
+            height: '',
+            radius: '',
+            length: formatLength(len, units),
+            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
+          })
+        } else if (currentEdit.activeField === 'length') {
+          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+        } else {
+          setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (
+        pendingAdd.shape === 'composite'
+        && pendingAdd.start
+        && !pendingAdd.closed
+        && (
+          (pendingAdd.currentMode === 'line' && !pendingAdd.pendingArcEnd)
+          || pendingAdd.currentMode === 'arc'
+        )
+      ) {
+        event.preventDefault()
+        const fromPoint = pendingAdd.lastPoint ?? pendingAdd.start
+        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
+
+        if (!currentEdit) {
+          const dx = previewPoint.x - fromPoint.x
+          const dy = previewPoint.y - fromPoint.y
+          const len = Math.hypot(dx, dy)
+          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
+          setDimensionEdit({
+            shape: 'composite',
+            anchor: fromPoint,
+            signX: 1,
+            signY: 1,
+            activeField: 'length',
+            width: '',
+            height: '',
+            radius: '',
+            length: formatLength(len, units),
+            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
+          })
+        } else if (currentEdit.activeField === 'length') {
+          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+        } else {
+          setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+    }
+
     if (
       event.key === 'Enter'
       && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
@@ -4176,6 +4373,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       originPreviewPointRef.current = null
       cancelPendingAdd()
       setPendingPreviewPointRef(null)
+      setDimensionEdit(null)
       return
     }
 
@@ -4301,6 +4499,187 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onContextMenu={handleContextMenu}
         tabIndex={0}
       />
+      {dimensionEdit && pendingAdd && (() => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const previewPt = computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
+
+        function commitDimensionEdit() {
+          const edit = dimensionEditRef.current
+          if (!edit) return
+          const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
+          const pendingAdd = pendingAddRef.current
+          if (edit.shape === 'polygon' && pendingAdd?.shape === 'polygon') {
+            addPendingPolygonPoint(pt)
+            setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
+            setDimensionEdit(null)
+            canvasRef.current?.focus({ preventScroll: true })
+          } else if (edit.shape === 'composite' && pendingAdd?.shape === 'composite') {
+            addPendingCompositePoint(pt)
+            setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
+            setDimensionEdit(null)
+            canvasRef.current?.focus({ preventScroll: true })
+          } else {
+            placePendingAddAt(pt)
+            setPendingPreviewPointRef(null)
+            setDimensionEdit(null)
+          }
+        }
+
+        function makeDimInputKeyDown(field: 'width' | 'height' | 'radius' | 'length' | 'angle') {
+          return (e: KeyboardEvent<HTMLInputElement>) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitDimensionEdit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setDimensionEdit(null)
+              canvasRef.current?.focus({ preventScroll: true })
+            } else if (e.key === 'Tab') {
+              e.preventDefault()
+              const edit = dimensionEditRef.current
+              if (!edit) return
+              if (field === 'width') {
+                setDimensionEdit({ ...edit, activeField: 'height' })
+              } else if (field === 'length') {
+                setDimensionEdit({ ...edit, activeField: 'angle' })
+              } else {
+                setDimensionEdit(null)
+                canvasRef.current?.focus({ preventScroll: true })
+              }
+            }
+          }
+        }
+
+        if (dimensionEdit.shape === 'polygon' || dimensionEdit.shape === 'composite') {
+          const fromC = worldToCanvas(dimensionEdit.anchor, vt)
+          const toC = worldToCanvas(previewPt, vt)
+          const rawDx = toC.cx - fromC.cx
+          const rawDy = toC.cy - fromC.cy
+          const rawLen = Math.hypot(rawDx, rawDy)
+          const displayLen = Math.max(rawLen, 40)
+          const dirX = rawLen > 0 ? rawDx / rawLen : 1
+          const dirY = rawLen > 0 ? rawDy / rawLen : 0
+          const midCx = fromC.cx + dirX * displayLen / 2
+          const midCy = fromC.cy + dirY * displayLen / 2
+          const perpX = -dirY
+          const perpY = dirX
+          const rawAngle = Math.atan2(dirY, dirX)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+          const lengthLabelX = midCx + perpX * 14
+          const lengthLabelY = midCy + perpY * 14
+          const angleLabelX = midCx + perpX * 36
+          const angleLabelY = midCy + perpY * 36
+          return (
+            <>
+              <input
+                key="length"
+                ref={widthInputRef}
+                className="sketch-dim-input"
+                style={{ left: lengthLabelX, top: lengthLabelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+                value={dimensionEdit.length}
+                onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
+                onKeyDown={makeDimInputKeyDown('length')}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <input
+                key="angle"
+                ref={heightInputRef}
+                className="sketch-dim-input"
+                style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+                value={dimensionEdit.angle}
+                onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
+                onKeyDown={makeDimInputKeyDown('angle')}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            </>
+          )
+        }
+
+        if (
+          pendingAdd.shape !== 'rect' && pendingAdd.shape !== 'circle'
+          && pendingAdd.shape !== 'tab' && pendingAdd.shape !== 'clamp'
+        ) return null
+        if (!pendingAdd.anchor) return null
+
+        if (dimensionEdit.shape === 'circle') {
+          const anchorC = worldToCanvas(dimensionEdit.anchor, vt)
+          const previewC = worldToCanvas(previewPt, vt)
+          const rawDx = previewC.cx - anchorC.cx
+          const rawDy = previewC.cy - anchorC.cy
+          const rawLen = Math.hypot(rawDx, rawDy)
+          // Use a minimum display radius so the input stays visible while typing (e.g. "0.75")
+          const displayLen = Math.max(rawLen, 40)
+          const dirX = rawLen > 0 ? rawDx / rawLen : 1
+          const dirY = rawLen > 0 ? rawDy / rawLen : 0
+          const displayDx = dirX * displayLen
+          const displayDy = dirY * displayLen
+          const midX = anchorC.cx + displayDx / 2
+          const midY = anchorC.cy + displayDy / 2
+          const rawAngle = Math.atan2(displayDy, displayDx)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+          const labelX = midX - (displayDy / displayLen) * 11
+          const labelY = midY + (displayDx / displayLen) * 11
+          return (
+            <input
+              key="radius"
+              ref={radiusInputRef}
+              className="sketch-dim-input"
+              style={{ left: labelX, top: labelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+              value={dimensionEdit.radius}
+              onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+              onKeyDown={makeDimInputKeyDown('radius')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          )
+        }
+
+        const ax = dimensionEdit.anchor.x
+        const ay = dimensionEdit.anchor.y
+        const px = previewPt.x
+        const py = previewPt.y
+        const rectX = Math.min(ax, px)
+        const rectY = Math.min(ay, py)
+        const rectW = Math.abs(px - ax)
+        const rectH = Math.abs(py - ay)
+
+        const topLeft = worldToCanvas({ x: rectX, y: rectY }, vt)
+        const topRight = worldToCanvas({ x: rectX + rectW, y: rectY }, vt)
+        const widthLabelX = (topLeft.cx + topRight.cx) / 2
+        const widthLabelY = topLeft.cy + 11
+
+        const rightTop = worldToCanvas({ x: rectX + rectW, y: rectY }, vt)
+        const rightBottom = worldToCanvas({ x: rectX + rectW, y: rectY + rectH }, vt)
+        const heightLabelX = rightTop.cx - 11
+        const heightLabelY = (rightTop.cy + rightBottom.cy) / 2
+
+        return (
+          <>
+            <input
+              key="width"
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: widthLabelX, top: widthLabelY, transform: 'translate(-50%, -50%)' }}
+              value={dimensionEdit.width}
+              onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+              onKeyDown={makeDimInputKeyDown('width')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <input
+              key="height"
+              ref={heightInputRef}
+              className="sketch-dim-input sketch-dim-input--rotated"
+              style={{ left: heightLabelX, top: heightLabelY, transform: 'translate(-50%, -50%) rotate(-90deg)' }}
+              value={dimensionEdit.height}
+              onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
+              onKeyDown={makeDimInputKeyDown('height')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </>
+        )
+      })()}
       {selection.mode === 'sketch_edit' && (
         <div className="sketch-edit-banner">
           <div>
@@ -4369,22 +4748,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? pendingAdd.points.length === 0
                 ? `Click to place the first ${pendingAdd.shape} control point.`
                 : pendingAdd.points.length < 2
-                  ? 'Click to add one more control point.'
+                  ? `Click to add one more control point.${pendingAdd.shape !== 'spline' ? ' Press Tab to type length/angle.' : ''}`
                   : pendingAdd.shape === 'spline'
                     ? 'Click to add control points. Click the first point to close, or press Enter / double-click to finish open.'
-                    : 'Click to add vertices. Click the first point to close, or press Enter / double-click to finish open.'
+                    : 'Click to add vertices. Press Tab to type length/angle. Click the first point to close, or press Enter / double-click to finish open.'
             : pendingAdd.shape === 'origin'
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
             : pendingAdd.shape === 'text'
               ? 'Move the mouse to preview the text, then click to place it.'
             : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
-                ? 'Move the mouse to size the rectangle, then click the opposite corner.'
+                ? 'Move the mouse to size the rectangle, then click the opposite corner. Press Tab to type dimensions.'
                 : pendingAdd.shape === 'tab'
-                  ? 'Move the mouse to size the tab footprint, then click the opposite corner.'
+                  ? 'Move the mouse to size the tab footprint, then click the opposite corner. Press Tab to type dimensions.'
                 : pendingAdd.shape === 'clamp'
-                  ? 'Move the mouse to size the clamp footprint, then click the opposite corner.'
-                : 'Move the mouse to set the radius, then click again to confirm the circle.'
+                  ? 'Move the mouse to size the clamp footprint, then click the opposite corner. Press Tab to type dimensions.'
+                : 'Move the mouse to set the radius, then click again to confirm the circle. Press Tab to type the radius.'
               : pendingAdd.shape === 'rect'
                 ? 'Click the sketch to set the rectangle corner, then click again to size it.'
                 : pendingAdd.shape === 'tab'
@@ -4397,11 +4776,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       ? 'Click to place the first composite point. Press L for line, A for arc, or S for spline.'
                       : pendingAdd.currentMode === 'arc'
                           ? pendingAdd.pendingArcEnd
-                            ? 'Click a third point on the arc to define curvature. Press Backspace to undo.'
-                            : 'Click to place the arc end point, then click again to define the arc. Press L or S to switch modes.'
+                            ? 'Click a third point on the arc to define curvature. Press Tab to type position, Backspace to undo.'
+                            : 'Click to place the arc end point, then click again to define the arc. Press Tab to type position, L or S to switch modes.'
                           : pendingAdd.currentMode === 'spline'
                             ? 'Click to add a spline segment endpoint. Click the first point to close, or press Enter to finish open.'
-                            : 'Click to add connected line segments. Click the first point to close, or press Enter to finish open.'}
+                            : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
             {' '}Press <kbd>Esc</kbd> to cancel.
           </div>
           {pendingDraftHasSelfIntersection ? (
