@@ -243,6 +243,7 @@ export interface ProjectStore {
   placePendingAddAt: (point: Point) => void
   placePendingTextAt: (point: Point) => string[]
   addPendingPolygonPoint: (point: Point) => void
+  undoPendingPolygonPoint: () => void
   completePendingPolygon: () => void
   completePendingOpenPath: () => void
   setPendingCompositeMode: (mode: CompositeSegmentMode) => void
@@ -5869,6 +5870,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ? { ...s.pendingAdd, points: [...s.pendingAdd.points, point] }
           : s.pendingAdd,
     })),
+
+  undoPendingPolygonPoint: () =>
+    set((s) => {
+      if (!s.pendingAdd || !('points' in s.pendingAdd)) {
+        return {}
+      }
+      return {
+        pendingAdd: {
+          ...s.pendingAdd,
+          points: s.pendingAdd.points.slice(0, -1),
+        },
+      }
+    }),
 
   completePendingPolygon: () => {
     const state = get()

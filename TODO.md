@@ -29,14 +29,6 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Flat shading fixed the worst artifacts.
   - The final look likely still needs another pass once the modeling flow stabilizes.
 
-### Spline creation backspace support
-- Status: Open
-- Priority: Medium
-- Summary: Spline creation tool does not support backspace for deleting the last added node.
-- Notes:
-  - This functionality already exists in the composite feature tool.
-  - Revisit the spline placement interaction to handle the backspace key by removing the last placed point.
-
 ### Origin placement preview responsiveness
 - Status: Open
 - Priority: Low
@@ -434,6 +426,10 @@ This file tracks follow-up work, open issues, and design questions that come up 
     - consider moving simulation replay/mesh generation off the main thread
 
 ## Done
+
+### Spline creation backspace support
+- Status: Done
+- Summary: Spline creation tool now supports backspace to remove the last placed node, matching the composite feature tool behavior.
 
 ### Ball endmill / V-bit simulation
 - Status: Done

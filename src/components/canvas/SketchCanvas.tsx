@@ -2154,6 +2154,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
+    undoPendingPolygonPoint,
     completePendingPolygon,
     completePendingOpenPath,
     cancelPendingAdd,
@@ -4340,6 +4341,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
         return
       }
+    }
+
+    if (
+      event.key === 'Backspace'
+      && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
+      && !event.repeat
+    ) {
+      event.preventDefault()
+      undoPendingPolygonPoint()
+      return
     }
 
     if (
