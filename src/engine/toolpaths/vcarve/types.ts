@@ -19,49 +19,9 @@ export interface PreparedVCarveRegion {
   bounds: VCarveBounds
 }
 
-export interface WavefrontEdge {
-  index: number
-  start: Point
-  end: Point
-  direction: Point
-  inwardNormal: Point
-  length: number
-}
-
-export interface WavefrontVertex {
-  index: number
-  point: Point
-  prevIndex: number
-  nextIndex: number
-  reflex: boolean
-  bisectorDirection: Point
-  speedScale: number
-}
-
-export interface WavefrontRing {
-  hole: boolean
-  points: Point[]
-  edges: WavefrontEdge[]
-  vertices: WavefrontVertex[]
-}
-
 export interface SkeletonNode {
   point: Point
   radius: number
-}
-
-export interface EdgeEventCandidate {
-  startVertexIndex: number
-  endVertexIndex: number
-  time: number
-  point: Point
-}
-
-export interface SplitEventCandidate {
-  vertexIndex: number
-  edgeIndex: number
-  time: number
-  point: Point
 }
 
 export interface SkeletonArc {
