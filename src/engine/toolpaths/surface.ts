@@ -4,6 +4,7 @@ import type {
   ClipperPath,
   PocketToolpathResult,
   ResolvedPocketBand,
+  ResolvedPocketRegion,
   ResolvedPocketResult,
   ToolpathBounds,
   ToolpathMove,
@@ -37,6 +38,18 @@ interface PolyTreeNode {
   Contour(): ClipperPath
   Childs?: () => PolyTreeNode[]
   m_Childs?: PolyTreeNode[]
+}
+
+interface SurfaceCleanBand extends ResolvedPocketBand {
+  subjectPaths: ClipperPath[]
+  protectedPaths: ClipperPath[]
+}
+
+interface SurfaceCleanResult {
+  operationId: string
+  units: ResolvedPocketResult['units']
+  bands: SurfaceCleanBand[]
+  warnings: string[]
 }
 
 function executeClip(
@@ -79,23 +92,34 @@ function flattenProfileToClipperPath(profile: SketchFeature['sketch']['profile']
   return toClipperPath(normalizeWinding(flattened.points, false), scale)
 }
 
-function buildSurfaceCoverageRegions(regions: ResolvedPocketBand['regions'], toolRadius: number) {
+function buildSurfaceCoverageRegions(
+  subjectPaths: ClipperPath[],
+  protectedPaths: ClipperPath[],
+  regions: ResolvedPocketBand['regions'],
+  toolRadius: number,
+): ResolvedPocketRegion[] {
   const scale = DEFAULT_CLIPPER_SCALE
-  const expandedRegions = regions.flatMap((region) => {
-    const outerPath = toClipperPath(normalizeWinding(region.outer, false), scale)
-    const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
 
-    const expandedOuterPaths = offsetPaths([outerPath], toolRadius * scale)
-    if (expandedOuterPaths.length === 0) {
-      return []
-    }
+  if (subjectPaths.length === 0) {
+    return []
+  }
 
-    const expandedIslandPaths = offsetPaths(islandPaths, toolRadius * scale)
-    const polyTree = executeClip(expandedOuterPaths, expandedIslandPaths, ClipperLib.ClipType.ctDifference)
-    return polyTreeToRegions(polyTree, region.targetFeatureIds, region.islandFeatureIds, scale)
-  })
+  // Expand the original subject and protected paths before subtraction so the
+  // tool centre path respects the true protected-feature boundary rather than
+  // the already-clipped edge.  AllowedArea = Offset(Subject, +r) - Offset(Protected, +r)
+  const expandedSubjectPaths = offsetPaths(subjectPaths, toolRadius * scale)
+  if (expandedSubjectPaths.length === 0) {
+    return []
+  }
 
-  return expandedRegions.filter((region) => region.outer.length >= 3)
+  const expandedProtectedPaths = offsetPaths(protectedPaths, toolRadius * scale)
+  const polyTree = executeClip(expandedSubjectPaths, expandedProtectedPaths, ClipperLib.ClipType.ctDifference)
+
+  const targetFeatureIds = [...new Set(regions.flatMap((r) => r.targetFeatureIds))]
+  const islandFeatureIds = [...new Set(regions.flatMap((r) => r.islandFeatureIds))]
+
+  return polyTreeToRegions(polyTree, targetFeatureIds, islandFeatureIds, scale)
+    .filter((region) => region.outer.length >= 3)
 }
 
 function pointEpsilonEqual(a: Point, b: Point): boolean {
@@ -238,7 +262,7 @@ function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
   return moves
 }
 
-function resolveSurfaceCleanRegions(project: Project, operation: Operation): ResolvedPocketResult {
+function resolveSurfaceCleanRegions(project: Project, operation: Operation): SurfaceCleanResult {
   const warnings: string[] = []
 
   if (operation.kind !== 'surface_clean') {
@@ -301,7 +325,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
 
   const depthLevels = [...new Set([project.stock.thickness, ...closedTargetFeatures.map(({ top }) => top)])]
     .sort((a, b) => b - a)
-  const bands: ResolvedPocketBand[] = []
+  const bands: SurfaceCleanBand[] = []
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
 
   for (let index = 0; index < depthLevels.length - 1; index += 1) {
@@ -337,6 +361,8 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
       targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
       islandFeatureIds: protectedFeatures.map(({ feature }) => feature.id),
       regions,
+      subjectPaths,
+      protectedPaths,
     })
   }
 
@@ -353,7 +379,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Res
 }
 
 function generateRoughBandMoves(
-  band: ResolvedPocketBand,
+  band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
   stepdown: number,
@@ -373,7 +399,7 @@ function generateRoughBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const coverageRegions = buildSurfaceCoverageRegions(band.regions, toolRadius)
+  const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
   const initialInset = radialLeave
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
@@ -407,7 +433,7 @@ function generateRoughBandMoves(
 }
 
 function generateFinishBandMoves(
-  band: ResolvedPocketBand,
+  band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
   _stepdown: number,
@@ -435,7 +461,7 @@ function generateFinishBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const coverageRegions = buildSurfaceCoverageRegions(band.regions, toolRadius)
+  const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
