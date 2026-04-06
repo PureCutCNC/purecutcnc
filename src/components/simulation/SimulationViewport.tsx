@@ -66,6 +66,7 @@ interface SimulationViewportProps {
   selectedClampId: string | null
   collidingClampIds: string[]
   origin: MachineOrigin
+  stockColor?: string
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
 }
@@ -332,6 +333,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   selectedClampId,
   collidingClampIds,
   origin,
+  stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
 }, ref) {
@@ -494,7 +496,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     const geometry = buildSimulationGeometry(simulation.grid)
     const material = new THREE.MeshStandardMaterial({
-      color: 0xb5beca,
+      color: stockColor ? new THREE.Color(stockColor) : 0xb5beca,
       roughness: 0.86,
       metalness: 0.05,
       flatShading: true,

@@ -593,6 +593,7 @@ function App() {
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin}
+            stockColor={project.stock.color}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
           />
