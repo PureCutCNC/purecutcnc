@@ -6,10 +6,11 @@ import type {
   SplitEventCandidate,
   WavefrontRing,
 } from './types'
-import { add, cross, distance, dot, leftNormal, rayLineIntersection, removeCollinearVertices, rightNormal, scale, sub } from './geometry'
+import { add, cross, distance, dot, leftNormal, rightNormal, scale, sub } from './geometry'
 import { buildInitialWavefront, buildWavefrontRing } from './wavefront'
 
 const EVENT_EPSILON = 1e-7
+const IMMEDIATE_SPLIT_EPSILON = 1e-5
 const ITERATION_MULTIPLIER = 24
 const MIN_ITERATIONS = 512
 
@@ -36,6 +37,11 @@ interface SolverState {
   nextVertexId: number
   rings: ActiveRing[]
   graph: SkeletonGraph
+}
+
+interface TaggedLoopPoint {
+  point: Point
+  sourceId: number | null
 }
 
 function moveVertex(vertex: ActiveVertex, delta: number): Point {
@@ -68,37 +74,6 @@ function clonePoint(point: Point): Point {
 function pointKey(point: Point): string {
   const scale = 1 / EVENT_EPSILON
   return `${Math.round(point.x * scale)}:${Math.round(point.y * scale)}`
-}
-
-function removeCollinearVerticesPreserving(points: Point[], preserved: Set<string>): Point[] {
-  const cleaned = removeCollinearVertices(points)
-  if (preserved.size === 0 || cleaned.length === points.length) {
-    return cleaned
-  }
-
-  const ring = points
-  if (ring.length < 3) {
-    return ring
-  }
-
-  const result: Point[] = []
-  for (let index = 0; index < ring.length; index += 1) {
-    const prev = ring[(index - 1 + ring.length) % ring.length]
-    const current = ring[index]
-    const next = ring[(index + 1) % ring.length]
-    if (preserved.has(pointKey(current))) {
-      result.push(current)
-      continue
-    }
-    const a = sub(current, prev)
-    const b = sub(next, current)
-    if (Math.abs(cross(a, b)) <= EVENT_EPSILON && dot(a, b) >= 0) {
-      continue
-    }
-    result.push(current)
-  }
-
-  return result.length >= 3 ? result : ring
 }
 
 function buildInitialState(region: PreparedVCarveRegion): SolverState {
@@ -160,36 +135,43 @@ function ringVertexOrder(ring: ActiveRing): ActiveVertex[] {
   return ordered.length === ring.vertices.length ? ordered : ring.vertices
 }
 
-function edgeEventForVertex(ring: ActiveRing, vertex: ActiveVertex): EdgeEventCandidate | null {
-  if (!Number.isFinite(vertex.speedScale) || vertex.speedScale <= 0) {
-    return null
-  }
-  const map = getVertexMap(ring)
-  const prev = map.get(vertex.prevId)
-  const next = map.get(vertex.nextId)
-  if (!prev || !next) {
-    return null
-  }
-
-  const left = rayLineIntersection(vertex.point, vertex.bisectorDirection, prev.point, prev.bisectorDirection)
-  const right = rayLineIntersection(vertex.point, vertex.bisectorDirection, next.point, next.bisectorDirection)
-  const candidate = [left, right]
-    .filter((hit): hit is NonNullable<typeof hit> => hit !== null)
-    .filter((hit) => hit.rayT > EVENT_EPSILON)
-    .sort((a, b) => a.rayT - b.rayT)[0]
-  if (!candidate) {
+function edgeEventForEdge(startVertex: ActiveVertex, endVertex: ActiveVertex): EdgeEventCandidate | null {
+  if (
+    !Number.isFinite(startVertex.speedScale)
+    || startVertex.speedScale <= 0
+    || !Number.isFinite(endVertex.speedScale)
+    || endVertex.speedScale <= 0
+  ) {
     return null
   }
 
-  const time = candidate.rayT / vertex.speedScale
+  const startVelocity = scale(startVertex.bisectorDirection, startVertex.speedScale)
+  const endVelocity = scale(endVertex.bisectorDirection, endVertex.speedScale)
+  const deltaPoint = sub(endVertex.point, startVertex.point)
+  const deltaVelocity = sub(endVelocity, startVelocity)
+  const deltaVelocityLengthSquared = dot(deltaVelocity, deltaVelocity)
+  if (!(deltaVelocityLengthSquared > EVENT_EPSILON)) {
+    return null
+  }
+
+  const time = -dot(deltaPoint, deltaVelocity) / deltaVelocityLengthSquared
   if (!(time > EVENT_EPSILON) || !Number.isFinite(time)) {
     return null
   }
 
+  const movedStart = add(startVertex.point, scale(startVelocity, time))
+  const movedEnd = add(endVertex.point, scale(endVelocity, time))
+  if (distance(movedStart, movedEnd) > EVENT_EPSILON * 32) {
+    return null
+  }
+
+  const point = scale(add(movedStart, movedEnd), 0.5)
+
   return {
-    vertexIndex: vertex.id,
+    startVertexIndex: startVertex.id,
+    endVertexIndex: endVertex.id,
     time,
-    point: candidate.point,
+    point,
   }
 }
 
@@ -211,6 +193,7 @@ function splitEventForVertexAgainstEdge(
   ordered: ActiveVertex[],
   vertexIndex: number,
   edgeIndex: number,
+  minimumTime = EVENT_EPSILON,
 ): SplitEventCandidate | null {
   const vertex = ordered[vertexIndex]
   if (!vertex.reflex || !Number.isFinite(vertex.speedScale) || vertex.speedScale <= 0) {
@@ -244,7 +227,7 @@ function splitEventForVertexAgainstEdge(
 
   const numerator = -cross(edgeDirection, sub(vertex.point, edgeStartVertex.point))
   const time = numerator / denominator
-  if (!(time > EVENT_EPSILON) || !Number.isFinite(time)) {
+  if (!(time > minimumTime) || !Number.isFinite(time)) {
     return null
   }
 
@@ -279,11 +262,18 @@ export function enumerateSplitEvents(ring: WavefrontRing): SplitEventCandidate[]
 }
 
 function enumerateSplitEventsFromActiveRing(ring: ActiveRing): SplitEventCandidate[] {
+  return enumerateSplitEventsFromActiveRingWithMinimumTime(ring, EVENT_EPSILON)
+}
+
+function enumerateSplitEventsFromActiveRingWithMinimumTime(
+  ring: ActiveRing,
+  minimumTime: number,
+): SplitEventCandidate[] {
   const ordered = ringVertexOrder(ring)
   const candidates: SplitEventCandidate[] = []
   for (let vertexIndex = 0; vertexIndex < ordered.length; vertexIndex += 1) {
     for (let edgeIndex = 0; edgeIndex < ordered.length; edgeIndex += 1) {
-      const candidate = splitEventForVertexAgainstEdge(ring, ordered, vertexIndex, edgeIndex)
+      const candidate = splitEventForVertexAgainstEdge(ring, ordered, vertexIndex, edgeIndex, minimumTime)
       if (candidate) {
         candidates.push(candidate)
       }
@@ -298,8 +288,9 @@ export function enumerateEdgeEvents(ring: WavefrontRing): EdgeEventCandidate[] {
 }
 
 function enumerateEdgeEventsFromActiveRing(ring: ActiveRing): EdgeEventCandidate[] {
-  return ringVertexOrder(ring)
-    .map((vertex) => edgeEventForVertex(ring, vertex))
+  const ordered = ringVertexOrder(ring)
+  return ordered
+    .map((vertex, index) => edgeEventForEdge(vertex, ordered[(index + 1) % ordered.length]))
     .filter((candidate): candidate is EdgeEventCandidate => candidate !== null)
     .sort((a, b) => a.time - b.time)
 }
@@ -388,7 +379,7 @@ function collapseEdgeCluster(ring: ActiveRing, time: number, graph: SkeletonGrap
     return null
   }
 
-  const eventVertexIds = new Set(edgeEvents.map((event) => event.vertexIndex))
+  const eventVertexIds = new Set(edgeEvents.flatMap((event) => [event.startVertexIndex, event.endVertexIndex]))
   const eventClusters = collectEventClusters(ordered, eventVertexIds)
   const advanced = advanceRing(ring, time)
   const advancedMap = getVertexMap(advanced)
@@ -504,7 +495,7 @@ export function solveSkeletonGraph(region: PreparedVCarveRegion, maxIterations?:
       const splitEvents = enumerateSplitEventsFromActiveRing(ring).filter((event) => Math.abs(event.time - nextTime) <= EVENT_EPSILON)
       if (splitEvents.length > 0) {
         const splitRings = splitRingAtEvent(ring, nextTime, splitEvents[0], state.graph)
-        nextRings.push(...splitRings)
+        nextRings.push(...settleImmediateSplitEvents(splitRings, state.graph))
         continue
       }
 
@@ -525,31 +516,78 @@ export function solveEdgeSkeletonPreview(region: PreparedVCarveRegion, maxIterat
   return solveSkeletonGraph(region, maxIterations)
 }
 
-function rebuildActiveRingFromPoints(
+function removeCollinearTaggedPointsPreserving(
+  points: TaggedLoopPoint[],
+  preserved: Set<string>,
+): TaggedLoopPoint[] {
+  const ring = points.slice()
+  if (ring.length >= 2 && distance(ring[0].point, ring[ring.length - 1].point) <= EVENT_EPSILON) {
+    ring.pop()
+  }
+  if (ring.length < 3) {
+    return ring
+  }
+
+  const result: TaggedLoopPoint[] = []
+  for (let index = 0; index < ring.length; index += 1) {
+    const prev = ring[(index - 1 + ring.length) % ring.length].point
+    const current = ring[index]
+    const next = ring[(index + 1) % ring.length].point
+    if (preserved.has(pointKey(current.point))) {
+      result.push(current)
+      continue
+    }
+    const a = sub(current.point, prev)
+    const b = sub(next, current.point)
+    if (Math.abs(cross(a, b)) <= EVENT_EPSILON && dot(a, b) >= 0) {
+      continue
+    }
+    result.push(current)
+  }
+
+  return result.length >= 3 ? result : ring
+}
+
+function rebuildActiveRingFromTaggedPoints(
   ringId: number,
   hole: boolean,
   offset: number,
-  points: Point[],
+  points: TaggedLoopPoint[],
   preservedPointKeys: Set<string> = new Set(),
 ): ActiveRing | null {
-  const cleaned = removeCollinearVerticesPreserving(points, preservedPointKeys)
+  const cleaned = removeCollinearTaggedPointsPreserving(points, preservedPointKeys)
   if (cleaned.length < 3) {
     return null
   }
-  const perimeter = cleaned.reduce((sum, point, index) => sum + distance(point, cleaned[(index + 1) % cleaned.length]), 0)
+  const perimeter = cleaned.reduce((sum, item, index) => sum + distance(item.point, cleaned[(index + 1) % cleaned.length].point), 0)
   if (!(perimeter > EVENT_EPSILON * 100)) {
     return null
   }
 
-  const rebuilt = buildWavefrontRing(cleaned, hole)
-  const active = toActiveRing(rebuilt, ringId)
-  active.offset = offset
-  return active
+  const rebuilt = buildWavefrontRing(cleaned.map((item) => item.point), hole)
+  const ids = cleaned.map((item, index) => item.sourceId ?? (-(ringId + 1) * 100000 - index - 1))
+  const vertices: ActiveVertex[] = rebuilt.vertices.map((vertex, index) => ({
+    id: ids[index],
+    sourceIndex: ids[index],
+    point: { x: vertex.point.x, y: vertex.point.y },
+    prevId: ids[(index - 1 + ids.length) % ids.length],
+    nextId: ids[(index + 1) % ids.length],
+    reflex: vertex.reflex,
+    bisectorDirection: vertex.bisectorDirection,
+    speedScale: vertex.speedScale,
+  }))
+
+  return {
+    id: ringId,
+    hole,
+    offset,
+    vertices,
+  }
 }
 
 function rebuildActiveRingFromMovedVertices(ringId: number, hole: boolean, offset: number, vertices: ActiveVertex[]): ActiveRing | null {
-  const points = vertices.map((vertex) => vertex.point)
-  return rebuildActiveRingFromPoints(ringId, hole, offset, points)
+  const points = vertices.map((vertex) => ({ point: vertex.point, sourceId: vertex.id }))
+  return rebuildActiveRingFromTaggedPoints(ringId, hole, offset, points)
 }
 
 function splitRingAtEvent(ring: ActiveRing, time: number, event: SplitEventCandidate, graph: SkeletonGraph): ActiveRing[] {
@@ -568,30 +606,66 @@ function splitRingAtEvent(ring: ActiveRing, time: number, event: SplitEventCandi
     appendNode(graph, event.point, ring.offset + time)
   }
 
-  const firstLoop: Point[] = [clonePoint(event.point)]
+  const splitPointId = -(ring.id + 1) * 1000000 - Math.max(1, Math.round((ring.offset + time) / EVENT_EPSILON))
+  const firstLoop: TaggedLoopPoint[] = [{ point: clonePoint(event.point), sourceId: splitPointId }]
   for (let index = (reflexIndex + 1) % ordered.length; ; index = (index + 1) % ordered.length) {
-    firstLoop.push(clonePoint(ordered[index].point))
+    firstLoop.push({ point: clonePoint(ordered[index].point), sourceId: ordered[index].id })
     if (index === edgeStartIndex) {
       break
     }
   }
-  firstLoop.push(clonePoint(event.point))
+  firstLoop.push({ point: clonePoint(event.point), sourceId: splitPointId })
 
-  const secondLoop: Point[] = [clonePoint(event.point)]
+  const secondLoop: TaggedLoopPoint[] = [{ point: clonePoint(event.point), sourceId: splitPointId }]
   for (let index = (edgeStartIndex + 1) % ordered.length; index !== reflexIndex; index = (index + 1) % ordered.length) {
-    secondLoop.push(clonePoint(ordered[index].point))
+    secondLoop.push({ point: clonePoint(ordered[index].point), sourceId: ordered[index].id })
   }
-  secondLoop.push(clonePoint(event.point))
+  secondLoop.push({ point: clonePoint(event.point), sourceId: splitPointId })
 
   const nextRings: ActiveRing[] = []
   const preserved = new Set([pointKey(event.point)])
-  const loopA = rebuildActiveRingFromPoints(ring.id * 2 + 1, ring.hole, ring.offset + time, firstLoop, preserved)
+  const loopA = rebuildActiveRingFromTaggedPoints(ring.id * 2 + 1, ring.hole, ring.offset + time, firstLoop, preserved)
   if (loopA) {
     nextRings.push(loopA)
   }
-  const loopB = rebuildActiveRingFromPoints(ring.id * 2 + 2, ring.hole, ring.offset + time, secondLoop, preserved)
+  const loopB = rebuildActiveRingFromTaggedPoints(ring.id * 2 + 2, ring.hole, ring.offset + time, secondLoop, preserved)
   if (loopB) {
     nextRings.push(loopB)
   }
   return nextRings
+}
+
+function settleImmediateSplitEvents(rings: ActiveRing[], graph: SkeletonGraph): ActiveRing[] {
+  const settled: ActiveRing[] = []
+  const queue = [...rings]
+  let iterations = 0
+
+  while (queue.length > 0 && iterations < MIN_ITERATIONS) {
+    iterations += 1
+    const ring = queue.shift()
+    if (!ring) {
+      continue
+    }
+
+    const immediateSplits = enumerateSplitEventsFromActiveRingWithMinimumTime(ring, -EVENT_EPSILON)
+      .filter((event) => event.time <= IMMEDIATE_SPLIT_EPSILON)
+      .sort((a, b) => a.time - b.time)
+
+    if (immediateSplits.length === 0) {
+      settled.push(ring)
+      continue
+    }
+
+    const splitRings = splitRingAtEvent(ring, immediateSplits[0].time, immediateSplits[0], graph)
+    queue.unshift(...splitRings)
+  }
+
+  while (queue.length > 0) {
+    const ring = queue.shift()
+    if (ring) {
+      settled.push(ring)
+    }
+  }
+
+  return settled
 }

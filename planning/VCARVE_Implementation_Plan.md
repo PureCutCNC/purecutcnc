@@ -145,9 +145,9 @@ V-carve generates a `ToolpathResult` (existing type) with moves typed as `'cut'`
 
 ---
 
-## Robust Solver Target: Geometric Medial-Axis / Straight-Skeleton V-Carve
+## Robust Solver Target: Clipper-Topology Skeleton Extraction
 
-The robust target is no longer the contour-parallel solver. The target is a true geometric centerline solve over the closed carved region.
+The robust target is no longer the contour-parallel solver, and it is no longer the current analytical wavefront prototype. The target is a Clipper-driven topology solver that extracts a usable medial graph from a sequence of absolute inward offsets.
 
 ### Input
 A simple polygon with optional holes (islands), represented as a list of vertices after profile flattening. Winding: outer boundary CCW, holes CW (Clipper convention).
@@ -157,19 +157,37 @@ A simple polygon with optional holes (islands), represented as a list of vertice
 2. Ensure consistent winding using Clipper's orientation utilities.
 3. Remove degenerate edges (zero length, collinear triples).
 
-### Core geometric solve
+### Core robust solve
 
 1. Resolve the closed target region with holes using the existing pocket-like region resolver.
-2. Run a geometric wavefront / straight-skeleton solve over that polygon-with-holes input.
-3. Produce a medial graph whose nodes/edges carry local boundary distance.
-4. For each graph point, compute:
+2. Generate a sequence of absolute inward Clipper offsets from the original region.
+3. Match contours between consecutive offset frames and detect topology events:
+   - split: one contour becomes multiple contours
+   - collapse: a contour disappears
+   - merge around holes: outer and hole-driven regions meet
+4. Convert those events into a medial graph whose nodes/edges carry local boundary distance.
+5. For each graph point, compute:
 
 ```ts
 depth = distanceToBoundary / tan(halfAngle)
 z = topZ - min(depth, maxCarveDepth)
 ```
 
-5. Traverse the resulting graph into cuttable toolpath branches.
+6. Traverse the resulting graph into cuttable toolpath branches.
+
+### Why this path replaces the analytical solver
+
+The current analytical wavefront solver is blocked on:
+- simultaneous event timing
+- event-node merging
+- ring rebuild correctness after split/collapse
+
+Clipper offsetting is already the most reliable polygon engine in this repo. Using it to detect topology evolution gives us:
+- robust integer-geometry offsets
+- natural hole/counter handling
+- no floating-point event queue as the core source of truth
+
+The tradeoff is approximation to the chosen offset step size, which is acceptable so long as it stays below machining tolerance.
 
 ### Temporary fallback algorithm
 
@@ -208,9 +226,11 @@ const z = feature.z_top - depth
 
 Suggested split:
 - `vcarve/geometry.ts`
-- `vcarve/skeleton.ts`
+- `vcarve/clipperSkeleton.ts`
 - `vcarve/depth.ts`
 - `vcarve/traverse.ts`
+
+The current `vcarve/skeleton.ts` analytical solver remains in the tree only as an experimental reference path until the Clipper topology solver replaces it.
 
 ### Temporary fallback path
 
@@ -298,8 +318,8 @@ Suggested split:
 
 ### VC4. Geometric skeleton computation
 - `[~]` Initial wavefront data structures and event geometry extracted into dedicated `vcarve/` modules
-- `[~]` `skeleton.ts` foundation in progress — active wavefront state, edge-event timing, split-event candidate detection, ring rebuild/split scaffolding, collapse-node cleanup, and a raised iteration budget exist
-- `[ ]` Handle convex polygons cleanly
+- `[~]` `skeleton.ts` foundation in progress — active wavefront state, direct adjacent-edge collapse timing, split-event candidate detection, ring rebuild/split scaffolding, collapse-node cleanup, and a raised iteration budget exist
+- `[~]` Handle convex polygons cleanly
 - `[~]` Handle reflex vertices and split events
 - `[~]` Handle polygons with holes
 - `[ ]` Unit tests for known shapes: rectangle → cross skeleton, equilateral triangle → centroid, serif `r` / `k` style glyph branching
@@ -317,6 +337,7 @@ Suggested split:
 - `[~]` Internal geometric pipeline helper exists (`prepare -> solve -> cleanup -> branch sampling -> moves`)
 - `[~]` Internal top-level geometric orchestrator exists and is now wired into the experimental `v_carve_skeleton` path for live testing
 - `[~]` Branches now sort by descending max radius for more sensible traversal order
+- `[~]` Smoke harness now verifies rectangle / triangle / circle-like convex cases; circle-like collapse is now a single center-node cut internally, but reflex branching is still incorrect
 - `[ ]` Implement `vcarve.ts` — top-level robust orchestrator
 - `[ ]` Multi-feature sequencing with rapids between features
 

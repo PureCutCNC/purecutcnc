@@ -4,7 +4,6 @@ import { getOperationSafeZ, normalizeToolForProject } from '../geometry'
 import { updateBounds } from '../pocket'
 import { resolvePocketRegions } from '../resolver'
 import { buildGeometricVCarveRegionResult } from './pipeline'
-import { prepareVCarveRegion } from './prepare'
 
 function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
   let bounds: ToolpathBounds | null = null
@@ -89,11 +88,10 @@ export function generateGeometricVCarveToolpath(project: Project, operation: Ope
   }
 
   const safeZ = getOperationSafeZ(project)
+  // segmentLength controls both the Clipper step size (via pipeline) and
+  // the output polyline sampling density.
   const segmentLength = Math.max(tool.diameter * operation.stepover, 1e-4)
   const warnings = [...resolved.warnings]
-  if (operation.kind === 'v_carve_skeleton') {
-    warnings.push('V-Carve Skeleton is using the experimental geometric solver')
-  }
   const moves: ToolpathMove[] = []
 
   for (const band of resolved.bands) {
@@ -104,15 +102,6 @@ export function generateGeometricVCarveToolpath(project: Project, operation: Ope
     }
 
     for (const region of band.regions) {
-      const preparedRegion = prepareVCarveRegion(region)
-      if (!preparedRegion) {
-        warnings.push('Skipped a geometric V-carve region because its polygon preparation failed')
-        continue
-      }
-      if (preparedRegion.holes.length > 0) {
-        warnings.push('Geometric V-carve solver does not yet support regions with holes')
-        continue
-      }
       const result = buildGeometricVCarveRegionResult(region, {
         topZ: band.topZ,
         maxDepth: maxBandDepth,

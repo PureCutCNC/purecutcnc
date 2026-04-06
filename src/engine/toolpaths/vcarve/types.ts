@@ -51,7 +51,8 @@ export interface SkeletonNode {
 }
 
 export interface EdgeEventCandidate {
-  vertexIndex: number
+  startVertexIndex: number
+  endVertexIndex: number
   time: number
   point: Point
 }
@@ -84,4 +85,20 @@ export interface SkeletonBranchPoint {
 export interface SkeletonCleanupOptions {
   minArcLength?: number
   minRadius?: number
+}
+
+/**
+ * Options for the Clipper-topology skeleton solver.
+ *
+ * stepSize   – inward offset increment per frame (mm). Smaller = more accurate
+ *              skeleton but more frames to process. Default 0.05 mm.
+ * maxRadius  – stop iterating once offset distance exceeds this (mm). Defaults
+ *              to the largest inscribed circle radius of the polygon's bounding box.
+ * minContourArea – contours whose area falls below this threshold (mm²) are
+ *              considered collapsed and ignored. Default 0.001 mm².
+ */
+export interface ClipperSkeletonOptions {
+  stepSize?: number
+  maxRadius?: number
+  minContourArea?: number
 }

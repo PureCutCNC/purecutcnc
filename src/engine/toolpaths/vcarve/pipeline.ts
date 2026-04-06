@@ -1,8 +1,8 @@
 import type { ToolpathMove } from '../types'
 import { cleanupSkeletonGraph, constrainSkeletonGraphToRegion } from './cleanup'
+import { solveClipperSkeleton } from './clipperSkeleton'
 import { skeletonGraphToRadiusBranches } from './depth'
 import { prepareVCarveRegion } from './prepare'
-import { solveSkeletonGraph } from './skeleton'
 import { radiusBranchesToToolpathMoves } from './toolpath'
 import { skeletonGraphToPolylines } from './traverse'
 import { diagnoseSkeletonGraph } from './validate'
@@ -27,7 +27,6 @@ export function buildGeometricVCarveRegionResult(
     slope: number
     safeZ: number
     segmentLength: number
-    maxIterations?: number
     minArcLength?: number
     minRadius?: number
   },
@@ -37,7 +36,12 @@ export function buildGeometricVCarveRegionResult(
     return null
   }
 
-  const rawGraph = solveSkeletonGraph(prepared, options.maxIterations)
+  // maxRadius: deepest inscribed circle radius = maxDepth × tan(halfAngle) = maxDepth × slope
+  const rawGraph = solveClipperSkeleton(prepared, {
+    stepSize: Math.max(options.segmentLength * 0.5, 0.02),
+    maxRadius: options.maxDepth * options.slope,
+  })
+
   const constrainedGraph = constrainSkeletonGraphToRegion(rawGraph, prepared)
   const graph = cleanupSkeletonGraph(constrainedGraph, {
     minArcLength: options.minArcLength ?? options.segmentLength * 0.5,

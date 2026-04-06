@@ -1,6 +1,6 @@
 import type { Point } from '../../../types/project'
 import type { EdgeEventCandidate, PreparedVCarveRegion, WavefrontEdge, WavefrontRing, WavefrontVertex } from './types'
-import { add, angleBisector, distance, leftNormal, normalize, rayLineIntersection, rightNormal, scale, sub } from './geometry'
+import { add, angleBisector, distance, leftNormal, normalize, rightNormal, scale, sub } from './geometry'
 
 function buildEdges(points: Point[], hole: boolean): WavefrontEdge[] {
   return points.map((start, index) => {
@@ -56,24 +56,45 @@ export function buildInitialWavefront(region: PreparedVCarveRegion): WavefrontRi
 export function enumerateInitialEdgeEvents(ring: WavefrontRing): EdgeEventCandidate[] {
   const candidates: EdgeEventCandidate[] = []
   for (const vertex of ring.vertices) {
-    if (!Number.isFinite(vertex.speedScale) || vertex.speedScale <= 0) {
-      continue
-    }
-    const prev = ring.vertices[vertex.prevIndex]
     const next = ring.vertices[vertex.nextIndex]
-    const left = rayLineIntersection(vertex.point, vertex.bisectorDirection, prev.point, prev.bisectorDirection)
-    const right = rayLineIntersection(vertex.point, vertex.bisectorDirection, next.point, next.bisectorDirection)
-    const candidate = [left, right]
-      .filter((hit): hit is NonNullable<typeof hit> => hit !== null)
-      .filter((hit) => hit.rayT > 0)
-      .sort((a, b) => a.rayT - b.rayT)[0]
-    if (!candidate) {
+    if (!next) {
       continue
     }
+    if (
+      !Number.isFinite(vertex.speedScale)
+      || vertex.speedScale <= 0
+      || !Number.isFinite(next.speedScale)
+      || next.speedScale <= 0
+    ) {
+      continue
+    }
+
+    const vertexVelocity = scale(vertex.bisectorDirection, vertex.speedScale)
+    const nextVelocity = scale(next.bisectorDirection, next.speedScale)
+    const deltaPoint = sub(next.point, vertex.point)
+    const deltaVelocity = sub(nextVelocity, vertexVelocity)
+    const deltaVelocityLengthSquared = deltaVelocity.x * deltaVelocity.x + deltaVelocity.y * deltaVelocity.y
+    if (!(deltaVelocityLengthSquared > 1e-12)) {
+      continue
+    }
+
+    const time = -((deltaPoint.x * deltaVelocity.x) + (deltaPoint.y * deltaVelocity.y)) / deltaVelocityLengthSquared
+    if (!(time > 0) || !Number.isFinite(time)) {
+      continue
+    }
+
+    const vertexMoved = add(vertex.point, scale(vertexVelocity, time))
+    const nextMoved = add(next.point, scale(nextVelocity, time))
+    if (distance(vertexMoved, nextMoved) > 1e-5) {
+      continue
+    }
+
+    const candidatePoint = scale(add(vertexMoved, nextMoved), 0.5)
     candidates.push({
-      vertexIndex: vertex.index,
-      time: candidate.rayT / vertex.speedScale,
-      point: add(vertex.point, scale(vertex.bisectorDirection, candidate.rayT)),
+      startVertexIndex: vertex.index,
+      endVertexIndex: next.index,
+      time,
+      point: candidatePoint,
     })
   }
   return candidates

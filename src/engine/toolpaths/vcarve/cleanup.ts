@@ -81,36 +81,66 @@ function buildAdjacency(arcs: SkeletonArc[]): Map<string, number[]> {
 }
 
 function collapseRadialStarToNode(arcs: SkeletonArc[], nodes: SkeletonGraph['nodes']): SkeletonGraph {
-  if (nodes.length !== 1 || arcs.length < 8) {
+  if (arcs.length < 4) {
     return { arcs, nodes }
   }
 
-  const center = nodes[0]
-  const incident = arcs.filter((arc) => pointEquals(arc.start, center.point) || pointEquals(arc.end, center.point))
-  if (incident.length !== arcs.length) {
-    return { arcs, nodes }
+  const adjacency = buildAdjacency(arcs)
+  const candidateCenters: Array<{ point: Point; radius: number }> = []
+
+  if (nodes.length === 1) {
+    candidateCenters.push({ point: nodes[0].point, radius: nodes[0].radius })
   }
 
-  const radii = incident.map((arc) => pointEquals(arc.start, center.point) ? arc.endRadius : arc.startRadius)
-  const lengths = incident.map((arc) => pointEquals(arc.start, center.point)
-    ? distance(center.point, arc.end)
-    : distance(center.point, arc.start))
-
-  const maxBoundaryRadius = Math.max(...radii)
-  if (maxBoundaryRadius > CLEANUP_EPSILON * 10) {
-    return { arcs, nodes }
+  for (const [key, incident] of adjacency) {
+    if (incident.length < 4) {
+      continue
+    }
+    const sampleArc = arcs[incident[0]]
+    if (!sampleArc) {
+      continue
+    }
+    const point = pointKey(sampleArc.start) === key ? sampleArc.start : sampleArc.end
+    const centerRadii = incident.map((index) => {
+      const arc = arcs[index]
+      return pointEquals(arc.start, point) ? arc.startRadius : arc.endRadius
+    })
+    const radius = centerRadii.reduce((sum, value) => sum + value, 0) / centerRadii.length
+    candidateCenters.push({ point, radius })
   }
 
-  const minLength = Math.min(...lengths)
-  const maxLength = Math.max(...lengths)
-  if (maxLength - minLength > Math.max(CLEANUP_EPSILON * 50, maxLength * 0.1)) {
-    return { arcs, nodes }
+  for (const center of candidateCenters) {
+    const incident = arcs.filter((arc) => pointEquals(arc.start, center.point) || pointEquals(arc.end, center.point))
+    if (incident.length !== arcs.length) {
+      continue
+    }
+
+    const radii = incident.map((arc) => pointEquals(arc.start, center.point) ? arc.endRadius : arc.startRadius)
+    const lengths = incident.map((arc) => pointEquals(arc.start, center.point)
+      ? distance(center.point, arc.end)
+      : distance(center.point, arc.start))
+
+    const maxBoundaryRadius = Math.max(...radii)
+    if (maxBoundaryRadius > CLEANUP_EPSILON * 10) {
+      continue
+    }
+
+    const minLength = Math.min(...lengths)
+    const maxLength = Math.max(...lengths)
+    if (maxLength - minLength > Math.max(CLEANUP_EPSILON * 50, maxLength * 0.2)) {
+      continue
+    }
+
+    return {
+      arcs: [],
+      nodes: [{
+        point: clonePoint(center.point),
+        radius: center.radius,
+      }],
+    }
   }
 
-  return {
-    arcs: [],
-    nodes,
-  }
+  return { arcs, nodes }
 }
 
 function mergeCollinearArcs(arcs: SkeletonArc[]): SkeletonArc[] {
