@@ -783,7 +783,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
   )
 }
 
-export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'mm'): Project {
+export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inch'): Project {
   const now = new Date().toISOString()
   const stock = defaultStock(undefined, undefined, undefined, units)
   return {

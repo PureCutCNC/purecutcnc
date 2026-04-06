@@ -1816,17 +1816,19 @@ function translateTab(tab: Tab, dx: number, dy: number): Tab {
   }
 }
 
-function duplicateFeatureName(name: string, features: SketchFeature[]): string {
-  const baseName = `${name} Copy`
-  if (!features.some((feature) => feature.name === baseName)) {
-    return baseName
+function duplicateFeatureName(name: string, features: SketchFeature[], totalCount: number, step: number): string {
+  if (totalCount === 1) {
+    // Single copy: "Name Copy"
+    const baseName = `${name} Copy`
+    if (!features.some((f) => f.name === baseName)) return baseName
+    let index = 2
+    while (features.some((f) => f.name === `${baseName} ${index}`)) index += 1
+    return `${baseName} ${index}`
   }
-
-  let index = 2
-  while (features.some((feature) => feature.name === `${baseName} ${index}`)) {
-    index += 1
-  }
-  return `${baseName} ${index}`
+  // Multiple copies: "Name Copy 1", "Name Copy 2", …
+  let index = step
+  while (features.some((f) => f.name === `${name} Copy ${index}`)) index += 1
+  return `${name} Copy ${index}`
 }
 
 function uniqueFolderName(preferred: string, folders: FeatureFolder[]): string {
@@ -2233,7 +2235,7 @@ function buildCopiedFeatures(
       created.push({
         ...sourceFeature,
         id: nextId,
-        name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created]),
+        name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
         folderId: sourceFeature.folderId,
         sketch: {
           ...sourceFeature.sketch,
@@ -6722,6 +6724,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                     },
                   }
                 }),
+          featureTree:
+            mode === 'copy'
+              ? [
+                  ...s.project.featureTree,
+                  ...createdFeatures.map((f) => ({ type: 'feature' as const, featureId: f.id })),
+                ]
+              : s.project.featureTree,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 
