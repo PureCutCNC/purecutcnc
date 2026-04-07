@@ -2036,8 +2036,6 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Pocket'
     case 'v_carve':
       return 'V-Carve'
-    case 'v_carve_skeleton':
-      return 'V-Carve Skeleton'
     case 'v_carve_recursive':
       return 'V-Carve Recursive'
     case 'edge_route_inside':
@@ -2093,7 +2091,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
@@ -2129,7 +2127,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -2184,7 +2182,7 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
       : { source: 'stock' }
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
     return firstSubtractFeature
       ? { source: 'features', featureIds: [firstSubtractFeature.id] }

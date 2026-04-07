@@ -68,21 +68,6 @@ function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
   return bounds
 }
 
-/**
- * Find the vertex in `candidates` closest to `pt`.
- */
-function findClosestVertex(pt: Point, candidates: Point[]): Point {
-  let best = candidates[0]
-  let bestDist = Infinity
-  for (const c of candidates) {
-    const d = Math.hypot(c.x - pt.x, c.y - pt.y)
-    if (d < bestDist) {
-      bestDist = d
-      best = c
-    }
-  }
-  return best
-}
 
 /**
  * Build a closed 3D loop from a 2D contour at a given Z depth.
@@ -144,35 +129,66 @@ function detectCorners(contour: Point[]): Point[] {
 }
 
 /**
- * Emit one diagonal skeleton-arm cut per active corner.
+ * Emit one diagonal skeleton-arm cut per active corner and advance corner
+ * positions to the next offset level (chain tracking).
  *
- * The original corner position is used as the search reference for BOTH
- * endpoints, but each endpoint is snapped to the nearest vertex on its
- * respective contour. This guarantees short cuts (≈ stepSize) that are
- * always anchored to real contour geometry — no long diagonal destruction
- * cuts when the original corner position drifts far from the current shape.
+ * Each `corner` is already a vertex of `currentContour` (guaranteed by chain
+ * tracking — at depth 0 corners are detected from the original contour; at
+ * depth N they are the `inNext` positions returned by the previous call).
+ * We therefore use `corner` directly as the "from" point and only need one
+ * nearest-vertex lookup (into `nextContour`) per corner.
  *
- * The original corners are passed unchanged to the next recursive level so
- * they remain a stable reference throughout the recursion.
+ * This produces cuts that are consistently ~stepSize long, forming a connected
+ * chain from the surface down to the collapse point — no long diagonal cuts.
  */
 function stepCorners(
   activeCorners: Point[],
-  currentContour: Point[],
   nextContour: Point[],
   currentZ: number,
   nextZ: number,
-): Path3D[] {
-  if (activeCorners.length === 0 || currentContour.length === 0 || nextContour.length === 0) return []
+  stepSize: number,
+): { cuts: Path3D[], nextCorners: Point[] } {
+  if (activeCorners.length === 0 || nextContour.length === 0) {
+    return { cuts: [], nextCorners: [] }
+  }
   const cuts: Path3D[] = []
+  const nextCorners: Point[] = []
+
   for (const corner of activeCorners) {
-    const inCurrent = findClosestVertex(corner, currentContour)
-    const inNext = findClosestVertex(corner, nextContour)
+    let bestIdx = 0
+    let bestDist = Infinity
+    for (let i = 0; i < nextContour.length; i++) {
+      const d = Math.hypot(nextContour[i].x - corner.x, nextContour[i].y - corner.y)
+      if (d < bestDist) { bestDist = d; bestIdx = i }
+    }
+    const inNext = nextContour[bestIdx]
     cuts.push([
-      { x: inCurrent.x, y: inCurrent.y, z: currentZ },
+      { x: corner.x, y: corner.y, z: currentZ },
       { x: inNext.x, y: inNext.y, z: nextZ },
     ])
+    nextCorners.push({ ...inNext })
   }
-  return cuts
+
+  // Position-based merge: if two nextCorners have converged within half a
+  // stepSize of each other they represent the same skeleton arm. Keep only
+  // one so subsequent levels don't emit a fan of near-identical overlapping
+  // cuts. This is safer than index-based dedup, which was dropping corners
+  // belonging to different walls that happened to map to the same vertex.
+  return { cuts, nextCorners: mergeCorners(nextCorners, stepSize * 0.5) }
+}
+
+/**
+ * Remove near-duplicate points: for each point, skip it if an earlier point
+ * in the list is already within `threshold` distance. O(n²) but n is small.
+ */
+function mergeCorners(corners: Point[], threshold: number): Point[] {
+  const result: Point[] = []
+  for (const c of corners) {
+    if (!result.some((r) => Math.hypot(r.x - c.x, r.y - c.y) < threshold)) {
+      result.push(c)
+    }
+  }
+  return result
 }
 
 
@@ -225,11 +241,13 @@ function traceRegion(
   totalOffset: number,
   depth: number,
   paths: Path3D[],
-  corners?: Point[],  // detected once from the original shape, passed through recursion
+  corners?: Point[],  // at depth 0: detected from original shape; thereafter: chain-tracked inNext positions
 ): void {
   if (depth > MAX_RECURSION_DEPTH) return
 
-  // Detect corners exactly once — from the original unmodified contour.
+  // At depth 0, detect corners from the original contour.
+  // At depth N, corners are the inNext positions from the previous level —
+  // they are already vertices of region.outer (guaranteed by chain tracking).
   const activeCorners = corners ?? detectCorners(region.outer)
 
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
@@ -261,9 +279,14 @@ function traceRegion(
   // ---- CONTINUE ----
   const nextRegion = nextRegions[0]
 
-  paths.push(...stepCorners(activeCorners, region.outer, nextRegion.outer, currentZ, nextZ))
+  const { cuts, nextCorners } = stepCorners(activeCorners, nextRegion.outer, currentZ, nextZ, stepSize)
+  paths.push(...cuts)
 
-  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, activeCorners)
+  // Pass nextCorners forward to continue chain tracking. If they're empty
+  // (shouldn't happen without dedup, but defensive), pass undefined so the
+  // next level re-detects corners fresh from its own contour.
+  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths,
+    nextCorners.length > 0 ? nextCorners : undefined)
 }
 
 // ---------------------------------------------------------------------------

@@ -216,8 +216,6 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Pocket'
     case 'v_carve':
       return 'V-Carve'
-    case 'v_carve_skeleton':
-      return 'V-Carve Skeleton'
     case 'v_carve_recursive':
       return 'V-Carve Recursive'
     case 'edge_route_inside':
@@ -244,7 +242,7 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
 }
 
 function operationRequiresClosedProfiles(kind: OperationKind): boolean {
-  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
@@ -280,7 +278,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       : null
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     if (selection.selectedFeatureIds.length === 0) {
       return null
     }
@@ -349,7 +347,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       : 'Surface clean only accepts closed profiles'
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     if (selection.selectedFeatureIds.length === 0) {
       return 'Select one or more closed subtract features first'
     }
@@ -521,12 +519,6 @@ export function CAMPanel({
         disabled: getValidOperationTarget(project, selection, 'v_carve') === null,
       },
       {
-        kind: 'v_carve_skeleton',
-        label: 'V-Carve Skeleton',
-        hint: getOperationAddHint(project, selection, 'v_carve_skeleton') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'v_carve_skeleton') === null,
-      },
-      {
         kind: 'v_carve_recursive',
         label: 'V-Carve Recursive',
         hint: getOperationAddHint(project, selection, 'v_carve_recursive') ?? undefined,
@@ -647,7 +639,7 @@ export function CAMPanel({
       return
     }
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_skeleton' || kind === 'v_carve_recursive') && newOperationMode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive') && newOperationMode === 'pair') {
       const operationId = addOperation(kind, 'rough', target)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
@@ -968,7 +960,7 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_skeleton' && selectedOperation.kind !== 'v_carve_recursive' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' ? (
                     <label className="properties-field">
                       <span>Pass</span>
                       <select
@@ -980,7 +972,7 @@ export function CAMPanel({
                       </select>
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_skeleton' || selectedOperation.kind === 'v_carve_recursive' ? (
+                  {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' ? (
                     <label className="properties-field">
                       <span>Max Carve Depth</span>
                       <DraftLengthInput
@@ -1073,7 +1065,7 @@ export function CAMPanel({
                       }
                     >
                       <option value="">No Tool</option>
-                      {(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_skeleton' || selectedOperation.kind === 'v_carve_recursive'
+                      {(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
                         ? project.tools.filter((tool) => tool.type === 'v_bit')
                         : project.tools
                       ).map((tool) => (
@@ -1091,7 +1083,7 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_skeleton' && selectedOperation.kind !== 'v_carve_recursive' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' ? (
                     <label className="properties-field">
                       <span>Stepdown</span>
                       <DraftLengthInput
@@ -1105,13 +1097,11 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'follow_line' ? (
                     <label className="properties-field">
                       <span>
-                        {selectedOperation.kind === 'v_carve_skeleton'
-                          ? 'Skeleton Resolution'
-                          : selectedOperation.kind === 'v_carve_recursive'
-                            ? 'Step Size'
-                            : selectedOperation.kind === 'v_carve'
-                              ? 'Contour Spacing'
-                              : 'Stepover Ratio'}
+                        {selectedOperation.kind === 'v_carve_recursive'
+                          ? 'Step Size'
+                          : selectedOperation.kind === 'v_carve'
+                            ? 'Contour Spacing'
+                            : 'Stepover Ratio'}
                       </span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}
@@ -1148,7 +1138,6 @@ export function CAMPanel({
                   </label>
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
-                    && selectedOperation.kind !== 'v_carve_skeleton'
                     && selectedOperation.kind !== 'v_carve_recursive' ? (
                     <>
                       <label className="properties-field">

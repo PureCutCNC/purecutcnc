@@ -208,7 +208,6 @@ export interface Tool {
 export type OperationKind =
   | 'pocket'
   | 'v_carve'
-  | 'v_carve_skeleton'
   | 'v_carve_recursive'
   | 'edge_route_inside'
   | 'edge_route_outside'
