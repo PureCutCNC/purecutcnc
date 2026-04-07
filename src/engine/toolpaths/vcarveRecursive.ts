@@ -290,6 +290,74 @@ function traceRegion(
 }
 
 // ---------------------------------------------------------------------------
+// Path chaining — join segments that share exact endpoints
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge Path3D segments whose endpoints touch into longer continuous paths.
+ *
+ * Chain tracking guarantees that the end of arm-segment N equals the start of
+ * arm-segment N+1 (same XYZ float values, same arithmetic origin). Chaining
+ * them here eliminates the retract-rapid-plunge between every pair of
+ * consecutive arm segments, collapsing each skeleton arm into a single
+ * connected toolpath entry.
+ *
+ * Standalone paths (e.g. closed collapse contours) pass through unchanged.
+ */
+function chainPaths(paths: Path3D[]): Path3D[] {
+  if (paths.length === 0) return []
+
+  const key = (p: { x: number; y: number; z: number }): string => `${p.x},${p.y},${p.z}`
+
+  // Only 2-point arm segments are chained. Contour paths (length > 2, emitted
+  // by split-bridge and collapse handlers) are left standalone. This is
+  // critical: arm endpoints share exact XYZ values with the contour vertices
+  // they were snapped to, so mixing the two types would create diagonal cuts
+  // through the material.
+  const arms    = paths.filter((p) => p.length === 2)
+  const contours = paths.filter((p) => p.length !== 2)
+
+  const byStart = new Map<string, number>()
+  const byEnd   = new Map<string, number>()
+  for (let i = 0; i < arms.length; i++) {
+    byStart.set(key(arms[i][0]), i)
+    byEnd.set(key(arms[i][1]), i)
+  }
+
+  const used = new Set<number>()
+  const chained: Path3D[] = []
+
+  for (let seed = 0; seed < arms.length; seed++) {
+    if (used.has(seed)) continue
+
+    // Walk backward to the true head of this chain (cycle-safe).
+    let head = seed
+    const backSeen = new Set<number>([seed])
+    for (;;) {
+      const prev = byEnd.get(key(arms[head][0]))
+      if (prev === undefined || used.has(prev) || backSeen.has(prev)) break
+      backSeen.add(prev)
+      head = prev
+    }
+
+    // Build chain forward from head.
+    const pts: Array<{ x: number; y: number; z: number }> = [...arms[head]]
+    used.add(head)
+
+    for (;;) {
+      const next = byStart.get(key(pts[pts.length - 1]))
+      if (next === undefined || used.has(next)) break
+      used.add(next)
+      pts.push(arms[next][1])  // arm[1] is the only new point (arm[0] already in pts)
+    }
+
+    chained.push(pts)
+  }
+
+  return [...chained, ...contours]
+}
+
+// ---------------------------------------------------------------------------
 // Paths → ToolpathMoves conversion
 // ---------------------------------------------------------------------------
 
@@ -298,26 +366,43 @@ function pathsToMoves(
   safeZ: number,
   moves: ToolpathMove[],
   startPosition: ToolpathPoint | null,
+  maxLinkDist: number,
 ): ToolpathPoint | null {
   let pos = startPosition
+  const chained = chainPaths(paths)
 
-  for (const path of paths) {
+  for (let pi = 0; pi < chained.length; pi++) {
+    const path = chained[pi]
     if (path.length < 2) continue
 
     const entry: ToolpathPoint = path[0]
-    pos = retractToSafe(moves, pos, safeZ)
-    pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
 
-    for (let i = 1; i < path.length; i++) {
-      const from = path[i - 1]
-      const to = path[i]
-      moves.push({ kind: 'cut', from, to })
-      pos = to
+    if (pos !== null) {
+      const xyDist = Math.hypot(entry.x - pos.x, entry.y - pos.y)
+      if (xyDist <= maxLinkDist) {
+        // Direct link: skip the full retract-rapid-plunge cycle.
+        // V-carve arm chains end deep and start near the surface, so the
+        // direct move is almost always going shallower (withdrawing). Use a
+        // rapid when rising, cut-feed when descending into material.
+        const kind: ToolpathMove['kind'] = entry.z >= pos.z ? 'rapid' : 'cut'
+        moves.push({ kind, from: pos, to: entry })
+        pos = entry
+      } else {
+        pos = retractToSafe(moves, pos, safeZ)
+        pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
+      }
+    } else {
+      pos = retractToSafe(moves, pos, safeZ)
+      pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
     }
 
-    pos = retractToSafe(moves, pos, safeZ)
+    for (let i = 1; i < path.length; i++) {
+      moves.push({ kind: 'cut', from: path[i - 1], to: path[i] })
+      pos = path[i]
+    }
   }
 
+  pos = retractToSafe(moves, pos, safeZ)
   return pos
 }
 
@@ -413,7 +498,10 @@ export function generateVCarveRecursiveToolpath(project: Project, operation: Ope
     for (const region of band.regions) {
       const paths: Path3D[] = []
       traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths)
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
+      // Link paths within 10× stepSize without a full retract.
+      // Most adjacent arm starts on a letter are within this range; anything
+      // farther apart warrants a proper retract-rapid-plunge.
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize * 10)
     }
   }
 
