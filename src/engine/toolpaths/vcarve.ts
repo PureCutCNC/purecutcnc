@@ -1,3 +1,4 @@
+import ClipperLib from 'clipper-lib'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
@@ -99,8 +100,9 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
       continue
     }
 
+    const vcarveJoinType = ClipperLib.JoinType.jtRound
     let currentDepth = Math.min(stepoverDistance / slope, maxBandDepth)
-    let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, currentDepth * slope))
+    let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, currentDepth * slope, vcarveJoinType))
 
     while (currentRegions.length > 0 && currentDepth <= maxBandDepth + 1e-9) {
       const contours = buildContourLoops(currentRegions)
@@ -122,7 +124,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
       if (currentDepth > maxBandDepth + 1e-9) {
         break
       }
-      currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, stepoverDistance))
+      currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, stepoverDistance, vcarveJoinType))
     }
   }
 

@@ -30,16 +30,40 @@ function getChildren(node: PolyTreeNode): PolyTreeNode[] {
   return node.Childs ? node.Childs() : (node.m_Childs ?? [])
 }
 
-function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
+/**
+ * Remove consecutive vertices that are closer than minDist (in integer Clipper units).
+ * Reduces noise introduced by Clipper offset operations.
+ */
+function cleanClipperPath(path: ClipperPath, minDist: number): ClipperPath {
+  if (path.length === 0) return path
+  const out: ClipperPath = [path[0]]
+  for (let i = 1; i < path.length; i++) {
+    const prev = out[out.length - 1]
+    const cur = path[i]
+    const dx = cur.X - prev.X
+    const dy = cur.Y - prev.Y
+    if (Math.sqrt(dx * dx + dy * dy) >= minDist) {
+      out.push(cur)
+    }
+  }
+  return out
+}
+
+function offsetPaths(
+  paths: ClipperPath[],
+  delta: number,
+  joinType: number = ClipperLib.JoinType.jtMiter,
+): ClipperPath[] {
   if (paths.length === 0) {
     return []
   }
 
   const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, delta)
-  return solution as ClipperPath[]
+  // Filter near-duplicate vertices (threshold: 1 Clipper unit ≈ 1/scale project units)
+  return (solution as ClipperPath[]).map((path) => cleanClipperPath(path, 1.0))
 }
 
 export function executeDifference(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): PolyTreeNode {
@@ -255,17 +279,21 @@ export function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint
   }
 }
 
-export function buildInsetRegions(region: ResolvedPocketRegion, delta: number): ResolvedPocketRegion[] {
+export function buildInsetRegions(
+  region: ResolvedPocketRegion,
+  delta: number,
+  joinType: number = ClipperLib.JoinType.jtMiter,
+): ResolvedPocketRegion[] {
   const scale = DEFAULT_CLIPPER_SCALE
   const outerPath = toClipperPath(normalizeWinding(region.outer, false), scale)
   const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
 
-  const insetOuterPaths = offsetPaths([outerPath], -delta * scale)
+  const insetOuterPaths = offsetPaths([outerPath], -delta * scale, joinType)
   if (insetOuterPaths.length === 0) {
     return []
   }
 
-  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale)
+  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale, joinType)
   const clipped = executeDifference(insetOuterPaths, expandedIslandPaths)
   return polyTreeToRegions(clipped, region.targetFeatureIds, region.islandFeatureIds, scale)
     .filter((nextRegion) => nextRegion.outer.length >= 3)

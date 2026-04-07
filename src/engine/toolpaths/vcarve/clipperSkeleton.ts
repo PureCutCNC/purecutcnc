@@ -40,13 +40,29 @@ function clipperPathArea(path: ClipperPath): number {
   return Math.abs(area) / 2
 }
 
+function cleanClipperPath(path: ClipperPath, minDist: number): ClipperPath {
+  if (path.length === 0) return path
+  const out: ClipperPath = [path[0]]
+  for (let i = 1; i < path.length; i++) {
+    const prev = out[out.length - 1]
+    const cur = path[i]
+    const dx = cur.X - prev.X
+    const dy = cur.Y - prev.Y
+    if (Math.sqrt(dx * dx + dy * dy) >= minDist) {
+      out.push(cur)
+    }
+  }
+  return out
+}
+
 function clipperInset(paths: ClipperPath[], deltaClipper: number): ClipperPath[] {
   if (paths.length === 0) return []
   const co = new ClipperLib.ClipperOffset()
-  co.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  co.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   co.Execute(solution, -deltaClipper)
-  return solution as ClipperPath[]
+  // Filter near-duplicate vertices to reduce offset noise
+  return (solution as ClipperPath[]).map((path) => cleanClipperPath(path, 1.0))
 }
 
 // ---------------------------------------------------------------------------
