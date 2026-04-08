@@ -536,3 +536,16 @@ This work is ready when:
 - `[~]` improve visual preview for add/delete point targeting
 - `[~]` validate open imported spline/polyline editing
 - `[~]` consider explicit apply/cancel buttons in the sketch-edit toolbar
+
+### FE16. Tab dimension editing in sketch-edit mode
+Match the Tab-to-type workflow that already exists during feature creation.
+
+- `[x]` hover an anchor and press Tab to open length/angle inputs for both adjacent segments
+- `[x]` hover an arc handle and press Tab to open a radius input for that arc
+- `[x]` Tab cycles through all segments touching the hovered node; Tab out of the last field cancels
+- `[x]` Enter commits, Escape cancels and restores the original geometry
+- `[x]` live preview updates the profile on every keystroke
+- `[x]` spline (bezier) segments show distances as well as line segments
+- `[x]` same Tab workflow applies during composite arc phase 2 (radius input while placing arc)
+- `[x]` banner text updated to document Tab usage
+- `[x]` Tab is always consumed by the canvas in sketch-edit mode (never leaks to browser focus)

@@ -75,6 +75,9 @@ export interface SketchCanvasHandle {
 interface DimensionEditState {
   shape: 'rect' | 'circle' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite'
   anchor: Point  // for rect-like: anchor corner; for segments: the fromPoint
+  arcStart?: Point
+  arcEnd?: Point
+  arcClockwise?: boolean
   signX: number
   signY: number
   activeField: 'width' | 'height' | 'radius' | 'length' | 'angle'
@@ -796,7 +799,7 @@ function drawProfileLineMeasurements(
       continue
     }
 
-    if (segment.type === 'line') {
+    if (segment.type === 'line' || segment.type === 'bezier') {
       drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
     }
 
@@ -1553,12 +1556,113 @@ function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point
   }
 }
 
+type EditDimStep =
+  | { kind: 'endpoint'; control: SketchControlRef; fromAnchorIndex: number }
+  | { kind: 'arc_radius'; control: SketchControlRef; arcStartAnchorIndex: number }
+
+function computeEditDimSteps(profile: SketchProfile, anchorIndex: number): EditDimStep[] {
+  const steps: EditDimStep[] = []
+  const n = profile.segments.length
+  const vertices = profileVertices(profile)
+
+  // Incoming segment (segment going into anchorIndex)
+  const hasIncoming = profile.closed || anchorIndex > 0
+  if (hasIncoming) {
+    const incomingSegIdx = profile.closed ? (anchorIndex - 1 + n) % n : anchorIndex - 1
+    const seg = profile.segments[incomingSegIdx]
+    if (seg.type === 'line' || seg.type === 'bezier') {
+      steps.push({ kind: 'endpoint', control: { kind: 'anchor', index: anchorIndex }, fromAnchorIndex: incomingSegIdx })
+    } else if (seg.type === 'arc') {
+      steps.push({ kind: 'arc_radius', control: { kind: 'arc_handle', index: incomingSegIdx }, arcStartAnchorIndex: incomingSegIdx })
+    }
+  }
+
+  // Outgoing segment (segment leaving anchorIndex)
+  const hasOutgoing = profile.closed ? n > 0 : anchorIndex < n
+  if (hasOutgoing) {
+    const outgoingSegIdx = anchorIndex
+    const seg = profile.segments[outgoingSegIdx]
+    const nextAnchorIdx = profile.closed ? (anchorIndex + 1) % vertices.length : anchorIndex + 1
+    if (seg.type === 'line' || seg.type === 'bezier') {
+      steps.push({ kind: 'endpoint', control: { kind: 'anchor', index: nextAnchorIdx }, fromAnchorIndex: anchorIndex })
+    } else if (seg.type === 'arc') {
+      steps.push({ kind: 'arc_radius', control: { kind: 'arc_handle', index: outgoingSegIdx }, arcStartAnchorIndex: anchorIndex })
+    }
+  }
+
+  return steps
+}
+
+function arcHandleFromRadius(
+  arcStart: Point,
+  segment: Extract<Segment, { type: 'arc' }>,
+  newRadius: number,
+): Point | null {
+  const to = segment.to
+  const midX = (arcStart.x + to.x) / 2
+  const midY = (arcStart.y + to.y) / 2
+  const halfChordX = (to.x - arcStart.x) / 2
+  const halfChordY = (to.y - arcStart.y) / 2
+  const halfChord = Math.hypot(halfChordX, halfChordY)
+  if (halfChord < 1e-9 || newRadius < halfChord) return null
+
+  const perpX = -halfChordY / halfChord
+  const perpY = halfChordX / halfChord
+  const side = (segment.center.x - midX) * perpX + (segment.center.y - midY) * perpY >= 0 ? 1 : -1
+  const t = Math.sqrt(newRadius * newRadius - halfChord * halfChord)
+  const newCenterX = midX + side * t * perpX
+  const newCenterY = midY + side * t * perpY
+
+  const startAngle = Math.atan2(arcStart.y - newCenterY, arcStart.x - newCenterX)
+  const endAngle = Math.atan2(to.y - newCenterY, to.x - newCenterX)
+  let sweep = endAngle - startAngle
+  if (segment.clockwise && sweep > 0) sweep -= Math.PI * 2
+  else if (!segment.clockwise && sweep < 0) sweep += Math.PI * 2
+
+  const midAngle = startAngle + sweep / 2
+  return {
+    x: newCenterX + Math.cos(midAngle) * newRadius,
+    y: newCenterY + Math.sin(midAngle) * newRadius,
+  }
+}
+
 function computeDimensionEditPreviewPoint(
   edit: DimensionEditState,
   units: 'mm' | 'inch',
 ): Point {
   if (edit.shape === 'circle') {
     const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
+    if (edit.arcStart && edit.arcEnd) {
+      const arcStart = edit.arcStart
+      const to = edit.arcEnd
+      const midX = (arcStart.x + to.x) / 2
+      const midY = (arcStart.y + to.y) / 2
+      const halfChordX = (to.x - arcStart.x) / 2
+      const halfChordY = (to.y - arcStart.y) / 2
+      const halfChord = Math.hypot(halfChordX, halfChordY)
+      if (halfChord < 1e-9 || r < halfChord) return edit.anchor
+
+      const perpX = -halfChordY / halfChord
+      const perpY = halfChordX / halfChord
+      // Side: we can use edit.anchor to determine which side of the chord the arc is on
+      const side = (edit.anchor.x - midX) * perpX + (edit.anchor.y - midY) * perpY >= 0 ? 1 : -1
+      const t = Math.sqrt(r * r - halfChord * halfChord)
+      const newCenterX = midX + side * t * perpX
+      const newCenterY = midY + side * t * perpY
+
+      const startAngle = Math.atan2(arcStart.y - newCenterY, arcStart.x - newCenterX)
+      const endAngle = Math.atan2(to.y - newCenterY, to.x - newCenterX)
+      const clockwise = edit.arcClockwise ?? false
+      let sweep = endAngle - startAngle
+      if (clockwise && sweep > 0) sweep -= Math.PI * 2
+      else if (!clockwise && sweep < 0) sweep += Math.PI * 2
+
+      const midAngle = startAngle + sweep / 2
+      return {
+        x: newCenterX + Math.cos(midAngle) * r,
+        y: newCenterY + Math.sin(midAngle) * r,
+      }
+    }
     return { x: edit.anchor.x + r, y: edit.anchor.y }
   }
   if (edit.shape === 'polygon' || edit.shape === 'spline' || edit.shape === 'composite') {
@@ -2117,6 +2221,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
   const dimensionEditRef = useRef<DimensionEditState | null>(null)
+  const dimensionEditControlRef = useRef<SketchControlRef | null>(null)
+  const dimensionEditFeatureIdRef = useRef<string | null>(null)
+  const editDimStepsRef = useRef<EditDimStep[]>([])
+  const editDimStepIndexRef = useRef(0)
   const widthInputRef = useRef<HTMLInputElement>(null)
   const heightInputRef = useRef<HTMLInputElement>(null)
   const radiusInputRef = useRef<HTMLInputElement>(null)
@@ -2143,6 +2251,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setActiveControl,
     beginHistoryTransaction,
     commitHistoryTransaction,
+    cancelHistoryTransaction,
     moveFeatureControl,
     insertFeaturePoint,
     deleteFeaturePoint,
@@ -2517,6 +2626,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [selection.mode, selection.sketchEditTool, selection.selectedFeatureId])
 
   useEffect(() => {
+    if (selection.mode !== 'sketch_edit') {
+      dimensionEditControlRef.current = null
+      dimensionEditFeatureIdRef.current = null
+      editDimStepsRef.current = []
+      editDimStepIndexRef.current = 0
+      setDimensionEdit(null)
+    }
+  }, [selection.mode])
+
+  useEffect(() => {
     pendingOffsetPreviewPointRef.current = null
     pendingOffsetRawPreviewPointRef.current = null
   }, [pendingOffset?.session])
@@ -2689,9 +2808,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
 
       if (editing) {
-        drawSketchControls(ctx, feature.sketch.profile, vt, selection.activeControl)
-        if (isDraggingNodeRef.current) {
-          drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, selection.activeControl)
+        const editControl = isDraggingNodeRef.current ? selection.activeControl : (dimensionEditControlRef.current ?? selection.activeControl)
+        drawSketchControls(ctx, feature.sketch.profile, vt, editControl)
+        if (isDraggingNodeRef.current || dimensionEditControlRef.current) {
+          drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
       }
     }
@@ -3935,8 +4055,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (dimensionEditRef.current) {
-      setDimensionEdit(null)
-      canvasRef.current?.focus({ preventScroll: true })
+      commitEditDimension()
       return
     }
 
@@ -4216,6 +4335,96 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     onFeatureContextMenu?.(hitId, event.clientX, event.clientY)
   }
 
+  function applyEditDimStep(stepIndex: number, steps: EditDimStep[], featureId: string, units: 'mm' | 'inch') {
+    if (stepIndex >= steps.length) {
+      cancelEditDimension()
+      return
+    }
+    const step = steps[stepIndex]
+    dimensionEditControlRef.current = step.control
+    const feature = useProjectStore.getState().project.features.find((f) => f.id === featureId)
+    if (!feature) return
+    const profile = feature.sketch.profile
+
+    if (step.kind === 'endpoint') {
+      const fromPoint = anchorPointForIndex(profile, step.fromAnchorIndex)
+      const anchorPos = anchorPointForIndex(profile, step.control.index)
+      const dx = anchorPos.x - fromPoint.x
+      const dy = anchorPos.y - fromPoint.y
+      setDimensionEdit({
+        shape: 'composite',
+        anchor: fromPoint,
+        signX: 1,
+        signY: 1,
+        activeField: 'length',
+        width: '',
+        height: '',
+        radius: '',
+        length: formatLength(Math.hypot(dx, dy), units),
+        angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, ''),
+      })
+    } else {
+      const seg = profile.segments[step.control.index]
+      if (!seg || seg.type !== 'arc') return
+      const arcStart = anchorPointForIndex(profile, step.arcStartAnchorIndex)
+      const radius = Math.hypot(arcStart.x - seg.center.x, arcStart.y - seg.center.y)
+      const arcMid = arcControlPoint(arcStart, seg)
+      setDimensionEdit({
+        shape: 'circle',
+        anchor: arcMid,
+        signX: 1,
+        signY: 1,
+        activeField: 'radius',
+        width: '',
+        height: '',
+        radius: formatLength(radius, units),
+        length: '',
+        angle: '',
+      })
+    }
+  }
+
+  function advanceTabInEditMode() {
+    const currentEdit = dimensionEditRef.current
+    const steps = editDimStepsRef.current
+    const stepIndex = editDimStepIndexRef.current
+    if (!currentEdit) return
+
+    const step = steps[stepIndex]
+    if (step?.kind === 'endpoint' && currentEdit.activeField === 'length') {
+      setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+      return
+    }
+
+    const nextIndex = stepIndex + 1
+    editDimStepIndexRef.current = nextIndex
+    const featureId = dimensionEditFeatureIdRef.current
+    const units = projectRef.current.meta.units
+    if (featureId) {
+      applyEditDimStep(nextIndex, steps, featureId, units)
+    }
+  }
+
+  function commitEditDimension() {
+    commitHistoryTransaction()
+    dimensionEditControlRef.current = null
+    dimensionEditFeatureIdRef.current = null
+    editDimStepsRef.current = []
+    editDimStepIndexRef.current = 0
+    setDimensionEdit(null)
+    canvasRef.current?.focus({ preventScroll: true })
+  }
+
+  function cancelEditDimension() {
+    cancelHistoryTransaction()
+    dimensionEditControlRef.current = null
+    dimensionEditFeatureIdRef.current = null
+    editDimStepsRef.current = []
+    editDimStepIndexRef.current = 0
+    setDimensionEdit(null)
+    canvasRef.current?.focus({ preventScroll: true })
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
@@ -4306,9 +4515,51 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         pendingAdd.shape === 'composite'
         && pendingAdd.start
         && !pendingAdd.closed
+        && pendingAdd.currentMode === 'arc'
+        && pendingAdd.pendingArcEnd
+      ) {
+        // Arc phase 2: typing a radius for the arc
+        event.preventDefault()
+        const arcStart = pendingAdd.lastPoint ?? pendingAdd.start
+        const arcEnd = pendingAdd.pendingArcEnd
+        const previewPoint = pendingPreviewPointRef.current?.point ?? arcEnd
+
+        if (!currentEdit) {
+          // Estimate radius from current through-point preview
+          const arcSeg = buildArcSegmentFromThreePoints(arcStart, arcEnd, previewPoint)
+          const r = arcSeg && arcSeg.type === 'arc'
+            ? Math.hypot(arcStart.x - arcSeg.center.x, arcStart.y - arcSeg.center.y)
+            : Math.hypot(arcEnd.x - arcStart.x, arcEnd.y - arcStart.y) / 2
+          // Use current preview point as anchor to determine which side of the chord the arc center lies on
+          setDimensionEdit({
+            shape: 'circle',
+            anchor: previewPoint,
+            arcStart,
+            arcEnd,
+            arcClockwise: arcSeg?.type === 'arc' ? arcSeg.clockwise : false,
+            signX: 1,
+            signY: 1,
+            activeField: 'radius',
+            width: '',
+            height: '',
+            radius: formatLength(r, units),
+            length: '',
+            angle: '',
+          })
+        } else {
+          setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (
+        pendingAdd.shape === 'composite'
+        && pendingAdd.start
+        && !pendingAdd.closed
         && (
           (pendingAdd.currentMode === 'line' && !pendingAdd.pendingArcEnd)
-          || pendingAdd.currentMode === 'arc'
+          || (pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd)
           || pendingAdd.currentMode === 'spline'
         )
       ) {
@@ -4341,6 +4592,41 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
         return
       }
+    }
+
+    if (event.key === 'Tab' && selection.mode === 'sketch_edit' && !pendingAdd) {
+      event.preventDefault()
+      const currentEdit = dimensionEditRef.current
+      const units = projectRef.current.meta.units
+
+      if (currentEdit && dimensionEditControlRef.current) {
+        advanceTabInEditMode()
+        return
+      }
+
+      const featureId = selection.selectedFeatureId
+      if (!featureId) return
+      const feature = projectRef.current.features.find((f) => f.id === featureId)
+      if (!feature) return
+
+      const profile = feature.sketch.profile
+      const activeControl = selection.activeControl
+
+      let steps: EditDimStep[] = []
+      if (activeControl?.kind === 'anchor') {
+        steps = computeEditDimSteps(profile, activeControl.index)
+      } else if (activeControl?.kind === 'arc_handle') {
+        steps = [{ kind: 'arc_radius', control: activeControl, arcStartAnchorIndex: activeControl.index }]
+      }
+
+      if (steps.length === 0) return
+
+      editDimStepsRef.current = steps
+      editDimStepIndexRef.current = 0
+      dimensionEditFeatureIdRef.current = featureId
+      beginHistoryTransaction()
+      applyEditDimStep(0, steps, featureId, units)
+      return
     }
 
     if (
@@ -4442,6 +4728,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
+      commitEditDimension()
+      return
+    }
+
+    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
+      cancelEditDimension()
+      return
+    }
+
     if (event.key === 'Enter' && selection.mode === 'sketch_edit') {
       stopNodeDrag()
       applySketchEdit()
@@ -4537,7 +4833,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
             setDimensionEdit(null)
             canvasRef.current?.focus({ preventScroll: true })
-          } else if (edit.shape === 'composite' && pendingAdd?.shape === 'composite') {
+          } else if (pendingAdd?.shape === 'composite') {
             addPendingCompositePoint(pt)
             setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
             setDimensionEdit(null)
@@ -4623,8 +4919,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (
           pendingAdd.shape !== 'rect' && pendingAdd.shape !== 'circle'
           && pendingAdd.shape !== 'tab' && pendingAdd.shape !== 'clamp'
+          && pendingAdd.shape !== 'composite'
         ) return null
-        if (!pendingAdd.anchor) return null
+        if (pendingAdd.shape !== 'composite' && !pendingAdd.anchor) return null
+        if (pendingAdd.shape === 'composite' && !pendingAdd.start) return null
 
         if (dimensionEdit.shape === 'circle') {
           const anchorC = worldToCanvas(dimensionEdit.anchor, vt)
@@ -4702,6 +5000,118 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </>
         )
       })()}
+      {dimensionEdit && selection.mode === 'sketch_edit' && !pendingAdd && (() => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const featureId = selection.selectedFeatureId
+        if (!featureId) return null
+
+        function makeEditInputKeyDown(_field: 'length' | 'angle' | 'radius') {
+          return (e: KeyboardEvent<HTMLInputElement>) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitEditDimension()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelEditDimension()
+            } else if (e.key === 'Tab') {
+              e.preventDefault()
+              advanceTabInEditMode()
+            }
+          }
+        }
+
+        function handleLiveChange(field: 'length' | 'angle' | 'radius', value: string) {
+          const prev = dimensionEditRef.current
+          if (!prev) return
+          const next = { ...prev, [field]: value }
+          setDimensionEdit(next)
+          const control = dimensionEditControlRef.current
+          const fId = dimensionEditFeatureIdRef.current
+          if (!control || !fId) return
+
+          if (control.kind === 'arc_handle') {
+            // Arc radius: compute new arc_handle point
+            const feature = projectRef.current.features.find((f) => f.id === fId)
+            if (!feature) return
+            const profile = feature.sketch.profile
+            const seg = profile.segments[control.index]
+            if (!seg || seg.type !== 'arc') return
+            const arcStart = anchorPointForIndex(profile, control.index)
+            const newRadius = parseLengthInput(value, projectRef.current.meta.units) ?? 0
+            if (newRadius <= 0) return
+            const newHandle = arcHandleFromRadius(arcStart, seg, newRadius)
+            if (newHandle) moveFeatureControl(fId, control, newHandle)
+          } else {
+            const pt = computeDimensionEditPreviewPoint(next, projectRef.current.meta.units)
+            moveFeatureControl(fId, control, pt)
+          }
+        }
+
+        // Arc radius step
+        if (dimensionEdit.shape === 'circle') {
+          const anchorC = worldToCanvas(dimensionEdit.anchor, vt)
+          return (
+            <input
+              key="edit-radius"
+              ref={radiusInputRef}
+              className="sketch-dim-input"
+              style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
+              value={dimensionEdit.radius}
+              onChange={(e) => handleLiveChange('radius', e.target.value)}
+              onKeyDown={makeEditInputKeyDown('radius')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          )
+        }
+
+        // Endpoint (length + angle) step
+        const previewPt = computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
+        const fromC = worldToCanvas(dimensionEdit.anchor, vt)
+        const toC = worldToCanvas(previewPt, vt)
+        const rawDx = toC.cx - fromC.cx
+        const rawDy = toC.cy - fromC.cy
+        const rawLen = Math.hypot(rawDx, rawDy)
+        const displayLen = Math.max(rawLen, 40)
+        const dirX = rawLen > 0 ? rawDx / rawLen : 1
+        const dirY = rawLen > 0 ? rawDy / rawLen : 0
+        const midCx = fromC.cx + dirX * displayLen / 2
+        const midCy = fromC.cy + dirY * displayLen / 2
+        const perpX = -dirY
+        const perpY = dirX
+        const rawAngle = Math.atan2(dirY, dirX)
+        const rotAngle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+        const lengthLabelX = midCx + perpX * 14
+        const lengthLabelY = midCy + perpY * 14
+        const angleLabelX = midCx + perpX * 36
+        const angleLabelY = midCy + perpY * 36
+        return (
+          <>
+            <input
+              key="edit-length"
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: lengthLabelX, top: lengthLabelY, transform: `translate(-50%, -50%) rotate(${rotAngle}rad)` }}
+              value={dimensionEdit.length}
+              onChange={(e) => handleLiveChange('length', e.target.value)}
+              onKeyDown={makeEditInputKeyDown('length')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <input
+              key="edit-angle"
+              ref={heightInputRef}
+              className="sketch-dim-input"
+              style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${rotAngle}rad)` }}
+              value={dimensionEdit.angle}
+              onChange={(e) => handleLiveChange('angle', e.target.value)}
+              onKeyDown={makeEditInputKeyDown('angle')}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </>
+        )
+      })()}
       {selection.mode === 'sketch_edit' && (
         <div className="sketch-edit-banner">
           <div>
@@ -4713,7 +5123,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   ? pendingSketchFilletRef.current
                     ? 'Fillet active. Click a second point to define the corner round. Press '
                     : 'Fillet active. Click a line-line corner to start. Press '
-                  : 'Drag nodes to reshape. Press '}
+                  : 'Drag nodes to reshape. Hover a node and press Tab to type length/angle. Press '}
             <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.
           </div>
           {editingFeatureHasSelfIntersection ? (
