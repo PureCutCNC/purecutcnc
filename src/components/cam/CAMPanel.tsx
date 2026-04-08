@@ -993,7 +993,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' ? (
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
                     <label className="properties-field">
                       <span>Pattern</span>
                       <select
@@ -1005,7 +1005,7 @@ export function CAMPanel({
                       </select>
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' && selectedOperation.pocketPattern === 'parallel' ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pocketPattern === 'parallel' ? (
                     <label className="properties-field">
                       <span>Angle</span>
                       <DraftNumberInput

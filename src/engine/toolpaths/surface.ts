@@ -1,5 +1,5 @@
 import ClipperLib from 'clipper-lib'
-import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import type { Operation, Project, SketchFeature } from '../../types/project'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -22,6 +22,8 @@ import {
 import {
   buildContourLoops,
   buildInsetRegions,
+  buildPocketFloorContours,
+  buildPocketParallelSegments,
   contourStartPoint,
   generateStepLevels,
   polyTreeToRegions,
@@ -29,6 +31,7 @@ import {
   resolveBandBottomZ,
   transitionToCutEntry,
   toClosedCutMoves,
+  toOpenCutMoves,
   updateBounds,
 } from './pocket'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
@@ -120,146 +123,6 @@ function buildSurfaceCoverageRegions(
 
   return polyTreeToRegions(polyTree, targetFeatureIds, islandFeatureIds, scale)
     .filter((region) => region.outer.length >= 3)
-}
-
-function pointEpsilonEqual(a: Point, b: Point): boolean {
-  return Math.abs(a.x - b.x) <= 1e-9 && Math.abs(a.y - b.y) <= 1e-9
-}
-
-function polygonYBounds(points: Point[]): { minY: number; maxY: number } | null {
-  if (points.length < 3) {
-    return null
-  }
-
-  let minY = Number.POSITIVE_INFINITY
-  let maxY = Number.NEGATIVE_INFINITY
-  for (const point of points) {
-    minY = Math.min(minY, point.y)
-    maxY = Math.max(maxY, point.y)
-  }
-
-  return Number.isFinite(minY) && Number.isFinite(maxY) ? { minY, maxY } : null
-}
-
-function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
-  const intersections: number[] = []
-  const closed =
-    points.length > 0 && pointEpsilonEqual(points[0], points[points.length - 1])
-      ? points
-      : [...points, points[0]]
-
-  for (let index = 0; index < closed.length - 1; index += 1) {
-    const a = closed[index]
-    const b = closed[index + 1]
-
-    if (Math.abs(a.y - b.y) <= 1e-9) {
-      continue
-    }
-
-    const intersects =
-      (a.y <= y && b.y > y) ||
-      (b.y <= y && a.y > y)
-
-    if (!intersects) {
-      continue
-    }
-
-    const t = (y - a.y) / (b.y - a.y)
-    intersections.push(a.x + (b.x - a.x) * t)
-  }
-
-  intersections.sort((left, right) => left - right)
-
-  const intervals: Array<[number, number]> = []
-  for (let index = 0; index + 1 < intersections.length; index += 2) {
-    const start = intersections[index]
-    const end = intersections[index + 1]
-    if (end - start > 1e-9) {
-      intervals.push([start, end])
-    }
-  }
-
-  return intervals
-}
-
-function subtractIntervals(
-  baseIntervals: Array<[number, number]>,
-  clipIntervals: Array<[number, number]>,
-): Array<[number, number]> {
-  let remaining = [...baseIntervals]
-
-  for (const [clipStart, clipEnd] of clipIntervals) {
-    const next: Array<[number, number]> = []
-    for (const [start, end] of remaining) {
-      if (clipEnd <= start || clipStart >= end) {
-        next.push([start, end])
-        continue
-      }
-
-      if (clipStart > start) {
-        next.push([start, clipStart])
-      }
-      if (clipEnd < end) {
-        next.push([clipEnd, end])
-      }
-    }
-    remaining = next
-  }
-
-  return remaining.filter(([start, end]) => end - start > 1e-9)
-}
-
-function buildSurfaceFloorSegments(regions: ResolvedPocketBand['regions'], stepoverDistance: number): Point[][] {
-  const segments: Point[][] = []
-  const minStepover = 1 / DEFAULT_CLIPPER_SCALE
-  const step = Math.max(stepoverDistance, minStepover)
-
-  regions.forEach((region, regionIndex) => {
-    const bounds = polygonYBounds(region.outer)
-    if (!bounds) {
-      return
-    }
-
-    let scanIndex = 0
-    for (let y = bounds.minY + step / 2; y < bounds.maxY - step / 2 + 1e-9; y += step) {
-      const outerIntervals = scanlineIntervals(region.outer, y)
-      if (outerIntervals.length === 0) {
-        scanIndex += 1
-        continue
-      }
-
-      const islandIntervals = region.islands.flatMap((island) => scanlineIntervals(island, y))
-      const fillIntervals = subtractIntervals(outerIntervals, islandIntervals)
-
-      for (const [startX, endX] of fillIntervals) {
-        const left: Point = { x: startX, y }
-        const right: Point = { x: endX, y }
-        const reverse = (regionIndex + scanIndex) % 2 === 1
-        segments.push(reverse ? [right, left] : [left, right])
-      }
-
-      scanIndex += 1
-    }
-  })
-
-  return segments
-}
-
-function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
-  if (points.length < 2) {
-    return []
-  }
-
-  const moves: ToolpathMove[] = []
-  for (let index = 0; index < points.length - 1; index += 1) {
-    moves.push({
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    })
-  }
-
-  return moves
 }
 
 function resolveSurfaceCleanRegions(project: Project, operation: Operation): SurfaceCleanResult {
@@ -406,6 +269,49 @@ function generateRoughBandMoves(
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
 
+  if (operation.pocketPattern === 'parallel') {
+    const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
+    if (roughRegions.length === 0) {
+      return {
+        moves,
+        stepLevels,
+        warnings: [`No machinable parallel cleanup region for band ${band.topZ} -> ${band.bottomZ}`],
+      }
+    }
+
+    const boundaryContours = buildContourLoops(roughRegions)
+    const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
+    if (segments.length === 0) {
+      return {
+        moves,
+        stepLevels,
+        warnings: [`No machinable parallel cleanup segments for band ${band.topZ} -> ${band.bottomZ}`],
+      }
+    }
+
+    for (const z of stepLevels) {
+      for (const contour of boundaryContours) {
+        const entryPoint = contourStartPoint(contour, z)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        const cutMoves = toClosedCutMoves(contour, z)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+
+      for (const segment of segments) {
+        const entryPoint = contourStartPoint(segment, z)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        const cutMoves = toOpenCutMoves(segment, z)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+    }
+
+    return { moves, stepLevels, warnings }
+  }
+
   for (const z of stepLevels) {
     let currentRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
     while (currentRegions.length > 0) {
@@ -465,10 +371,13 @@ function generateFinishBandMoves(
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
-  const floorSegments = operation.finishFloor
-    ? buildSurfaceFloorSegments(finishRegions, stepoverDistance)
+  const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
+    ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
     : []
-  if (wallContours.length === 0 && floorSegments.length === 0) {
+  const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
+    ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
+    : []
+  if (wallContours.length === 0 && floorContours.length === 0 && floorSegments.length === 0) {
     return {
       moves,
       stepLevels: [],
@@ -493,6 +402,14 @@ function generateFinishBandMoves(
   }
 
   for (const z of floorStepLevels) {
+    for (const contour of floorContours) {
+      const entryPoint = contourStartPoint(contour, z)
+      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      const cutMoves = toClosedCutMoves(contour, z)
+      moves.push(...cutMoves)
+      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+    }
+
     for (const segment of floorSegments) {
       const entryPoint = contourStartPoint(segment, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
