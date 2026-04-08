@@ -6,6 +6,7 @@ import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary
 import type {
   OperationKind,
   OperationPass,
+  PocketPattern,
   OperationTarget,
   Project,
   Tool,
@@ -239,6 +240,15 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
     .filter((name): name is string => Boolean(name))
 
   return names.length > 0 ? names.join(', ') : 'No features'
+}
+
+function pocketPatternLabel(pattern: PocketPattern): string {
+  switch (pattern) {
+    case 'offset':
+      return 'Offset'
+    case 'parallel':
+      return 'Parallel'
+  }
 }
 
 function operationRequiresClosedProfiles(kind: OperationKind): boolean {
@@ -980,6 +990,27 @@ export function CAMPanel({
                         units={project.meta.units}
                         min={0.0001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { maxCarveDepth: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
+                    <label className="properties-field">
+                      <span>Pattern</span>
+                      <select
+                        value={selectedOperation.pocketPattern}
+                        onChange={(event) => updateOperation(selectedOperation.id, { pocketPattern: event.target.value as PocketPattern })}
+                      >
+                        <option value="offset">{pocketPatternLabel('offset')}</option>
+                        <option value="parallel">{pocketPatternLabel('parallel')}</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pocketPattern === 'parallel' ? (
+                    <label className="properties-field">
+                      <span>Angle</span>
+                      <DraftNumberInput
+                        value={selectedOperation.pocketAngle}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
                       />
                     </label>
                   ) : null}

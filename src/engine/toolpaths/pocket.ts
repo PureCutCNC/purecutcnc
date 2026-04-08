@@ -351,6 +351,214 @@ export function buildPocketFloorContours(
   return contours
 }
 
+function pointEpsilonEqual(a: Point, b: Point): boolean {
+  return Math.abs(a.x - b.x) <= 1e-9 && Math.abs(a.y - b.y) <= 1e-9
+}
+
+function polygonYBounds(points: Point[]): { minY: number; maxY: number } | null {
+  if (points.length < 3) {
+    return null
+  }
+
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const point of points) {
+    minY = Math.min(minY, point.y)
+    maxY = Math.max(maxY, point.y)
+  }
+
+  return Number.isFinite(minY) && Number.isFinite(maxY) ? { minY, maxY } : null
+}
+
+function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
+  const intersections: number[] = []
+  const closed =
+    points.length > 0 && pointEpsilonEqual(points[0], points[points.length - 1])
+      ? points
+      : [...points, points[0]]
+
+  for (let index = 0; index < closed.length - 1; index += 1) {
+    const a = closed[index]
+    const b = closed[index + 1]
+
+    if (Math.abs(a.y - b.y) <= 1e-9) {
+      continue
+    }
+
+    const intersects =
+      (a.y <= y && b.y > y) ||
+      (b.y <= y && a.y > y)
+
+    if (!intersects) {
+      continue
+    }
+
+    const t = (y - a.y) / (b.y - a.y)
+    intersections.push(a.x + (b.x - a.x) * t)
+  }
+
+  intersections.sort((left, right) => left - right)
+
+  const intervals: Array<[number, number]> = []
+  for (let index = 0; index + 1 < intersections.length; index += 2) {
+    const start = intersections[index]
+    const end = intersections[index + 1]
+    if (end - start > 1e-9) {
+      intervals.push([start, end])
+    }
+  }
+
+  return intervals
+}
+
+function subtractIntervals(
+  baseIntervals: Array<[number, number]>,
+  clipIntervals: Array<[number, number]>,
+): Array<[number, number]> {
+  let remaining = [...baseIntervals]
+
+  for (const [clipStart, clipEnd] of clipIntervals) {
+    const next: Array<[number, number]> = []
+    for (const [start, end] of remaining) {
+      if (clipEnd <= start || clipStart >= end) {
+        next.push([start, end])
+        continue
+      }
+
+      if (clipStart > start) {
+        next.push([start, clipStart])
+      }
+      if (clipEnd < end) {
+        next.push([clipEnd, end])
+      }
+    }
+    remaining = next
+  }
+
+  return remaining.filter(([start, end]) => end - start > 1e-9)
+}
+
+function rotatePoint(point: Point, cosTheta: number, sinTheta: number): Point {
+  return {
+    x: point.x * cosTheta - point.y * sinTheta,
+    y: point.x * sinTheta + point.y * cosTheta,
+  }
+}
+
+function distanceSquared(a: Point, b: Point): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return dx * dx + dy * dy
+}
+
+function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
+  if (segments.length <= 1 || start === null) {
+    return segments
+  }
+
+  const remaining = segments
+    .filter((segment) => segment.length >= 2)
+    .map((segment) => [...segment])
+  const ordered: Point[][] = []
+  let current = start
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestReverse = false
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const segment = remaining[index]
+      const first = segment[0]
+      const last = segment[segment.length - 1]
+      const forwardDistance = distanceSquared(current, first)
+      if (forwardDistance < bestDistance) {
+        bestIndex = index
+        bestReverse = false
+        bestDistance = forwardDistance
+      }
+
+      const reverseDistance = distanceSquared(current, last)
+      if (reverseDistance < bestDistance) {
+        bestIndex = index
+        bestReverse = true
+        bestDistance = reverseDistance
+      }
+    }
+
+    const [nextSegment] = remaining.splice(bestIndex, 1)
+    const orderedSegment = bestReverse ? [...nextSegment].reverse() : nextSegment
+    ordered.push(orderedSegment)
+    current = orderedSegment[orderedSegment.length - 1]
+  }
+
+  return ordered
+}
+
+export function buildPocketParallelSegments(
+  regions: ResolvedPocketRegion[],
+  stepoverDistance: number,
+  angleDeg: number,
+): Point[][] {
+  const segments: Point[][] = []
+  const minStepover = 1 / DEFAULT_CLIPPER_SCALE
+  const step = Math.max(stepoverDistance, minStepover)
+  const angleRad = (angleDeg * Math.PI) / 180
+  const cosForward = Math.cos(angleRad)
+  const sinForward = Math.sin(angleRad)
+  const cosInverse = Math.cos(-angleRad)
+  const sinInverse = Math.sin(-angleRad)
+
+  regions.forEach((region, regionIndex) => {
+    const rotatedOuter = region.outer.map((point) => rotatePoint(point, cosInverse, sinInverse))
+    const rotatedIslands = region.islands.map((island) => island.map((point) => rotatePoint(point, cosInverse, sinInverse)))
+    const bounds = polygonYBounds(rotatedOuter)
+    if (!bounds) {
+      return
+    }
+
+    let scanIndex = 0
+    for (let y = bounds.minY + step / 2; y < bounds.maxY - step / 2 + 1e-9; y += step) {
+      const outerIntervals = scanlineIntervals(rotatedOuter, y)
+      if (outerIntervals.length === 0) {
+        scanIndex += 1
+        continue
+      }
+
+      const islandIntervals = rotatedIslands.flatMap((island) => scanlineIntervals(island, y))
+      const fillIntervals = subtractIntervals(outerIntervals, islandIntervals)
+
+      for (const [startX, endX] of fillIntervals) {
+        const left = rotatePoint({ x: startX, y }, cosForward, sinForward)
+        const right = rotatePoint({ x: endX, y }, cosForward, sinForward)
+        const reverse = (regionIndex + scanIndex) % 2 === 1
+        segments.push(reverse ? [right, left] : [left, right])
+      }
+
+      scanIndex += 1
+    }
+  })
+
+  return segments
+}
+
+export function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
+  if (points.length < 2) {
+    return []
+  }
+
+  const moves: ToolpathMove[] = []
+  for (let index = 0; index < points.length - 1; index += 1) {
+    moves.push({
+      kind: 'cut',
+      from: { x: points[index].x, y: points[index].y, z },
+      to: { x: points[index + 1].x, y: points[index + 1].y, z },
+    })
+  }
+
+  return moves
+}
+
 function generateRoughBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
@@ -377,6 +585,54 @@ function generateRoughBandMoves(
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
+
+  if (operation.kind === 'pocket' && operation.pocketPattern === 'parallel') {
+    const roughRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
+    if (roughRegions.length === 0) {
+      return {
+        moves,
+        stepLevels,
+        warnings: [`No machinable parallel floor region for band ${band.topZ} -> ${band.bottomZ}`],
+      }
+    }
+
+    const boundaryContours = buildContourLoops(roughRegions)
+    const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
+    if (segments.length === 0) {
+      return {
+        moves,
+        stepLevels,
+        warnings: [`No machinable parallel floor segments for band ${band.topZ} -> ${band.bottomZ}`],
+      }
+    }
+
+    for (const z of stepLevels) {
+      for (const contour of boundaryContours) {
+        const entryPoint = contourStartPoint(contour, z)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        const cutMoves = toClosedCutMoves(contour, z)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+
+      const orderedSegments = orderOpenSegmentsGreedy(
+        segments,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+
+      for (const segment of orderedSegments) {
+        const entryPoint = contourStartPoint(segment, z)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        const cutMoves = toOpenCutMoves(segment, z)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+    }
+
+    return { moves, stepLevels, warnings }
+  }
 
   for (const z of stepLevels) {
     let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
@@ -436,10 +692,13 @@ function generateFinishBandMoves(
   const finishDelta = toolRadius + radialLeave
   const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
-  const floorContours = operation.finishFloor
+  const floorContours = operation.finishFloor && !(operation.kind === 'pocket' && operation.pocketPattern === 'parallel')
     ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
     : []
-  if (wallContours.length === 0 && floorContours.length === 0) {
+  const floorSegments = operation.finishFloor && operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
+    ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
+    : []
+  if (wallContours.length === 0 && floorContours.length === 0 && floorSegments.length === 0) {
     return {
       moves,
       stepLevels: [],
@@ -468,6 +727,19 @@ function generateFinishBandMoves(
       const entryPoint = contourStartPoint(contour, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toClosedCutMoves(contour, z)
+      moves.push(...cutMoves)
+      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+    }
+
+    const orderedFloorSegments = orderOpenSegmentsGreedy(
+      floorSegments,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
+
+    for (const segment of orderedFloorSegments) {
+      const entryPoint = contourStartPoint(segment, z)
+      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      const cutMoves = toOpenCutMoves(segment, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
