@@ -215,6 +215,7 @@ export type OperationKind =
   | 'follow_line'
 
 export type OperationPass = 'rough' | 'finish'
+export type PocketPattern = 'offset' | 'parallel'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -234,6 +235,8 @@ export interface Operation {
   feed: number
   plungeFeed: number
   rpm: number
+  pocketPattern: PocketPattern
+  pocketAngle: number
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

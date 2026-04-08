@@ -2165,6 +2165,8 @@ function defaultOperationForTarget(
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,
