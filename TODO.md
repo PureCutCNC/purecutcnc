@@ -125,6 +125,8 @@ This file tracks follow-up work, open issues, and design questions that come up 
 - Notes:
   - Current finish supports separate wall and floor toggles.
   - Future improvements include smarter floor-finish patterns, better finish ordering, and richer finish linking.
+  - When a preserved island only exists in upper bands, finish-floor cleanup should avoid recutting the already-cleared air around that island at deeper bands.
+  - Desired behavior: only clean the top surface that still exists at that band, instead of tracing stale island keep-out space below it.
 
 ### Configurable arc / chord tolerance for CAM flattening
 - Status: Open
