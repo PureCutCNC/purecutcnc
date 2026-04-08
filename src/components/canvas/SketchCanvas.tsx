@@ -88,6 +88,12 @@ interface DimensionEditState {
   angle: string  // degrees
 }
 
+type OperationDimEdit =
+  | { kind: 'move' | 'copy'; distance: string }
+  | { kind: 'scale'; factor: string }
+  | { kind: 'rotate'; angle: string }
+  | { kind: 'offset'; distance: string }
+
 function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
   return {
     cx: vt.offsetX + point.x * vt.scale,
@@ -1385,6 +1391,25 @@ function resolveOffsetPreview(
   return snappedPreview
 }
 
+function unitDirection(from: Point, to: Point): Point {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.hypot(dx, dy)
+  if (len <= 1e-9) {
+    return { x: 1, y: 0 }
+  }
+  return { x: dx / len, y: dy / len }
+}
+
+function rotateVector(vector: Point, angleRadians: number): Point {
+  const cos = Math.cos(angleRadians)
+  const sin = Math.sin(angleRadians)
+  return {
+    x: vector.x * cos - vector.y * sin,
+    y: vector.x * sin + vector.y * cos,
+  }
+}
+
 function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: ViewTransform): string | null {
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
@@ -2228,6 +2253,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const widthInputRef = useRef<HTMLInputElement>(null)
   const heightInputRef = useRef<HTMLInputElement>(null)
   const radiusInputRef = useRef<HTMLInputElement>(null)
+  const [operationDimEdit, setOperationDimEdit] = useState<OperationDimEdit | null>(null)
+  const operationDimEditRef = useRef<OperationDimEdit | null>(null)
+  operationDimEditRef.current = operationDimEdit
 
   const {
     project,
@@ -3131,14 +3159,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingTransform.referenceEnd) {
           drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
           drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
-          drawLineLengthMeasurement(
-            ctx,
-            pendingTransform.referenceStart!,
-            pendingTransform.referenceEnd,
-            vt,
-            project.meta.units,
-            { prefix: pendingTransform.mode === 'resize' ? 'Ref' : undefined },
-          )
+          if (pendingTransform.mode === 'resize') {
+            drawLineLengthMeasurement(
+              ctx,
+              pendingTransform.referenceStart!,
+              pendingTransform.referenceEnd,
+              vt,
+              project.meta.units,
+              { prefix: 'Ref' },
+            )
+          }
         }
 
         if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
@@ -3199,14 +3229,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (pendingTransform.referenceEnd) {
         drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
         drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
-        drawLineLengthMeasurement(
-          ctx,
-          pendingTransform.referenceStart!,
-          pendingTransform.referenceEnd,
-          vt,
-          project.meta.units,
-          { prefix: pendingTransform.mode === 'resize' ? 'Ref' : undefined },
-        )
+        if (pendingTransform.mode === 'resize') {
+          drawLineLengthMeasurement(
+            ctx,
+            pendingTransform.referenceStart!,
+            pendingTransform.referenceEnd,
+            vt,
+            project.meta.units,
+            { prefix: 'Ref' },
+          )
+        }
       }
 
       if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
@@ -3261,22 +3293,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawPendingPoint(ctx, snappedOffsetPoint, vt, isActiveSnapPoint(snappedOffsetPoint))
       }
 
+      const typedOffsetDistance =
+        operationDimEdit?.kind === 'offset'
+          ? parseLengthInput(operationDimEdit.distance, project.meta.units)
+          : null
       const previewInput =
-        features.length > 0 && rawOffsetPoint && snappedOffsetPoint
+        typedOffsetDistance === null
+          && features.length > 0
+          && rawOffsetPoint
+          && snappedOffsetPoint
           ? resolveOffsetPreview(features, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
           : null
 
-      if (previewInput) {
+      if (previewInput && typedOffsetDistance === null) {
         drawPendingPoint(ctx, previewInput.nearestPoint, vt)
         drawMoveGuide(ctx, previewInput.nearestPoint, snappedOffsetPoint!, vt)
         drawLineLengthMeasurement(ctx, previewInput.nearestPoint, snappedOffsetPoint!, vt, project.meta.units)
-        const previewFeatures = previewOffsetFeatures(project, pendingOffset.entityIds, previewInput.signedDistance)
+      }
+
+      const previewDistance = typedOffsetDistance ?? previewInput?.signedDistance ?? null
+      if (previewDistance !== null) {
+        const previewFeatures = previewOffsetFeatures(project, pendingOffset.entityIds, previewDistance)
         for (const feature of previewFeatures) {
           drawPreviewProfile(
             ctx,
             feature.sketch.profile,
             vt,
-            previewInput.direction === 'in' ? 'Offset in preview' : 'Offset out preview',
+            previewDistance < 0 ? 'Offset in preview' : 'Offset out preview',
           )
         }
       }
@@ -3374,6 +3417,103 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
   }, [pendingAdd])
 
+  useEffect(() => {
+    if (!pendingMove) setOperationDimEdit(null)
+  }, [pendingMove])
+
+  useEffect(() => {
+    if (!pendingTransform) setOperationDimEdit(null)
+  }, [pendingTransform])
+
+  useEffect(() => {
+    if (!pendingOffset) setOperationDimEdit(null)
+  }, [pendingOffset])
+
+  useEffect(() => {
+    if (!operationDimEdit) return
+    const inputRef = widthInputRef
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true })
+      inputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [operationDimEdit?.kind, !operationDimEdit])
+
+  useEffect(() => {
+    const pendingMove = pendingMoveRef.current
+    if (!operationDimEdit || !pendingMove?.fromPoint) {
+      return
+    }
+
+    if (operationDimEdit.kind !== 'move' && operationDimEdit.kind !== 'copy') {
+      return
+    }
+
+    const units = projectRef.current.meta.units
+    const distance = parseLengthInput(operationDimEdit.distance, units)
+    if (distance === null) {
+      return
+    }
+    const direction = unitDirection(
+      pendingMove.fromPoint,
+      pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint,
+    )
+
+    setPendingMovePreviewPointRef({
+      point: {
+        x: pendingMove.fromPoint.x + direction.x * Math.abs(distance),
+        y: pendingMove.fromPoint.y + direction.y * Math.abs(distance),
+      },
+      session: pendingMove.session,
+    })
+  }, [operationDimEdit])
+
+  useEffect(() => {
+    const pendingTransform = pendingTransformRef.current
+    if (
+      !operationDimEdit
+      || (operationDimEdit.kind !== 'scale' && operationDimEdit.kind !== 'rotate')
+      || !pendingTransform
+      || !pendingTransform.referenceStart
+      || !pendingTransform.referenceEnd
+    ) {
+      return
+    }
+
+    if (operationDimEdit.kind === 'scale') {
+      if (pendingTransform.mode !== 'resize') {
+        return
+      }
+      const factor = Number(operationDimEdit.factor)
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return
+      }
+
+      const refVec = subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart)
+      setPendingTransformPreviewPointRef({
+        point: addPoint(pendingTransform.referenceStart, scalePoint(refVec, factor)),
+        session: pendingTransform.session,
+      })
+      return
+    }
+
+    if (pendingTransform.mode !== 'rotate') {
+      return
+    }
+
+    const angleDegrees = Number(operationDimEdit.angle)
+    if (!Number.isFinite(angleDegrees)) {
+      return
+    }
+
+    const refVec = subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart)
+    const rotated = rotateVector(refVec, angleDegrees * Math.PI / 180)
+    setPendingTransformPreviewPointRef({
+      point: addPoint(pendingTransform.referenceStart, rotated),
+      session: pendingTransform.session,
+    })
+  }, [operationDimEdit])
+
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
       const canvas = canvasRef.current
@@ -3406,6 +3546,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (operationDimEdit) {
+      return
+    }
+
     if (selection.mode !== 'sketch_edit' && !pendingMove && !pendingTransform && !pendingOffset && !pendingShapeAction) {
       return
     }
@@ -3415,7 +3559,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [copyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -3560,7 +3704,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleMouseDown(event: MouseEvent<HTMLCanvasElement>) {
+    const project = projectRef.current
+    const selection = selectionRef.current
+    const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
+    const viewState = viewStateRef.current
     const point = canvasCoordinates(event)
 
     if (zoomWindowActive && event.button === 0) {
@@ -3580,11 +3728,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (pendingOffsetRef.current) {
+    if (pendingOffset) {
       return
     }
 
-    if (selectionRef.current.mode === 'sketch_edit' && selectionRef.current.sketchEditTool) {
+    if (selection.mode === 'sketch_edit' && selection.sketchEditTool) {
       return
     }
 
@@ -3593,8 +3741,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    const project = projectRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const control = hitEditableControl(point)
     const hitClampId = findHitClampId(world, project.clamps)
@@ -3626,7 +3773,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const viewState = viewStateRef.current
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
@@ -3712,6 +3860,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
       hoverFeature(null)
+      const moveEdit = operationDimEditRef.current
+      if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
+        const distance = parseLengthInput(moveEdit.distance, project.meta.units)
+        if (distance !== null) {
+          const direction = unitDirection(pendingMove.fromPoint, snapped)
+          setPendingMovePreviewPointRef({
+            point: {
+              x: pendingMove.fromPoint.x + direction.x * Math.abs(distance),
+              y: pendingMove.fromPoint.y + direction.y * Math.abs(distance),
+            },
+            session: pendingMove.session,
+          })
+          return
+        }
+      }
       setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       return
     }
@@ -3859,12 +4022,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function handleMouseUp() {
     const canvas = canvasRef.current
     const project = projectRef.current
+    const selection = selectionRef.current
+    const viewState = viewStateRef.current
+
     if (canvas && zoomWindowStartRef.current && zoomWindowCurrentRef.current) {
       const dx = zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx
       const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
         const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
         setViewState(
@@ -3893,7 +4059,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
         const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
         const minX = Math.min(startWorld.x, endWorld.x)
@@ -3904,7 +4070,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           .filter((feature) => feature.visible)
           .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
           .map((feature) => feature.id)
-        const nextIds = [...selectionRef.current.selectedFeatureIds, ...enclosedIds]
+        const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
           .filter((id, index, array) => array.indexOf(id) === index)
         if (nextIds.length > 0) {
           selectFeatures(nextIds)
@@ -3920,6 +4086,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleMouseLeave() {
+    const pendingAdd = pendingAddRef.current
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
+
     marqueeStartRef.current = null
     marqueeCurrentRef.current = null
     zoomWindowStartRef.current = null
@@ -3983,13 +4153,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
+    const viewState = viewStateRef.current
+    const dimensionEdit = dimensionEditRef.current
     if (isDraggingNodeRef.current) return
 
     const point = canvasCoordinates(event)
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const resolvedSnap = resolveSketchSnap(world, vt)
     const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
@@ -4070,7 +4242,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (dimensionEditRef.current) {
+    if (dimensionEdit) {
       commitEditDimension()
       return
     }
@@ -4442,8 +4614,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
+    const project = projectRef.current
+    const selection = selectionRef.current
+    const pendingAdd = pendingAddRef.current
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
+    const viewState = viewStateRef.current
 
     if (event.key === 'Tab' && pendingAdd) {
       const currentEdit = dimensionEditRef.current
@@ -4610,6 +4788,103 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    if (event.key === 'Tab' && pendingMove && pendingMove.fromPoint && !pendingMove.toPoint) {
+      event.preventDefault()
+      const currentEdit = operationDimEditRef.current
+      const units = projectRef.current.meta.units
+      if (!currentEdit) {
+        const previewPoint = pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
+        const dx = previewPoint.x - pendingMove.fromPoint.x
+        const dy = previewPoint.y - pendingMove.fromPoint.y
+        setOperationDimEdit({
+          kind: pendingMove.mode,
+          distance: formatLength(Math.hypot(dx, dy), units),
+        })
+      } else if (currentEdit.kind === 'move' || currentEdit.kind === 'copy') {
+        setOperationDimEdit(null)
+        canvasRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+
+    if (event.key === 'Tab' && pendingTransform?.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+      event.preventDefault()
+      const currentEdit = operationDimEditRef.current
+      if (!currentEdit) {
+        let factor = '1'
+        const previewPoint = pendingTransformPreviewPointRef.current?.point
+        if (previewPoint) {
+          const refVec = subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart)
+          const refLen = Math.hypot(refVec.x, refVec.y)
+          if (refLen > 1e-9) {
+            const unit = scalePoint(refVec, 1 / refLen)
+            const projLen = dotPoint(subtractPoint(previewPoint, pendingTransform.referenceStart), unit)
+            const f = projLen / refLen
+            factor = f.toFixed(4).replace(/\.?0+$/, '')
+          }
+        }
+        setOperationDimEdit({ kind: 'scale', factor })
+      } else {
+        setOperationDimEdit(null)
+        canvasRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+
+    if (event.key === 'Tab' && pendingTransform?.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+      event.preventDefault()
+      const currentEdit = operationDimEditRef.current
+      if (!currentEdit) {
+        let angle = '0'
+        const previewPoint = pendingTransformPreviewPointRef.current?.point
+        if (previewPoint) {
+          const startVec = subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart)
+          const previewVec = subtractPoint(previewPoint, pendingTransform.referenceStart)
+          const startAngle = Math.atan2(startVec.y, startVec.x)
+          const previewAngle = Math.atan2(previewVec.y, previewVec.x)
+          let delta = (previewAngle - startAngle) * (180 / Math.PI)
+          while (delta <= -180) delta += 360
+          while (delta > 180) delta -= 360
+          angle = delta.toFixed(2).replace(/\.?0+$/, '')
+        }
+        setOperationDimEdit({ kind: 'rotate', angle })
+      } else if (currentEdit.kind === 'rotate') {
+        setOperationDimEdit(null)
+        canvasRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+
+    if (event.key === 'Tab' && pendingOffset) {
+      event.preventDefault()
+      const currentEdit = operationDimEditRef.current
+      if (!currentEdit) {
+        const units = project.meta.units
+        let distance = '0'
+        const rawOffsetPoint = pendingOffsetRawPreviewPointRef.current?.point
+        const snappedOffsetPoint = pendingOffsetPreviewPointRef.current?.point
+        if (rawOffsetPoint && snappedOffsetPoint) {
+          const canvas = canvasRef.current
+          if (canvas) {
+            const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+            const sourceFeatures = pendingOffset.entityIds
+              .map((id) => project.features.find((f) => f.id === id) ?? null)
+              .filter((f): f is SketchFeature => f !== null)
+              .filter((f) => f.sketch.profile.closed)
+            const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
+            if (previewInput) {
+              distance = formatLength(previewInput.signedDistance, units)
+            }
+          }
+        }
+        setOperationDimEdit({ kind: 'offset', distance })
+      } else {
+        setOperationDimEdit(null)
+        canvasRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+
     if (event.key === 'Tab' && selection.mode === 'sketch_edit' && !pendingAdd) {
       event.preventDefault()
       const currentEdit = dimensionEditRef.current
@@ -4705,12 +4980,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       cancelPendingMove()
       setPendingMovePreviewPointRef(null)
       setCopyCountDraft('1')
+      setOperationDimEdit(null)
       return
     }
 
     if (event.key === 'Escape' && pendingTransform) {
       cancelPendingTransform()
       setPendingTransformPreviewPointRef(null)
+      setOperationDimEdit(null)
       return
     }
 
@@ -4718,6 +4995,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       cancelPendingOffset()
       setPendingOffsetPreviewPointRef(null)
       setPendingOffsetRawPreviewPointRef(null)
+      setOperationDimEdit(null)
       return
     }
 
@@ -5127,6 +5405,303 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </>
         )
       })()}
+      {operationDimEdit && (() => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+
+        if ((operationDimEdit.kind === 'move' || operationDimEdit.kind === 'copy') && pendingMove?.fromPoint) {
+          const edit = operationDimEdit
+          const units = project.meta.units
+          const distance = parseLengthInput(edit.distance, units)
+          const direction = unitDirection(
+            pendingMove.fromPoint,
+            pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint,
+          )
+          const previewPoint =
+            distance !== null
+              ? {
+                  x: pendingMove.fromPoint.x + direction.x * Math.abs(distance),
+                  y: pendingMove.fromPoint.y + direction.y * Math.abs(distance),
+                }
+              : pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
+
+          const fromC = worldToCanvas(pendingMove.fromPoint, vt)
+          const toC = worldToCanvas(previewPoint, vt)
+          const dx = toC.cx - fromC.cx
+          const dy = toC.cy - fromC.cy
+          const len = Math.hypot(dx, dy)
+          const dirX = len > 0 ? dx / len : 1
+          const dirY = len > 0 ? dy / len : 0
+          const midX = fromC.cx + dx / 2
+          const midY = fromC.cy + dy / 2
+          const labelX = midX - dirY * 14
+          const labelY = midY + dirX * 14
+          const rawAngle = Math.atan2(dy, dx)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+
+          function commitMoveDistanceEdit() {
+            const currentEdit = operationDimEditRef.current
+            if (!currentEdit || (currentEdit.kind !== 'move' && currentEdit.kind !== 'copy')) return
+            const pm = pendingMoveRef.current
+            if (!pm || !pm.fromPoint) return
+            const units = projectRef.current.meta.units
+            const distance = parseLengthInput(currentEdit.distance, units)
+            if (distance === null) return
+            const direction = unitDirection(
+              pm.fromPoint,
+              pendingMovePreviewPointRef.current?.point ?? pm.fromPoint,
+            )
+            const toPoint = {
+              x: pm.fromPoint.x + direction.x * Math.abs(distance),
+              y: pm.fromPoint.y + direction.y * Math.abs(distance),
+            }
+            if (currentEdit.kind === 'move') {
+              completePendingMove(toPoint)
+              setPendingMovePreviewPointRef(null)
+            } else {
+              setPendingMoveTo(toPoint)
+              setPendingMovePreviewPointRef({ point: toPoint, session: pm.session })
+              setCopyCountDraft('1')
+            }
+            setOperationDimEdit(null)
+          }
+
+          return (
+            <input
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: labelX, top: labelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+              value={edit.distance}
+              onChange={(e) => setOperationDimEdit({ ...edit, distance: e.target.value })}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitMoveDistanceEdit()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelPendingMove()
+                  setPendingMovePreviewPointRef(null)
+                  setCopyCountDraft('1')
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  setOperationDimEdit(null)
+                  canvasRef.current?.focus({ preventScroll: true })
+                }
+              }}
+            />
+          )
+        }
+
+        if (operationDimEdit.kind === 'scale' && pendingTransform?.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+          const factor = Number(operationDimEdit.factor)
+          const previewPoint =
+            Number.isFinite(factor) && factor > 0
+              ? addPoint(
+                  pendingTransform.referenceStart,
+                  scalePoint(subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart), factor),
+                )
+              : pendingTransformPreviewPointRef.current?.point ?? pendingTransform.referenceEnd
+          const fromC = worldToCanvas(pendingTransform.referenceStart, vt)
+          const toC = worldToCanvas(previewPoint, vt)
+          const dx = toC.cx - fromC.cx
+          const dy = toC.cy - fromC.cy
+          const len = Math.hypot(dx, dy)
+          const dirX = len > 0 ? dx / len : 1
+          const dirY = len > 0 ? dy / len : 0
+          const midX = fromC.cx + dx / 2
+          const midY = fromC.cy + dy / 2
+          const labelX = midX - dirY * 14
+          const labelY = midY + dirX * 14
+          const rawAngle = Math.atan2(dy, dx)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+
+          return (
+            <input
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: labelX, top: labelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+              value={operationDimEdit.factor}
+              onChange={(e) => setOperationDimEdit({ kind: 'scale', factor: e.target.value })}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const edit = operationDimEditRef.current
+                  if (!edit || edit.kind !== 'scale') return
+                  const pt = pendingTransformRef.current
+                  if (!pt || pt.mode !== 'resize' || !pt.referenceStart || !pt.referenceEnd) return
+                  const factor = Number(edit.factor)
+                  if (!Number.isFinite(factor) || factor <= 0) return
+                  const refVec = subtractPoint(pt.referenceEnd, pt.referenceStart)
+                  const previewPoint = addPoint(pt.referenceStart, scalePoint(refVec, factor))
+                  completePendingTransform(previewPoint)
+                  setPendingTransformPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelPendingTransform()
+                  setPendingTransformPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  setOperationDimEdit(null)
+                  canvasRef.current?.focus({ preventScroll: true })
+                }
+              }}
+            />
+          )
+        }
+
+        if (operationDimEdit.kind === 'rotate' && pendingTransform?.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+          const angleDegrees = Number(operationDimEdit.angle)
+          const previewPoint =
+            Number.isFinite(angleDegrees)
+              ? addPoint(
+                  pendingTransform.referenceStart,
+                  rotateVector(
+                    subtractPoint(pendingTransform.referenceEnd, pendingTransform.referenceStart),
+                    angleDegrees * Math.PI / 180,
+                  ),
+                )
+              : pendingTransformPreviewPointRef.current?.point ?? pendingTransform.referenceEnd
+          const originC = worldToCanvas(pendingTransform.referenceStart, vt)
+          const previewC = worldToCanvas(previewPoint, vt)
+          const dx = previewC.cx - originC.cx
+          const dy = previewC.cy - originC.cy
+          const len = Math.hypot(dx, dy)
+          const dirX = len > 0 ? dx / len : 1
+          const dirY = len > 0 ? dy / len : 0
+          const midX = originC.cx + dx / 2
+          const midY = originC.cy + dy / 2
+          const labelX = midX - dirY * 22
+          const labelY = midY + dirX * 22
+          const rawAngle = Math.atan2(dy, dx)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+
+          return (
+            <input
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: labelX, top: labelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+              value={operationDimEdit.angle}
+              onChange={(e) => setOperationDimEdit({ kind: 'rotate', angle: e.target.value })}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const edit = operationDimEditRef.current
+                  if (!edit || edit.kind !== 'rotate') return
+                  const pt = pendingTransformRef.current
+                  if (!pt || pt.mode !== 'rotate' || !pt.referenceStart || !pt.referenceEnd) return
+                  const angleDegrees = Number(edit.angle)
+                  if (!Number.isFinite(angleDegrees)) return
+                  const previewPoint = addPoint(
+                    pt.referenceStart,
+                    rotateVector(
+                      subtractPoint(pt.referenceEnd, pt.referenceStart),
+                      angleDegrees * Math.PI / 180,
+                    ),
+                  )
+                  completePendingTransform(previewPoint)
+                  setPendingTransformPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelPendingTransform()
+                  setPendingTransformPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  setOperationDimEdit(null)
+                  canvasRef.current?.focus({ preventScroll: true })
+                }
+              }}
+            />
+          )
+        }
+
+        if (operationDimEdit.kind === 'offset' && pendingOffset) {
+          const currentOffsetRawPreviewPoint =
+            pendingOffsetRawPreviewPointRef.current?.session === pendingOffset.session
+              ? pendingOffsetRawPreviewPointRef.current.point
+              : null
+          const currentOffsetPreviewPoint =
+            pendingOffsetPreviewPointRef.current?.session === pendingOffset.session
+              ? pendingOffsetPreviewPointRef.current.point
+              : null
+          const features = pendingOffset.entityIds
+            .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
+            .filter((feature): feature is SketchFeature => feature !== null)
+            .filter((feature) => feature.sketch.profile.closed)
+          const rawOffsetPoint = currentOffsetRawPreviewPoint ?? livePointerWorldRef.current ?? activeSnapRef.current?.rawPoint ?? null
+          const snappedOffsetPoint = currentOffsetPreviewPoint ?? activeSnapRef.current?.point ?? rawOffsetPoint
+          const previewInput =
+            features.length > 0 && rawOffsetPoint && snappedOffsetPoint
+              ? resolveOffsetPreview(features, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
+              : null
+          const labelAnchor = previewInput?.nearestPoint ?? snappedOffsetPoint
+          const labelTarget = snappedOffsetPoint ?? previewInput?.nearestPoint
+          if (!labelAnchor || !labelTarget) return null
+
+          const fromC = worldToCanvas(labelAnchor, vt)
+          const toC = worldToCanvas(labelTarget, vt)
+          const dx = toC.cx - fromC.cx
+          const dy = toC.cy - fromC.cy
+          const len = Math.hypot(dx, dy)
+          const dirX = len > 0 ? dx / len : 1
+          const dirY = len > 0 ? dy / len : 0
+          const midX = fromC.cx + dx / 2
+          const midY = fromC.cy + dy / 2
+          const labelX = midX - dirY * 14
+          const labelY = midY + dirX * 14
+          const rawAngle = Math.atan2(dy, dx)
+          const angle = rawAngle > Math.PI / 2 || rawAngle < -Math.PI / 2 ? rawAngle + Math.PI : rawAngle
+
+          return (
+            <input
+              ref={widthInputRef}
+              className="sketch-dim-input"
+              style={{ left: labelX, top: labelY, transform: `translate(-50%, -50%) rotate(${angle}rad)` }}
+              value={operationDimEdit.distance}
+              onChange={(e) => setOperationDimEdit({ kind: 'offset', distance: e.target.value })}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const edit = operationDimEditRef.current
+                  if (!edit || edit.kind !== 'offset') return
+                  const units = projectRef.current.meta.units
+                  const dist = parseLengthInput(edit.distance, units)
+                  if (dist === null) return
+                  completePendingOffset(dist)
+                  setPendingOffsetPreviewPointRef(null)
+                  setPendingOffsetRawPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelPendingOffset()
+                  setPendingOffsetPreviewPointRef(null)
+                  setPendingOffsetRawPreviewPointRef(null)
+                  setOperationDimEdit(null)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  setOperationDimEdit(null)
+                  canvasRef.current?.focus({ preventScroll: true })
+                }
+              }}
+            />
+          )
+        }
+
+        return null
+      })()}
       {selection.mode === 'sketch_edit' && (
         <div className="sketch-edit-banner">
           <div>
@@ -5151,7 +5726,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       )}
       {pendingOffset && (
         <div className="sketch-place-banner">
-          Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Click to commit or press <kbd>Esc</kbd> to cancel.
+          <>Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Press <kbd>Tab</kbd> to type exact distance, click to commit, or press <kbd>Esc</kbd> to cancel.</>
         </div>
       )}
       {pendingShapeAction && (
@@ -5270,8 +5845,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           ) : (
             pendingMove.fromPoint
               ? pendingMove.mode === 'copy'
-                ? 'Click the copy to point, then enter the copy count. Press Esc to cancel.'
-                : 'Click the destination point to complete the move. Press Esc to cancel.'
+                ? 'Click the copy to point, then enter the copy count. Press Tab to type exact distance. Press Esc to cancel.'
+                : 'Click the destination point to complete the move. Press Tab to type exact distance. Press Esc to cancel.'
               : pendingMove.mode === 'copy'
                 ? 'Click the copy from point, then click the copy to point. Press Esc to cancel.'
                 : 'Click the move from point, then click the move to point. Press Esc to cancel.'
@@ -5285,12 +5860,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Click the first resize reference point. Press Esc to cancel.'
               : !pendingTransform.referenceEnd
                 ? 'Click the second resize reference point. Press Esc to cancel.'
-                : 'Move along the reference line to preview the resized feature, then click to commit. Press Esc to cancel.'
+                : 'Move along the reference line to preview the resized feature, then click to commit. Press Tab to type scale factor. Press Esc to cancel.'
             : !pendingTransform.referenceStart
               ? 'Click the rotation origin. Press Esc to cancel.'
               : !pendingTransform.referenceEnd
                 ? 'Click the reference direction point. Press Esc to cancel.'
-                : 'Move to preview the rotated feature, then click to commit. Press Esc to cancel.'}
+                : 'Move to preview the rotated feature, then click to commit. Press Tab to type exact angle. Press Esc to cancel.'}
         </div>
       )}
     </div>
