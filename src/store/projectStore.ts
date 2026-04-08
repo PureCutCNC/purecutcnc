@@ -1,16 +1,8 @@
 import { create } from 'zustand'
-import ClipperLib from 'clipper-lib'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
-import {
-  DEFAULT_CLIPPER_SCALE,
-  flattenProfile,
-  fromClipperPath,
-  normalizeWinding,
-  toClipperPath,
-} from '../engine/toolpaths/geometry'
-import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName, type ImportedShape, type ImportSourceType } from '../import'
+import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -38,7 +30,6 @@ import type {
   FeatureOperation,
   FeatureFolder,
   FeatureTreeEntry,
-  GridSettings,
   Operation,
   OperationKind,
   OperationPass,
@@ -47,7 +38,6 @@ import type {
   Project,
   SketchProfile,
   SketchFeature,
-  Stock,
   Tab,
   Tool,
 } from '../types/project'
@@ -57,400 +47,51 @@ import {
   featureHasClosedGeometry,
   generateTextShapes,
   getTextFrameProfile,
-  normalizeTextFontId,
   type TextToolConfig,
 } from '../text'
-
-// ============================================================
-// Selection state
-// ============================================================
-
-export type SelectionMode = 'feature' | 'sketch_edit'
-
-export interface SelectionState {
-  mode: SelectionMode
-  selectedFeatureId: string | null
-  selectedFeatureIds: string[]
-  selectedNode: SelectedNode
-  hoveredFeatureId: string | null
-  sketchEditTool: SketchEditTool | null
-  // sketch edit mode — which anchor/handle is being dragged
-  activeControl: SketchControlRef | null
-}
-
-export interface SketchControlRef {
-  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle'
-  index: number
-}
-
-export type SketchEditTool = 'add_point' | 'delete_point' | 'fillet'
-
-export type SketchInsertTarget =
-  | { kind: 'segment'; segmentIndex: number; point: Point; t: number }
-  | { kind: 'extend_start'; point: Point }
-  | { kind: 'extend_end'; point: Point }
-
-export type SelectedNode =
-  | { type: 'project' }
-  | { type: 'grid' }
-  | { type: 'stock' }
-  | { type: 'origin' }
-  | { type: 'backdrop' }
-  | { type: 'features_root' }
-  | { type: 'tabs_root' }
-  | { type: 'clamps_root' }
-  | { type: 'folder'; folderId: string }
-  | { type: 'feature'; featureId: string }
-  | { type: 'tab'; tabId: string }
-  | { type: 'clamp'; clampId: string }
-  | null
-
-// ============================================================
-// Store shape
-// ============================================================
-
-export interface ProjectStore {
-  project: Project
-  selection: SelectionState
-  pendingAdd: PendingAddTool | null
-  pendingMove: PendingMoveTool | null
-  pendingTransform: PendingTransformTool | null
-  pendingOffset: PendingOffsetTool | null
-  pendingShapeAction: PendingShapeActionTool | null
-  backdropImageLoading: boolean
-  sketchEditSession: SketchEditSession | null
-  history: ProjectHistory
-
-  // Project ops
-  createNewProject: (template?: Project, name?: string) => void
-  setProjectName: (name: string) => void
-  setShowFeatureInfo: (visible: boolean) => void
-  setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
-  setOrigin: (origin: Project['origin']) => void
-  startPlaceOrigin: () => void
-  placeOriginAt: (point: Point) => void
-  loadBackdropImage: (input: Pick<BackdropImage, 'name' | 'mimeType' | 'imageDataUrl' | 'intrinsicWidth' | 'intrinsicHeight'>) => void
-  setBackdropImageLoading: (loading: boolean) => void
-  setBackdrop: (backdrop: BackdropImage | null) => void
-  updateBackdrop: (patch: Partial<BackdropImage>) => void
-  deleteBackdrop: () => void
-  setSelectedMachineId: (id: string | null) => void
-  addMachineDefinition: (definition: MachineDefinition) => void
-  removeMachineDefinition: (id: string) => void
-  loadProject: (p: Project) => void
-  saveProject: () => string   // returns JSON string
-  undo: () => void
-  redo: () => void
-  beginHistoryTransaction: () => void
-  commitHistoryTransaction: () => void
-  cancelHistoryTransaction: () => void
-
-  // Stock
-  setStock: (stock: Stock) => void
-  setGrid: (grid: GridSettings) => void
-  setUnits: (units: Project['meta']['units']) => void
-
-  // Features
-  addFeatureFolder: () => string
-  updateFeatureFolder: (id: string, patch: Partial<FeatureFolder>) => void
-  deleteFeatureFolder: (id: string) => void
-  assignFeaturesToFolder: (featureIds: string[], folderId: string | null) => void
-  moveFeatureTreeFeature: (featureId: string, folderId: string | null, beforeFeatureId?: string | null) => void
-  reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
-  setAllFeaturesVisible: (visible: boolean) => void
-  addFeature: (feature: SketchFeature) => void
-  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
-  updateFeature: (id: string, patch: Partial<SketchFeature>) => void
-  deleteFeature: (id: string) => void
-  deleteFeatures: (ids: string[]) => void
-  mergeSelectedFeatures: (keepOriginals?: boolean) => string[]
-  cutSelectedFeatures: (keepOriginals?: boolean) => string[]
-  offsetSelectedFeatures: (distance: number) => string[]
-  reorderFeatures: (ids: string[]) => void
-
-  // Clamps
-  addClamp: () => string
-  updateClamp: (id: string, patch: Partial<Clamp>) => void
-  deleteClamp: (id: string) => void
-  setAllClampsVisible: (visible: boolean) => void
-  startAddClampPlacement: () => void
-  startMoveClamp: (clampId: string) => void
-  startCopyClamp: (clampId: string) => void
-  duplicateClamp: (id: string) => string | null
-
-  // Tabs
-  enterTabEdit: (id: string) => void
-  moveTabControl: (tabId: string, control: SketchControlRef, point: Point) => void
-  updateTab: (id: string, patch: Partial<Tab>) => void
-  deleteTab: (id: string) => void
-  setAllTabsVisible: (visible: boolean) => void
-  startAddTabPlacement: () => void
-  startMoveTab: (tabId: string) => void
-  startCopyTab: (tabId: string) => void
-  autoPlaceTabsForOperation: (operationId: string) => void
-
-  // Tools
-  addTool: () => string
-  importTools: (tools: Array<Omit<Tool, 'id'>>) => string[]
-  updateTool: (id: string, patch: Partial<Tool>) => void
-  deleteTool: (id: string) => void
-  duplicateTool: (id: string) => string | null
-
-  // Operations
-  addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
-  updateOperation: (id: string, patch: Partial<Operation>) => void
-  setAllOperationToolpathVisibility: (visible: boolean) => void
-  deleteOperation: (id: string) => void
-  duplicateOperation: (id: string) => string | null
-  reorderOperations: (ids: string[]) => void
-
-  // Selection
-  selectFeature: (id: string | null, additive?: boolean) => void
-  selectFeatures: (ids: string[]) => void
-  selectProject: () => void
-  selectGrid: () => void
-  selectStock: () => void
-  selectOrigin: () => void
-  selectBackdrop: () => void
-  selectFeaturesRoot: () => void
-  selectTabsRoot: () => void
-  selectClampsRoot: () => void
-  selectFeatureFolder: (id: string) => void
-  selectTab: (id: string) => void
-  selectClamp: (id: string) => void
-  hoverFeature: (id: string | null) => void
-  enterSketchEdit: (id: string) => void
-  enterClampEdit: (id: string) => void
-  applySketchEdit: () => void
-  cancelSketchEdit: () => void
-  setSketchEditTool: (tool: SketchEditTool | null) => void
-  setActiveControl: (control: SketchControlRef | null) => void
-  moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
-  insertFeaturePoint: (featureId: string, target: SketchInsertTarget) => void
-  deleteFeaturePoint: (featureId: string, anchorIndex: number) => void
-  filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
-  moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
-
-  // Feature placement flow
-  startAddRectPlacement: () => void
-  startAddCirclePlacement: () => void
-  startAddPolygonPlacement: () => void
-  startAddSplinePlacement: () => void
-  startAddCompositePlacement: () => void
-  startAddTextPlacement: (config: TextToolConfig) => void
-  cancelPendingAdd: () => void
-  setPendingAddAnchor: (point: Point) => void
-  placePendingAddAt: (point: Point) => void
-  placePendingTextAt: (point: Point) => string[]
-  addPendingPolygonPoint: (point: Point) => void
-  undoPendingPolygonPoint: () => void
-  completePendingPolygon: () => void
-  completePendingOpenPath: () => void
-  setPendingCompositeMode: (mode: CompositeSegmentMode) => void
-  addPendingCompositePoint: (point: Point) => void
-  undoPendingCompositeStep: () => void
-  closePendingCompositeDraft: () => void
-  completePendingComposite: () => void
-  completePendingOpenComposite: () => void
-  startMoveFeature: (featureId: string) => void
-  startCopyFeature: (featureId: string) => void
-  startResizeFeature: (featureId: string) => void
-  startRotateFeature: (featureId: string) => void
-  startMoveBackdrop: () => void
-  startResizeBackdrop: () => void
-  startRotateBackdrop: () => void
-  startJoinSelectedFeatures: () => void
-  startCutSelectedFeatures: () => void
-  cancelPendingShapeAction: () => void
-  setPendingShapeActionKeepOriginals: (keepOriginals: boolean) => void
-  completePendingShapeAction: () => string[]
-  startOffsetSelectedFeatures: () => void
-  cancelPendingOffset: () => void
-  completePendingOffset: (distance: number) => string[]
-  cancelPendingMove: () => void
-  setPendingMoveFrom: (point: Point) => void
-  setPendingMoveTo: (point: Point) => void
-  completePendingMove: (toPoint: Point, copyCount?: number) => void
-  cancelPendingTransform: () => void
-  setPendingTransformReferenceStart: (point: Point) => void
-  setPendingTransformReferenceEnd: (point: Point) => void
-  completePendingTransform: (previewPoint: Point) => void
-
-  // Convenience: add primitive features
-  addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
-  addCircleFeature: (name: string, cx: number, cy: number, r: number, depth: number) => void
-  addPolygonFeature: (name: string, points: Point[], depth: number) => void
-  addSplineFeature: (name: string, points: Point[], depth: number) => void
-}
-
-export type PendingAddTool =
-  | { shape: 'origin'; session: number }
-  | { shape: 'rect'; anchor: Point | null; session: number }
-  | { shape: 'circle'; anchor: Point | null; session: number }
-  | { shape: 'tab'; anchor: Point | null; session: number }
-  | { shape: 'clamp'; anchor: Point | null; session: number }
-  | { shape: 'text'; config: TextToolConfig; session: number }
-  | { shape: 'polygon'; points: Point[]; session: number }
-  | { shape: 'spline'; points: Point[]; session: number }
-  | {
-      shape: 'composite'
-      start: Point | null
-      lastPoint: Point | null
-      segments: Segment[]
-      currentMode: CompositeSegmentMode
-      pendingArcEnd: Point | null
-      closed: boolean
-      session: number
-    }
-
-export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
-
-export interface PendingMoveTool {
-  mode: 'move' | 'copy'
-  entityType: 'feature' | 'clamp' | 'tab' | 'backdrop'
-  entityIds: string[]
-  fromPoint: Point | null
-  toPoint: Point | null
-  session: number
-}
-
-export interface PendingTransformTool {
-  mode: 'resize' | 'rotate'
-  entityType: 'feature' | 'backdrop'
-  entityIds: string[]
-  referenceStart: Point | null
-  referenceEnd: Point | null
-  session: number
-}
-
-export interface PendingOffsetTool {
-  entityIds: string[]
-  session: number
-}
-
-export type PendingShapeActionTool =
-  | {
-      kind: 'join'
-      entityIds: string[]
-      keepOriginals: boolean
-      session: number
-    }
-  | {
-      kind: 'cut'
-      cutterId: string | null
-      targetIds: string[]
-      keepOriginals: boolean
-      session: number
-    }
-
-export interface ProjectHistory {
-  past: Project[]
-  future: Project[]
-  transactionStart: Project | null
-}
-
-export interface SketchEditSession {
-  entityType: 'feature' | 'clamp' | 'tab'
-  entityId: string
-  snapshot: Project
-  pastLength: number
-}
-
-interface ClipperPolyNode {
-  IsHole(): boolean
-  Contour(): Array<{ X: number; Y: number }>
-  Childs?: () => ClipperPolyNode[]
-  m_Childs?: ClipperPolyNode[]
-}
-
-// ============================================================
-// ID generator
-// ============================================================
-
-let _idCounter = 1
-export function genId(prefix = 'f'): string {
-  return `${prefix}${String(_idCounter++).padStart(4, '0')}`
-}
-
-function idNumericSuffix(id: string): number {
-  const match = id.match(/(\d+)$/)
-  return match ? Number.parseInt(match[1], 10) : 0
-}
-
-function syncIdCounter(project: Project): void {
-  const usedIds = [
-    ...project.features.map((feature) => feature.id),
-    ...project.featureFolders.map((folder) => folder.id),
-    ...project.tools.map((tool) => tool.id),
-    ...project.operations.map((operation) => operation.id),
-    ...project.tabs.map((tab) => tab.id),
-    ...project.clamps.map((clamp) => clamp.id),
-  ]
-  const maxSuffix = usedIds.reduce((max, id) => Math.max(max, idNumericSuffix(id)), 0)
-  _idCounter = Math.max(_idCounter, maxSuffix + 1)
-}
-
-function nextUniqueGeneratedId(project: Project, prefix: string): string {
-  const usedIds = new Set([
-    ...project.features.map((feature) => feature.id),
-    ...project.featureFolders.map((folder) => folder.id),
-    ...project.tools.map((tool) => tool.id),
-    ...project.operations.map((operation) => operation.id),
-    ...project.tabs.map((tab) => tab.id),
-    ...project.clamps.map((clamp) => clamp.id),
-  ])
-
-  let nextId = genId(prefix)
-  while (usedIds.has(nextId)) {
-    nextId = genId(prefix)
-  }
-  return nextId
-}
-
-let _placementSessionCounter = 1
-function nextPlacementSession(): number {
-  return _placementSessionCounter++
-}
-
-function clonePoint(point: Point): Point {
-  return { ...point }
-}
-
-function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
-  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
-}
-
-function addPoint(a: Point, b: Point): Point {
-  return { x: a.x + b.x, y: a.y + b.y }
-}
-
-function subtractPoint(a: Point, b: Point): Point {
-  return { x: a.x - b.x, y: a.y - b.y }
-}
-
-function scalePoint(point: Point, scale: number): Point {
-  return { x: point.x * scale, y: point.y * scale }
-}
-
-function dotPoint(a: Point, b: Point): number {
-  return a.x * b.x + a.y * b.y
-}
-
-function crossPoint(a: Point, b: Point): number {
-  return a.x * b.y - a.y * b.x
-}
-
-function pointLength(point: Point): number {
-  return Math.hypot(point.x, point.y)
-}
-
-function normalizePoint(point: Point): Point | null {
-  const length = pointLength(point)
-  if (length <= 1e-9) {
-    return null
-  }
-  return scalePoint(point, 1 / length)
-}
+import {
+  addPoint,
+  clampNumber,
+  clonePoint,
+  crossPoint,
+  dotPoint,
+  lerpPoint,
+  normalizePoint,
+  pointLength,
+  pointsEqual,
+  scalePoint,
+  subtractPoint,
+} from './helpers/geometry'
+import {
+  clipperContourToProfile,
+  featuresFormConnectedOverlapGroup,
+  featuresOverlap,
+  flattenFeatureToClipperPath,
+  unionClipperPaths,
+} from './helpers/clipping'
+import {
+  cutFeaturesByCutterGrouped,
+  insertDerivedFeaturesAfterSources,
+  insertDerivedFeatureTreeEntries,
+  normalizeDerivedFeatureNameStem,
+  previewOffsetFeatures as previewOffsetFeaturesWithFactory,
+  selectedClosedFeaturesFromIds,
+  type DerivedFeatureGroup,
+} from './helpers/derivedFeatures'
+import { idNumericSuffix, nextPlacementSession, nextUniqueGeneratedId, syncIdCounter } from './helpers/ids'
+import {
+  angleToPoint,
+  inferProfileOrientationAngle,
+  normalizeAngleDegrees,
+  normalizeFeatureZRange,
+  normalizeTool,
+} from './helpers/normalize'
+import type {
+  PendingAddTool,
+  ProjectStore,
+  SelectionState,
+  SketchInsertTarget,
+} from './types'
 
 function cloneSegment(segment: Segment): Segment {
   if (segment.type === 'arc') {
@@ -492,243 +133,6 @@ function normalizeEditableProfileClosure(profile: SketchProfile): SketchProfile 
   }
 }
 
-function getClipperChildren(node: ClipperPolyNode): ClipperPolyNode[] {
-  return node.Childs ? node.Childs() : (node.m_Childs ?? [])
-}
-
-function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE) {
-  const flattened = flattenProfile(feature.sketch.profile)
-  return toClipperPath(normalizeWinding(flattened.points, false), scale)
-}
-
-function executeClipPaths(subjectPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipType: number) {
-  const clipper = new ClipperLib.Clipper()
-  if (subjectPaths.length > 0) {
-    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
-  }
-  if (clipPaths.length > 0) {
-    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
-  }
-
-  const solution = new ClipperLib.Paths()
-  clipper.Execute(
-    clipType,
-    solution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-  return solution as ReturnType<typeof flattenFeatureToClipperPath>[]
-}
-
-function executeClipTree(subjectPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipPaths: ReturnType<typeof flattenFeatureToClipperPath>[], clipType: number): ClipperPolyNode {
-  const clipper = new ClipperLib.Clipper()
-  if (subjectPaths.length > 0) {
-    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
-  }
-  if (clipPaths.length > 0) {
-    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
-  }
-
-  const polyTree = new ClipperLib.PolyTree()
-  clipper.Execute(
-    clipType,
-    polyTree,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-  return polyTree as ClipperPolyNode
-}
-
-function unionClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[]) {
-  if (paths.length === 0) {
-    return []
-  }
-  return executeClipPaths(paths, [], ClipperLib.ClipType.ctUnion)
-}
-
-function rangesOverlap(minA: number, maxA: number, minB: number, maxB: number): boolean {
-  return maxA >= minB && maxB >= minA
-}
-
-function featuresOverlap(a: SketchFeature, b: SketchFeature): boolean {
-  if (!a.sketch.profile.closed || !b.sketch.profile.closed) {
-    return false
-  }
-
-  const boundsA = getProfileBounds(a.sketch.profile)
-  const boundsB = getProfileBounds(b.sketch.profile)
-  if (
-    !rangesOverlap(boundsA.minX, boundsA.maxX, boundsB.minX, boundsB.maxX)
-    || !rangesOverlap(boundsA.minY, boundsA.maxY, boundsB.minY, boundsB.maxY)
-  ) {
-    return false
-  }
-
-  const intersections = executeClipPaths(
-    [flattenFeatureToClipperPath(a)],
-    [flattenFeatureToClipperPath(b)],
-    0, // ctIntersection is available at runtime but omitted from the local Clipper typings.
-  )
-
-  return intersections.length > 0
-}
-
-function featuresFormConnectedOverlapGroup(features: SketchFeature[]): boolean {
-  if (features.length <= 1) {
-    return true
-  }
-
-  const visited = new Set<number>([0])
-  const stack = [0]
-
-  while (stack.length > 0) {
-    const currentIndex = stack.pop()!
-    for (let index = 0; index < features.length; index += 1) {
-      if (visited.has(index)) {
-        continue
-      }
-      if (featuresOverlap(features[currentIndex], features[index])) {
-        visited.add(index)
-        stack.push(index)
-      }
-    }
-  }
-
-  return visited.size === features.length
-}
-
-interface DerivedFeatureGroup {
-  sourceId: string
-  features: SketchFeature[]
-}
-
-function normalizeDerivedFeatureNameStem(name: string) {
-  return name
-    .replace(/(?: Join(?: \d+)?)$/u, '')
-    .replace(/(?: Offset(?: \d+)?)$/u, '')
-    .replace(/(?: Cut(?: Hole)?(?: \d+)?)$/u, '')
-    .trim()
-}
-
-function cutFeaturesByCutterGrouped(
-  project: Project,
-  cutter: SketchFeature,
-  targets: SketchFeature[],
-): DerivedFeatureGroup[] {
-  const clipPaths = [flattenFeatureToClipperPath(cutter)]
-  const existingNames = [...project.features.map((feature) => feature.name)]
-  const groups: DerivedFeatureGroup[] = []
-
-  for (const target of targets) {
-    const subjectPaths = [flattenFeatureToClipperPath(target)]
-    const polyTree = executeClipTree(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
-    const cutNameStem = normalizeDerivedFeatureNameStem(target.name)
-    const nextFeatures = collectDerivedFeaturesFromPolyTree(
-      project,
-      polyTree,
-      target,
-      target.operation,
-      `${cutNameStem} Cut`,
-    )
-
-    const groupedFeatures: SketchFeature[] = []
-    for (const feature of nextFeatures) {
-      const uniqueFeature = {
-        ...feature,
-        name: uniqueName(feature.name, [...existingNames, ...groupedFeatures.map((entry) => entry.name)]),
-      }
-      groupedFeatures.push(uniqueFeature)
-      existingNames.push(uniqueFeature.name)
-    }
-    groups.push({ sourceId: target.id, features: groupedFeatures })
-  }
-
-  return groups
-}
-
-function insertDerivedFeaturesAfterSources(
-  features: SketchFeature[],
-  groups: DerivedFeatureGroup[],
-  removeIds: Set<string>,
-): SketchFeature[] {
-  const groupMap = new Map(groups.map((group) => [group.sourceId, group.features]))
-  const nextFeatures: SketchFeature[] = []
-
-  for (const feature of features) {
-    if (!removeIds.has(feature.id)) {
-      nextFeatures.push(feature)
-    }
-    const derived = groupMap.get(feature.id)
-    if (derived?.length) {
-      nextFeatures.push(...derived)
-    }
-  }
-
-  return nextFeatures
-}
-
-function insertDerivedFeatureTreeEntries(
-  featureTree: FeatureTreeEntry[],
-  features: SketchFeature[],
-  groups: DerivedFeatureGroup[],
-  removeIds: Set<string>,
-): FeatureTreeEntry[] {
-  const featureMap = new Map(features.map((feature) => [feature.id, feature]))
-  const rootGroupMap = new Map(
-    groups
-      .filter((group) => {
-        const source = featureMap.get(group.sourceId)
-        return source?.folderId === null
-      })
-      .map((group) => [
-        group.sourceId,
-        group.features
-          .filter((feature) => feature.folderId === null)
-          .map((feature) => ({ type: 'feature', featureId: feature.id } as FeatureTreeEntry)),
-      ]),
-  )
-
-  return featureTree.flatMap((entry) => {
-    if (entry.type !== 'feature') {
-      return [entry]
-    }
-
-    const appended = rootGroupMap.get(entry.featureId) ?? []
-    if (removeIds.has(entry.featureId)) {
-      return appended
-    }
-
-    return [entry, ...appended]
-  })
-}
-
-function offsetClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[], delta: number) {
-  if (paths.length === 0) {
-    return []
-  }
-  const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
-  return solution as ReturnType<typeof flattenFeatureToClipperPath>[]
-}
-
-function clipperContourToProfile(contour: ReturnType<typeof flattenFeatureToClipperPath>, scale = DEFAULT_CLIPPER_SCALE): SketchProfile | null {
-  const points = fromClipperPath(contour, scale)
-  if (points.length < 3) {
-    return null
-  }
-
-  const first = points[0]
-  const last = points[points.length - 1]
-  const vertices = pointsEqual(first, last) ? points.slice(0, -1) : points
-  if (vertices.length < 3) {
-    return null
-  }
-
-  return polygonProfile(vertices)
-}
-
 function createDerivedFeature(
   project: Project,
   baseFeature: SketchFeature,
@@ -756,91 +160,8 @@ function createDerivedFeature(
   })
 }
 
-function collectDerivedFeaturesFromPolyTree(
-  project: Project,
-  node: ClipperPolyNode,
-  baseFeature: SketchFeature,
-  baseOperation: FeatureOperation,
-  baseName: string,
-  contourDepth = 0,
-): SketchFeature[] {
-  const created: SketchFeature[] = []
-  const contour = node.Contour()
-  const nextContourDepth = contour.length > 0 ? contourDepth + 1 : contourDepth
-
-  if (contour.length > 0) {
-    const profile = clipperContourToProfile(contour)
-    if (profile) {
-      const logicalDepth = nextContourDepth - 1
-      const operation = logicalDepth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
-      const name = uniqueName(
-        logicalDepth === 0 ? baseName : `${baseName} Hole`,
-        [...project.features.map((feature) => feature.name), ...created.map((feature) => feature.name)],
-      )
-      const nextProject = { ...project, features: [...project.features, ...created] }
-      created.push(createDerivedFeature(nextProject, baseFeature, profile, operation, name))
-    }
-  }
-
-  for (const child of getClipperChildren(node)) {
-    created.push(...collectDerivedFeaturesFromPolyTree(
-      { ...project, features: [...project.features, ...created] },
-      child,
-      baseFeature,
-      baseOperation,
-      baseName,
-      nextContourDepth,
-    ))
-  }
-
-  return created
-}
-
-function selectedClosedFeaturesFromIds(project: Project, featureIds: string[]): SketchFeature[] {
-  return featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
-    .filter((feature) => feature.sketch.profile.closed)
-}
-
 export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): SketchFeature[] {
-  const selectedFeatures = selectedClosedFeaturesFromIds(project, featureIds)
-  if (selectedFeatures.length === 0 || Math.abs(distance) <= 1e-9) {
-    return []
-  }
-
-  const baseFeature = selectedFeatures[selectedFeatures.length - 1]
-  const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
-  const offsetPaths = offsetClipperPaths(unionPaths, distance * DEFAULT_CLIPPER_SCALE)
-  const createdFeatures: SketchFeature[] = []
-
-  for (const [index, path] of offsetPaths.entries()) {
-    const profile = clipperContourToProfile(path)
-    if (!profile) {
-      continue
-    }
-
-    const nextProject = { ...project, features: [...project.features, ...createdFeatures] }
-    createdFeatures.push(createDerivedFeature(
-      nextProject,
-      baseFeature,
-      profile,
-      baseFeature.operation,
-      uniqueName(index === 0 ? `${baseFeature.name} Offset` : `${baseFeature.name} Offset ${index + 1}`, [
-        ...project.features.map((feature) => feature.name),
-        ...createdFeatures.map((feature) => feature.name),
-      ]),
-    ))
-  }
-
-  return createdFeatures
-}
-
-function lerpPoint(a: Point, b: Point, t: number): Point {
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-  }
+  return previewOffsetFeaturesWithFactory(project, featureIds, distance, createDerivedFeature)
 }
 
 function anchorPointForIndex(profile: SketchProfile, index: number): Point {
@@ -969,10 +290,6 @@ function buildBridgeSegment(
     type: 'line',
     to: clonePoint(nextAnchor),
   }
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
 }
 
 function createFilletArcSegment(start: Point, end: Point, center: Point): Segment {
@@ -1471,48 +788,6 @@ function rotatePointAround(point: Point, origin: Point, angle: number): Point {
     x: origin.x + local.x * cos - local.y * sin,
     y: origin.y + local.x * sin + local.y * cos,
   }
-}
-
-function normalizeAngleDegrees(angle: number): number {
-  const normalized = angle % 360
-  return normalized < 0 ? normalized + 360 : normalized
-}
-
-function angleToPoint(angleDegrees: number): Point {
-  const radians = (angleDegrees * Math.PI) / 180
-  return {
-    x: Math.cos(radians),
-    y: Math.sin(radians),
-  }
-}
-
-function inferProfileOrientationAngle(profile: SketchFeature['sketch']['profile']): number {
-  const vertices = profileVertices(profile)
-  let bestDirection: Point | null = null
-  let bestLength = 0
-
-  for (let index = 0; index < vertices.length; index += 1) {
-    const start = vertices[index]
-    const end = vertices[(index + 1) % vertices.length]
-    if (!end || (index === vertices.length - 1 && !profile.closed)) {
-      continue
-    }
-
-    const direction = subtractPoint(end, start)
-    const length = pointLength(direction)
-    if (length > bestLength + 1e-9) {
-      bestDirection = direction
-      bestLength = length
-    }
-  }
-
-  const u = bestDirection ? normalizePoint(bestDirection) : null
-  if (!u) {
-    return 90
-  }
-
-  const xAxisAngle = Math.atan2(u.y, u.x) * (180 / Math.PI)
-  return normalizeAngleDegrees(xAxisAngle + 90)
 }
 
 function featureResizeBasis(feature: SketchFeature): { u: Point; v: Point } {
@@ -2312,50 +1587,6 @@ function buildCopiedTabs(
   }
 
   return created
-}
-
-function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
-  const safeFeature = {
-    ...feature,
-    text: feature.kind === 'text' && feature.text
-      ? {
-        ...feature.text,
-        text: feature.text.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
-        fontId: normalizeTextFontId(feature.text.fontId, feature.text.style),
-      }
-      : null,
-    sketch: {
-      ...feature.sketch,
-      orientationAngle: normalizeAngleDegrees(
-        feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
-      ),
-      profile: {
-        ...feature.sketch.profile,
-        closed: feature.sketch.profile.closed ?? true,
-      },
-    },
-    kind: feature.kind ?? inferFeatureKind(feature.sketch.profile),
-    folderId: feature.folderId ?? null,
-  }
-  const { z_top, z_bottom } = safeFeature
-  if (typeof z_top === 'number' && typeof z_bottom === 'number' && z_top < z_bottom) {
-    return {
-      ...safeFeature,
-      z_top: z_bottom,
-      z_bottom: z_top,
-    }
-  }
-
-  return safeFeature
-}
-
-function normalizeTool(tool: Tool, units: Project['meta']['units'], index: number): Tool {
-  const defaults = defaultTool(units, index + 1)
-  return {
-    ...defaults,
-    ...tool,
-    vBitAngle: (tool.type ?? defaults.type) === 'v_bit' ? (tool.vBitAngle ?? 60) : null,
-  }
 }
 
 function syncFeatureTreeProject(project: Project): Project {
@@ -4333,7 +3564,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const cutter = selectedFeatures[selectedFeatures.length - 1]
     const targets = selectedFeatures.filter((feature) => feature.id !== cutter.id)
-    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets)
+    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets, createDerivedFeature)
     const createdFeatures = createdGroups.flatMap((group) => group.features)
 
     if (createdFeatures.length === 0) {
@@ -7030,7 +6261,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return []
     }
 
-    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets)
+    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets, createDerivedFeature)
     const createdFeatures = createdGroups.flatMap((group) => group.features)
     if (createdFeatures.length === 0) {
       set({ pendingShapeAction: null })

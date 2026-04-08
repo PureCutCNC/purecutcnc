@@ -5,7 +5,7 @@ import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { SketchEditTool } from '../../store/projectStore'
+import type { SketchEditTool } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
 

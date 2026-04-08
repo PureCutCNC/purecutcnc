@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { SketchControlRef, SketchEditTool, SketchInsertTarget } from '../../store/projectStore'
+import type { SketchControlRef, SketchEditTool, SketchInsertTarget } from '../../store/types'
 import { filletFeatureFromPoint, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import { generateTextShapes, getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
