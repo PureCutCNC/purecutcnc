@@ -62,7 +62,8 @@ type.
 - started runtime slices:
   - `src/store/slices/selectionSlice.ts`
   - `src/store/slices/pendingActionsSlice.ts`
-- `projectStore.ts` reduced from ~7177 lines to ~5431 lines
+  - `src/store/slices/pendingCompletionSlice.ts`
+- `projectStore.ts` reduced from ~7177 lines to ~5034 lines
 
 ### Phase B: move runtime logic into slices
 
@@ -126,6 +127,13 @@ This should be done incrementally:
 - then draw primitives
 - then scene/feature drawing
 - interaction last
+
+**Status:** in progress
+- extracted `src/components/canvas/measurements.ts`
+- extracted `src/components/canvas/viewTransform.ts`
+- extracted `src/components/canvas/profilePrimitives.ts`
+- extracted `src/components/canvas/scenePrimitives.ts`
+- `SketchCanvas.tsx` reduced from ~5873 lines to ~5131 lines
 
 ---
 

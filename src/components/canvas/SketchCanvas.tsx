@@ -4,12 +4,39 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchControlRef, SketchEditTool, SketchInsertTarget } from '../../store/types'
 import { filletFeatureFromPoint, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import {
+  drawActiveEditMeasurements,
+  drawAngleMeasurement,
+  drawArcRadiusMeasurement,
+  drawLineLengthMeasurement,
+  drawProfileLineMeasurements,
+  drawRadiusMeasurement,
+} from './measurements'
+import {
+  canvasToWorld,
+  computeBaseViewTransform,
+  computeFitViewState,
+  computeFitViewStateForBounds,
+  computeViewTransform,
+  worldToCanvas,
+} from './viewTransform'
+import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
+import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
+import {
+  drawBackdropImage,
+  drawClampFootprint,
+  drawGrid,
+  drawOriginMarker,
+  drawSketchControls,
+  drawSketchEditPreviewPoint,
+  drawTabFootprint,
+  hitBackdrop,
+} from './scenePrimitives'
 import { generateTextShapes, getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   bezierPoint,
   circleProfile,
   getProfileBounds,
-  getStockBounds,
   polygonProfile,
   profileExceedsStock,
   profileHasSelfIntersection,
@@ -18,29 +45,14 @@ import {
   sampleProfilePoints,
   splineProfile,
 } from '../../types/project'
-import type { Clamp, GridSettings, Point, Segment, SketchFeature, SketchProfile, Stock, Tab } from '../../types/project'
-import type { BackdropImage } from '../../types/project'
+import type { Clamp, Point, Segment, SketchFeature, SketchProfile, Tab } from '../../types/project'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 
-const PADDING = 42
-const NODE_RADIUS = 5
 const NODE_HIT_RADIUS = 9
 const EXTEND_HIT_RADIUS = 14
-const HANDLE_RADIUS = 4
 const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 const MIN_SKETCH_ZOOM = 0.02
-
-interface ViewTransform {
-  scale: number
-  offsetX: number
-  offsetY: number
-}
-
-interface CanvasPoint {
-  cx: number
-  cy: number
-}
 
 interface PendingPreviewPoint {
   point: Point
@@ -60,12 +72,6 @@ interface PendingSketchExtension {
 interface PendingSketchFillet {
   anchorIndex: number
   corner: Point
-}
-
-interface SketchViewState {
-  zoom: number
-  panX: number
-  panY: number
 }
 
 export interface SketchCanvasHandle {
@@ -94,13 +100,6 @@ type OperationDimEdit =
   | { kind: 'rotate'; angle: string }
   | { kind: 'offset'; distance: string }
 
-function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
-  return {
-    cx: vt.offsetX + point.x * vt.scale,
-    cy: vt.offsetY + point.y * vt.scale,
-  }
-}
-
 function drawDiamond(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -113,13 +112,6 @@ function drawDiamond(
   ctx.lineTo(cx, cy + radius)
   ctx.lineTo(cx - radius, cy)
   ctx.closePath()
-}
-
-function canvasToWorld(cx: number, cy: number, vt: ViewTransform): Point {
-  return {
-    x: (cx - vt.offsetX) / vt.scale,
-    y: (cy - vt.offsetY) / vt.scale,
-  }
 }
 
 function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
@@ -149,366 +141,6 @@ function translateProfile(profile: SketchProfile, dx: number, dy: number): Sketc
         to: { x: segment.to.x + dx, y: segment.to.y + dy },
       }
     }),
-  }
-}
-
-function computeBaseViewTransform(stock: Stock, canvasW: number, canvasH: number): ViewTransform {
-  const bounds = getStockBounds(stock)
-  const stockW = Math.max(bounds.maxX - bounds.minX, 1)
-  const stockH = Math.max(bounds.maxY - bounds.minY, 1)
-
-  const scale = Math.min(
-    (canvasW - PADDING * 2) / stockW,
-    (canvasH - PADDING * 2) / stockH,
-  )
-
-  return {
-    scale,
-    offsetX: (canvasW - stockW * scale) / 2 - bounds.minX * scale,
-    offsetY: (canvasH - stockH * scale) / 2 - bounds.minY * scale,
-  }
-}
-
-function computeViewTransform(
-  stock: Stock,
-  canvasW: number,
-  canvasH: number,
-  viewState: SketchViewState,
-): ViewTransform {
-  const base = computeBaseViewTransform(stock, canvasW, canvasH)
-  return {
-    scale: base.scale * viewState.zoom,
-    offsetX: base.offsetX + viewState.panX,
-    offsetY: base.offsetY + viewState.panY,
-  }
-}
-
-function getVisibleSceneBounds2D(project: ReturnType<typeof useProjectStore.getState>['project']) {
-  const profiles: SketchProfile[] = []
-
-  if (project.stock.visible) {
-    profiles.push(project.stock.profile)
-  }
-
-  for (const feature of project.features) {
-    if (feature.visible) {
-      profiles.push(...getFeatureGeometryProfiles(feature))
-    }
-  }
-
-  for (const tab of project.tabs) {
-    if (tab.visible) {
-      profiles.push(rectProfile(tab.x, tab.y, tab.w, tab.h))
-    }
-  }
-
-  for (const clamp of project.clamps) {
-    if (clamp.visible) {
-      profiles.push(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
-    }
-  }
-
-  if (profiles.length === 0) {
-    profiles.push(project.stock.profile)
-  }
-
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-
-  for (const profile of profiles) {
-    const bounds = getProfileBounds(profile)
-    minX = Math.min(minX, bounds.minX)
-    maxX = Math.max(maxX, bounds.maxX)
-    minY = Math.min(minY, bounds.minY)
-    maxY = Math.max(maxY, bounds.maxY)
-  }
-
-  if (project.origin.visible) {
-    minX = Math.min(minX, project.origin.x)
-    maxX = Math.max(maxX, project.origin.x)
-    minY = Math.min(minY, project.origin.y)
-    maxY = Math.max(maxY, project.origin.y)
-  }
-
-  if (project.backdrop?.visible) {
-    const halfW = project.backdrop.width / 2
-    const halfH = project.backdrop.height / 2
-    minX = Math.min(minX, project.backdrop.center.x - halfW)
-    maxX = Math.max(maxX, project.backdrop.center.x + halfW)
-    minY = Math.min(minY, project.backdrop.center.y - halfH)
-    maxY = Math.max(maxY, project.backdrop.center.y + halfH)
-  }
-
-  return { minX, maxX, minY, maxY }
-}
-
-function computeFitViewState(
-  project: ReturnType<typeof useProjectStore.getState>['project'],
-  canvasW: number,
-  canvasH: number,
-): SketchViewState {
-  const bounds = getVisibleSceneBounds2D(project)
-  return computeFitViewStateForBounds(project.stock, bounds, canvasW, canvasH)
-}
-
-function computeFitViewStateForBounds(
-  stock: Stock,
-  bounds: { minX: number; maxX: number; minY: number; maxY: number },
-  canvasW: number,
-  canvasH: number,
-): SketchViewState {
-  const base = computeBaseViewTransform(stock, canvasW, canvasH)
-  const contentW = Math.max(bounds.maxX - bounds.minX, 1)
-  const contentH = Math.max(bounds.maxY - bounds.minY, 1)
-  const desiredScale = Math.min(
-    (canvasW - PADDING * 2) / contentW,
-    (canvasH - PADDING * 2) / contentH,
-  )
-  const desiredOffsetX = (canvasW - contentW * desiredScale) / 2 - bounds.minX * desiredScale
-  const desiredOffsetY = (canvasH - contentH * desiredScale) / 2 - bounds.minY * desiredScale
-
-  return {
-    zoom: desiredScale / base.scale,
-    panX: desiredOffsetX - base.offsetX,
-    panY: desiredOffsetY - base.offsetY,
-  }
-}
-
-function traceProfilePath(
-  ctx: CanvasRenderingContext2D,
-  profile: SketchProfile,
-  vt: ViewTransform,
-): void {
-  ctx.beginPath()
-  const start = worldToCanvas(profile.start, vt)
-  ctx.moveTo(start.cx, start.cy)
-
-  let current = profile.start
-
-  for (const segment of profile.segments) {
-    const to = worldToCanvas(segment.to, vt)
-
-    if (segment.type === 'line') {
-      ctx.lineTo(to.cx, to.cy)
-      current = segment.to
-      continue
-    }
-
-    if (segment.type === 'bezier') {
-      const control1 = worldToCanvas(segment.control1, vt)
-      const control2 = worldToCanvas(segment.control2, vt)
-      ctx.bezierCurveTo(control1.cx, control1.cy, control2.cx, control2.cy, to.cx, to.cy)
-      current = segment.to
-      continue
-    }
-
-    const center = worldToCanvas(segment.center, vt)
-    const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
-    const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
-    const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
-
-    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
-    current = segment.to
-  }
-
-  if (profile.closed) {
-    ctx.closePath()
-  }
-}
-
-function anchorPointForIndex(profile: SketchProfile, index: number): Point {
-  return index === 0 ? profile.start : profile.segments[index - 1].to
-}
-
-function arcControlPoint(start: Point, segment: Extract<Segment, { type: 'arc' }>): Point {
-  const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
-  const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
-  const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
-
-  let sweep = endAngle - startAngle
-  if (segment.clockwise && sweep > 0) {
-    sweep -= Math.PI * 2
-  } else if (!segment.clockwise && sweep < 0) {
-    sweep += Math.PI * 2
-  }
-
-  const midAngle = startAngle + sweep / 2
-  return {
-    x: segment.center.x + Math.cos(midAngle) * radius,
-    y: segment.center.y + Math.sin(midAngle) * radius,
-  }
-}
-
-function drawSketchControls(
-  ctx: CanvasRenderingContext2D,
-  profile: SketchProfile,
-  vt: ViewTransform,
-  activeControl: SketchControlRef | null,
-): void {
-  const vertices = profileVertices(profile)
-
-  for (let index = 0; index < profile.segments.length; index += 1) {
-    const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
-    const outgoingSegment = profile.segments[index]
-    const incomingSegment =
-      profile.closed
-        ? profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
-        : index > 0
-          ? profile.segments[index - 1]
-          : null
-
-    if (outgoingSegment.type === 'bezier') {
-      const handle = worldToCanvas(outgoingSegment.control1, vt)
-      ctx.beginPath()
-      ctx.moveTo(anchor.cx, anchor.cy)
-      ctx.lineTo(handle.cx, handle.cy)
-      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
-      ctx.lineWidth = 1
-      ctx.stroke()
-    }
-
-    if (incomingSegment?.type === 'bezier') {
-      const handle = worldToCanvas(incomingSegment.control2, vt)
-      ctx.beginPath()
-      ctx.moveTo(anchor.cx, anchor.cy)
-      ctx.lineTo(handle.cx, handle.cy)
-      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
-      ctx.lineWidth = 1
-      ctx.stroke()
-    }
-  }
-
-  for (let index = 0; index < vertices.length; index += 1) {
-    const vertex = vertices[index]
-    const { cx, cy } = worldToCanvas(vertex, vt)
-    const active = activeControl?.kind === 'anchor' && activeControl.index === index
-
-    ctx.beginPath()
-    ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
-    ctx.fillStyle = active ? '#f2b95c' : '#d2dde6'
-    ctx.fill()
-    ctx.strokeStyle = active ? '#f7d394' : '#3f708f'
-    ctx.lineWidth = 2
-    ctx.stroke()
-  }
-
-  for (let index = 0; index < profile.segments.length; index += 1) {
-    const segment = profile.segments[index]
-    if (segment.type !== 'arc') {
-      continue
-    }
-
-    const start = anchorPointForIndex(profile, index)
-    const control = worldToCanvas(arcControlPoint(start, segment), vt)
-    const active = activeControl?.kind === 'arc_handle' && activeControl.index === index
-    drawDiamond(ctx, control.cx, control.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-    ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
-    ctx.fill()
-    ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-  }
-
-  for (let index = 0; index < profile.segments.length; index += 1) {
-    const outgoingSegment = profile.segments[index]
-    const incomingSegment =
-      profile.closed
-        ? profile.segments[(index - 1 + profile.segments.length) % profile.segments.length]
-        : index > 0
-          ? profile.segments[index - 1]
-          : null
-
-    if (outgoingSegment.type === 'bezier') {
-      const point = worldToCanvas(outgoingSegment.control1, vt)
-      const active = activeControl?.kind === 'out_handle' && activeControl.index === index
-      drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
-      ctx.fill()
-      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-    }
-
-    if (incomingSegment?.type === 'bezier') {
-      const point = worldToCanvas(incomingSegment.control2, vt)
-      const active = activeControl?.kind === 'in_handle' && activeControl.index === index
-      drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
-      ctx.fill()
-      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-    }
-  }
-}
-
-function drawSketchEditPreviewPoint(
-  ctx: CanvasRenderingContext2D,
-  preview: SketchEditPreviewPoint,
-  vt: ViewTransform,
-): void {
-  const { cx, cy } = worldToCanvas(preview.point, vt)
-  ctx.beginPath()
-  ctx.arc(cx, cy, NODE_RADIUS + 2, 0, Math.PI * 2)
-  ctx.fillStyle = preview.mode === 'delete_point' ? '#d66c6c' : '#5daeea'
-  ctx.fill()
-  ctx.strokeStyle = preview.mode === 'delete_point' ? '#efb0b0' : '#a9d2f5'
-  ctx.lineWidth = 2
-  ctx.stroke()
-}
-
-function drawGrid(
-  ctx: CanvasRenderingContext2D,
-  vt: ViewTransform,
-  canvasW: number,
-  canvasH: number,
-  stock: Stock,
-  grid: GridSettings,
-): void {
-  if (!grid.visible) return
-
-  const bounds = getStockBounds(stock)
-  const centerX = bounds.minX + (bounds.maxX - bounds.minX) / 2
-  const centerY = bounds.minY + (bounds.maxY - bounds.minY) / 2
-  const halfExtent = Math.max(grid.extent / 2, 10)
-  const minX = centerX - halfExtent
-  const maxX = centerX + halfExtent
-  const minY = centerY - halfExtent
-  const maxY = centerY + halfExtent
-  const minorSpacing = Math.max(grid.minorSpacing, 0.0001)
-  const majorSpacing = Math.max(grid.majorSpacing, minorSpacing)
-  const startX = Math.floor(minX / minorSpacing) * minorSpacing
-  const endX = Math.ceil(maxX / minorSpacing) * minorSpacing
-  const startY = Math.floor(minY / minorSpacing) * minorSpacing
-  const endY = Math.ceil(maxY / minorSpacing) * minorSpacing
-  const tolerance = minorSpacing * 0.001
-
-  for (let x = startX; x <= endX + tolerance; x += minorSpacing) {
-    const normalized = Math.abs(x / majorSpacing - Math.round(x / majorSpacing))
-    const isMajor = normalized < tolerance / Math.max(majorSpacing, 1)
-    const p0 = worldToCanvas({ x, y: minY }, vt)
-    const p1 = worldToCanvas({ x, y: maxY }, vt)
-    ctx.beginPath()
-    ctx.moveTo(p0.cx, 0)
-    ctx.lineTo(p1.cx, canvasH)
-    ctx.strokeStyle = isMajor ? 'rgba(104, 132, 154, 0.34)' : 'rgba(88, 112, 130, 0.18)'
-    ctx.lineWidth = isMajor ? 1.2 : 1
-    ctx.stroke()
-  }
-
-  for (let y = startY; y <= endY + tolerance; y += minorSpacing) {
-    const normalized = Math.abs(y / majorSpacing - Math.round(y / majorSpacing))
-    const isMajor = normalized < tolerance / Math.max(majorSpacing, 1)
-    const p0 = worldToCanvas({ x: minX, y }, vt)
-    const p1 = worldToCanvas({ x: maxX, y }, vt)
-    ctx.beginPath()
-    ctx.moveTo(0, p0.cy)
-    ctx.lineTo(canvasW, p1.cy)
-    ctx.strokeStyle = isMajor ? 'rgba(104, 132, 154, 0.34)' : 'rgba(88, 112, 130, 0.18)'
-    ctx.lineWidth = isMajor ? 1.2 : 1
-    ctx.stroke()
   }
 }
 
@@ -666,219 +298,6 @@ function drawMoveGuide(
   ctx.setLineDash([])
 }
 
-function lineLength(start: Point, end: Point): number {
-  return Math.hypot(end.x - start.x, end.y - start.y)
-}
-
-function drawMeasurementLabel(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  cx: number,
-  cy: number,
-  angle = 0,
-): void {
-  const normalizedAngle =
-    angle > Math.PI / 2 || angle < -Math.PI / 2
-      ? angle + Math.PI
-      : angle
-
-  ctx.save()
-  ctx.translate(cx, cy)
-  ctx.rotate(normalizedAngle)
-  ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const metrics = ctx.measureText(text)
-  const width = metrics.width + 12
-  const height = 18
-  ctx.fillStyle = 'rgba(15, 21, 29, 0.92)'
-  ctx.strokeStyle = 'rgba(239, 188, 122, 0.42)'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.roundRect(-width / 2, -height / 2, width, height, 5)
-  ctx.fill()
-  ctx.stroke()
-  ctx.fillStyle = 'rgba(245, 216, 183, 0.96)'
-  ctx.fillText(text, 0, 0)
-  ctx.restore()
-}
-
-function drawLineLengthMeasurement(
-  ctx: CanvasRenderingContext2D,
-  start: Point,
-  end: Point,
-  vt: ViewTransform,
-  units: 'mm' | 'inch',
-  options?: { prefix?: string; offset?: number },
-): void {
-  const startCanvas = worldToCanvas(start, vt)
-  const endCanvas = worldToCanvas(end, vt)
-  const dx = endCanvas.cx - startCanvas.cx
-  const dy = endCanvas.cy - startCanvas.cy
-  const canvasLength = Math.hypot(dx, dy)
-  if (canvasLength < 28) {
-    return
-  }
-
-  const midX = (startCanvas.cx + endCanvas.cx) / 2
-  const midY = (startCanvas.cy + endCanvas.cy) / 2
-  const offset = options?.offset ?? 11
-  const normalX = -dy / canvasLength
-  const normalY = dx / canvasLength
-  const value = formatLength(lineLength(start, end), units)
-  drawMeasurementLabel(
-    ctx,
-    options?.prefix ? `${options.prefix} ${value}` : value,
-    midX + normalX * offset,
-    midY + normalY * offset,
-    Math.atan2(dy, dx),
-  )
-}
-
-function drawArcRadiusMeasurement(
-  ctx: CanvasRenderingContext2D,
-  start: Point,
-  segment: Extract<Segment, { type: 'arc' }>,
-  vt: ViewTransform,
-  units: 'mm' | 'inch',
-): void {
-  const midpoint = arcControlPoint(start, segment)
-  const midpointCanvas = worldToCanvas(midpoint, vt)
-  const centerCanvas = worldToCanvas(segment.center, vt)
-  const radiusCanvas = Math.hypot(midpointCanvas.cx - centerCanvas.cx, midpointCanvas.cy - centerCanvas.cy)
-  if (radiusCanvas < 16) {
-    return
-  }
-
-  const angle = Math.atan2(midpointCanvas.cy - centerCanvas.cy, midpointCanvas.cx - centerCanvas.cx)
-  const offset = 14
-  drawMeasurementLabel(
-    ctx,
-    `R ${formatLength(lineLength(start, segment.center), units)}`,
-    midpointCanvas.cx + Math.cos(angle) * offset,
-    midpointCanvas.cy + Math.sin(angle) * offset,
-  )
-}
-
-function drawRadiusMeasurement(
-  ctx: CanvasRenderingContext2D,
-  center: Point,
-  edgePoint: Point,
-  vt: ViewTransform,
-  units: 'mm' | 'inch',
-): void {
-  const centerCanvas = worldToCanvas(center, vt)
-  const edgeCanvas = worldToCanvas(edgePoint, vt)
-  const dx = edgeCanvas.cx - centerCanvas.cx
-  const dy = edgeCanvas.cy - centerCanvas.cy
-  const canvasLength = Math.hypot(dx, dy)
-  if (canvasLength < 16) {
-    return
-  }
-
-  const midX = (centerCanvas.cx + edgeCanvas.cx) / 2
-  const midY = (centerCanvas.cy + edgeCanvas.cy) / 2
-  const offset = 11
-  drawMeasurementLabel(
-    ctx,
-    `R ${formatLength(lineLength(center, edgePoint), units)}`,
-    midX - (dy / canvasLength) * offset,
-    midY + (dx / canvasLength) * offset,
-    Math.atan2(dy, dx),
-  )
-}
-
-function drawProfileLineMeasurements(
-  ctx: CanvasRenderingContext2D,
-  profile: SketchProfile,
-  vt: ViewTransform,
-  units: 'mm' | 'inch',
-  options?: { segmentIndices?: number[] },
-): void {
-  const allowed = options?.segmentIndices ? new Set(options.segmentIndices) : null
-  let current = profile.start
-
-  for (let index = 0; index < profile.segments.length; index += 1) {
-    const segment = profile.segments[index]
-    if (allowed && !allowed.has(index)) {
-      current = segment.to
-      continue
-    }
-
-    if (segment.type === 'line' || segment.type === 'bezier') {
-      drawLineLengthMeasurement(ctx, current, segment.to, vt, units)
-    }
-
-    current = segment.to
-  }
-}
-
-function drawAngleMeasurement(
-  ctx: CanvasRenderingContext2D,
-  origin: Point,
-  fromPoint: Point,
-  toPoint: Point,
-  vt: ViewTransform,
-): void {
-  const startAngle = Math.atan2(fromPoint.y - origin.y, fromPoint.x - origin.x)
-  const endAngle = Math.atan2(toPoint.y - origin.y, toPoint.x - origin.x)
-  let delta = (endAngle - startAngle) * (180 / Math.PI)
-  while (delta <= -180) delta += 360
-  while (delta > 180) delta -= 360
-  if (Math.abs(delta) < 0.1) {
-    return
-  }
-
-  const originCanvas = worldToCanvas(origin, vt)
-  const angleMid = startAngle + ((delta * Math.PI) / 180) / 2
-  const radius =
-    Math.min(
-      Math.max(
-        (Math.hypot(fromPoint.x - origin.x, fromPoint.y - origin.y) + Math.hypot(toPoint.x - origin.x, toPoint.y - origin.y)) * vt.scale * 0.2,
-        24,
-      ),
-      56,
-    )
-
-  drawMeasurementLabel(
-    ctx,
-    `${delta >= 0 ? '+' : ''}${delta.toFixed(1).replace(/\.0$/, '')}°`,
-    originCanvas.cx + Math.cos(angleMid) * radius,
-    originCanvas.cy + Math.sin(angleMid) * radius,
-  )
-}
-
-function drawActiveEditMeasurements(
-  ctx: CanvasRenderingContext2D,
-  profile: SketchProfile,
-  vt: ViewTransform,
-  units: 'mm' | 'inch',
-  activeControl: SketchControlRef | null,
-): void {
-  if (!activeControl) {
-    return
-  }
-
-  if (activeControl.kind === 'anchor') {
-    const indices: number[] = []
-    if (profile.closed || activeControl.index > 0) {
-      indices.push((activeControl.index - 1 + profile.segments.length) % profile.segments.length)
-    }
-    if (activeControl.index < profile.segments.length) {
-      indices.push(activeControl.index)
-    }
-    drawProfileLineMeasurements(ctx, profile, vt, units, { segmentIndices: indices })
-    return
-  }
-
-  if (activeControl.kind === 'arc_handle') {
-    const segment = profile.segments[activeControl.index]
-    if (segment?.type === 'arc') {
-      drawArcRadiusMeasurement(ctx, anchorPointForIndex(profile, activeControl.index), segment, vt, units)
-    }
-  }
-}
-
 function drawPendingPathLoop(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -944,167 +363,6 @@ function drawPendingPathLoop(
     ctx.lineWidth = 2
     ctx.stroke()
   }
-}
-
-function drawClampFootprint(
-  ctx: CanvasRenderingContext2D,
-  clamp: Clamp,
-  vt: ViewTransform,
-  selected: boolean,
-  colliding: boolean,
-): void {
-  const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
-  traceProfilePath(ctx, profile, vt)
-  ctx.fillStyle = colliding
-    ? (selected ? 'rgba(209, 118, 118, 0.28)' : 'rgba(184, 98, 98, 0.18)')
-    : (selected ? 'rgba(118, 144, 209, 0.24)' : 'rgba(86, 110, 168, 0.14)')
-  ctx.fill()
-  ctx.strokeStyle = colliding
-    ? (selected ? '#ffb0b0' : 'rgba(235, 122, 122, 0.92)')
-    : (selected ? '#9db9ff' : 'rgba(122, 151, 224, 0.88)')
-  ctx.lineWidth = selected ? 2.2 : 1.6
-  ctx.setLineDash([6, 4])
-  ctx.stroke()
-  ctx.setLineDash([])
-}
-
-function drawTabFootprint(
-  ctx: CanvasRenderingContext2D,
-  tab: Tab,
-  vt: ViewTransform,
-  selected: boolean,
-): void {
-  const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
-  traceProfilePath(ctx, profile, vt)
-  ctx.fillStyle = selected ? 'rgba(168, 208, 110, 0.24)' : 'rgba(128, 175, 82, 0.14)'
-  ctx.fill()
-  ctx.strokeStyle = selected ? '#c7ef94' : 'rgba(156, 205, 103, 0.88)'
-  ctx.lineWidth = selected ? 2.2 : 1.6
-  ctx.setLineDash([6, 4])
-  ctx.stroke()
-  ctx.setLineDash([])
-}
-
-function drawOriginMarker(
-  ctx: CanvasRenderingContext2D,
-  origin: ReturnType<typeof useProjectStore.getState>['project']['origin'],
-  vt: ViewTransform,
-): void {
-  const anchor = worldToCanvas({ x: origin.x, y: origin.y }, vt)
-  const axisLength = 20
-
-  ctx.save()
-  ctx.lineCap = 'round'
-
-  ctx.beginPath()
-  ctx.moveTo(anchor.cx, anchor.cy)
-  ctx.lineTo(anchor.cx + axisLength, anchor.cy)
-  ctx.strokeStyle = '#e35b5b'
-  ctx.lineWidth = 2
-  ctx.stroke()
-
-  ctx.beginPath()
-  ctx.moveTo(anchor.cx + axisLength, anchor.cy)
-  ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy - 3)
-  ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy + 3)
-  ctx.closePath()
-  ctx.fillStyle = '#e35b5b'
-  ctx.fill()
-
-  ctx.beginPath()
-  ctx.moveTo(anchor.cx, anchor.cy)
-  ctx.lineTo(anchor.cx, anchor.cy - axisLength)
-  ctx.strokeStyle = '#63c07a'
-  ctx.lineWidth = 2
-  ctx.stroke()
-
-  ctx.beginPath()
-  ctx.moveTo(anchor.cx, anchor.cy - axisLength)
-  ctx.lineTo(anchor.cx - 3, anchor.cy - axisLength + 6)
-  ctx.lineTo(anchor.cx + 3, anchor.cy - axisLength + 6)
-  ctx.closePath()
-  ctx.fillStyle = '#63c07a'
-  ctx.fill()
-
-  ctx.beginPath()
-  ctx.arc(anchor.cx, anchor.cy, 4, 0, Math.PI * 2)
-  ctx.fillStyle = '#5b90e3'
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(230, 237, 245, 0.95)'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-
-  ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
-  ctx.fillStyle = 'rgba(230, 237, 245, 0.95)'
-  ctx.fillText(origin.name, anchor.cx + 10, anchor.cy - 8)
-  ctx.restore()
-}
-
-function backdropRotationRadians(backdrop: BackdropImage): number {
-  return ((backdrop.orientationAngle ?? 90) - 90) * (Math.PI / 180)
-}
-
-function drawBackdropImage(
-  ctx: CanvasRenderingContext2D,
-  backdrop: BackdropImage,
-  image: HTMLImageElement,
-  vt: ViewTransform,
-  selected: boolean,
-  label = 'Backdrop',
-): void {
-  const center = worldToCanvas(backdrop.center, vt)
-  const width = backdrop.width * vt.scale
-  const height = backdrop.height * vt.scale
-  const rotation = backdropRotationRadians(backdrop)
-
-  ctx.save()
-  ctx.translate(center.cx, center.cy)
-  ctx.rotate(rotation)
-  ctx.globalAlpha = Math.min(Math.max(backdrop.opacity, 0), 1)
-  ctx.drawImage(image, -width / 2, -height / 2, width, height)
-  ctx.restore()
-
-  if (selected) {
-    ctx.save()
-    ctx.translate(center.cx, center.cy)
-    ctx.rotate(rotation)
-    ctx.beginPath()
-    ctx.rect(-width / 2, -height / 2, width, height)
-    ctx.strokeStyle = '#efbc7a'
-    ctx.lineWidth = 2
-    ctx.setLineDash([8, 5])
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(239, 188, 122, 0.06)'
-    ctx.fill()
-    ctx.restore()
-
-    ctx.fillStyle = 'rgba(18, 22, 29, 0.8)'
-    ctx.fillRect(center.cx - 38, center.cy - 14, 76, 18)
-    ctx.fillStyle = '#d8e4f0'
-    ctx.font = '11px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText(label, center.cx, center.cy - 1)
-  }
-}
-
-function hitBackdrop(point: Point, backdrop: BackdropImage): boolean {
-  const angle = -backdropRotationRadians(backdrop)
-  const local = {
-    x: point.x - backdrop.center.x,
-    y: point.y - backdrop.center.y,
-  }
-  const cos = Math.cos(angle)
-  const sin = Math.sin(angle)
-  const rotated = {
-    x: local.x * cos - local.y * sin,
-    y: local.x * sin + local.y * cos,
-  }
-
-  return (
-    Math.abs(rotated.x) <= backdrop.width / 2
-    && Math.abs(rotated.y) <= backdrop.height / 2
-  )
 }
 
 function buildSplineDraftSegments(points: Point[], previewPoint: Point | null): Segment[] {
