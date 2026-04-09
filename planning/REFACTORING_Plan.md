@@ -63,7 +63,8 @@ type.
   - `src/store/slices/selectionSlice.ts`
   - `src/store/slices/pendingActionsSlice.ts`
   - `src/store/slices/pendingCompletionSlice.ts`
-- `projectStore.ts` reduced from ~7177 lines to ~5034 lines
+  - `src/store/slices/pendingAddSlice.ts`
+- `projectStore.ts` reduced from ~7177 lines to ~4405 lines
 
 ### Phase B: move runtime logic into slices
 
