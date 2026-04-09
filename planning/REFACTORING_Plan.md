@@ -133,7 +133,8 @@ This should be done incrementally:
 - extracted `src/components/canvas/viewTransform.ts`
 - extracted `src/components/canvas/profilePrimitives.ts`
 - extracted `src/components/canvas/scenePrimitives.ts`
-- `SketchCanvas.tsx` reduced from ~5873 lines to ~5131 lines
+- extracted `src/components/canvas/hitTest.ts`
+- `SketchCanvas.tsx` reduced from ~5873 lines to ~5025 lines
 
 ---
 
