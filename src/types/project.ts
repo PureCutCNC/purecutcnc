@@ -228,6 +228,7 @@ export interface Operation {
   pass: OperationPass
   enabled: boolean
   showToolpath: boolean
+  debugToolpath: boolean
   target: OperationTarget
   toolRef: string | null
   stepdown: number

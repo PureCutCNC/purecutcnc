@@ -15,6 +15,7 @@ import {
   getOperationSafeZ,
   normalizeWinding,
   normalizeToolForProject,
+  resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
 import { resolvePocketRegions } from './resolver'
@@ -451,6 +452,149 @@ function distanceSquared(a: Point, b: Point): number {
   return dx * dx + dy * dy
 }
 
+function contourNearestVertexIndex(points: Point[], anchor: Point): { index: number; distance: number } {
+  let bestIndex = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < points.length; index += 1) {
+    const distance = distanceSquared(anchor, points[index])
+    if (distance < bestDistance) {
+      bestIndex = index
+      bestDistance = distance
+    }
+  }
+
+  return { index: bestIndex, distance: bestDistance }
+}
+
+function contourNearestVertexDistance(points: Point[], anchor: Point): number {
+  return contourNearestVertexIndex(points, anchor).distance
+}
+
+function rotateClosedContour(points: Point[], startIndex: number): Point[] {
+  if (points.length <= 1 || startIndex <= 0 || startIndex >= points.length) {
+    return points
+  }
+
+  return [...points.slice(startIndex), ...points.slice(0, startIndex)]
+}
+
+function contourEntryDistanceSquared(points: Point[], anchor: Point): number {
+  if (points.length === 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  return contourNearestVertexDistance(points, anchor)
+}
+
+function rotateContourToNearestEntry(points: Point[], anchor: Point | null): Point[] {
+  if (points.length === 0 || anchor === null) {
+    return points
+  }
+
+  const { index } = contourNearestVertexIndex(points, anchor)
+  return rotateClosedContour(points, index)
+}
+
+function rotateContourToBestEntry(
+  points: Point[],
+  fromAnchor: Point | null,
+  nextAnchors: Point[],
+): Point[] {
+  if (points.length === 0) {
+    return points
+  }
+
+  let bestIndex = 0
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < points.length; index += 1) {
+    const candidate = points[index]
+    const fromDistance = fromAnchor ? distanceSquared(fromAnchor, candidate) : 0
+    const nextDistance = nextAnchors.length > 0
+      ? Math.min(...nextAnchors.map((anchor) => distanceSquared(anchor, candidate)))
+      : 0
+    const score = fromDistance + nextDistance
+
+    if (score < bestScore) {
+      bestIndex = index
+      bestScore = score
+    }
+  }
+
+  return rotateClosedContour(points, bestIndex)
+}
+
+function contourAnchorPoint(points: Point[]): Point | null {
+  const first = points[0]
+  return first ? { x: first.x, y: first.y } : null
+}
+
+function regionEntryDistanceSquared(region: ResolvedPocketRegion, anchor: Point): number {
+  return contourEntryDistanceSquared(region.outer, anchor)
+}
+
+function orderRegionsGreedy(regions: ResolvedPocketRegion[], start: Point | null): ResolvedPocketRegion[] {
+  if (regions.length <= 1 || start === null) {
+    return regions
+  }
+
+  const remaining = [...regions]
+  const ordered: ResolvedPocketRegion[] = []
+  let current = start
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const distance = regionEntryDistanceSquared(remaining[index], current)
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+
+    const [nextRegion] = remaining.splice(bestIndex, 1)
+    ordered.push(nextRegion)
+    current = contourAnchorPoint(nextRegion.outer) ?? current
+  }
+
+  return ordered
+}
+
+function orderClosedContoursGreedy(contours: Point[][], start: Point | null): Point[][] {
+  if (contours.length <= 1 || start === null) {
+    return contours
+  }
+
+  const remaining = contours
+    .filter((contour) => contour.length >= 3)
+    .map((contour) => [...contour])
+  const ordered: Point[][] = []
+  let current = start
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const distance = contourEntryDistanceSquared(remaining[index], current)
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+
+    const [nextContour] = remaining.splice(bestIndex, 1)
+    const rotated = rotateContourToNearestEntry(nextContour, current)
+    ordered.push(rotated)
+    current = contourAnchorPoint(rotated) ?? current
+  }
+
+  return ordered
+}
+
 function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
   if (segments.length <= 1 || start === null) {
     return segments
@@ -540,6 +684,80 @@ export function buildPocketParallelSegments(
   })
 
   return segments
+}
+
+function cutClosedContours(
+  moves: ToolpathMove[],
+  contours: Point[][],
+  z: number,
+  safeZ: number,
+  maxLinkDistance: number,
+  currentPosition: ToolpathPoint | null,
+): ToolpathPoint | null {
+  const orderedContours = orderClosedContoursGreedy(
+    contours,
+    currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+  )
+
+  let nextPosition = currentPosition
+  for (const contour of orderedContours) {
+    const entryPoint = contourStartPoint(contour, z)
+    nextPosition = transitionToCutEntry(moves, nextPosition, entryPoint, safeZ, maxLinkDistance)
+    const cutMoves = toClosedCutMoves(contour, z)
+    moves.push(...cutMoves)
+    nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+  }
+
+  return nextPosition
+}
+
+function cutOffsetRegionRecursive(
+  moves: ToolpathMove[],
+  region: ResolvedPocketRegion,
+  z: number,
+  safeZ: number,
+  stepoverDistance: number,
+  maxLinkDistance: number,
+  currentPosition: ToolpathPoint | null,
+): ToolpathPoint | null {
+  const childRegions = buildInsetRegions(region, stepoverDistance)
+  const childAnchors = childRegions
+    .map((child) => child.outer)
+    .filter((contour) => contour.length > 0)
+    .map((contour) => contour[0])
+  const preparedContours = buildContourLoops([region]).map((contour) => rotateContourToBestEntry(
+    contour,
+    currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    childAnchors,
+  ))
+
+  let nextPosition = cutClosedContours(
+    moves,
+    preparedContours,
+    z,
+    safeZ,
+    maxLinkDistance,
+    currentPosition,
+  )
+
+  const orderedChildren = orderRegionsGreedy(
+    childRegions,
+    nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
+  )
+
+  for (const childRegion of orderedChildren) {
+    nextPosition = cutOffsetRegionRecursive(
+      moves,
+      childRegion,
+      z,
+      safeZ,
+      stepoverDistance,
+      maxLinkDistance,
+      nextPosition,
+    )
+  }
+
+  return nextPosition
 }
 
 export function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
@@ -635,23 +853,28 @@ function generateRoughBandMoves(
   }
 
   for (const z of stepLevels) {
-    let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
-    while (currentRegions.length > 0) {
-      const contours = buildContourLoops(currentRegions)
-      if (contours.length === 0) {
-        warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
-        break
-      }
+    const currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
+    if (currentRegions.length === 0) {
+      warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+      continue
+    }
 
-      for (const contour of contours) {
-        const entryPoint = contourStartPoint(contour, z)
-        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-        const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
-        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      }
+    const orderedRegions = orderRegionsGreedy(
+      currentRegions,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
 
-      currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
+    for (const region of orderedRegions) {
+      currentPosition = cutOffsetRegionRecursive(
+        moves,
+        region,
+        z,
+        safeZ,
+        effectiveStepover,
+        maxLinkDistance,
+        currentPosition,
+      )
     }
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
@@ -711,25 +934,13 @@ function generateFinishBandMoves(
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of wallStepLevels) {
-    for (const contour of wallContours) {
-      const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-      const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
-      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-    }
+    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition)
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
   for (const z of floorStepLevels) {
-    for (const contour of floorContours) {
-      const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-      const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
-      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-    }
+    currentPosition = cutClosedContours(moves, floorContours, z, safeZ, maxLinkDistance, currentPosition)
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(
       floorSegments,
@@ -808,6 +1019,42 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
 
+  const formatZ = (value: number) => Number(value.toFixed(6)).toString()
+  const formatFeatureSpan = (featureId: string) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    if (!feature) {
+      return `${featureId} [missing]`
+    }
+
+    const span = resolveFeatureZSpan(project, feature)
+    return `${feature.name} (${feature.id}) [${formatZ(span.max)} -> ${formatZ(span.min)}]`
+  }
+
+  const formatIslandSpan = (id: string) => {
+    const feature = project.features.find((entry) => entry.id === id)
+    if (feature) {
+      const span = resolveFeatureZSpan(project, feature)
+      return `${feature.name} (${feature.id}) [${formatZ(span.max)} -> ${formatZ(span.min)}]`
+    }
+
+    const tab = project.tabs.find((entry) => entry.id === id)
+    if (tab) {
+      return `${tab.name} (${tab.id}) [${formatZ(Math.max(tab.z_top, tab.z_bottom))} -> ${formatZ(Math.min(tab.z_top, tab.z_bottom))}]`
+    }
+
+    return `${id} [missing]`
+  }
+
+  if (operation.debugToolpath) {
+    const resolvedBandSummary = resolved.bands
+      .map((band) => `${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)}`)
+      .join(', ')
+
+    if (resolved.bands.length > 0) {
+      warnings.push(`Debug: resolved pocket bands = ${resolvedBandSummary}`)
+    }
+  }
+
   for (const band of resolved.bands) {
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
@@ -832,6 +1079,23 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
     warnings.push(...bandWarnings)
+    if (operation.debugToolpath) {
+      warnings.push(
+        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} cut levels = ${
+          stepLevels.length > 0 ? stepLevels.map((level) => formatZ(level)).join(', ') : 'none'
+        }`,
+      )
+      warnings.push(
+        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} targets = ${
+          band.targetFeatureIds.length > 0 ? band.targetFeatureIds.map((id) => formatFeatureSpan(id)).join('; ') : 'none'
+        }`,
+      )
+      warnings.push(
+        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} islands = ${
+          band.islandFeatureIds.length > 0 ? band.islandFeatureIds.map((id) => formatIslandSpan(id)).join('; ') : 'none'
+        }`,
+      )
+    }
   }
 
   let bounds: ToolpathBounds | null = null

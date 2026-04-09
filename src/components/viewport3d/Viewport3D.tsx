@@ -96,6 +96,171 @@ function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): T
   return new THREE.Vector3(point.x, point.z, point.y)
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
+  if (toolpath.moves.length === 0) {
+    return []
+  }
+
+  const firstPoint = toolpathPointToWorld(toolpath.moves[0].from)
+  const lastPoint = toolpathPointToWorld(toolpath.moves[toolpath.moves.length - 1].to)
+  const bounds = toolpath.bounds
+  const span = bounds
+    ? Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
+    : 10
+  const markerLength = clamp(span * 0.08, 0.2, 8)
+  const headLength = markerLength * 0.38
+  const headWidth = markerLength * 0.16
+  const lineOpacity = emphasized ? 0.96 : 0.6
+
+  const startArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, -1, 0),
+    firstPoint.clone().add(new THREE.Vector3(0, markerLength, 0)),
+    markerLength,
+    0xd583df,
+    headLength,
+    headWidth,
+  )
+  const endArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 1, 0),
+    lastPoint,
+    markerLength,
+    0x78b8de,
+    headLength,
+    headWidth,
+  )
+
+  const markers = [startArrow, endArrow]
+  for (const marker of markers) {
+    marker.traverse((entry) => {
+      if (entry instanceof THREE.Line || entry instanceof THREE.Mesh) {
+        const material = Array.isArray(entry.material) ? entry.material : [entry.material]
+        material.forEach((item) => {
+          item.transparent = true
+          item.opacity = lineOpacity
+          item.depthWrite = false
+          item.depthTest = false
+        })
+      }
+    })
+  }
+
+  return markers
+}
+
+function buildToolpathDirectionMarkers(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
+  if (!emphasized || toolpath.moves.length === 0) {
+    return []
+  }
+
+  const bounds = toolpath.bounds
+  const span = bounds
+    ? Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
+    : 10
+  const preferredMarkerLength = clamp(span * 0.028, 0.04, 2.4)
+  const preferredSpacing = clamp(span * 0.09, 0.12, 8)
+  const horizontalTolerance = 1e-6
+  const objects: THREE.Object3D[] = []
+  const distanceSinceLastArrowByKind: Record<'cut' | 'rapid', number> = {
+    cut: 0,
+    rapid: 0,
+  }
+
+  function getHorizontalDirection(move: ToolpathResult['moves'][number] | undefined): THREE.Vector3 | null {
+    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) {
+      return null
+    }
+
+    const from = toolpathPointToWorld(move.from)
+    const to = toolpathPointToWorld(move.to)
+    const delta = to.clone().sub(from)
+    if (Math.abs(delta.y) > horizontalTolerance || delta.length() <= 1e-6) {
+      return null
+    }
+
+    return delta.normalize()
+  }
+
+  for (let moveIndex = 0; moveIndex < toolpath.moves.length; moveIndex += 1) {
+    const move = toolpath.moves[moveIndex]
+    if (move.kind !== 'cut' && move.kind !== 'rapid') {
+      continue
+    }
+
+    const from = toolpathPointToWorld(move.from)
+    const to = toolpathPointToWorld(move.to)
+    const delta = to.clone().sub(from)
+    if (Math.abs(delta.y) > horizontalTolerance) {
+      distanceSinceLastArrowByKind[move.kind] = 0
+      continue
+    }
+
+    const length = delta.length()
+    if (!(length >= 0.001)) {
+      continue
+    }
+
+    const direction = delta.clone().normalize()
+    distanceSinceLastArrowByKind[move.kind] += length
+
+    const previousDirection = getHorizontalDirection(toolpath.moves[moveIndex - 1])
+    const nextDirection = getHorizontalDirection(toolpath.moves[moveIndex + 1])
+    const directionTurn =
+      previousDirection && nextDirection
+        ? Math.min(
+          direction.angleTo(previousDirection),
+          direction.angleTo(nextDirection),
+        )
+        : null
+    const isConnectorCut =
+      move.kind === 'cut'
+      && length <= preferredSpacing * 0.8
+      && directionTurn !== null
+      && directionTurn >= Math.PI / 10
+
+    const shouldForceArrow = length >= preferredMarkerLength * 1.1
+    const shouldPlaceBySpacing = distanceSinceLastArrowByKind[move.kind] >= preferredSpacing
+    if (!shouldForceArrow && !shouldPlaceBySpacing && !isConnectorCut) {
+      continue
+    }
+
+    const markerLength = clamp(Math.min(preferredMarkerLength, Math.max(length * 0.55, preferredMarkerLength * 0.45)), 0.02, 2.4)
+    const headLength = markerLength * 0.45
+    const headWidth = markerLength * 0.18
+    const center = from.clone().add(to).multiplyScalar(0.5)
+    const origin = center.clone().sub(direction.clone().multiplyScalar(markerLength * 0.5))
+    const color = move.kind === 'rapid' ? 0x78b8de : 0xff735c
+    const arrow = new THREE.ArrowHelper(
+      direction,
+      origin,
+      markerLength,
+      color,
+      headLength,
+      headWidth,
+    )
+
+    arrow.traverse((entry) => {
+      if (entry instanceof THREE.Line || entry instanceof THREE.Mesh) {
+        const material = Array.isArray(entry.material) ? entry.material : [entry.material]
+        material.forEach((item) => {
+          item.transparent = true
+          item.opacity = 0.95
+          item.depthWrite = false
+          item.depthTest = false
+        })
+      }
+    })
+
+    objects.push(arrow)
+    distanceSinceLastArrowByKind[move.kind] = 0
+  }
+
+  return objects
+}
+
 function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
@@ -142,6 +307,11 @@ function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): TH
     })
 
     objects.push(new THREE.LineSegments(geometry, material))
+  }
+
+  if (emphasized) {
+    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized))
+    objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized))
   }
 
   return objects
