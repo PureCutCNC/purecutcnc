@@ -440,6 +440,132 @@ export function drawToolpath(
     ctx.setLineDash([])
     ctx.globalAlpha = 1
   }
+
+  if (!emphasized || !toolpath.bounds) {
+    return
+  }
+
+  const span = Math.max(
+    toolpath.bounds.maxX - toolpath.bounds.minX,
+    toolpath.bounds.maxY - toolpath.bounds.minY,
+    toolpath.bounds.maxZ - toolpath.bounds.minZ,
+  )
+  const preferredSpacing = Math.max(12, Math.min(40, span * vt.scale * 0.09))
+  const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
+  const distanceSinceLastArrowByKind: Record<'cut' | 'rapid', number> = {
+    cut: 0,
+    rapid: 0,
+  }
+
+  function drawDirectionArrow(fromX: number, fromY: number, toX: number, toY: number, color: string) {
+    const dx = toX - fromX
+    const dy = toY - fromY
+    const length = Math.hypot(dx, dy)
+    if (length <= 0.001) {
+      return
+    }
+
+    const ux = dx / length
+    const uy = dy / length
+    const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
+    const headLength = markerLength * 0.52
+    const headWidth = markerLength * 0.28
+    const centerX = (fromX + toX) / 2
+    const centerY = (fromY + toY) / 2
+    const tailX = centerX - ux * markerLength * 0.5
+    const tailY = centerY - uy * markerLength * 0.5
+    const tipX = centerX + ux * markerLength * 0.5
+    const tipY = centerY + uy * markerLength * 0.5
+    const leftX = tipX - ux * headLength - uy * headWidth
+    const leftY = tipY - uy * headLength + ux * headWidth
+    const rightX = tipX - ux * headLength + uy * headWidth
+    const rightY = tipY - uy * headLength - ux * headWidth
+
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = 1.4
+    ctx.globalAlpha = 0.95
+    ctx.beginPath()
+    ctx.moveTo(tailX, tailY)
+    ctx.lineTo(tipX, tipY)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(tipX, tipY)
+    ctx.lineTo(leftX, leftY)
+    ctx.lineTo(rightX, rightY)
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+  }
+
+  function moveCanvasDelta(move: ToolpathResult['moves'][number]) {
+    const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
+    const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
+    return {
+      from,
+      to,
+      dx: to.cx - from.cx,
+      dy: to.cy - from.cy,
+      length: Math.hypot(to.cx - from.cx, to.cy - from.cy),
+    }
+  }
+
+  function normalizedMoveDirection(move: ToolpathResult['moves'][number] | undefined): { x: number; y: number } | null {
+    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) {
+      return null
+    }
+
+    const delta = moveCanvasDelta(move)
+    if (delta.length <= 0.001) {
+      return null
+    }
+
+    return { x: delta.dx / delta.length, y: delta.dy / delta.length }
+  }
+
+  for (let moveIndex = 0; moveIndex < toolpath.moves.length; moveIndex += 1) {
+    const move = toolpath.moves[moveIndex]
+    if (move.kind !== 'cut' && move.kind !== 'rapid') {
+      continue
+    }
+
+    const delta = moveCanvasDelta(move)
+    if (delta.length < 0.5) {
+      continue
+    }
+
+    distanceSinceLastArrowByKind[move.kind] += delta.length
+    const previousDirection = normalizedMoveDirection(toolpath.moves[moveIndex - 1])
+    const nextDirection = normalizedMoveDirection(toolpath.moves[moveIndex + 1])
+    const direction = { x: delta.dx / delta.length, y: delta.dy / delta.length }
+    const directionTurn = previousDirection && nextDirection
+      ? Math.min(
+        Math.acos(Math.max(-1, Math.min(1, direction.x * previousDirection.x + direction.y * previousDirection.y))),
+        Math.acos(Math.max(-1, Math.min(1, direction.x * nextDirection.x + direction.y * nextDirection.y))),
+      )
+      : null
+    const isConnectorCut =
+      move.kind === 'cut'
+      && delta.length <= preferredSpacing * 0.8
+      && directionTurn !== null
+      && directionTurn >= Math.PI / 10
+    const shouldForceArrow = delta.length >= preferredArrowLength * 1.1
+    const shouldPlaceBySpacing = distanceSinceLastArrowByKind[move.kind] >= preferredSpacing
+
+    if (!shouldForceArrow && !shouldPlaceBySpacing && !isConnectorCut) {
+      continue
+    }
+
+    drawDirectionArrow(
+      delta.from.cx,
+      delta.from.cy,
+      delta.to.cx,
+      delta.to.cy,
+      move.kind === 'rapid' ? 'rgba(124, 184, 222, 0.95)' : 'rgba(255, 115, 92, 0.98)',
+    )
+    distanceSinceLastArrowByKind[move.kind] = 0
+  }
 }
 
 export function hexToRgba(hex: string, alpha: number): string {

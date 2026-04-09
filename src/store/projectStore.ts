@@ -1433,6 +1433,7 @@ function defaultOperationForTarget(
     pass,
     enabled: true,
     showToolpath: true,
+    debugToolpath: false,
     target,
     toolRef,
     stepdown: tool.defaultStepdown,

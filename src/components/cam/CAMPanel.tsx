@@ -1049,6 +1049,14 @@ export function CAMPanel({
                     <span>Target</span>
                     <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />
                   </label>
+                  <label className="properties-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedOperation.debugToolpath}
+                      onChange={(event) => updateOperation(selectedOperation.id, { debugToolpath: event.target.checked })}
+                    />
+                    <span>Debug toolpath</span>
+                  </label>
                   <div className="properties-field">
                     <span>Target Source</span>
                     <button

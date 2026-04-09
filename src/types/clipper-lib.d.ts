@@ -48,6 +48,7 @@ declare module 'clipper-lib' {
     }
     ClipType: {
       ctUnion: number
+      ctIntersection: number
       ctDifference: number
     }
     PolyFillType: {

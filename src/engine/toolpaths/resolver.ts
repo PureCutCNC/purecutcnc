@@ -140,6 +140,14 @@ function differencePaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]):
   return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctDifference)
 }
 
+function pathsIntersect(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): boolean {
+  if (subjectPaths.length === 0 || clipPaths.length === 0) {
+    return false
+  }
+
+  return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctIntersection).length > 0
+}
+
 function polyTreeToRegions(
   node: PolyTreeNode,
   targetFeatureIds: string[],
@@ -235,21 +243,26 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     }
   }
 
+  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
+    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
-  const candidateTabIslands: AdditiveObstacleWithSpan[] = project.tabs.map((tab) => ({
-    id: tab.id,
-    path: toClipperPath(normalizeWinding(flattenProfile(rectProfile(tab.x, tab.y, tab.w, tab.h)).points, false), DEFAULT_CLIPPER_SCALE),
-    span: {
-      min: Math.min(tab.z_bottom, tab.z_top),
-      max: Math.max(tab.z_bottom, tab.z_top),
-    },
-  }))
+  const candidateTabIslands: AdditiveObstacleWithSpan[] = project.tabs
+    .map((tab) => ({
+      id: tab.id,
+      path: toClipperPath(normalizeWinding(flattenProfile(rectProfile(tab.x, tab.y, tab.w, tab.h)).points, false), DEFAULT_CLIPPER_SCALE),
+      span: {
+        min: Math.min(tab.z_bottom, tab.z_top),
+        max: Math.max(tab.z_bottom, tab.z_top),
+      },
+    }))
+    .filter((tab) => pathsIntersect(targetUnionPaths, [tab.path]))
 
   const depths = uniqueSortedDepthsFromSpans([
     ...closedTargetFeatures.map(({ span }) => span),
