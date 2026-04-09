@@ -134,7 +134,12 @@ This should be done incrementally:
 - extracted `src/components/canvas/profilePrimitives.ts`
 - extracted `src/components/canvas/scenePrimitives.ts`
 - extracted `src/components/canvas/hitTest.ts`
-- `SketchCanvas.tsx` reduced from ~5873 lines to ~5025 lines
+- extracted `src/components/canvas/draftGeometry.ts`
+- extracted `src/components/canvas/draftHelpers.ts`
+- extracted `src/components/canvas/manualEntry.ts`
+- extracted `src/components/canvas/snappingHelpers.ts`
+- extracted `src/components/canvas/previewPrimitives.ts`
+- `SketchCanvas.tsx` reduced from ~5873 lines to ~3527 lines
 
 ---
 

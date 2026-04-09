@@ -172,9 +172,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   }
 
   function handleTextTool() {
-    if (pendingAdd?.shape === 'text') {
+    if (pendingAdd) {
       cancelPendingAdd()
-      return
     }
     setShowTextDialog(true)
   }
@@ -954,57 +953,73 @@ export function CreationToolbar({
   const toolbar = useToolbarState(onZoomToModel, onImportComplete)
 
   return (
-    <div className={`toolbar toolbar--creation toolbar--${layout}`}>
-      <CreationActions
-        pendingShape={toolbar.pendingAdd?.shape ?? null}
-        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onRect={toolbar.handleRect}
-        onCircle={toolbar.handleCircle}
-        onPolygon={toolbar.handlePolygon}
-        onSpline={toolbar.handleSpline}
-        onComposite={toolbar.handleComposite}
-        onText={toolbar.handleTextTool}
+    <>
+      <div className={`toolbar toolbar--creation toolbar--${layout}`}>
+        <CreationActions
+          pendingShape={toolbar.pendingAdd?.shape ?? null}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onRect={toolbar.handleRect}
+          onCircle={toolbar.handleCircle}
+          onPolygon={toolbar.handlePolygon}
+          onSpline={toolbar.handleSpline}
+          onComposite={toolbar.handleComposite}
+          onText={toolbar.handleTextTool}
+        />
+        <ShapeToolActions
+          pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onJoin={toolbar.handleJoinSelectedFeatures}
+          onCut={toolbar.handleCutSelectedFeatures}
+        />
+        <FeatureEditActions
+          enabled={toolbar.hasSelectedFeatures}
+          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
+          hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
+          pendingOffset={!!toolbar.pendingOffset}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onCopy={toolbar.handleFeatureCopy}
+          onMove={toolbar.handleFeatureMove}
+          onDelete={toolbar.handleDeleteSelectedFeatures}
+          onResize={toolbar.handleFeatureResize}
+          onRotate={toolbar.handleFeatureRotate}
+          onOffset={toolbar.handleOffsetSelectedFeatures}
+        />
+        <SketchEditActions
+          enabled={toolbar.featureSketchEditActive}
+          activeTool={toolbar.sketchEditTool}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onAddPoint={toolbar.handleSketchEditAddPoint}
+          onDeletePoint={toolbar.handleSketchEditDeletePoint}
+          onFillet={toolbar.handleSketchEditFillet}
+        />
+        <BackdropEditActions
+          enabled={toolbar.hasSelectedBackdrop}
+          pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onMove={toolbar.handleBackdropMove}
+          onDelete={toolbar.handleBackdropDelete}
+          onResize={toolbar.handleBackdropResize}
+          onRotate={toolbar.handleBackdropRotate}
+        />
+      </div>
+      <ToolbarDialog
+        showNewProjectDialog={toolbar.showNewProjectDialog}
+        showImportDialog={toolbar.showImportDialog}
+        showTextDialog={toolbar.showTextDialog}
+        onCloseNewProject={() => {
+          toolbar.setNameVal(useProjectStore.getState().project.meta.name)
+          toolbar.setEditingName(false)
+          toolbar.setShowNewProjectDialog(false)
+        }}
+        onCloseImport={() => toolbar.setShowImportDialog(false)}
+        onCloseText={() => toolbar.setShowTextDialog(false)}
+        onConfirmText={toolbar.confirmTextTool}
+        onImportComplete={onImportComplete}
       />
-      <ShapeToolActions
-        pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
-        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onJoin={toolbar.handleJoinSelectedFeatures}
-        onCut={toolbar.handleCutSelectedFeatures}
-      />
-      <FeatureEditActions
-        enabled={toolbar.hasSelectedFeatures}
-        hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-        hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
-        pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-        pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
-        pendingOffset={!!toolbar.pendingOffset}
-        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onCopy={toolbar.handleFeatureCopy}
-        onMove={toolbar.handleFeatureMove}
-        onDelete={toolbar.handleDeleteSelectedFeatures}
-        onResize={toolbar.handleFeatureResize}
-        onRotate={toolbar.handleFeatureRotate}
-        onOffset={toolbar.handleOffsetSelectedFeatures}
-      />
-      <SketchEditActions
-        enabled={toolbar.featureSketchEditActive}
-        activeTool={toolbar.sketchEditTool}
-        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onAddPoint={toolbar.handleSketchEditAddPoint}
-        onDeletePoint={toolbar.handleSketchEditDeletePoint}
-        onFillet={toolbar.handleSketchEditFillet}
-      />
-      <BackdropEditActions
-        enabled={toolbar.hasSelectedBackdrop}
-        pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
-        pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
-        tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-        onMove={toolbar.handleBackdropMove}
-        onDelete={toolbar.handleBackdropDelete}
-        onResize={toolbar.handleBackdropResize}
-        onRotate={toolbar.handleBackdropRotate}
-      />
-    </div>
+    </>
   )
 }
 
