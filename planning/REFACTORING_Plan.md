@@ -53,6 +53,16 @@ type.
 **Status:** in progress
 - extracted `src/store/types.ts`
 - moved consumer type imports off `projectStore.ts`
+- extracted helper modules:
+  - `src/store/helpers/ids.ts`
+  - `src/store/helpers/geometry.ts`
+  - `src/store/helpers/clipping.ts`
+  - `src/store/helpers/derivedFeatures.ts`
+  - `src/store/helpers/normalize.ts`
+- started runtime slices:
+  - `src/store/slices/selectionSlice.ts`
+  - `src/store/slices/pendingActionsSlice.ts`
+- `projectStore.ts` reduced from ~7177 lines to ~5431 lines
 
 ### Phase B: move runtime logic into slices
 
