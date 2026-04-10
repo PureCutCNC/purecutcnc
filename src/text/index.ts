@@ -7,6 +7,7 @@ import gentilisRegular from 'three/examples/fonts/gentilis_regular.typeface.json
 import gentilisBold from 'three/examples/fonts/gentilis_bold.typeface.json'
 import droidSansRegular from 'three/examples/fonts/droid/droid_sans_regular.typeface.json'
 import droidSansBold from 'three/examples/fonts/droid/droid_sans_bold.typeface.json'
+import droidSansMonoRegular from 'three/examples/fonts/droid/droid_sans_mono_regular.typeface.json'
 import droidSerifRegular from 'three/examples/fonts/droid/droid_serif_regular.typeface.json'
 import droidSerifBold from 'three/examples/fonts/droid/droid_serif_bold.typeface.json'
 import {
@@ -44,6 +45,9 @@ interface TextFontDefinition {
   id: TextFontId
   label: string
   style: TextFontStyle
+  baseId: 'simple_stroke' | OutlineFontBaseId
+  slant?: number
+  widthScale?: number
 }
 
 interface TextTemplate {
@@ -62,18 +66,54 @@ const DEFAULT_TEXT = 'TEXT'
 
 const LETTER_SPACING_RATIO = 0.18
 const LINE_HEIGHT_RATIO = 1.45
+
+type OutlineFontBaseId =
+  | 'helvetiker_regular'
+  | 'helvetiker_bold'
+  | 'optimer_regular'
+  | 'optimer_bold'
+  | 'gentilis_regular'
+  | 'gentilis_bold'
+  | 'droid_sans_regular'
+  | 'droid_sans_bold'
+  | 'droid_sans_mono_regular'
+  | 'droid_serif_regular'
+  | 'droid_serif_bold'
+
+const ITALIC_SLANT = 0.22
+const CONDENSED_WIDTH_SCALE = 0.82
+
 const TEXT_FONTS: TextFontDefinition[] = [
-  { id: 'simple_stroke', label: 'Simple Stroke', style: 'skeleton' },
-  { id: 'helvetiker_regular', label: 'Helvetiker Regular', style: 'outline' },
-  { id: 'helvetiker_bold', label: 'Helvetiker Bold', style: 'outline' },
-  { id: 'optimer_regular', label: 'Optimer Regular', style: 'outline' },
-  { id: 'optimer_bold', label: 'Optimer Bold', style: 'outline' },
-  { id: 'gentilis_regular', label: 'Gentilis Regular', style: 'outline' },
-  { id: 'gentilis_bold', label: 'Gentilis Bold', style: 'outline' },
-  { id: 'droid_sans_regular', label: 'Droid Sans Regular', style: 'outline' },
-  { id: 'droid_sans_bold', label: 'Droid Sans Bold', style: 'outline' },
-  { id: 'droid_serif_regular', label: 'Droid Serif Regular', style: 'outline' },
-  { id: 'droid_serif_bold', label: 'Droid Serif Bold', style: 'outline' },
+  { id: 'simple_stroke', label: 'Simple Stroke', style: 'skeleton', baseId: 'simple_stroke' },
+  { id: 'simple_stroke_italic', label: 'Simple Stroke Italic', style: 'skeleton', baseId: 'simple_stroke', slant: ITALIC_SLANT },
+  { id: 'simple_stroke_condensed', label: 'Simple Stroke Condensed', style: 'skeleton', baseId: 'simple_stroke', widthScale: CONDENSED_WIDTH_SCALE },
+  { id: 'simple_stroke_condensed_italic', label: 'Simple Stroke Condensed Italic', style: 'skeleton', baseId: 'simple_stroke', widthScale: CONDENSED_WIDTH_SCALE, slant: ITALIC_SLANT },
+  { id: 'helvetiker_regular', label: 'Helvetiker Regular', style: 'outline', baseId: 'helvetiker_regular' },
+  { id: 'helvetiker_bold', label: 'Helvetiker Bold', style: 'outline', baseId: 'helvetiker_bold' },
+  { id: 'helvetiker_regular_italic', label: 'Helvetiker Regular Italic', style: 'outline', baseId: 'helvetiker_regular', slant: ITALIC_SLANT },
+  { id: 'helvetiker_bold_italic', label: 'Helvetiker Bold Italic', style: 'outline', baseId: 'helvetiker_bold', slant: ITALIC_SLANT },
+  { id: 'helvetiker_regular_condensed', label: 'Helvetiker Regular Condensed', style: 'outline', baseId: 'helvetiker_regular', widthScale: CONDENSED_WIDTH_SCALE },
+  { id: 'helvetiker_bold_condensed', label: 'Helvetiker Bold Condensed', style: 'outline', baseId: 'helvetiker_bold', widthScale: CONDENSED_WIDTH_SCALE },
+  { id: 'helvetiker_regular_condensed_italic', label: 'Helvetiker Regular Condensed Italic', style: 'outline', baseId: 'helvetiker_regular', widthScale: CONDENSED_WIDTH_SCALE, slant: ITALIC_SLANT },
+  { id: 'helvetiker_bold_condensed_italic', label: 'Helvetiker Bold Condensed Italic', style: 'outline', baseId: 'helvetiker_bold', widthScale: CONDENSED_WIDTH_SCALE, slant: ITALIC_SLANT },
+  { id: 'optimer_regular', label: 'Optimer Regular', style: 'outline', baseId: 'optimer_regular' },
+  { id: 'optimer_bold', label: 'Optimer Bold', style: 'outline', baseId: 'optimer_bold' },
+  { id: 'optimer_regular_italic', label: 'Optimer Regular Italic', style: 'outline', baseId: 'optimer_regular', slant: ITALIC_SLANT },
+  { id: 'optimer_bold_italic', label: 'Optimer Bold Italic', style: 'outline', baseId: 'optimer_bold', slant: ITALIC_SLANT },
+  { id: 'gentilis_regular', label: 'Gentilis Regular', style: 'outline', baseId: 'gentilis_regular' },
+  { id: 'gentilis_bold', label: 'Gentilis Bold', style: 'outline', baseId: 'gentilis_bold' },
+  { id: 'gentilis_regular_italic', label: 'Gentilis Regular Italic', style: 'outline', baseId: 'gentilis_regular', slant: ITALIC_SLANT },
+  { id: 'gentilis_bold_italic', label: 'Gentilis Bold Italic', style: 'outline', baseId: 'gentilis_bold', slant: ITALIC_SLANT },
+  { id: 'droid_sans_regular', label: 'Droid Sans Regular', style: 'outline', baseId: 'droid_sans_regular' },
+  { id: 'droid_sans_bold', label: 'Droid Sans Bold', style: 'outline', baseId: 'droid_sans_bold' },
+  { id: 'droid_sans_mono_regular', label: 'Droid Sans Mono Regular', style: 'outline', baseId: 'droid_sans_mono_regular' },
+  { id: 'droid_sans_regular_italic', label: 'Droid Sans Regular Italic', style: 'outline', baseId: 'droid_sans_regular', slant: ITALIC_SLANT },
+  { id: 'droid_sans_bold_italic', label: 'Droid Sans Bold Italic', style: 'outline', baseId: 'droid_sans_bold', slant: ITALIC_SLANT },
+  { id: 'droid_sans_mono_regular_italic', label: 'Droid Sans Mono Regular Italic', style: 'outline', baseId: 'droid_sans_mono_regular', slant: ITALIC_SLANT },
+  { id: 'droid_serif_regular', label: 'Droid Serif Regular', style: 'outline', baseId: 'droid_serif_regular' },
+  { id: 'droid_serif_bold', label: 'Droid Serif Bold', style: 'outline', baseId: 'droid_serif_bold' },
+  { id: 'droid_serif_regular_italic', label: 'Droid Serif Regular Italic', style: 'outline', baseId: 'droid_serif_regular', slant: ITALIC_SLANT },
+  { id: 'droid_serif_bold_italic', label: 'Droid Serif Bold Italic', style: 'outline', baseId: 'droid_serif_bold', slant: ITALIC_SLANT },
 ]
 
 const fontLoader = new FontLoader()
@@ -86,9 +126,12 @@ const OUTLINE_FONTS = {
   gentilis_bold: fontLoader.parse(gentilisBold as any),
   droid_sans_regular: fontLoader.parse(droidSansRegular as any),
   droid_sans_bold: fontLoader.parse(droidSansBold as any),
+  droid_sans_mono_regular: fontLoader.parse(droidSansMonoRegular as any),
   droid_serif_regular: fontLoader.parse(droidSerifRegular as any),
   droid_serif_bold: fontLoader.parse(droidSerifBold as any),
 } as const
+
+const TEXT_FONT_MAP = Object.fromEntries(TEXT_FONTS.map((font) => [font.id, font])) as Record<TextFontId, TextFontDefinition>
 
 const GLYPHS: Record<string, GlyphDefinition> = {
   A: { advance: 1, strokes: [[[0, 1], [0.5, 0], [1, 1]], [[0.2, 0.58], [0.8, 0.58]]] },
@@ -150,7 +193,8 @@ export function defaultTextToolConfig(units: 'mm' | 'inch'): TextToolConfig {
 }
 
 export function getTextFontOptions(style?: TextFontStyle): TextFontDefinition[] {
-  return style ? TEXT_FONTS.filter((font) => font.style === style) : TEXT_FONTS
+  const filtered = style ? TEXT_FONTS.filter((font) => font.style === style) : TEXT_FONTS
+  return [...filtered].sort((left, right) => left.label.localeCompare(right.label))
 }
 
 export function normalizeTextFontId(fontId: string | null | undefined, style: TextFontStyle): TextFontId {
@@ -240,8 +284,52 @@ function flipProfileY(profile: SketchProfile, maxY: number): SketchProfile {
   return transformProfile(profile, (point) => ({ x: point.x, y: maxY - point.y }))
 }
 
+function fontDefinitionFor(fontId: TextFontId, style: TextFontStyle): TextFontDefinition {
+  const font = TEXT_FONT_MAP[fontId]
+  if (font && font.style === style) {
+    return font
+  }
+  return TEXT_FONT_MAP[defaultFontIdForStyle(style)]
+}
+
+function applyFontVariantToProfile(profile: SketchProfile, font: TextFontDefinition): SketchProfile {
+  if (!font.slant && !font.widthScale) {
+    return profile
+  }
+  const widthScale = font.widthScale ?? 1
+  const slant = font.slant ?? 0
+  return transformProfile(profile, (point) => ({
+    x: point.x * widthScale - point.y * slant,
+    y: point.y,
+  }))
+}
+
+function normalizeProfileSet(profiles: Array<{ profile: SketchProfile; depth: number }>): Array<{ profile: SketchProfile; depth: number }> {
+  if (profiles.length === 0) {
+    return []
+  }
+
+  const bounds = profiles
+    .map(({ profile }) => getProfileBounds(profile))
+    .reduce(
+      (acc, next) => ({
+        minX: Math.min(acc.minX, next.minX),
+        maxX: Math.max(acc.maxX, next.maxX),
+        minY: Math.min(acc.minY, next.minY),
+        maxY: Math.max(acc.maxY, next.maxY),
+      }),
+      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
+    )
+
+  return profiles.map(({ profile, depth }) => ({
+    profile: translateProfile(profile, -bounds.minX, -bounds.minY),
+    depth,
+  }))
+}
+
 function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId): Array<{ profile: SketchProfile; depth: number }> {
-  const font = OUTLINE_FONTS[fontId as keyof typeof OUTLINE_FONTS] ?? OUTLINE_FONTS.helvetiker_bold
+  const fontDefinition = fontDefinitionFor(fontId, 'outline')
+  const font = OUTLINE_FONTS[fontDefinition.baseId as OutlineFontBaseId] ?? OUTLINE_FONTS.helvetiker_bold
   const shapes = font.generateShapes(normalizeText(text), size)
   const rawProfiles: Array<{ profile: SketchProfile; depth: number }> = []
 
@@ -292,11 +380,17 @@ function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId)
       { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
     )
 
-  return flippedProfiles
-    .map(({ profile, depth }) => ({
-      profile: translateProfile(profile, -flippedBounds.minX, -flippedBounds.minY),
-      depth,
-    }))
+  return normalizeProfileSet(
+    flippedProfiles
+      .map(({ profile, depth }) => ({
+        profile: translateProfile(profile, -flippedBounds.minX, -flippedBounds.minY),
+        depth,
+      }))
+      .map(({ profile, depth }) => ({
+        profile: applyFontVariantToProfile(profile, fontDefinition),
+        depth,
+      })),
+  )
     .filter(({ profile }) => Math.abs(signedArea(profileVertices(profile))) > size * size * 0.001)
 }
 
@@ -421,6 +515,7 @@ function transformProfile(profile: SketchProfile, mapPoint: (point: Point) => Po
 function buildTextTemplate(config: TextToolConfig): TextTemplate {
   const glyphs = layoutGlyphs(config.text, config.size, { x: 0, y: 0 })
   const baseLabel = displayLabelForText(config.text)
+  const fontDefinition = fontDefinitionFor(config.fontId, config.style)
 
   const shapes =
     config.style === 'skeleton'
@@ -433,7 +528,7 @@ function buildTextTemplate(config: TextToolConfig): TextTemplate {
           }
           return {
             name: `${baseLabel} ${glyph.index}${glyph.polylines.length > 1 ? String.fromCharCode(97 + strokeIndex) : ''}`,
-            profile,
+            profile: applyFontVariantToProfile(profile, fontDefinition),
             operation: config.operation,
           }
         })

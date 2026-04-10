@@ -53,15 +53,31 @@ Introduce a persistent editable text feature instead of baking text directly int
 
 ## Font Strategy
 
-First pass uses a small deterministic built-in set:
+Current built-in support is deterministic and compact in project files:
+
+- projects save only the text source settings and a compact `fontId`
+- built-in typeface JSON is loaded from the app bundle, not embedded into project files
+- synthetic built-in variants such as italic and condensed are derived at render time from the bundled base faces
+
+Current built-in families:
 
 - `Simple Stroke`
-- `Bold Sans`
-- `Bold Serif`
+- `Helvetiker`
+- `Optimer`
+- `Gentilis`
+- `Droid Sans`
+- `Droid Serif`
+
+Current built-in variants:
+
+- regular / bold where the bundled face provides it
+- synthetic italic variants
+- selected synthetic condensed variants
 
 Later:
 
 - allow importing font files into the project
+- lazy-load non-default built-in outline families if bundle size becomes a problem
 - avoid relying on arbitrary system fonts as the main saved workflow
 
 ## Notes
