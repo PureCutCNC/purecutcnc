@@ -23,8 +23,6 @@ interface CAMPanelProps {
   toolpathWarnings?: string[] | null
 }
 
-type NewOperationMode = OperationPass | 'pair'
-
 interface DraftTextInputProps {
   value: string
   onCommit: (value: string) => void
@@ -216,18 +214,41 @@ function operationKindLabel(kind: OperationKind): string {
     case 'pocket':
       return 'Pocket'
     case 'v_carve':
-      return 'V-Carve'
+      return 'V-Carve offset'
     case 'v_carve_recursive':
-      return 'V-Carve Recursive'
+      return 'V-Carve skeleton'
     case 'edge_route_inside':
-      return 'Edge Route Inside'
+      return 'Edge route inside'
     case 'edge_route_outside':
-      return 'Edge Route Outside'
+      return 'Edge route outside'
     case 'surface_clean':
-      return 'Surface Clean'
+      return 'Surface clean'
     case 'follow_line':
-      return 'Follow Line'
+      return 'Engrave'
   }
+}
+
+function operationAddButtonLabel(kind: OperationKind): string {
+  switch (kind) {
+    case 'pocket':
+      return 'Pocket'
+    case 'v_carve':
+      return 'V-Carve offset'
+    case 'v_carve_recursive':
+      return 'V-Carve skeleton'
+    case 'edge_route_inside':
+      return 'Edge in'
+    case 'edge_route_outside':
+      return 'Edge out'
+    case 'surface_clean':
+      return 'Surface'
+    case 'follow_line':
+      return 'Engrave'
+  }
+}
+
+function operationSupportsPassSelection(kind: OperationKind): boolean {
+  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive'
 }
 
 function operationTargetSummary(project: Project, target: OperationTarget): string {
@@ -423,8 +444,8 @@ export function CAMPanel({
   const [libraryName, setLibraryName] = useState('Bundled Tool Library')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState<string | null>(null)
-  const [newOperationMode, setNewOperationMode] = useState<NewOperationMode>('rough')
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
+  const [selectedNewOperationKind, setSelectedNewOperationKind] = useState<OperationKind | null>(null)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
     operationId: string
     selectionKey: string
@@ -514,53 +535,56 @@ export function CAMPanel({
     void ensureBundledLibraryLoaded()
   }, [ensureBundledLibraryLoaded, libraryError, libraryLoading, libraryTools.length, mode])
 
-  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; disabled: boolean; hint?: string }>>(
+  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string }>>(
     () => ([
       {
         kind: 'pocket',
-        label: 'Pocket',
+        label: operationAddButtonLabel('pocket'),
         hint: getOperationAddHint(project, selection, 'pocket') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'pocket') === null,
       },
       {
         kind: 'v_carve',
-        label: 'V-Carve',
+        label: operationAddButtonLabel('v_carve'),
         hint: getOperationAddHint(project, selection, 'v_carve') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'v_carve') === null,
       },
       {
         kind: 'v_carve_recursive',
-        label: 'V-Carve Recursive',
+        label: operationAddButtonLabel('v_carve_recursive'),
         hint: getOperationAddHint(project, selection, 'v_carve_recursive') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'v_carve_recursive') === null,
       },
       {
         kind: 'edge_route_inside',
-        label: 'Edge In',
+        label: operationAddButtonLabel('edge_route_inside'),
         hint: getOperationAddHint(project, selection, 'edge_route_inside') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'edge_route_inside') === null,
       },
       {
         kind: 'edge_route_outside',
-        label: 'Edge Out',
+        label: operationAddButtonLabel('edge_route_outside'),
         hint: getOperationAddHint(project, selection, 'edge_route_outside') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'edge_route_outside') === null,
       },
       {
         kind: 'surface_clean',
-        label: 'Surface',
+        label: operationAddButtonLabel('surface_clean'),
         hint: getOperationAddHint(project, selection, 'surface_clean') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'surface_clean') === null,
       },
       {
         kind: 'follow_line',
-        label: 'Follow Line',
+        label: operationAddButtonLabel('follow_line'),
         hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
-        disabled: getValidOperationTarget(project, selection, 'follow_line') === null,
       },
     ]),
     [project, selection]
   )
+
+  const selectedNewOperationHint = selectedNewOperationKind
+    ? getOperationAddHint(project, selection, selectedNewOperationKind)
+    : null
+  const selectedNewOperationSupportsPass = selectedNewOperationKind
+    ? operationSupportsPassSelection(selectedNewOperationKind)
+    : false
+  const selectedNewOperationTarget = selectedNewOperationKind
+    ? getValidOperationTarget(project, selection, selectedNewOperationKind)
+    : null
 
   useEffect(() => {
     if (!showAddOperationMenu) {
@@ -573,11 +597,13 @@ export function CAMPanel({
         return
       }
       setShowAddOperationMenu(false)
+      setSelectedNewOperationKind(null)
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setShowAddOperationMenu(false)
+        setSelectedNewOperationKind(null)
       }
     }
 
@@ -643,36 +669,53 @@ export function CAMPanel({
     }
   }
 
-  function handleAddOperation(kind: OperationKind) {
+  function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
     const target = getValidOperationTarget(project, selection, kind)
     if (!target) {
+      setSelectedNewOperationKind(kind)
       return
     }
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive') && newOperationMode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive') && mode === 'pair') {
       const operationId = addOperation(kind, 'rough', target)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
         setShowAddOperationMenu(false)
+        setSelectedNewOperationKind(null)
       }
       return
     }
 
-    if (newOperationMode === 'pair') {
+    if (mode === 'pair') {
       const roughId = addOperation(kind, 'rough', target)
       const finishId = addOperation(kind, 'finish', target)
       const nextSelectedId = finishId ?? roughId
       if (nextSelectedId) {
         onSelectedOperationIdChange(nextSelectedId)
         setShowAddOperationMenu(false)
+        setSelectedNewOperationKind(null)
       }
       return
     }
 
-    const operationId = addOperation(kind, newOperationMode, target)
+    const operationId = addOperation(kind, mode, target)
     if (operationId) {
       onSelectedOperationIdChange(operationId)
       setShowAddOperationMenu(false)
+      setSelectedNewOperationKind(null)
+    }
+  }
+
+  function handleChooseOperationForAdd(kind: OperationKind) {
+    setSelectedNewOperationKind(kind)
+
+    const target = getValidOperationTarget(project, selection, kind)
+    if (!target) {
+      return
+    }
+
+    if (!operationSupportsPassSelection(kind)) {
+      handleAddOperation(kind, 'rough')
     }
   }
 
@@ -828,55 +871,64 @@ export function CAMPanel({
                     type="button"
                     aria-expanded={showAddOperationMenu}
                     aria-haspopup="dialog"
-                    onClick={() => setShowAddOperationMenu((value) => !value)}
+                    onClick={() => {
+                      setSelectedNewOperationKind(null)
+                      setShowAddOperationMenu((value) => !value)
+                    }}
                   >
                     Add
                   </button>
                     {showAddOperationMenu ? (
                       <div className="cam-add-menu" role="dialog" aria-label="Add operation">
                         <div className="cam-add-menu__section">
-                          <span className="cam-add-menu__label">Pass</span>
-                          <div className="cam-pass-toggle">
-                            <button
-                              className={`cam-subtab ${newOperationMode === 'rough' ? 'cam-subtab--active' : ''}`}
-                              type="button"
-                              onClick={() => setNewOperationMode('rough')}
-                            >
-                              Rough
-                            </button>
-                            <button
-                              className={`cam-subtab ${newOperationMode === 'finish' ? 'cam-subtab--active' : ''}`}
-                              type="button"
-                              onClick={() => setNewOperationMode('finish')}
-                            >
-                              Finish
-                            </button>
-                            <button
-                              className={`cam-subtab ${newOperationMode === 'pair' ? 'cam-subtab--active' : ''}`}
-                              type="button"
-                              onClick={() => setNewOperationMode('pair')}
-                            >
-                              Rough + Finish
-                            </button>
-                          </div>
-                        </div>
-                        <div className="cam-add-menu__section">
                           <span className="cam-add-menu__label">Operation</span>
                           <div className="cam-add-menu__buttons">
                             {operationButtons.map((button) => (
                               <button
                                 key={button.kind}
-                                className="feat-btn"
+                                className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
                                 type="button"
-                                disabled={button.disabled}
                                 title={button.hint}
-                                onClick={() => handleAddOperation(button.kind)}
+                                onClick={() => handleChooseOperationForAdd(button.kind)}
                               >
                                 {button.label}
                               </button>
                             ))}
                           </div>
                         </div>
+                        {selectedNewOperationKind && selectedNewOperationSupportsPass && selectedNewOperationTarget ? (
+                          <div className="cam-add-menu__section">
+                            <span className="cam-add-menu__label">Pass</span>
+                            <div className="cam-pass-toggle">
+                              <button
+                                className="cam-subtab"
+                                type="button"
+                                onClick={() => handleAddOperation(selectedNewOperationKind, 'rough')}
+                              >
+                                Rough
+                              </button>
+                              <button
+                                className="cam-subtab"
+                                type="button"
+                                onClick={() => handleAddOperation(selectedNewOperationKind, 'finish')}
+                              >
+                                Finish
+                              </button>
+                              <button
+                                className="cam-subtab"
+                                type="button"
+                                onClick={() => handleAddOperation(selectedNewOperationKind, 'pair')}
+                              >
+                                Rough + finish
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {selectedNewOperationHint ? (
+                          <div className="cam-field-message" role="status">
+                            {selectedNewOperationHint}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
