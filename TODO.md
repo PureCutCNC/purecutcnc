@@ -128,6 +128,15 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - When a preserved island only exists in upper bands, finish-floor cleanup should avoid recutting the already-cleared air around that island at deeper bands.
   - Desired behavior: only clean the top surface that still exists at that band, instead of tracing stale island keep-out space below it.
 
+### Surface-clean corner linking symmetry
+- Status: Open
+- Priority: Medium
+- Summary: Surface-clean offset linking still retracts inconsistently at some symmetric corner branches even after same-level local linking was improved.
+- Notes:
+  - Current surface-clean ordering is materially better and now follows the pocket-style greedy / recursive local linking flow.
+  - The remaining issue appears in some mirrored corner branches where two corners link cleanly and two still retract.
+  - This should be treated as a later contour-entry / branch-link optimization pass rather than blocking the current improvement.
+
 ### Configurable arc / chord tolerance for CAM flattening
 - Status: Open
 - Priority: Medium

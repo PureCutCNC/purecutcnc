@@ -534,7 +534,7 @@ function regionEntryDistanceSquared(region: ResolvedPocketRegion, anchor: Point)
   return contourEntryDistanceSquared(region.outer, anchor)
 }
 
-function orderRegionsGreedy(regions: ResolvedPocketRegion[], start: Point | null): ResolvedPocketRegion[] {
+export function orderRegionsGreedy(regions: ResolvedPocketRegion[], start: Point | null): ResolvedPocketRegion[] {
   if (regions.length <= 1 || start === null) {
     return regions
   }
@@ -563,7 +563,7 @@ function orderRegionsGreedy(regions: ResolvedPocketRegion[], start: Point | null
   return ordered
 }
 
-function orderClosedContoursGreedy(contours: Point[][], start: Point | null): Point[][] {
+export function orderClosedContoursGreedy(contours: Point[][], start: Point | null): Point[][] {
   if (contours.length <= 1 || start === null) {
     return contours
   }
@@ -595,7 +595,38 @@ function orderClosedContoursGreedy(contours: Point[][], start: Point | null): Po
   return ordered
 }
 
-function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
+function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start: Point | null): Point[][] {
+  if (contours.length <= 1 || start === null) {
+    return contours
+  }
+
+  const remaining = contours
+    .filter((contour) => contour.length >= 3)
+    .map((contour) => [...contour])
+  const ordered: Point[][] = []
+  let current = start
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const distance = contourEntryDistanceSquared(remaining[index], current)
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+
+    const [nextContour] = remaining.splice(bestIndex, 1)
+    ordered.push(nextContour)
+    current = contourAnchorPoint(nextContour) ?? current
+  }
+
+  return ordered
+}
+
+export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
   if (segments.length <= 1 || start === null) {
     return segments
   }
@@ -693,11 +724,12 @@ function cutClosedContours(
   safeZ: number,
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
+  preserveContourRotation = false,
 ): ToolpathPoint | null {
-  const orderedContours = orderClosedContoursGreedy(
-    contours,
-    currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-  )
+  const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
+  const orderedContours = preserveContourRotation
+    ? orderClosedContoursGreedyPreservingRotation(contours, start)
+    : orderClosedContoursGreedy(contours, start)
 
   let nextPosition = currentPosition
   for (const contour of orderedContours) {
@@ -711,7 +743,7 @@ function cutClosedContours(
   return nextPosition
 }
 
-function cutOffsetRegionRecursive(
+export function cutOffsetRegionRecursive(
   moves: ToolpathMove[],
   region: ResolvedPocketRegion,
   z: number,
@@ -738,6 +770,7 @@ function cutOffsetRegionRecursive(
     safeZ,
     maxLinkDistance,
     currentPosition,
+    true,
   )
 
   const orderedChildren = orderRegionsGreedy(

@@ -24,8 +24,12 @@ import {
   buildInsetRegions,
   buildPocketFloorContours,
   buildPocketParallelSegments,
+  cutOffsetRegionRecursive,
   contourStartPoint,
   generateStepLevels,
+  orderClosedContoursGreedy,
+  orderOpenSegmentsGreedy,
+  orderRegionsGreedy,
   polyTreeToRegions,
   retractToSafe,
   resolveBandBottomZ,
@@ -290,7 +294,12 @@ function generateRoughBandMoves(
     }
 
     for (const z of stepLevels) {
-      for (const contour of boundaryContours) {
+      const orderedBoundaryContours = orderClosedContoursGreedy(
+        boundaryContours,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+
+      for (const contour of orderedBoundaryContours) {
         const entryPoint = contourStartPoint(contour, z)
         currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
         const cutMoves = toClosedCutMoves(contour, z)
@@ -298,7 +307,12 @@ function generateRoughBandMoves(
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
-      for (const segment of segments) {
+      const orderedSegments = orderOpenSegmentsGreedy(
+        segments,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+
+      for (const segment of orderedSegments) {
         const entryPoint = contourStartPoint(segment, z)
         currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
         const cutMoves = toOpenCutMoves(segment, z)
@@ -313,23 +327,28 @@ function generateRoughBandMoves(
   }
 
   for (const z of stepLevels) {
-    let currentRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
-    while (currentRegions.length > 0) {
-      const contours = buildContourLoops(currentRegions)
-      if (contours.length === 0) {
-        warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
-        break
-      }
+    const currentRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
+    if (currentRegions.length === 0) {
+      warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+      continue
+    }
 
-      for (const contour of contours) {
-        const entryPoint = contourStartPoint(contour, z)
-        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-        const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
-        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      }
+    const orderedRegions = orderRegionsGreedy(
+      currentRegions,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
 
-      currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
+    for (const region of orderedRegions) {
+      currentPosition = cutOffsetRegionRecursive(
+        moves,
+        region,
+        z,
+        safeZ,
+        effectiveStepover,
+        maxLinkDistance,
+        currentPosition,
+      )
     }
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
@@ -390,7 +409,12 @@ function generateFinishBandMoves(
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of wallStepLevels) {
-    for (const contour of wallContours) {
+    const orderedWallContours = orderClosedContoursGreedy(
+      wallContours,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
+
+    for (const contour of orderedWallContours) {
       const entryPoint = contourStartPoint(contour, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toClosedCutMoves(contour, z)
@@ -402,7 +426,12 @@ function generateFinishBandMoves(
   }
 
   for (const z of floorStepLevels) {
-    for (const contour of floorContours) {
+    const orderedFloorContours = orderClosedContoursGreedy(
+      floorContours,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
+
+    for (const contour of orderedFloorContours) {
       const entryPoint = contourStartPoint(contour, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toClosedCutMoves(contour, z)
@@ -410,7 +439,12 @@ function generateFinishBandMoves(
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
-    for (const segment of floorSegments) {
+    const orderedFloorSegments = orderOpenSegmentsGreedy(
+      floorSegments,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
+
+    for (const segment of orderedFloorSegments) {
       const entryPoint = contourStartPoint(segment, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toOpenCutMoves(segment, z)
