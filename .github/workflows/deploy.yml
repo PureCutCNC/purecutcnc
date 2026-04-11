@@ -1,0 +1,65 @@
+name: Build and Deploy to GitHub Pages
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout app source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Checkout pages repo
+        uses: actions/checkout@v4
+        with:
+          repository: PureCutCNC/purecutcnc.github.io
+          token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          path: pages-repo
+
+      - name: Write version.json
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_DATE: ${{ github.event.release.published_at }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+        run: |
+          node -e "
+            const v = {
+              version: process.env.RELEASE_VERSION,
+              name: process.env.RELEASE_NAME,
+              date: process.env.RELEASE_DATE,
+              url: process.env.RELEASE_URL
+            };
+            require('fs').writeFileSync('dist/version.json', JSON.stringify(v, null, 2));
+            console.log('version.json:', JSON.stringify(v, null, 2));
+          "
+
+      - name: Copy build output to app folder
+        run: |
+          rm -rf pages-repo/app
+          mkdir -p pages-repo/app
+          cp -r dist/. pages-repo/app/
+
+      - name: Commit and push
+        run: |
+          cd pages-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/
+          git diff --cached --quiet || git commit -m "deploy: update app from release ${{ github.event.release.tag_name }}"
+          git push
