@@ -1,73 +1,148 @@
-# React + TypeScript + Vite
+# PureCut CNC
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+`PureCut CNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export.
 
-Currently, two official plugins are available:
+It is aimed at the kind of work where you want one place to:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- draw or import geometry
+- organize features into machinable shapes
+- assign operations such as pockets, contours, carving, and V-carving
+- inspect the toolpath strategy visually
+- export the result when it looks right
 
-## React Compiler
+## What You Can Do
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Sketch geometry
 
-## Expanding the ESLint configuration
+Create and edit geometry directly in the `Sketch` view:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- rectangles, circles, polygons, splines, and composite profiles
+- text features with built-in vector fonts
+- tabs and clamps
+- backdrop images for tracing
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+The sketch workflow includes:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- grid snapping
+- feature / point / line / midpoint / center snapping
+- marquee selection
+- move, copy, resize, rotate, and offset transforms
+- direct sketch editing with point add / delete / move and corner fillets
+- on-canvas measurements while drawing and editing
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### Import geometry
+
+Import source geometry and continue working with it as native sketch features:
+
+- SVG import
+- DXF import
+
+Imported geometry can then be transformed, assigned operations, and used like hand-drawn features.
+
+### Work with text
+
+Text is handled as an editable feature rather than exploded letter geometry.
+
+Current text support includes:
+
+- single-line text
+- skeleton and outline text styles
+- built-in font selection
+- shared operation and Z settings across the text feature
+- transform support through a text frame
+
+### Define CAM operations
+
+Operations are created from selected geometry and managed in the CAM panel.
+
+Current operation set includes:
+
+- Pocket Rough
+- Pocket Finish
+- Surface Rough
+- Surface Finish
+- Edge Route
+- Follow Line
+- V-Carve
+- V-Carve Recursive
+
+The toolpath system supports things such as:
+
+- multiple operation targets
+- tabs and clamps
+- parallel and offset-style pocket / surface patterns
+- tool selection and feeds
+- operation visibility and selection
+- toolpath debugging for selected operations where needed
+
+### Inspect the result before export
+
+The app provides three main working views:
+
+- `Sketch`
+  - author geometry
+  - inspect selected toolpaths in 2D
+  - check snapping, ordering, and direction
+- `3D View`
+  - preview model geometry and toolpaths in 3D
+  - inspect entry / exit and path direction
+- `Simulation`
+  - replay toolpaths against stock
+  - verify that pockets, tabs, islands, and carving behavior match expectations
+
+## Typical Workflow
+
+1. Start a new project and define stock.
+2. Draw geometry, import SVG / DXF, or place a backdrop image for tracing.
+3. Organize and edit features until the sketch matches the intended part.
+4. Add CAM operations from the selected geometry.
+5. Tune tooling, stepdown, stepover, pattern, and operation parameters.
+6. Check the result in `Sketch`, `3D View`, and `Simulation`.
+7. Export once the toolpaths look correct.
+
+## Current Focus
+
+`PureCut CNC` is under active development. The core workflow is already usable, but the project is still evolving in areas such as:
+
+- additional font support and text workflows
+- deeper DXF coverage
+- more toolpath optimization
+- richer simulation tooling
+- more advanced carving and finishing workflows
+
+## Build And Run
+
+### Requirements
+
+- Node.js 20+ is recommended
+- npm
+
+### Install dependencies
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Run the development server
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+npm run dev
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Vite will print a local URL, typically:
+
+```text
+http://localhost:5173
+```
+
+### Create a production build
+
+```bash
+npm run build
+```
+
+### Preview the production build locally
+
+```bash
+npm run preview
 ```
