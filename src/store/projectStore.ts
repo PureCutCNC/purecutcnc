@@ -1310,17 +1310,17 @@ function operationKindLabel(kind: OperationKind): string {
     case 'pocket':
       return 'Pocket'
     case 'v_carve':
-      return 'V-Carve'
+      return 'V-Carve offset'
     case 'v_carve_recursive':
-      return 'V-Carve Recursive'
+      return 'V-Carve skeleton'
     case 'edge_route_inside':
-      return 'Edge Route Inside'
+      return 'Edge route inside'
     case 'edge_route_outside':
-      return 'Edge Route Outside'
+      return 'Edge route outside'
     case 'surface_clean':
-      return 'Surface Clean'
+      return 'Surface clean'
     case 'follow_line':
-      return 'Follow Line'
+      return 'Engrave'
   }
 }
 

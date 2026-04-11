@@ -1326,6 +1326,12 @@
   border-color: var(--accent);
 }
 
+.feat-btn--active {
+  color: #fff;
+  border-color: var(--accent);
+  background: rgba(37, 82, 136, 0.24);
+}
+
 .feat-btn--delete:hover {
   border-color: #c96d65;
   color: #f5b3ad;
