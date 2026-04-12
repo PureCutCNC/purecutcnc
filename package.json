@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/convert-camj-to-icons.js && tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync-icons": "node scripts/convert-camj-to-icons.js"
   },
   "dependencies": {
     "@types/three": "^0.183.1",
