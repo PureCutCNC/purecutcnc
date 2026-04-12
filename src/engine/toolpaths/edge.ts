@@ -25,6 +25,23 @@ function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   return solution as ClipperPath[]
 }
 
+function unionPaths(paths: ClipperPath[]): ClipperPath[] {
+  if (paths.length === 0) {
+    return []
+  }
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
+}
+
 function contourStartPoint(points: Point[], z: number): ToolpathPoint {
   const first = points[0] ?? { x: 0, y: 0 }
   return { x: first.x, y: first.y, z }
@@ -183,10 +200,13 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
   }
 }
 
-function resolveContourTarget(feature: SketchFeature, offsetDistance: number): Point[][] {
+function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
   const flattened = flattenProfile(feature.sketch.profile)
-  const path = toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)
-  const offset = offsetPaths([path], offsetDistance * DEFAULT_CLIPPER_SCALE)
+  return toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)
+}
+
+function resolveContourPaths(paths: ClipperPath[], offsetDistance: number): Point[][] {
+  const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE)
   return offset
     .map((entry) => fromClipperPath(entry))
     .filter((points) => points.length >= 3)
@@ -209,6 +229,33 @@ function resolveEffectiveBottom(feature: SketchFeature, project: Project, operat
   }
 
   return effectiveBottom
+}
+
+function depthValuesMatch(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 1e-6
+}
+
+function appendContoursAtLevels(
+  moves: ToolpathMove[],
+  currentPosition: ToolpathPoint | null,
+  contours: Point[][],
+  levels: number[],
+  safeZ: number,
+  maxLinkDistance: number,
+): ToolpathPoint | null {
+  let nextPosition = currentPosition
+
+  for (const z of levels) {
+    for (const contour of contours) {
+      const entryPoint = contourStartPoint(contour, z)
+      nextPosition = transitionToCutEntry(moves, nextPosition, entryPoint, safeZ, maxLinkDistance)
+      const cutMoves = toClosedCutMoves(contour, z)
+      moves.push(...cutMoves)
+      nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+    }
+  }
+
+  return nextPosition
 }
 
 export function generateEdgeRouteToolpath(project: Project, operation: Operation): ToolpathResult {
@@ -295,37 +342,82 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
       ? -(tool.radius + radialLeave)
       : tool.radius + radialLeave
 
+  const routableTargets = closedTargetFeatures
+    .map((feature) => {
+      const effectiveBottom = resolveEffectiveBottom(feature, project, operation)
+      if (effectiveBottom === null) {
+        warnings.push(`${feature.name} leaves no cut depth after axial stock-to-leave`)
+        return null
+      }
+
+      const span = resolveFeatureZSpan(project, feature)
+      return {
+        feature,
+        contourPath: flattenFeatureToClipperPath(feature),
+        topZ: span.top,
+        bottomZ: effectiveBottom,
+      }
+    })
+    .filter((entry): entry is { feature: SketchFeature; contourPath: ClipperPath; topZ: number; bottomZ: number } => entry !== null)
+
+  if (routableTargets.length === 0) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: [...warnings, 'No valid target features were found for this edge-route operation'],
+      bounds: null,
+    }
+  }
+
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
   const maxLinkDistance = tool.diameter
 
-  for (const feature of closedTargetFeatures) {
-    const contours = resolveContourTarget(feature, offsetDistance)
-    if (contours.length === 0) {
-      warnings.push(`No valid contour could be generated for ${feature.name}`)
-      continue
-    }
+  const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
+  if (shouldAttemptCombinedOutside) {
+    const referenceTarget = routableTargets[0]
+    const canCombineOutsideTargets = routableTargets.every((target) => (
+      depthValuesMatch(target.topZ, referenceTarget.topZ)
+      && depthValuesMatch(target.bottomZ, referenceTarget.bottomZ)
+    ))
 
-    const effectiveBottom = resolveEffectiveBottom(feature, project, operation)
-    if (effectiveBottom === null) {
-      warnings.push(`${feature.name} leaves no cut depth after axial stock-to-leave`)
-      continue
-    }
+    if (canCombineOutsideTargets) {
+      const contours = resolveContourPaths(
+        unionPaths(routableTargets.map((target) => target.contourPath)),
+        offsetDistance,
+      )
 
-    const span = resolveFeatureZSpan(project, feature)
-    const levels =
-      operation.pass === 'finish'
-        ? [effectiveBottom]
-        : generateStepLevels(span.top, effectiveBottom, operation.stepdown)
+      if (contours.length === 0) {
+        warnings.push('No valid combined outer contour could be generated for the selected outside edge targets')
+      } else {
+        const levels =
+          operation.pass === 'finish'
+            ? [referenceTarget.bottomZ]
+            : generateStepLevels(referenceTarget.topZ, referenceTarget.bottomZ, operation.stepdown)
 
-    for (const z of levels) {
-      for (const contour of contours) {
-        const entryPoint = contourStartPoint(contour, z)
-        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-        const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
-        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        currentPosition = appendContoursAtLevels(moves, currentPosition, contours, levels, safeZ, maxLinkDistance)
       }
+    } else {
+      warnings.push(
+        'Selected outside edge targets have different effective depth spans. Combined outside routing is not supported for mixed-depth targets yet; generating separate contours may cut internal overlap. Split the operation by depth or align target tops/bottoms.',
+      )
+    }
+  }
+
+  if (moves.length === 0) {
+    for (const target of routableTargets) {
+      const contours = resolveContourPaths([target.contourPath], offsetDistance)
+      if (contours.length === 0) {
+        warnings.push(`No valid contour could be generated for ${target.feature.name}`)
+        continue
+      }
+
+      const levels =
+        operation.pass === 'finish'
+          ? [target.bottomZ]
+          : generateStepLevels(target.topZ, target.bottomZ, operation.stepdown)
+
+      currentPosition = appendContoursAtLevels(moves, currentPosition, contours, levels, safeZ, maxLinkDistance)
     }
   }
 
