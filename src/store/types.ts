@@ -178,6 +178,8 @@ export interface ProjectStore {
   moveFeatureTreeFeature: (featureId: string, folderId: string | null, beforeFeatureId?: string | null) => void
   reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
   setAllFeaturesVisible: (visible: boolean) => void
+  toggleFolderVisible: (folderId: string) => void
+  selectFolderFeatures: (folderId: string) => void
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void

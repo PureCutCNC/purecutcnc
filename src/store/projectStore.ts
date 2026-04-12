@@ -3234,6 +3234,55 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  toggleFolderVisible: (folderId) =>
+    set((s) => {
+      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId)
+      const anyVisible = folderFeatures.some((f) => f.visible)
+      const nextVisible = !anyVisible
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((f) =>
+          f.folderId === folderId ? { ...f, visible: nextVisible } : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  selectFolderFeatures: (folderId) =>
+    set((s) => {
+      const ids = s.project.features
+        .filter((f) => f.folderId === folderId)
+        .map((f) => f.id)
+      if (ids.length === 0) {
+        return {}
+      }
+      const primaryId = ids.at(-1) ?? null
+      return {
+        pendingOffset: null,
+        pendingShapeAction: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: ids,
+          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+        },
+        sketchEditSession: null,
+      }
+    }),
+
   addFeature: (feature) =>
     set((s) => {
       const safeId = s.project.features.some((existing) => existing.id === feature.id)
@@ -3241,13 +3290,48 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         : feature.id
       // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
+      // Determine folder context and insertion point from current selection.
+      const selectedNode = !isFirst ? s.selection.selectedNode : null
+      let effectiveFolderId: string | null = feature.folderId ?? null
+      let insertAfterFeatureId: string | null = null
+      if (selectedNode?.type === 'folder') {
+        effectiveFolderId = selectedNode.folderId
+      } else if (selectedNode?.type === 'feature') {
+        const selectedFeature = s.project.features.find((f) => f.id === selectedNode.featureId)
+        effectiveFolderId = selectedFeature?.folderId ?? null
+        insertAfterFeatureId = selectedNode.featureId
+      }
       const safeFeature: SketchFeature = isFirst
         ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: null, operation: 'add' })
-        : normalizeFeatureZRange({ ...feature, id: safeId, folderId: feature.folderId ?? null })
+        : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
+      // Build features and featureTree arrays with correct insertion position.
+      let nextFeatures: SketchFeature[]
+      let nextTree: FeatureTreeEntry[]
+      if (insertAfterFeatureId !== null) {
+        const idx = s.project.features.findIndex((f) => f.id === insertAfterFeatureId)
+        nextFeatures = idx >= 0
+          ? [...s.project.features.slice(0, idx + 1), safeFeature, ...s.project.features.slice(idx + 1)]
+          : [...s.project.features, safeFeature]
+        if (effectiveFolderId === null) {
+          // Root-level: insert tree entry immediately after selected feature's entry.
+          const treeIdx = s.project.featureTree.findIndex(
+            (e) => e.type === 'feature' && e.featureId === insertAfterFeatureId
+          )
+          nextTree = treeIdx >= 0
+            ? [...s.project.featureTree.slice(0, treeIdx + 1), { type: 'feature', featureId: safeFeature.id }, ...s.project.featureTree.slice(treeIdx + 1)]
+            : [...s.project.featureTree, { type: 'feature', featureId: safeFeature.id }]
+        } else {
+          // Folder feature: sync handles ordering by features[] position; tree entry will be dropped.
+          nextTree = [...s.project.featureTree, { type: 'feature', featureId: safeFeature.id }]
+        }
+      } else {
+        nextFeatures = [...s.project.features, safeFeature]
+        nextTree = [...s.project.featureTree, { type: 'feature', featureId: safeFeature.id }]
+      }
       const nextProject = syncFeatureTreeProject({
         ...s.project,
-        features: [...s.project.features, safeFeature],
-        featureTree: [...s.project.featureTree, { type: 'feature', featureId: safeFeature.id }],
+        features: nextFeatures,
+        featureTree: nextTree,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
       return {
