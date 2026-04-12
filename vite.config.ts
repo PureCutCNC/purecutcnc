@@ -18,6 +18,7 @@ const sharedProjectRoot = candidateSharedRoots.find((candidate) => (
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: './',
   server: {
     fs: {
       allow: [
