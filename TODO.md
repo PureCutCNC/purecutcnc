@@ -277,12 +277,12 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - This is a resolver/toolpath correctness issue, not just a preview issue.
 
 ### Reduce irrelevant tab warnings
-- Status: Open
+- Status: Done
 - Priority: Medium
 - Summary: Do not show per-tab warnings for tabs that are not meaningfully relevant to the current operation/toolpath.
 - Notes:
-  - Current tab validation is too noisy when many tabs exist elsewhere in the setup.
-  - Prefer surfacing only tabs that intersect or are otherwise plausibly involved in the selected operation.
+  - Tab validation now ignores tabs outside the selected toolpath footprint.
+  - Tabs that overlap in XY but sit outside the active cut depth are summarized as one nearby-tab warning instead of producing one warning per tab.
 
 ### Tab lift vs machine/clamp limits
 - Status: Open
