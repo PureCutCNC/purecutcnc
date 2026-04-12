@@ -285,7 +285,7 @@ function svgArcToBeziers(
 
   const segmentCount = Math.max(1, Math.ceil(Math.abs(sweepAngle) / (Math.PI / 2)))
   const step = sweepAngle / segmentCount
-  const segments: Array<Extract<Segment, { type: 'bezier' }>> = []
+  const resultSegments: Array<Extract<Segment, { type: 'bezier' }>> = []
 
   for (let index = 0; index < segmentCount; index += 1) {
     const angle0 = startAngle + step * index
@@ -313,15 +313,15 @@ function svgArcToBeziers(
       y: p3.y + alpha * (adjustedRx * sinPhi * sin1 - adjustedRy * cosPhi * cos1),
     }
 
-    segments.push({
+    resultSegments.push({
       type: 'bezier',
-      control1: index === 0 ? p1 : p1,
+      control1: p1,
       control2: p2,
       to: p3,
     })
   }
 
-  return segments
+  return resultSegments
 }
 
 function parsePathProfiles(pathData: string): SketchProfile[] {
@@ -332,21 +332,18 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
   let current: Point = { x: 0, y: 0 }
   let subpathStart: Point = { x: 0, y: 0 }
   let currentSegments: Segment[] = []
-  let isClosed = false
   let previousCubicControl: Point | null = null
   let previousQuadraticControl: Point | null = null
 
   const finishSubpath = () => {
-    if (currentSegments.length === 0) {
-      return
+    if (currentSegments.length > 0 || (profiles.length === 0 && tokens.length > 0)) {
+      profiles.push({
+        start: subpathStart,
+        segments: [...currentSegments],
+        closed: false,
+      })
+      currentSegments = []
     }
-    profiles.push({
-      start: subpathStart,
-      segments: currentSegments,
-      closed: isClosed,
-    })
-    currentSegments = []
-    isClosed = false
     previousCubicControl = null
     previousQuadraticControl = null
   }
@@ -362,18 +359,16 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
     const absolute = command === command.toUpperCase()
     switch (command.toUpperCase()) {
       case 'M': {
+        finishSubpath()
         const x = nextNumber()
         const y = nextNumber()
-        if (currentSegments.length > 0) {
-          finishSubpath()
-        }
         current = absolute ? { x, y } : { x: current.x + x, y: current.y + y }
         subpathStart = current
         while (hasNumber()) {
           const lineX = nextNumber()
           const lineY = nextNumber()
           current = absolute ? { x: lineX, y: lineY } : { x: current.x + lineX, y: current.y + lineY }
-          currentSegments.push({ type: 'line', to: current })
+          currentSegments.push({ type: 'line', to: { ...current } })
         }
         break
       }
@@ -382,7 +377,7 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
           const x = nextNumber()
           const y = nextNumber()
           current = absolute ? { x, y } : { x: current.x + x, y: current.y + y }
-          currentSegments.push({ type: 'line', to: current })
+          currentSegments.push({ type: 'line', to: { ...current } })
         }
         previousCubicControl = null
         previousQuadraticControl = null
@@ -391,7 +386,7 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
         while (hasNumber()) {
           const x = nextNumber()
           current = absolute ? { x, y: current.y } : { x: current.x + x, y: current.y }
-          currentSegments.push({ type: 'line', to: current })
+          currentSegments.push({ type: 'line', to: { ...current } })
         }
         previousCubicControl = null
         previousQuadraticControl = null
@@ -400,7 +395,7 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
         while (hasNumber()) {
           const y = nextNumber()
           current = absolute ? { x: current.x, y } : { x: current.x, y: current.y + y }
-          currentSegments.push({ type: 'line', to: current })
+          currentSegments.push({ type: 'line', to: { ...current } })
         }
         previousCubicControl = null
         previousQuadraticControl = null
@@ -426,7 +421,7 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
         while (hasNumber()) {
           const control1 = previousCubicControl
             ? { x: current.x * 2 - previousCubicControl.x, y: current.y * 2 - previousCubicControl.y }
-            : current
+            : { ...current }
           const control2 = absolute
             ? { x: nextNumber(), y: nextNumber() }
             : { x: current.x + nextNumber(), y: current.y + nextNumber() }
@@ -457,7 +452,7 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
         while (hasNumber()) {
           const control: Point = previousQuadraticControl
             ? { x: current.x * 2 - previousQuadraticControl.x, y: current.y * 2 - previousQuadraticControl.y }
-            : current
+            : { ...current }
           const end = absolute
             ? { x: nextNumber(), y: nextNumber() }
             : { x: current.x + nextNumber(), y: current.y + nextNumber() }
@@ -485,11 +480,21 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
         break
       case 'Z':
         if (current.x !== subpathStart.x || current.y !== subpathStart.y) {
-          currentSegments.push({ type: 'line', to: subpathStart })
+          currentSegments.push({ type: 'line', to: { ...subpathStart } })
         }
         current = subpathStart
-        isClosed = true
-        finishSubpath()
+        if (profiles.length === 0 || currentSegments.length > 0) {
+          profiles.push({
+            start: { ...subpathStart },
+            segments: [...currentSegments],
+            closed: true,
+          })
+          currentSegments = []
+        } else {
+          profiles[profiles.length - 1].closed = true
+        }
+        previousCubicControl = null
+        previousQuadraticControl = null
         break
       default:
         index = tokens.length
