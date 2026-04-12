@@ -26,7 +26,7 @@ export function Icon({ id, className, size = 18 }: IconProps) {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <use href={`/icons.svg#${id}`} />
+      <use href={`${import.meta.env.BASE_URL}icons.svg#${id}`} />
     </svg>
   )
 }
