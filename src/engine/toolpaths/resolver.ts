@@ -360,3 +360,155 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     warnings,
   }
 }
+
+export function resolveInsideEdgeRegions(project: Project, operation: Operation): ResolvedPocketResult {
+  const warnings: string[] = []
+  const operationLabel = 'Inside edge route'
+
+  if (operation.kind !== 'edge_route_inside') {
+    return {
+      operationId: operation.id,
+      units: project.meta.units,
+      bands: [],
+      warnings: ['Only inside edge-route operations can be resolved by this region resolver'],
+    }
+  }
+
+  if (operation.target.source !== 'features' || operation.target.featureIds.length === 0) {
+    return {
+      operationId: operation.id,
+      units: project.meta.units,
+      bands: [],
+      warnings: [`${operationLabel} operation has no feature targets`],
+    }
+  }
+
+  const selectedTargetFeatures = operation.target.featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is SketchFeature => feature !== null)
+  const validTargetSourceFeatures = selectedTargetFeatures
+    .filter((feature) => feature.operation === 'subtract')
+
+  const targetFeatures = validTargetSourceFeatures
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'subtract')
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
+
+  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
+    warnings.push('Some selected target features are missing or are not subtract features')
+  }
+
+  const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
+  if (closedTargetFeatures.length !== targetFeatures.length) {
+    warnings.push(`${operationLabel} operations only support closed target profiles`)
+  }
+
+  if (closedTargetFeatures.length === 0) {
+    return {
+      operationId: operation.id,
+      units: project.meta.units,
+      bands: [],
+      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
+    }
+  }
+
+  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+
+  const candidateIslands = project.features
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
+    .map((feature) => ({
+      feature,
+      path: flattenFeatureToClipperPath(feature),
+    }))
+    .filter(({ path }) => pathsIntersect(targetUnionPaths, [path]))
+    .filter(({ path }) => differencePaths([path], targetUnionPaths).length > 0)
+    .map(({ feature }) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
+
+  const depths = uniqueSortedDepthsFromSpans([
+    ...closedTargetFeatures.map(({ span }) => span),
+    ...candidateIslands.map(({ span }) => span),
+  ])
+  const bands: ResolvedPocketBand[] = []
+  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
+  const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
+
+  for (let index = 0; index < depths.length - 1; index += 1) {
+    const topZ = depths[index]
+    const bottomZ = depths[index + 1]
+    if (!bandHasThickness(topZ, bottomZ)) {
+      continue
+    }
+
+    const activeTargets = activeForBand(closedTargetFeatures, topZ, bottomZ)
+    if (activeTargets.length === 0) {
+      continue
+    }
+
+    const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
+    const activeBandFeatureIds = new Set([
+      ...activeTargets.map(({ feature }) => feature.id),
+      ...activeIslands.map(({ feature }) => feature.id),
+    ])
+    let resolvedPaths: ClipperPath[] = []
+
+    for (const feature of expandedFeaturesInOrder) {
+      if (!activeBandFeatureIds.has(feature.id)) {
+        continue
+      }
+
+      const featurePath = flattenFeatureToClipperPath(feature)
+      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
+        resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+        continue
+      }
+
+      if (feature.operation === 'add' && resolvedPaths.length > 0) {
+        resolvedPaths = differencePaths(resolvedPaths, [featurePath])
+      }
+    }
+
+    if (resolvedPaths.length === 0) {
+      warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty subject geometry`)
+      continue
+    }
+
+    const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
+
+    const regions = polyTreeToRegions(
+      polyTree,
+      activeTargets.map(({ feature }) => feature.id),
+      activeIslands.map(({ feature }) => feature.id),
+    )
+
+    if (regions.length === 0) {
+      warnings.push(`Band ${topZ} -> ${bottomZ} resolved to no machinable regions`)
+      continue
+    }
+
+    bands.push({
+      topZ,
+      bottomZ,
+      targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
+      islandFeatureIds: activeIslands.map(({ feature }) => feature.id),
+      regions,
+    })
+  }
+
+  if (bands.length === 0) {
+    warnings.push(`${operationLabel} resolver produced no depth bands`)
+  }
+
+  return {
+    operationId: operation.id,
+    units: project.meta.units,
+    bands,
+    warnings,
+  }
+}

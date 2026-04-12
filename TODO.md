@@ -261,11 +261,12 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - The warning should explain that the preserved/resulting behavior is limited in this configuration.
 
 ### Combine multiple inside edge targets
-- Status: Open
-- Priority: Medium
+- Status: Done
+- Priority: High
 - Summary: When multiple features are selected for an inside edge route, resolve them as one combined target region where appropriate, similar to pocket target union behavior.
 - Notes:
   - Current inside edge routing still treats multiple targets too independently in some cases.
+  - Add features later in the feature tree can still be cut into incorrectly instead of being preserved as interior islands within the selected inside-route target region.
   - This should be addressed in the inside-edge resolver rather than as a display-only change.
 
 ### Combine multiple outside edge targets

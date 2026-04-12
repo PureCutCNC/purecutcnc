@@ -12,6 +12,8 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
+import { resolveInsideEdgeRegions } from './resolver'
 
 function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   if (paths.length === 0) {
@@ -342,6 +344,55 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
       ? -(tool.radius + radialLeave)
       : tool.radius + radialLeave
 
+  const moves: ToolpathMove[] = []
+  let currentPosition: ToolpathPoint | null = null
+  const maxLinkDistance = tool.diameter
+
+  if (operation.kind === 'edge_route_inside') {
+    const resolved = resolveInsideEdgeRegions(project, operation)
+    warnings.push(...resolved.warnings)
+    const insideInset = tool.radius + radialLeave
+
+    for (const band of resolved.bands) {
+      const effectiveBottom = resolveBandBottomZ(band, operation)
+      if (effectiveBottom === null) {
+        warnings.push(`Band ${band.topZ} -> ${band.bottomZ} leaves no cut depth after axial stock-to-leave`)
+        continue
+      }
+
+      const insetRegions = band.regions.flatMap((region) => buildInsetRegions(region, insideInset))
+      const contours = buildOuterContours(insetRegions)
+      if (contours.length === 0) {
+        warnings.push(`No valid inside contour could be generated for band ${band.topZ} -> ${band.bottomZ}`)
+        continue
+      }
+
+      const levels =
+        operation.pass === 'finish'
+          ? [effectiveBottom]
+          : generateStepLevels(band.topZ, effectiveBottom, operation.stepdown)
+
+      for (const z of levels) {
+        currentPosition = cutClosedContours(moves, contours, z, safeZ, maxLinkDistance, currentPosition)
+      }
+    }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
+
+    let bounds: ToolpathBounds | null = null
+    for (const move of moves) {
+      bounds = updateBounds(bounds, move.from)
+      bounds = updateBounds(bounds, move.to)
+    }
+
+    return {
+      operationId: operation.id,
+      moves,
+      warnings,
+      bounds,
+    }
+  }
+
   const routableTargets = closedTargetFeatures
     .map((feature) => {
       const effectiveBottom = resolveEffectiveBottom(feature, project, operation)
@@ -368,10 +419,6 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
       bounds: null,
     }
   }
-
-  const moves: ToolpathMove[] = []
-  let currentPosition: ToolpathPoint | null = null
-  const maxLinkDistance = tool.diameter
 
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {

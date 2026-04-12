@@ -1,8 +1,8 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project } from '../../types/project'
-import { getProfileBounds, rectProfile, sampleProfilePoints } from '../../types/project'
+import { rectProfile, sampleProfilePoints } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, resolveFeatureZSpan, toClipperPath } from './geometry'
+import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, toClipperPath } from './geometry'
 
 interface PreservedObstacle {
   id: string
@@ -48,54 +48,6 @@ function buildTabObstacles(project: Project): PreservedObstacle[] {
     zTop: tab.z_top,
     zBottom: tab.z_bottom,
   }))
-}
-
-function buildAddFeatureObstacles(project: Project, operation: Operation): PreservedObstacle[] {
-  if (operation.kind !== 'edge_route_inside' || operation.target.source !== 'features') {
-    return []
-  }
-
-  const featureIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
-  const targetSubtracts = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId && feature.operation === 'subtract') ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
-
-  if (targetSubtracts.length === 0) {
-    return []
-  }
-
-  const targetBounds = targetSubtracts.map((feature) => getProfileBounds(feature.sketch.profile))
-
-  return project.features
-    .filter((feature) => feature.operation === 'add')
-    .filter((feature) => {
-      const addIndex = featureIndex.get(feature.id) ?? -1
-      if (addIndex < 0) {
-        return false
-      }
-
-      const featureBounds = getProfileBounds(feature.sketch.profile)
-      return targetSubtracts.some((target, targetIndex) => {
-        const targetIndexValue = featureIndex.get(target.id) ?? -1
-        if (targetIndexValue >= addIndex) {
-          return false
-        }
-
-        const bounds = targetBounds[targetIndex]
-        return rangesOverlap(featureBounds.minX, featureBounds.maxX, bounds.minX, bounds.maxX)
-          && rangesOverlap(featureBounds.minY, featureBounds.maxY, bounds.minY, bounds.maxY)
-      })
-    })
-    .map((feature) => {
-      const span = resolveFeatureZSpan(project, feature)
-      return {
-        id: feature.id,
-        name: feature.name,
-        points: sampleProfilePoints(feature.sketch.profile, 24),
-        zTop: span.max,
-        zBottom: span.min,
-      }
-    })
 }
 
 function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
@@ -396,10 +348,7 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     ? normalizeToolForProject(toolRecord, project).radius + Math.max(0, operation.stockToLeaveRadial)
     : Math.max(0, operation.stockToLeaveRadial)
 
-  const obstacles = expandObstacles([
-    ...buildTabObstacles(project),
-    ...buildAddFeatureObstacles(project, operation),
-  ], effectiveRadius)
+  const obstacles = expandObstacles(buildTabObstacles(project), effectiveRadius)
   if (obstacles.length === 0) {
     return result
   }

@@ -717,7 +717,7 @@ export function buildPocketParallelSegments(
   return segments
 }
 
-function cutClosedContours(
+export function cutClosedContours(
   moves: ToolpathMove[],
   contours: Point[][],
   z: number,
