@@ -21,6 +21,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     moveFeatureTreeFeature,
     reorderFeatureTreeEntries,
     setAllFeaturesVisible,
+    toggleFolderVisible,
+    selectFolderFeatures,
     setAllTabsVisible,
     setAllClampsVisible,
     updateFeatureFolder,
@@ -266,6 +268,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               }
 
               const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id)
+              const folderVisible = folderFeatures.some((f) => f.visible)
               return (
                 <div key={folder.id}>
                   <TreeRow
@@ -275,10 +278,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
                     collapsed={folder.collapsed}
+                    visible={folderVisible}
                     onClick={() => selectFeatureFolder(folder.id)}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
                     onToggleCollapse={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
+                    onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
                     draggable
                     onDragStart={() => handleFolderDragStart(folder.id)}
                     onDragEnd={() => setDragItem(null)}
@@ -400,6 +406,7 @@ interface TreeRowProps {
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
+  onSelectAllFeatures?: () => void
   onToggleOperation?: () => void
   onToggleCollapse?: () => void
   onAddFolder?: () => void
@@ -429,6 +436,7 @@ function TreeRow({
   onMouseEnter,
   onMouseLeave,
   onToggleVisible,
+  onSelectAllFeatures,
   onToggleOperation,
   onToggleCollapse,
   onAddFolder,
@@ -537,7 +545,9 @@ function TreeRow({
             title="Add folder"
             aria-label="Add folder"
           >
-            +
+            <svg viewBox="0 0 16 12" width="14" height="11" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+              <path fill="currentColor" d="M1.5 3.25h3.2l1-1.35h2.15c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v.32h3.05c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v4.97c0 .43-.15.8-.44 1.09-.29.29-.66.44-1.09.44H1.75c-.43 0-.8-.15-1.09-.44-.29-.29-.44-.66-.44-1.09V4.78c0-.43.15-.8.44-1.09.29-.29.66-.44 1.09-.44Z" />
+            </svg>
           </button>
         ) : null}
         {kind === 'tabs' && onAddTab ? (
@@ -612,6 +622,22 @@ function TreeRow({
             aria-disabled={operationLocked}
           >
             {operationLocked ? '🔒' : operation === 'add' ? '+' : '−'}
+          </button>
+        ) : null}
+        {onSelectAllFeatures ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelectAllFeatures()
+            }}
+            title="Select all features in folder"
+            aria-label="Select all features in folder"
+          >
+            <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+              <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
+            </svg>
           </button>
         ) : null}
         {onToggleVisible ? (
