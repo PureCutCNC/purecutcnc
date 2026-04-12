@@ -1,8 +1,8 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project } from '../../types/project'
-import { getProfileBounds, rectProfile, sampleProfilePoints } from '../../types/project'
+import { rectProfile, sampleProfilePoints } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, resolveFeatureZSpan, toClipperPath } from './geometry'
+import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, toClipperPath } from './geometry'
 
 interface PreservedObstacle {
   id: string
@@ -48,54 +48,6 @@ function buildTabObstacles(project: Project): PreservedObstacle[] {
     zTop: tab.z_top,
     zBottom: tab.z_bottom,
   }))
-}
-
-function buildAddFeatureObstacles(project: Project, operation: Operation): PreservedObstacle[] {
-  if (operation.kind !== 'edge_route_inside' || operation.target.source !== 'features') {
-    return []
-  }
-
-  const featureIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
-  const targetSubtracts = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId && feature.operation === 'subtract') ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
-
-  if (targetSubtracts.length === 0) {
-    return []
-  }
-
-  const targetBounds = targetSubtracts.map((feature) => getProfileBounds(feature.sketch.profile))
-
-  return project.features
-    .filter((feature) => feature.operation === 'add')
-    .filter((feature) => {
-      const addIndex = featureIndex.get(feature.id) ?? -1
-      if (addIndex < 0) {
-        return false
-      }
-
-      const featureBounds = getProfileBounds(feature.sketch.profile)
-      return targetSubtracts.some((target, targetIndex) => {
-        const targetIndexValue = featureIndex.get(target.id) ?? -1
-        if (targetIndexValue >= addIndex) {
-          return false
-        }
-
-        const bounds = targetBounds[targetIndex]
-        return rangesOverlap(featureBounds.minX, featureBounds.maxX, bounds.minX, bounds.maxX)
-          && rangesOverlap(featureBounds.minY, featureBounds.maxY, bounds.minY, bounds.maxY)
-      })
-    })
-    .map((feature) => {
-      const span = resolveFeatureZSpan(project, feature)
-      return {
-        id: feature.id,
-        name: feature.name,
-        points: sampleProfilePoints(feature.sketch.profile, 24),
-        zTop: span.max,
-        zBottom: span.min,
-      }
-    })
 }
 
 function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
@@ -219,6 +171,16 @@ function rectsOverlap(a: PreservedObstacle, b: PreservedObstacle): boolean {
   return rangesOverlap(boundsA.minX, boundsA.maxX, boundsB.minX, boundsB.maxX)
     && rangesOverlap(boundsA.minY, boundsA.maxY, boundsB.minY, boundsB.maxY)
     && rangesOverlap(a.zBottom, a.zTop, b.zBottom, b.zTop)
+}
+
+function obstacleOverlapsToolpathBounds(obstacle: PreservedObstacle, bounds: ToolpathBounds | null): boolean {
+  if (!bounds) {
+    return false
+  }
+
+  const obstacleRect = obstacleBounds(obstacle)
+  return rangesOverlap(obstacleRect.minX, obstacleRect.maxX, bounds.minX, bounds.maxX)
+    && rangesOverlap(obstacleRect.minY, obstacleRect.maxY, bounds.minY, bounds.maxY)
 }
 
 function isSupportedTabOperation(kind: Operation['kind']): boolean {
@@ -386,10 +348,7 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     ? normalizeToolForProject(toolRecord, project).radius + Math.max(0, operation.stockToLeaveRadial)
     : Math.max(0, operation.stockToLeaveRadial)
 
-  const obstacles = expandObstacles([
-    ...buildTabObstacles(project),
-    ...buildAddFeatureObstacles(project, operation),
-  ], effectiveRadius)
+  const obstacles = expandObstacles(buildTabObstacles(project), effectiveRadius)
   if (obstacles.length === 0) {
     return result
   }
@@ -456,6 +415,17 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     (move) => move.kind === 'cut' || move.kind === 'lead_in' || move.kind === 'lead_out',
   )
 
+  let cutBounds: ToolpathBounds | null = null
+  for (const move of cutMoves) {
+    cutBounds = updateBounds(cutBounds, move.from)
+    cutBounds = updateBounds(cutBounds, move.to)
+  }
+
+  const relevantTabs = visibleTabs.filter((entry) => obstacleOverlapsToolpathBounds(entry, cutBounds))
+  if (relevantTabs.length === 0) {
+    return result
+  }
+
   let cutMinZ = Number.POSITIVE_INFINITY
   let cutMaxZ = Number.NEGATIVE_INFINITY
   for (const move of cutMoves) {
@@ -463,8 +433,11 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     cutMaxZ = Math.max(cutMaxZ, move.from.z, move.to.z)
   }
 
-  for (let index = 0; index < visibleTabs.length; index += 1) {
-    const entry = visibleTabs[index]
+  const xyOnlyTabNames: string[] = []
+  const depthRelevantTabs: PreservedObstacle[] = []
+
+  for (let index = 0; index < relevantTabs.length; index += 1) {
+    const entry = relevantTabs[index]
     const tab = entry
 
     if (!(tab.zTop > tab.zBottom)) {
@@ -489,16 +462,38 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     if (Number.isFinite(cutMinZ) && Number.isFinite(cutMaxZ)) {
       const affectsCutDepth = rangesOverlap(tab.zBottom, tab.zTop, cutMinZ, cutMaxZ)
       if (!affectsCutDepth) {
-        warnings.push(
-          `Tab "${tab.name}" intersects the toolpath in XY but is outside the cut Z range (${cutMinZ.toFixed(3)} -> ${cutMaxZ.toFixed(3)}).`,
-        )
-      } else if (!isSupportedTabOperation(operation.kind)) {
+        xyOnlyTabNames.push(tab.name)
+        continue
+      }
+
+      depthRelevantTabs.push(entry)
+
+      if (!isSupportedTabOperation(operation.kind)) {
         warnings.push(`Tab "${tab.name}" is relevant to this operation, but tabs are only applied to edge-route operations right now.`)
       }
     }
+  }
 
-    for (let otherIndex = index + 1; otherIndex < visibleTabs.length; otherIndex += 1) {
-      const other = visibleTabs[otherIndex]
+  if (xyOnlyTabNames.length > 0 && Number.isFinite(cutMinZ) && Number.isFinite(cutMaxZ)) {
+    const listedTabNames = xyOnlyTabNames.slice(0, 3).map((name) => `"${name}"`).join(', ')
+    const remainingCount = xyOnlyTabNames.length - Math.min(xyOnlyTabNames.length, 3)
+
+    if (xyOnlyTabNames.length === 1) {
+      warnings.push(
+        `Nearby tab ${listedTabNames} overlaps the toolpath footprint but is outside the cut Z range (${cutMinZ.toFixed(3)} -> ${cutMaxZ.toFixed(3)}).`,
+      )
+    } else {
+      warnings.push(
+        `${xyOnlyTabNames.length} nearby tabs overlap the toolpath footprint but are outside the cut Z range (${cutMinZ.toFixed(3)} -> ${cutMaxZ.toFixed(3)})${listedTabNames ? `: ${listedTabNames}${remainingCount > 0 ? `, and ${remainingCount} more` : ''}` : ''}.`,
+      )
+    }
+  }
+
+  for (let index = 0; index < depthRelevantTabs.length; index += 1) {
+    const entry = depthRelevantTabs[index]
+    const tab = entry
+    for (let otherIndex = index + 1; otherIndex < depthRelevantTabs.length; otherIndex += 1) {
+      const other = depthRelevantTabs[otherIndex]
       if (rectsOverlap(entry, other)) {
         warnings.push(`Tabs "${tab.name}" and "${other.name}" overlap in a way that may produce ambiguous output.`)
       }

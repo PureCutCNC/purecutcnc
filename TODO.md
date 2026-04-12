@@ -261,28 +261,30 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - The warning should explain that the preserved/resulting behavior is limited in this configuration.
 
 ### Combine multiple inside edge targets
-- Status: Open
-- Priority: Medium
+- Status: Done
+- Priority: High
 - Summary: When multiple features are selected for an inside edge route, resolve them as one combined target region where appropriate, similar to pocket target union behavior.
 - Notes:
   - Current inside edge routing still treats multiple targets too independently in some cases.
+  - Add features later in the feature tree can still be cut into incorrectly instead of being preserved as interior islands within the selected inside-route target region.
   - This should be addressed in the inside-edge resolver rather than as a display-only change.
 
 ### Combine multiple outside edge targets
-- Status: Open
+- Status: Partial
 - Priority: High
 - Summary: When multiple features are selected for an outside edge route, resolve them as one combined outer boundary where appropriate instead of cutting through the interior overlap.
 - Notes:
-  - Current outside edge routing can machine through the inside of overlapping selected add features.
-  - This is a resolver/toolpath correctness issue, not just a preview issue.
+  - Outside edge routing now combines overlapping selected add targets when their effective depth spans match.
+  - Mixed-depth targets are not combined yet; the toolpath falls back to separate contours and warns that internal overlap may still be cut.
+  - A proper band-based outside-edge resolver is still needed for full mixed-depth support.
 
 ### Reduce irrelevant tab warnings
-- Status: Open
+- Status: Done
 - Priority: Medium
 - Summary: Do not show per-tab warnings for tabs that are not meaningfully relevant to the current operation/toolpath.
 - Notes:
-  - Current tab validation is too noisy when many tabs exist elsewhere in the setup.
-  - Prefer surfacing only tabs that intersect or are otherwise plausibly involved in the selected operation.
+  - Tab validation now ignores tabs outside the selected toolpath footprint.
+  - Tabs that overlap in XY but sit outside the active cut depth are summarized as one nearby-tab warning instead of producing one warning per tab.
 
 ### Tab lift vs machine/clamp limits
 - Status: Open
