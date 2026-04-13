@@ -35,7 +35,19 @@ Defined in `src/types/project.ts`:
 - `src/import/`: DXF and SVG parsers that normalize external geometry into the `.camj` format.
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
 
-## 5. Coding Standards & Conventions
+## 5. Icon System
+
+Icons are managed as a custom build pipeline using the `.camj` project format.
+
+- **Source of truth:** `src/assets/icons.camj` — a standard `.camj` project file where each icon is a named folder of sketch features on a 24×24 unit canvas. This file can be opened and edited in the application itself.
+- **Build output:** `public/icons.svg` — an SVG sprite sheet generated from `icons.camj`. This file is **generated; do not edit it directly**.
+- **Build command:** `npm run sync-icons` (also runs as part of the full `npm run build`).
+- **Conversion script:** `scripts/convert-camj-to-icons.js` reads `icons.camj`, converts each feature's sketch profile to an SVG `<path>`, and writes `<symbol>` elements to `public/icons.svg`. Features with empty segment arrays are skipped.
+- **Icon naming:** The folder `name` in `icons.camj` becomes the symbol `id` in the SVG (e.g. folder name `"view-top"` → `<symbol id="view-top">`).
+- **Usage in components:** Import `Icon` from `src/components/Icon.tsx` and pass the folder name as the `id` prop: `<Icon id="view-top" size={18} />`. The component renders a `<use href="icons.svg#id" />` reference, so the icon inherits `stroke="currentColor"` and `fill="none"` from the SVG wrapper.
+- **Adding new icons:** Add feature folders and features to `icons.camj`, then run `npm run sync-icons`. Each icon group needs a `featureFolders` entry and a `featureTree` entry in addition to the `features` entries.
+
+## 6. Coding Standards & Conventions
 - **Strict TypeScript:** No `any`. Use interfaces and types defined in `src/types/project.ts`.
 - **State Mutation:** All modifications to the project must go through the `projectStore` actions to ensure consistency and history tracking.
 - **UI:** React for component structure + Vanilla CSS for styling. Avoid heavy UI libraries.

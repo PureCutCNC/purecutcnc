@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { buildSimulationGeometry } from '../../engine/simulation/mesh'
 import type { SimulationResult } from '../../engine/simulation'
@@ -337,7 +338,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowActive = false,
   onZoomWindowComplete,
 }, ref) {
-  const [showOverlay, setShowOverlay] = useState(false)
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -645,14 +645,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       )}
       <div className="viewport-presets">
         <div className="viewport-presets__group viewport-presets__group--status">
-          <button
-            className={`preset-btn ${showOverlay ? 'preset-btn--active' : ''}`}
-            onClick={() => setShowOverlay((current) => !current)}
-            title="Show simulation stats"
-            type="button"
-          >
-            Info
-          </button>
           <div className="simulation-mode-toggle" role="tablist" aria-label="Simulation mode">
             <button
               className={`simulation-mode-toggle__btn ${mode === 'selected' ? 'simulation-mode-toggle__btn--active' : ''}`}
@@ -684,76 +676,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           </label>
         </div>
         <div className="viewport-presets__group viewport-presets__group--views">
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">Top</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">Bottom</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">Front</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">Back</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">Right</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">Left</button>
-          <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">Iso</button>
+          <div className="preset-btn-panel">
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button"><Icon id="view-top" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button"><Icon id="view-bottom" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button"><Icon id="view-front" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button"><Icon id="view-back" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button"><Icon id="view-right" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button"><Icon id="view-left" size={16} /></button>
+            <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button"><Icon id="view-iso" size={16} /></button>
+          </div>
         </div>
       </div>
-      {showOverlay ? (
-        <div className="simulation-viewport__overlay">
-          <div className="simulation-viewport__overlay-header">
-            <div className="simulation-viewport__title">Simulation</div>
-            <button
-              className="simulation-viewport__close"
-              onClick={() => setShowOverlay(false)}
-              title="Hide simulation stats"
-              type="button"
-            >
-              Close
-            </button>
-          </div>
-          {mode === 'visible' || operation ? (
-            <>
-              <div className="simulation-viewport__line">
-                Mode: <strong>{mode === 'selected' ? 'Selected' : 'Visible'}</strong>
-              </div>
-              {mode === 'selected' ? (
-                <div className="simulation-viewport__line">
-                  Operation: <strong>{operation?.name ?? 'Selected operation'}</strong>
-                </div>
-              ) : (
-                <div className="simulation-viewport__line">
-                  Operations: <strong>{operationCount}</strong>
-                </div>
-              )}
-              {simulation ? (
-                <>
-                  <div className="simulation-viewport__line">
-                    Grid: <strong>{simulation.grid.cols} × {simulation.grid.rows}</strong>
-                  </div>
-                  <div className="simulation-viewport__line">
-                    Cell size: <strong>{simulation.grid.cellSize.toFixed(4)}</strong>
-                  </div>
-                  <div className="simulation-viewport__line">
-                    Moves: <strong>{simulation.stats.processedMoveCount}</strong>
-                  </div>
-                  <div className="simulation-viewport__line">
-                    Removed cells: <strong>{simulation.stats.removedCellCount}</strong>
-                  </div>
-                  <div className="simulation-viewport__line">
-                    Min top Z: <strong>{simulation.stats.minTopZ.toFixed(4)}</strong>
-                  </div>
-                </>
-              ) : null}
-              {simulation && simulation.warnings.length > 0 ? (
-                <div className="simulation-viewport__warnings">
-                  {simulation.warnings.map((warning, index) => (
-                    <div key={`${operation?.id ?? mode}-simulation-warning-${index}`} className="simulation-viewport__warning">
-                      {warning}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="simulation-viewport__note">Select an operation to simulate.</div>
-          )}
-        </div>
-      ) : null}
     </div>
   )
 })

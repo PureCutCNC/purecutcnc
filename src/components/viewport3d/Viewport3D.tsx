@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { Icon } from '../Icon'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { buildOriginTriad, buildScene } from '../../engine/csg'
@@ -1026,27 +1027,29 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         </div>
       )}
       <div className="viewport-presets">
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">
-          Top
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">
-          Bottom
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">
-          Front
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">
-          Back
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">
-          Right
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">
-          Left
-        </button>
-        <button className="preset-btn" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">
-          Iso
-        </button>
+        <div className="preset-btn-panel">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">
+            <Icon id="view-top" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">
+            <Icon id="view-bottom" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">
+            <Icon id="view-front" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">
+            <Icon id="view-back" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">
+            <Icon id="view-right" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">
+            <Icon id="view-left" size={16} />
+          </button>
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">
+            <Icon id="view-iso" size={16} />
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -1394,6 +1394,36 @@
 .preset-btn--icon {
   width: 30px;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preset-btn-panel {
+  display: inline-flex;
+}
+
+.preset-btn-panel .preset-btn {
+  border-radius: 0;
+}
+
+.preset-btn-panel .preset-btn:first-child {
+  border-top-left-radius: 7px;
+  border-bottom-left-radius: 7px;
+}
+
+.preset-btn-panel .preset-btn:last-child {
+  border-top-right-radius: 7px;
+  border-bottom-right-radius: 7px;
+}
+
+.preset-btn-panel .preset-btn + .preset-btn {
+  margin-left: -1px;
+}
+
+.preset-btn-panel .preset-btn:hover {
+  position: relative;
+  z-index: 1;
 }
 
 .feature-context-menu {
