@@ -680,6 +680,7 @@ export function CAMPanel({
       defaultPlungeFeed: tool.defaultPlungeFeed,
       defaultStepdown: tool.defaultStepdown,
       defaultStepover: tool.defaultStepover,
+      maxCutDepth: tool.maxCutDepth,
     })))
     if (importedIds.length > 0) {
       setSelectedToolId(importedIds[importedIds.length - 1] ?? null)
@@ -1029,7 +1030,7 @@ export function CAMPanel({
                 </div>
                 <div className="cam-section-body">
                 {selectedOperation ? (
-                  <div key={selectedOperation.id} className="properties-panel cam-tool-properties">
+                  <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
                     <div className="properties-group">
                   <label className="properties-field">
                     <span>Name</span>
@@ -1178,11 +1179,27 @@ export function CAMPanel({
                     <span>Tool</span>
                     <select
                       value={selectedOperation.toolRef ?? ''}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const newToolId = event.target.value || null
+                        const newTool = newToolId ? project.tools.find((t) => t.id === newToolId) ?? null : null
+                        const toolInProjectUnits = newTool && newTool.units !== project.meta.units
+                          ? convertToolUnits(newTool, project.meta.units)
+                          : newTool
+                        const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
                         updateOperation(selectedOperation.id, {
-                          toolRef: event.target.value || null,
+                          toolRef: newToolId,
+                          ...(toolInProjectUnits ? {
+                            feed: toolInProjectUnits.defaultFeed,
+                            plungeFeed: toolInProjectUnits.defaultPlungeFeed,
+                            stepdown: toolInProjectUnits.defaultStepdown,
+                            stepover: toolInProjectUnits.defaultStepover,
+                            rpm: toolInProjectUnits.defaultRpm,
+                            ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {
+                              maxCarveDepth: toolInProjectUnits.maxCutDepth,
+                            } : {}),
+                          } : {}),
                         })
-                      }
+                      }}
                     >
                       <option value="">No Tool</option>
                       {(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
@@ -1485,6 +1502,15 @@ export function CAMPanel({
                           units={selectedTool.units}
                           min={0.0001}
                           onCommit={(value) => updateTool(selectedTool.id, { defaultStepdown: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Max Cut Depth</span>
+                        <DraftLengthInput
+                          value={selectedTool.maxCutDepth}
+                          units={selectedTool.units}
+                          min={0}
+                          onCommit={(value) => updateTool(selectedTool.id, { maxCutDepth: value })}
                         />
                       </label>
                       <label className="properties-field">

@@ -234,6 +234,7 @@ export interface Tool {
   defaultPlungeFeed: number
   defaultStepdown: number
   defaultStepover: number
+  maxCutDepth: number
 }
 
 // ============================================================
@@ -606,6 +607,7 @@ export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool
       defaultPlungeFeed: 12,
       defaultStepdown: 0.1,
       defaultStepover: 0.4,
+      maxCutDepth: 0,
     }
   }
 
@@ -623,6 +625,7 @@ export function defaultTool(units: ProjectMeta['units'] = 'mm', index = 1): Tool
     defaultPlungeFeed: 300,
     defaultStepdown: 2,
     defaultStepover: 0.4,
+    maxCutDepth: 0,
   }
 }
 

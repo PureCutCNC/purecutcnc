@@ -29,6 +29,7 @@ import type {
 import {
   DEFAULT_CLIPPER_SCALE,
   applyContourDirection,
+  checkMaxCutDepthWarning,
   flattenProfile,
   getOperationSafeZ,
   normalizeToolForProject,
@@ -526,6 +527,11 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
+  const maxBandDepth = resolved.bands.reduce((max, band) => Math.max(max, Math.abs(band.topZ - band.bottomZ)), 0)
+  const depthWarning = checkMaxCutDepthWarning(tool, maxBandDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
 
   for (const band of resolved.bands) {
     const result = operation.pass === 'finish'

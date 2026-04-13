@@ -17,7 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { applyContourDirection, getOperationSafeZ, normalizeToolForProject } from './geometry'
+import { applyContourDirection, checkMaxCutDepthWarning, getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { buildContourLoops, buildInsetRegions, contourStartPoint, pushRapidAndPlunge, retractToSafe, toClosedCutMoves, updateBounds } from './pocket'
 import { resolvePocketRegions } from './resolver'
 
@@ -108,6 +108,10 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
   const direction = operation.cutDirection ?? 'conventional'
   const moves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
+  const depthWarning = checkMaxCutDepthWarning(tool, operation.maxCarveDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
   let currentPosition: ToolpathPoint | null = null
 
   for (const band of resolved.bands) {

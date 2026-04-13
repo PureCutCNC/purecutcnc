@@ -18,6 +18,7 @@ import type { Operation, Point, Project, SketchFeature } from '../../types/proje
 import { expandFeatureGeometry } from '../../text'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
+  checkMaxCutDepthWarning,
   flattenProfile,
   getOperationSafeZ,
   normalizeToolForProject,
@@ -165,6 +166,11 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     .flatMap((feature) => expandFeatureGeometry(feature))
 
   const warnings: string[] = []
+  const depthWarning = checkMaxCutDepthWarning(tool, operation.carveDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
+
   if (targetFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing')
   }

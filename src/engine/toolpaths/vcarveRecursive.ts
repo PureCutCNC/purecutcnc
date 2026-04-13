@@ -41,7 +41,7 @@ import type {
   ToolpathPoint,
   ToolpathResult,
 } from './types'
-import { getOperationSafeZ, normalizeToolForProject } from './geometry'
+import { checkMaxCutDepthWarning, getOperationSafeZ, normalizeToolForProject } from './geometry'
 import {
   buildInsetRegions,
   pushRapidAndPlunge,
@@ -502,6 +502,10 @@ export function generateVCarveRecursiveToolpath(project: Project, operation: Ope
   const stepSize = operation.stepover   // absolute project-unit step distance
   const moves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
+  const depthWarning = checkMaxCutDepthWarning(tool, operation.maxCarveDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
   let currentPosition: ToolpathPoint | null = null
 
   for (const band of resolved.bands) {

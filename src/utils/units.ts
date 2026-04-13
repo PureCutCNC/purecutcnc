@@ -205,6 +205,7 @@ function convertTool(tool: Tool, from: Units, to: Units): Tool {
     defaultFeed: convertLength(tool.defaultFeed, from, to),
     defaultPlungeFeed: convertLength(tool.defaultPlungeFeed, from, to),
     defaultStepdown: convertLength(tool.defaultStepdown, from, to),
+    maxCutDepth: convertLength(tool.maxCutDepth, from, to),
   }
 }
 

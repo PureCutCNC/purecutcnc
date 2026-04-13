@@ -76,6 +76,8 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
     isFiniteNumber(value.defaultStepover) && value.defaultStepover > 0 && value.defaultStepover <= 1
       ? value.defaultStepover
       : null
+  const maxCutDepth =
+    isFiniteNumber(value.maxCutDepth) && value.maxCutDepth >= 0 ? value.maxCutDepth : 0
 
   if (
     diameter === null
@@ -103,6 +105,7 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
     defaultPlungeFeed,
     defaultStepdown,
     defaultStepover,
+    maxCutDepth,
   }
 }
 
