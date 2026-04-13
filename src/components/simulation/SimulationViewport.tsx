@@ -323,13 +323,11 @@ function createOrbitControls(
 }
 
 export const SimulationViewport = forwardRef<SimulationViewportHandle, SimulationViewportProps>(function SimulationViewport({
-  operation,
   simulation,
   detailCells,
   onDetailCellsChange,
   mode,
   onModeChange,
-  operationCount,
   clamps,
   selectedClampId,
   collidingClampIds,
