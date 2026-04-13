@@ -1449,6 +1449,7 @@ function defaultOperationForTarget(
     finishFloor: true,
     carveDepth: convertLength(1, 'mm', project.meta.units),
     maxCarveDepth: convertLength(1, 'mm', project.meta.units),
+    cutDirection: 'conventional',
   }
 }
 

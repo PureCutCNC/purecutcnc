@@ -1,5 +1,5 @@
 import ClipperLib from 'clipper-lib'
-import type { Operation, Project, SketchFeature } from '../../types/project'
+import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -12,6 +12,7 @@ import type {
 } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
+  applyContourDirection,
   flattenProfile,
   getOperationSafeZ,
   normalizeToolForProject,
@@ -253,6 +254,7 @@ function generateRoughBandMoves(
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
+  direction: CutDirection = 'conventional',
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -283,7 +285,7 @@ function generateRoughBandMoves(
       }
     }
 
-    const boundaryContours = buildContourLoops(roughRegions)
+    const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
     if (segments.length === 0) {
       return {
@@ -348,6 +350,7 @@ function generateRoughBandMoves(
         effectiveStepover,
         maxLinkDistance,
         currentPosition,
+        direction,
       )
     }
 
@@ -365,6 +368,7 @@ function generateFinishBandMoves(
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
+  direction: CutDirection = 'conventional',
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -389,9 +393,9 @@ function generateFinishBandMoves(
   const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
-  const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
+  const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
   const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
-    ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
+    ? applyContourDirection(buildPocketFloorContours(finishRegions, 0, stepoverDistance), direction)
     : []
   const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
@@ -502,6 +506,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   const safeZ = getOperationSafeZ(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
+  const direction = operation.cutDirection ?? 'conventional'
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
@@ -516,6 +521,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
+        direction,
       )
       : generateRoughBandMoves(
         band,
@@ -525,6 +531,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
+        direction,
       )
 
     const { moves, stepLevels, warnings: bandWarnings } = result

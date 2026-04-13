@@ -1,5 +1,5 @@
 import ClipperLib from 'clipper-lib'
-import type { Operation, Point, Project } from '../../types/project'
+import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -11,6 +11,7 @@ import type {
 } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
+  applyContourDirection,
   fromClipperPath,
   getOperationSafeZ,
   normalizeWinding,
@@ -725,11 +726,13 @@ export function cutClosedContours(
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
   preserveContourRotation = false,
+  direction: CutDirection = 'conventional',
 ): ToolpathPoint | null {
+  const directedContours = applyContourDirection(contours, direction)
   const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
   const orderedContours = preserveContourRotation
-    ? orderClosedContoursGreedyPreservingRotation(contours, start)
-    : orderClosedContoursGreedy(contours, start)
+    ? orderClosedContoursGreedyPreservingRotation(directedContours, start)
+    : orderClosedContoursGreedy(directedContours, start)
 
   let nextPosition = currentPosition
   for (const contour of orderedContours) {
@@ -751,6 +754,7 @@ export function cutOffsetRegionRecursive(
   stepoverDistance: number,
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
+  direction: CutDirection = 'conventional',
 ): ToolpathPoint | null {
   const childRegions = buildInsetRegions(region, stepoverDistance)
   const childAnchors = childRegions
@@ -771,6 +775,7 @@ export function cutOffsetRegionRecursive(
     maxLinkDistance,
     currentPosition,
     true,
+    direction,
   )
 
   const orderedChildren = orderRegionsGreedy(
@@ -787,6 +792,7 @@ export function cutOffsetRegionRecursive(
       stepoverDistance,
       maxLinkDistance,
       nextPosition,
+      direction,
     )
   }
 
@@ -818,6 +824,7 @@ function generateRoughBandMoves(
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
+  direction: CutDirection = 'conventional',
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -847,7 +854,7 @@ function generateRoughBandMoves(
       }
     }
 
-    const boundaryContours = buildContourLoops(roughRegions)
+    const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
     if (segments.length === 0) {
       return {
@@ -907,6 +914,7 @@ function generateRoughBandMoves(
         effectiveStepover,
         maxLinkDistance,
         currentPosition,
+        direction,
       )
     }
 
@@ -924,6 +932,7 @@ function generateFinishBandMoves(
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
+  direction: CutDirection = 'conventional',
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
   const moves: ToolpathMove[] = []
   const warnings: string[] = []
@@ -967,13 +976,13 @@ function generateFinishBandMoves(
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of wallStepLevels) {
-    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition)
+    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
   for (const z of floorStepLevels) {
-    currentPosition = cutClosedContours(moves, floorContours, z, safeZ, maxLinkDistance, currentPosition)
+    currentPosition = cutClosedContours(moves, floorContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(
       floorSegments,
@@ -1048,6 +1057,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   const safeZ = getOperationSafeZ(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
+  const direction = operation.cutDirection ?? 'conventional'
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
@@ -1098,6 +1108,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
+        direction,
       )
       : generateRoughBandMoves(
         band,
@@ -1107,6 +1118,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
+        direction,
       )
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))

@@ -1,7 +1,7 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { getOperationSafeZ, normalizeToolForProject } from './geometry'
+import { applyContourDirection, getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { buildContourLoops, buildInsetRegions, contourStartPoint, pushRapidAndPlunge, retractToSafe, toClosedCutMoves, updateBounds } from './pocket'
 import { resolvePocketRegions } from './resolver'
 
@@ -89,6 +89,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
   const safeZ = getOperationSafeZ(project)
   // stepover is the absolute contour spacing distance in project units.
   const stepoverDistance = operation.stepover
+  const direction = operation.cutDirection ?? 'conventional'
   const moves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   let currentPosition: ToolpathPoint | null = null
@@ -105,11 +106,12 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     let currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, currentDepth * slope, vcarveJoinType))
 
     while (currentRegions.length > 0 && currentDepth <= maxBandDepth + 1e-9) {
-      const contours = buildContourLoops(currentRegions)
-      if (contours.length === 0) {
+      const rawContours = buildContourLoops(currentRegions)
+      if (rawContours.length === 0) {
         break
       }
 
+      const contours = applyContourDirection(rawContours, direction)
       const z = band.topZ - currentDepth
       for (const contour of contours) {
         const entryPoint = contourStartPoint(contour, z)
