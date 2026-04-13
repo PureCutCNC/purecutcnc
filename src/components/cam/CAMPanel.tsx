@@ -4,6 +4,7 @@ import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import type {
+  CutDirection,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -1064,6 +1065,18 @@ export function CAMPanel({
                         value={selectedOperation.pocketAngle}
                         onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
                       />
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean') ? (
+                    <label className="properties-field">
+                      <span>Cut Direction</span>
+                      <select
+                        value={selectedOperation.cutDirection ?? 'conventional'}
+                        onChange={(event) => updateOperation(selectedOperation.id, { cutDirection: event.target.value as CutDirection })}
+                      >
+                        <option value="conventional">Conventional</option>
+                        <option value="climb">Climb</option>
+                      </select>
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'follow_line' ? (

@@ -235,6 +235,7 @@ export type OperationKind =
 
 export type OperationPass = 'rough' | 'finish'
 export type PocketPattern = 'offset' | 'parallel'
+export type CutDirection = 'conventional' | 'climb'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -263,6 +264,7 @@ export interface Operation {
   finishFloor: boolean
   carveDepth: number
   maxCarveDepth: number
+  cutDirection?: CutDirection
 }
 
 // ============================================================

@@ -27,12 +27,10 @@ export function resolveDimensionRef(project: Project, value: DimensionRef): numb
   if (typeof value === 'number') {
     return value
   }
-
   const named = project.dimensions[value]
   if (!named) {
     throw new Error(`Unknown dimension reference: ${value}`)
   }
-
   return named.value
 }
 
@@ -41,7 +39,6 @@ export function resolveFeatureZSpan(project: Project, feature: SketchFeature): R
   const bottom = resolveDimensionRef(project, feature.z_bottom)
   const min = Math.min(top, bottom)
   const max = Math.max(top, bottom)
-
   return {
     top,
     bottom,
@@ -52,10 +49,7 @@ export function resolveFeatureZSpan(project: Project, feature: SketchFeature): R
 }
 
 export function normalizeToolForProject(tool: Tool, project: Project): NormalizedTool {
-  const normalizedTool = tool.units === project.meta.units
-    ? tool
-    : convertToolUnits(tool, project.meta.units)
-
+  const normalizedTool = tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units)
   return {
     id: tool.id,
     name: tool.name,
@@ -76,10 +70,7 @@ export function normalizeToolForProject(tool: Tool, project: Project): Normalize
 }
 
 export function resolveOperationTool(project: Project, operation: Operation): ResolvedToolpathOperation {
-  const tool = operation.toolRef
-    ? project.tools.find((candidate) => candidate.id === operation.toolRef) ?? null
-    : null
-
+  const tool = operation.toolRef ? project.tools.find((c) => c.id === operation.toolRef) ?? null : null
   return {
     operation,
     tool: tool ? normalizeToolForProject(tool, project) : null,
@@ -89,7 +80,6 @@ export function resolveOperationTool(project: Project, operation: Operation): Re
 
 export function flattenProfile(profile: SketchProfile, curveSamples = 24, arcStepRadians = Math.PI / 36): FlattenedPath {
   const sampled = sampleProfilePoints(profile, curveSamples, arcStepRadians)
-
   return {
     points: sampled.map(clonePoint),
     closed: profile.closed,
@@ -97,32 +87,22 @@ export function flattenProfile(profile: SketchProfile, curveSamples = 24, arcSte
 }
 
 export function ensureClosedPath(points: Point[]): Point[] {
-  if (points.length === 0) {
-    return []
-  }
-
+  if (points.length === 0) return []
   const first = points[0]
   const last = points[points.length - 1]
-  if (first.x === last.x && first.y === last.y) {
-    return points.map(clonePoint)
-  }
-
+  if (first.x === last.x && first.y === last.y) return points.map(clonePoint)
   return [...points.map(clonePoint), clonePoint(first)]
 }
 
 export function signedArea(points: Point[]): number {
-  if (points.length < 3) {
-    return 0
-  }
-
+  if (points.length < 3) return 0
   let area = 0
   const closed = ensureClosedPath(points)
-  for (let index = 0; index < closed.length - 1; index += 1) {
-    const a = closed[index]
-    const b = closed[index + 1]
+  for (let i = 0; i < closed.length - 1; i++) {
+    const a = closed[i]
+    const b = closed[i + 1]
     area += a.x * b.y - b.x * a.y
   }
-
   return area / 2
 }
 
@@ -130,28 +110,35 @@ export function isClockwise(points: Point[]): boolean {
   return signedArea(points) < 0
 }
 
-export function normalizeWinding(points: Point[], clockwise: boolean): Point[] {
+export function normalizeWinding(points: Point[], wantClockwise: boolean): Point[] {
   const closed = ensureClosedPath(points)
-  const currentlyClockwise = isClockwise(closed)
-  if (currentlyClockwise === clockwise) {
-    return closed
+  const alreadyClockwise = isClockwise(closed)
+  if (alreadyClockwise === wantClockwise) return closed
+  const reversed = [...closed].reverse()
+  const first = reversed[0]
+  const last = reversed[reversed.length - 1]
+  if (first.x !== last.x || first.y !== last.y) {
+    reversed.push({ x: first.x, y: first.y })
   }
+  return reversed
+}
 
-  return [...closed].reverse()
+export function applyContourDirection(contours: Point[][], direction: 'conventional' | 'climb' = 'conventional'): Point[][] {
+  // Conventional = no-op: the natural Clipper output is already conventional for every
+  // operation (both inside cuts like pocket and outside cuts like edge_route_outside after
+  // the flattenFeatureToClipperPath fix). Climb simply reverses each contour.
+  if (direction === 'conventional') {
+    return contours
+  }
+  return contours.map((c) => normalizeWinding(c, !isClockwise(c)))
 }
 
 export function toClipperPath(points: Point[], scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
-  return ensureClosedPath(points).map((point) => ({
-    X: Math.round(point.x * scale),
-    Y: Math.round(point.y * scale),
-  }))
+  return ensureClosedPath(points).map((p) => ({ X: Math.round(p.x * scale), Y: Math.round(p.y * scale) }))
 }
 
 export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE): Point[] {
-  return path.map((point) => ({
-    x: point.X / scale,
-    y: point.Y / scale,
-  }))
+  return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
 }
 
 export function getOperationClearance(project: Project): number {
@@ -159,7 +146,7 @@ export function getOperationClearance(project: Project): number {
 }
 
 export function getOperationSafeZ(project: Project, featureSpans: ResolvedFeatureZSpan[] = []): number {
-  const highestFeatureZ = featureSpans.reduce((highest, span) => Math.max(highest, span.max), 0)
+  const highestFeatureZ = featureSpans.reduce((h, span) => Math.max(h, span.max), 0)
   const stockTop = project.stock.thickness
   return Math.max(stockTop, highestFeatureZ) + getOperationClearance(project)
 }

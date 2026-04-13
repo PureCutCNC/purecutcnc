@@ -4,6 +4,7 @@ import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
+  applyContourDirection,
   flattenProfile,
   fromClipperPath,
   getOperationSafeZ,
@@ -204,7 +205,9 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
 
 function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
   const flattened = flattenProfile(feature.sketch.profile)
-  return toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)
+  // Normalize to CCW on screen (isClockwise=true) so Clipper treats it as an outer polygon.
+  // Offsetting outward then preserves CCW orientation → conventional cut by default (CW in machine after Y-flip).
+  return toClipperPath(normalizeWinding(flattened.points, true), DEFAULT_CLIPPER_SCALE)
 }
 
 function resolveContourPaths(paths: ClipperPath[], offsetDistance: number): Point[][] {
@@ -347,6 +350,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
   const maxLinkDistance = tool.diameter
+  const direction = operation.cutDirection ?? 'conventional'
 
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
@@ -361,12 +365,13 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
       }
 
       const insetRegions = band.regions.flatMap((region) => buildInsetRegions(region, insideInset))
-      const contours = buildOuterContours(insetRegions)
-      if (contours.length === 0) {
+      const rawContours = buildOuterContours(insetRegions)
+      if (rawContours.length === 0) {
         warnings.push(`No valid inside contour could be generated for band ${band.topZ} -> ${band.bottomZ}`)
         continue
       }
 
+      const contours = applyContourDirection(rawContours, direction)
       const levels =
         operation.pass === 'finish'
           ? [effectiveBottom]
@@ -429,14 +434,15 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     ))
 
     if (canCombineOutsideTargets) {
-      const contours = resolveContourPaths(
+      const rawContours = resolveContourPaths(
         unionPaths(routableTargets.map((target) => target.contourPath)),
         offsetDistance,
       )
 
-      if (contours.length === 0) {
+      if (rawContours.length === 0) {
         warnings.push('No valid combined outer contour could be generated for the selected outside edge targets')
       } else {
+        const contours = applyContourDirection(rawContours, direction)
         const levels =
           operation.pass === 'finish'
             ? [referenceTarget.bottomZ]
@@ -453,12 +459,13 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
 
   if (moves.length === 0) {
     for (const target of routableTargets) {
-      const contours = resolveContourPaths([target.contourPath], offsetDistance)
-      if (contours.length === 0) {
+      const rawContours = resolveContourPaths([target.contourPath], offsetDistance)
+      if (rawContours.length === 0) {
         warnings.push(`No valid contour could be generated for ${target.feature.name}`)
         continue
       }
 
+      const contours = applyContourDirection(rawContours, direction)
       const levels =
         operation.pass === 'finish'
           ? [target.bottomZ]
