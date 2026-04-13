@@ -108,7 +108,7 @@ function parseToolLibraryFile(value: unknown): ToolLibraryFile {
 
 export async function loadBundledToolLibrary(): Promise<ToolLibraryFile> {
   if (!bundledToolLibraryPromise) {
-    bundledToolLibraryPromise = fetch('/tool-library.json')
+    bundledToolLibraryPromise = fetch(`${import.meta.env.BASE_URL}tool-library.json`)
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Failed to load tool library (${response.status}).`)
