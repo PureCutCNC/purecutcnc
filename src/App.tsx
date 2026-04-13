@@ -1,5 +1,20 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AIPanel } from './components/ai/AIPanel'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
@@ -32,7 +47,7 @@ const TOOLBAR_LEFT_BREAKPOINT = 1100
 
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
-  const [rightTab, setRightTab] = useState<'operations' | 'tools' | 'ai'>('operations')
+  const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
   const [toolbarOrientationPreference, setToolbarOrientationPreference] = useState<ToolbarOrientation>(() => {
     if (typeof window === 'undefined') {
       return 'top'
@@ -582,7 +597,6 @@ function App() {
             layout="vertical"
           />
         }
-        aiPanel={<AIPanel />}
         sketchCanvas={
           <SketchCanvas
             ref={sketchCanvasRef}
