@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import type { ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
@@ -13,7 +29,6 @@ interface AppShellProps {
   propertiesPanel: ReactNode
   viewport3d: ReactNode
   simulationViewport: ReactNode
-  aiPanel: ReactNode
   camPanel?: ReactNode
   centerTab: 'sketch' | 'preview3d' | 'simulation'
   onCenterTabChange: (tab: 'sketch' | 'preview3d' | 'simulation') => void
@@ -22,8 +37,8 @@ interface AppShellProps {
   toolbarOrientation: 'top' | 'left'
   toolbarOrientationForced: boolean
   onToolbarOrientationChange: (orientation: 'top' | 'left') => void
-  rightTab: 'operations' | 'tools' | 'ai'
-  onRightTabChange: (tab: 'operations' | 'tools' | 'ai') => void
+  rightTab: 'operations' | 'tools'
+  onRightTabChange: (tab: 'operations' | 'tools') => void
   statusBarExtras?: ReactNode
 }
 
@@ -42,7 +57,6 @@ export function AppShell({
   propertiesPanel,
   viewport3d,
   simulationViewport,
-  aiPanel,
   camPanel,
   centerTab,
   onCenterTabChange,
@@ -60,7 +74,7 @@ export function AppShell({
   const stockWidth = stockBounds.maxX - stockBounds.minX
   const stockHeight = stockBounds.maxY - stockBounds.minY
   const centerTabs = ['sketch', 'preview3d', 'simulation'] as const
-  const rightTabs = ['operations', 'tools', 'ai'] as const
+  const rightTabs = ['operations', 'tools'] as const
   const workspaceLayouts = [
     { id: 'lcr', label: 'Show left, center, and right panels' },
     { id: 'lc', label: 'Show left and center panels' },
@@ -319,54 +333,21 @@ export function AppShell({
               >
                 Tools
               </button>
-              <button
-                id="sidebar-tab-ai"
-                className={`panel-tab ${rightTab === 'ai' ? 'panel-tab--active' : ''}`}
-                onClick={() => onRightTabChange('ai')}
-                onKeyDown={(event) => {
-                  if (event.key === 'ArrowRight') {
-                    event.preventDefault()
-                    onRightTabChange(nextTab(rightTabs, rightTab, 1))
-                  } else if (event.key === 'ArrowLeft') {
-                    event.preventDefault()
-                    onRightTabChange(nextTab(rightTabs, rightTab, -1))
-                  } else if (event.key === 'Home') {
-                    event.preventDefault()
-                    onRightTabChange(rightTabs[0])
-                  } else if (event.key === 'End') {
-                    event.preventDefault()
-                    onRightTabChange(rightTabs[rightTabs.length - 1])
-                  }
-                }}
-                type="button"
-                role="tab"
-                aria-selected={rightTab === 'ai'}
-                aria-controls="sidebar-panel-ai"
-                tabIndex={rightTab === 'ai' ? 0 : -1}
-              >
-                AI Chat
-              </button>
             </div>
             <div
-              id={rightTab === 'operations' ? 'sidebar-panel-operations' : rightTab === 'tools' ? 'sidebar-panel-tools' : 'sidebar-panel-ai'}
+              id={rightTab === 'operations' ? 'sidebar-panel-operations' : 'sidebar-panel-tools'}
               className="panel-content"
               role="tabpanel"
               aria-labelledby={
                 rightTab === 'operations'
                   ? 'sidebar-tab-operations'
-                  : rightTab === 'tools'
-                    ? 'sidebar-tab-tools'
-                    : 'sidebar-tab-ai'
+                  : 'sidebar-tab-tools'
               }
             >
-              {rightTab === 'ai' ? (
-                aiPanel
-              ) : (
-                camPanel ?? (
-                  <div className="panel-empty">
-                    CAM operations and toolpaths are scheduled for Phase 4.
-                  </div>
-                )
+              {camPanel ?? (
+                <div className="panel-empty">
+                  CAM operations and toolpaths are scheduled for Phase 4.
+                </div>
               )}
             </div>
           </section>
