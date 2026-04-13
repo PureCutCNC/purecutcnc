@@ -27,6 +27,7 @@ interface TreeContextMenuState {
 type ToolbarOrientation = 'top' | 'left'
 
 const TOOLBAR_ORIENTATION_STORAGE_KEY = 'camcam.toolbarOrientation'
+const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 const TOOLBAR_LEFT_BREAKPOINT = 1100
 
 function App() {
@@ -51,6 +52,13 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
+  const [depthLegendCollapsed, setDepthLegendCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    return window.localStorage.getItem(DEPTH_LEGEND_COLLAPSED_STORAGE_KEY) === 'true'
+  })
   const [snapSettings, setSnapSettings] = useState<SnapSettings>(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SNAP_SETTINGS
@@ -297,6 +305,10 @@ function App() {
   }, [toolbarOrientationPreference])
 
   useEffect(() => {
+    window.localStorage.setItem(DEPTH_LEGEND_COLLAPSED_STORAGE_KEY, String(depthLegendCollapsed))
+  }, [depthLegendCollapsed])
+
+  useEffect(() => {
     window.localStorage.setItem(SNAP_SETTINGS_STORAGE_KEY, JSON.stringify(snapSettings))
   }, [snapSettings])
 
@@ -519,6 +531,24 @@ function App() {
       project.features.some((feature) => feature.id === featureId && feature.locked)
     ) ?? false)
 
+  const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
+    <button
+      className="statusbar-depth-legend"
+      type="button"
+      onClick={() => setDepthLegendCollapsed(false)}
+      title="Expand feature color legend"
+      aria-label="Expand feature color legend"
+    >
+      <span className="statusbar-depth-legend__label">Feature Colors</span>
+      <span className="statusbar-depth-legend__swatches" aria-hidden="true">
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
+      </span>
+    </button>
+  ) : null
+
   return (
     <>
       <AppShell
@@ -566,6 +596,8 @@ function App() {
             zoomWindowActive={zoomWindowActive && centerTab === 'sketch'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
             onActiveSnapModeChange={setActiveSnapMode}
+            depthLegendCollapsed={depthLegendCollapsed}
+            onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
           />
         }
         viewport3d={
@@ -618,6 +650,7 @@ function App() {
         onToolbarOrientationChange={setToolbarOrientationPreference}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
+        statusBarExtras={collapsedDepthLegend}
       />
       
       {showExportDialog && (

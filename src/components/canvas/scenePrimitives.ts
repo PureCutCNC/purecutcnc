@@ -30,6 +30,29 @@ export function drawSketchControls(
 ): void {
   const vertices = profileVertices(profile)
 
+  if (activeControl?.kind === 'segment') {
+    const segment = profile.segments[activeControl.index]
+    if (segment?.type === 'line') {
+      const start = worldToCanvas(anchorPointForIndex(profile, activeControl.index), vt)
+      const end = worldToCanvas(segment.to, vt)
+      ctx.beginPath()
+      ctx.moveTo(start.cx, start.cy)
+      ctx.lineTo(end.cx, end.cy)
+      ctx.strokeStyle = '#f7d394'
+      ctx.lineWidth = 5
+      ctx.lineCap = 'round'
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(start.cx, start.cy)
+      ctx.lineTo(end.cx, end.cy)
+      ctx.strokeStyle = '#f2b95c'
+      ctx.lineWidth = 3
+      ctx.lineCap = 'round'
+      ctx.stroke()
+    }
+  }
+
   for (let index = 0; index < profile.segments.length; index += 1) {
     const anchor = worldToCanvas(anchorPointForIndex(profile, index), vt)
     const outgoingSegment = profile.segments[index]
