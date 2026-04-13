@@ -36,6 +36,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   const { project, operations, definition, options } = input
   const lines: string[] = []
   const warnings: string[] = []
+  const outputUnits = project.meta.units
   
   const state: ModalState = {
     motionCommand: null,
@@ -76,19 +77,19 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     }
 
     if (axes.x !== undefined) {
-      lineSegments.push(`X${formatGCodeNumber(axes.x, definition)}`)
+      lineSegments.push(`X${formatGCodeNumber(axes.x, definition, outputUnits)}`)
     }
     if (axes.y !== undefined) {
-      lineSegments.push(`Y${formatGCodeNumber(axes.y, definition)}`)
+      lineSegments.push(`Y${formatGCodeNumber(axes.y, definition, outputUnits)}`)
     }
     if (axes.z !== undefined) {
-      lineSegments.push(`Z${formatGCodeNumber(axes.z, definition)}`)
+      lineSegments.push(`Z${formatGCodeNumber(axes.z, definition, outputUnits)}`)
     }
 
     if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
       const feedChanged = state.feedRate !== feed
       if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
-        const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition)}`
+        const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
         if (definition.feedSpeed.inlineWithMotion) {
           lineSegments.push(fWord)
         } else if (feedChanged) {
@@ -176,7 +177,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     // Spindle On
     const rpm = operation.rpm || tool.defaultRpm
     if (!state.spindleOn || state.spindleSpeed !== rpm) {
-      emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition)}`)
+      emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
       state.spindleOn = true
       state.spindleSpeed = rpm
     }

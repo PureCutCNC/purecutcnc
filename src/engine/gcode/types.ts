@@ -18,6 +18,18 @@ import { z } from 'zod'
 import type { Project, Operation } from '../../types/project'
 import type { ToolpathResult, NormalizedTool } from '../toolpaths/types'
 
+const DecimalPlacesSchema = z.union([
+  z.number(),
+  z.object({
+    mm: z.number(),
+    inch: z.number(),
+  }),
+]).transform((value) => (
+  typeof value === 'number'
+    ? { mm: value, inch: value }
+    : value
+))
+
 export const MachineDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -31,7 +43,7 @@ export const MachineDefinitionSchema = z.object({
     zAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
   }),
   numberFormat: z.object({
-    decimalPlaces: z.number(),
+    decimalPlaces: DecimalPlacesSchema,
     trailingZeros: z.boolean(),
     leadingZero: z.boolean(),
   }),

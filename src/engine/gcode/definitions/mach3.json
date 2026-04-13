@@ -10,7 +10,10 @@
     "zAxis": "Z"
   },
   "numberFormat": {
-    "decimalPlaces": 4,
+    "decimalPlaces": {
+      "mm": 3,
+      "inch": 4
+    },
     "trailingZeros": true,
     "leadingZero": true
   },

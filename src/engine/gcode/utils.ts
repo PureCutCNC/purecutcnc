@@ -59,12 +59,14 @@ export function projectToMachinePoint(
  */
 export function formatGCodeNumber(
   value: number,
-  definition: MachineDefinition
+  definition: MachineDefinition,
+  units: 'mm' | 'inch'
 ): string {
   const { decimalPlaces, trailingZeros, leadingZero } = definition.numberFormat
+  const precision = decimalPlaces[units]
   
   // Basic fixed-point formatting
-  let s = value.toFixed(decimalPlaces)
+  let s = value.toFixed(precision)
   
   // Handle trailing zeros: "1.000" -> "1" if false
   if (!trailingZeros && s.includes('.')) {
