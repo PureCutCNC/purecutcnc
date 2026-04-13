@@ -919,6 +919,94 @@
   border-color: var(--accent);
 }
 
+.sketch-depth-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  min-width: 158px;
+  padding: 10px 10px 9px;
+  border: 1px solid rgba(91, 117, 138, 0.78);
+  border-radius: 10px;
+  background: rgba(16, 22, 30, 0.92);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.sketch-depth-legend__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: rgba(230, 238, 245, 0.94);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sketch-depth-legend__toggle,
+.statusbar-depth-legend {
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: rgba(13, 19, 27, 0.88);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.sketch-depth-legend__toggle {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.sketch-depth-legend__toggle:hover,
+.statusbar-depth-legend:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.sketch-depth-legend__items {
+  display: grid;
+  gap: 7px;
+}
+
+.sketch-depth-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(206, 220, 231, 0.95);
+  font-size: 11px;
+}
+
+.sketch-depth-legend__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 12px;
+}
+
+.sketch-depth-legend__swatch--subtract-shallow {
+  background: #5da5d8;
+}
+
+.sketch-depth-legend__swatch--subtract-deep {
+  background: #3f76b4;
+}
+
+.sketch-depth-legend__swatch--add {
+  background: #63b176;
+}
+
+.sketch-depth-legend__swatch--selected {
+  background: #efbc7a;
+}
+
 .sketch-dim-input {
   position: absolute;
   z-index: 5;
@@ -1479,10 +1567,46 @@
   color: var(--text-dim);
   font-size: 12px;
   display: flex;
+  flex-wrap: nowrap;
   gap: 18px;
   align-items: center;
+  height: 35px;
   padding: 8px 14px;
   background: rgba(16, 24, 33, 0.9);
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.statusbar-depth-legend {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1;
+  margin-left: auto;
+  box-sizing: border-box;
+}
+
+.statusbar-depth-legend__label {
+  color: inherit;
+}
+
+.statusbar-depth-legend__swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar-depth-legend .sketch-depth-legend__swatch {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
 }
 
 .cam-panel {
@@ -1888,11 +2012,6 @@
   .toolbar-group {
     border-right: none;
     padding-right: 0;
-  }
-
-  .app-statusbar {
-    flex-wrap: wrap;
-    row-gap: 6px;
   }
 
   .cam-tools-layout {

@@ -33,8 +33,9 @@ export interface SelectionState {
 }
 
 export interface SketchControlRef {
-  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle'
+  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle' | 'segment'
   index: number
+  t?: number
 }
 
 export type SketchEditTool = 'add_point' | 'delete_point' | 'fillet'

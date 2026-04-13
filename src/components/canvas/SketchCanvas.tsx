@@ -38,7 +38,6 @@ import type { DimensionEditState, OperationDimEdit } from './manualEntry'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import {
-  drawDepthLegend,
   drawFeature,
   drawMoveGuide,
   drawPendingPathLoop,
@@ -124,6 +123,8 @@ interface SketchCanvasProps {
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
   onActiveSnapModeChange?: (mode: SnapMode | null) => void
+  depthLegendCollapsed?: boolean
+  onToggleDepthLegend?: () => void
 }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
@@ -138,6 +139,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     zoomWindowActive = false,
     onZoomWindowComplete,
     onActiveSnapModeChange,
+    depthLegendCollapsed = false,
+    onToggleDepthLegend,
   },
   ref
 ) {
@@ -170,6 +173,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
+  const hoveredEditControlRef = useRef<SketchControlRef | null>(null)
   const dimensionEditRef = useRef<DimensionEditState | null>(null)
   const dimensionEditControlRef = useRef<SketchControlRef | null>(null)
   const dimensionEditFeatureIdRef = useRef<string | null>(null)
@@ -303,6 +307,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     scheduleDraw()
   }
 
+  function sameControl(a: SketchControlRef | null, b: SketchControlRef | null): boolean {
+    return a?.kind === b?.kind && a?.index === b?.index && a?.t === b?.t
+  }
+
+  function setHoveredEditControl(nextControl: SketchControlRef | null) {
+    if (sameControl(hoveredEditControlRef.current, nextControl)) {
+      return
+    }
+    hoveredEditControlRef.current = nextControl
+    scheduleDraw()
+  }
+
   function isActiveSnapPoint(point: Point | null | undefined): boolean {
     return !!point && !!activeSnapRef.current?.mode && pointsEqual(point, activeSnapRef.current.point, 1e-6)
   }
@@ -415,6 +431,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     if (selection.mode !== 'sketch_edit') {
+      hoveredEditControlRef.current = null
       dimensionEditControlRef.current = null
       dimensionEditFeatureIdRef.current = null
       editDimStepsRef.current = []
@@ -422,6 +439,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       setDimensionEdit(null)
     }
   }, [selection.mode])
+
+  useEffect(() => {
+    if (
+      selection.mode !== 'sketch_edit'
+      || selection.selectedNode?.type !== 'feature'
+      || !!selection.sketchEditTool
+    ) {
+      setHoveredEditControl(null)
+    }
+  }, [selection.mode, selection.selectedFeatureId, selection.selectedNode, selection.sketchEditTool])
 
   useEffect(() => {
     pendingOffsetPreviewPointRef.current = null
@@ -596,9 +623,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
 
       if (editing) {
-        const editControl = isDraggingNodeRef.current ? selection.activeControl : (dimensionEditControlRef.current ?? selection.activeControl)
+        const hoveredEditControl =
+          !isDraggingNodeRef.current && !dimensionEditControlRef.current
+            ? hoveredEditControlRef.current
+            : null
+        const editControl =
+          isDraggingNodeRef.current
+            ? selection.activeControl
+            : (dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
         drawSketchControls(ctx, feature.sketch.profile, vt, editControl)
-        if (isDraggingNodeRef.current || dimensionEditControlRef.current) {
+        if (editControl && (isDraggingNodeRef.current || dimensionEditControlRef.current || hoveredEditControl)) {
           drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
       }
@@ -970,7 +1004,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
         }
 
-        drawDepthLegend(ctx, width, height)
         return
       }
 
@@ -1102,7 +1135,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     drawSnapIndicator(ctx, activeSnapRef.current, vt)
-    drawDepthLegend(ctx, width, height)
   }
 
   function scheduleDraw() {
@@ -1386,7 +1418,49 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
   }
 
-  function hitEditableControl(point: CanvasPoint): SketchControlRef | null {
+  function computeEditStepsForControl(profile: SketchFeature['sketch']['profile'], control: SketchControlRef | null): EditDimStep[] {
+    if (!control) {
+      return []
+    }
+
+    if (control.kind === 'anchor') {
+      return computeEditDimSteps(profile, control.index)
+    }
+
+    if (control.kind === 'arc_handle') {
+      return [{ kind: 'arc_radius', control, arcStartAnchorIndex: control.index }]
+    }
+
+    return []
+  }
+
+  function projectPointToSegment(point: Point, start: Point, end: Point): { point: Point; t: number; distance: number } {
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const lengthSq = dx * dx + dy * dy
+    if (lengthSq <= 1e-12) {
+      return {
+        point: start,
+        t: 0,
+        distance: Math.hypot(point.x - start.x, point.y - start.y),
+      }
+    }
+
+    const rawT = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq
+    const t = Math.max(0, Math.min(1, rawT))
+    const projectedPoint = {
+      x: start.x + dx * t,
+      y: start.y + dy * t,
+    }
+
+    return {
+      point: projectedPoint,
+      t,
+      distance: Math.hypot(point.x - projectedPoint.x, point.y - projectedPoint.y),
+    }
+  }
+
+  function hitEditableControl(point: CanvasPoint, options?: { includeSegments?: boolean }): SketchControlRef | null {
     const feature = editableFeature()
     const clamp = editableClamp()
     const tab = editableTab()
@@ -1404,6 +1478,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!profile || (feature && feature.locked)) return null
 
     const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+    const worldPoint = canvasToWorld(point.cx, point.cy, vt)
     const vertices = profileVertices(profile)
     let bestControl: SketchControlRef | null = null
     let bestDistanceSq = NODE_HIT_RADIUS * NODE_HIT_RADIUS
@@ -1459,6 +1534,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    if (feature && options?.includeSegments !== false && !bestControl) {
+      const segmentHitRadiusSq = NODE_HIT_RADIUS * NODE_HIT_RADIUS
+      for (let index = 0; index < profile.segments.length; index += 1) {
+        const segment = profile.segments[index]
+        if (segment.type !== 'line') {
+          continue
+        }
+
+        const start = anchorPointForIndex(profile, index)
+        const projected = projectPointToSegment(worldPoint, start, segment.to)
+        const projectedCanvas = worldToCanvas(projected.point, vt)
+        const d2 = distance2(point, projectedCanvas)
+        if (d2 <= Math.min(bestDistanceSq, segmentHitRadiusSq)) {
+          bestDistanceSq = d2
+          bestControl = { kind: 'segment', index, t: projected.t }
+        }
+      }
+    }
+
     return bestControl
   }
 
@@ -1473,6 +1567,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (zoomWindowActive && event.button === 0) {
       zoomWindowStartRef.current = point
       zoomWindowCurrentRef.current = point
+      setHoveredEditControl(null)
       hoverFeature(null)
       updateActiveSnap(null)
       scheduleDraw()
@@ -1484,6 +1579,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       isPanningRef.current = true
       didPanRef.current = false
       lastPanPointRef.current = point
+      setHoveredEditControl(null)
       return
     }
 
@@ -1509,6 +1605,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       marqueeStartRef.current = point
       marqueeCurrentRef.current = point
+      setHoveredEditControl(null)
       scheduleDraw()
       return
     }
@@ -1517,9 +1614,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    let nextControl = control
+    if (control.kind === 'segment' && selection.selectedFeatureId) {
+      const resolvedSnap = resolveCurrentSketchSnap(world, vt)
+      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
+      const feature = editableFeature()
+      const segment = feature?.sketch.profile.segments[control.index]
+      if (feature && segment?.type === 'line') {
+        const segmentStart = anchorPointForIndex(feature.sketch.profile, control.index)
+        const projected = projectPointToSegment(targetPoint, segmentStart, segment.to)
+        nextControl = {
+          kind: 'segment',
+          index: control.index,
+          t: projected.t,
+        }
+      }
+    }
+
     beginHistoryTransaction()
-    setActiveControl(control)
+    setActiveControl(nextControl)
     isDraggingNodeRef.current = true
+
+    if (nextControl.kind === 'segment' && selection.selectedFeatureId) {
+      const resolvedSnap = resolveCurrentSketchSnap(world, vt)
+      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
+      moveFeatureControl(selection.selectedFeatureId, nextControl, targetPoint)
+      updateActiveSnap(resolvedSnap.mode ? resolvedSnap : null)
+    }
   }
 
   function handleCanvasPointerMove(point: CanvasPoint) {
@@ -1542,6 +1663,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       updateActiveSnap(null)
       const dx = point.cx - lastPanPointRef.current.cx
       const dy = point.cy - lastPanPointRef.current.cy
@@ -1594,9 +1716,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         })
       : { rawPoint: world, point: world, mode: null as null }
     const snapped = resolvedSnap.point
+    const activeEditControl = selection.activeControl
     const constrainedPoint =
       requiresResolvedSnapForPointPick() && !resolvedSnap.mode
-        ? null
+        ? activeEditControl?.kind === 'segment'
+          ? world
+          : null
         : snapped
     updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
@@ -1604,6 +1729,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       hoverFeature(null)
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
@@ -1618,6 +1744,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       hoverFeature(null)
       const moveEdit = operationDimEditRef.current
       if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
@@ -1642,6 +1769,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       hoverFeature(null)
       const constrainedPoint =
         pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
@@ -1655,6 +1783,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       hoverFeature(null)
       setPendingOffsetRawPreviewPointRef({ point: world, session: pendingOffset.session })
       setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
@@ -1665,6 +1794,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       if (!constrainedPoint) {
         scheduleDraw()
         return
@@ -1677,6 +1807,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       if (!constrainedPoint) {
         scheduleDraw()
         return
@@ -1689,6 +1820,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       sketchEditPreviewRef.current = null
       pendingSketchExtensionRef.current = null
       pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
       if (!constrainedPoint) {
         scheduleDraw()
         return
@@ -1716,6 +1848,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
         scheduleDraw()
+        setHoveredEditControl(null)
         hoverFeature(null)
         return
       }
@@ -1723,12 +1856,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'delete_point') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
-        const control = hitEditableControl(point)
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
-            : null
+          const control = hitEditableControl(point, { includeSegments: false })
+          sketchEditPreviewRef.current =
+            control?.kind === 'anchor'
+              ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
+              : null
         scheduleDraw()
+        setHoveredEditControl(null)
         hoverFeature(null)
         return
       }
@@ -1738,7 +1872,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (pendingSketchFilletRef.current) {
           sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
         } else {
-          const control = hitEditableControl(point)
+          const control = hitEditableControl(point, { includeSegments: false })
           if (control?.kind === 'anchor') {
             const corner = anchorPointForIndex(feature.sketch.profile, control.index)
             sketchEditPreviewRef.current = { point: corner, mode: 'add_point' }
@@ -1747,14 +1881,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
         scheduleDraw()
+        setHoveredEditControl(null)
         hoverFeature(null)
         return
       }
     }
 
+    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
+      const feature = editableFeature()
+      const hoveredControl = feature ? hitEditableControl(point, { includeSegments: false }) : null
+      const steps = feature ? computeEditStepsForControl(feature.sketch.profile, hoveredControl) : []
+      setHoveredEditControl(steps.length > 0 ? hoveredControl : null)
+      hoverFeature(null)
+      return
+    }
+
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
     pendingSketchFilletRef.current = null
+    setHoveredEditControl(null)
 
     const hitTabId = findHitTabId(world, project.tabs)
     if (hitTabId) {
@@ -1859,6 +2004,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     sketchEditPreviewRef.current = null
     pendingSketchFilletRef.current = null
     pendingSketchExtensionRef.current = null
+    setHoveredEditControl(null)
     setPendingOffsetPreviewPointRef(null)
     setPendingOffsetRawPreviewPointRef(null)
     hoverFeature(null)
@@ -1963,7 +2109,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         if (feature && selection.sketchEditTool === 'delete_point') {
-          const control = hitEditableControl(point)
+          const control = hitEditableControl(point, { includeSegments: false })
           if (control?.kind === 'anchor') {
             deleteFeaturePoint(selection.selectedFeatureId, control.index)
           }
@@ -1985,7 +2131,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             return
           }
 
-          const control = hitEditableControl(point)
+          const control = hitEditableControl(point, { includeSegments: false })
           if (control?.kind === 'anchor') {
             pendingSketchFilletRef.current = {
               anchorIndex: control.index,
@@ -2654,14 +2800,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (!feature) return
 
       const profile = feature.sketch.profile
-      const activeControl = selection.activeControl
-
-      let steps: EditDimStep[] = []
-      if (activeControl?.kind === 'anchor') {
-        steps = computeEditDimSteps(profile, activeControl.index)
-      } else if (activeControl?.kind === 'arc_handle') {
-        steps = [{ kind: 'arc_radius', control: activeControl, arcStartAnchorIndex: activeControl.index }]
-      }
+      const control = selection.activeControl ?? hoveredEditControlRef.current
+      const steps = computeEditStepsForControl(profile, control)
 
       if (steps.length === 0) return
 
@@ -2850,6 +2990,40 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onContextMenu={handleContextMenu}
         tabIndex={0}
       />
+      {!depthLegendCollapsed ? (
+        <div className="sketch-depth-legend">
+          <div className="sketch-depth-legend__header">
+            <span>Feature Colors</span>
+            <button
+              className="sketch-depth-legend__toggle tree-action-btn"
+              type="button"
+              onClick={onToggleDepthLegend}
+              aria-label="Collapse feature color legend"
+              title="Collapse legend"
+            >
+              ▾
+            </button>
+          </div>
+          <div className="sketch-depth-legend__items">
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
+              <span>Subtract shallow</span>
+            </div>
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
+              <span>Subtract deep</span>
+            </div>
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
+              <span>Add feature</span>
+            </div>
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
+              <span>Selected</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {dimensionEdit && pendingAdd && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
@@ -3364,10 +3538,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               : selection.sketchEditTool === 'delete_point'
                 ? 'Delete Point active. Click anchors to remove them. Press '
                 : selection.sketchEditTool === 'fillet'
-                  ? pendingSketchFilletRef.current
+                ? pendingSketchFilletRef.current
                     ? 'Fillet active. Click a second point to define the corner round. Press '
                     : 'Fillet active. Click a line-line corner to start. Press '
-                  : 'Drag nodes to reshape. Hover a node and press Tab to type length/angle. Press '}
+                  : 'Drag nodes or straight segments to reshape. Hover a node and press Tab to type length/angle. Press '}
             <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.
           </div>
           {editingFeatureHasSelfIntersection ? (

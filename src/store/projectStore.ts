@@ -3922,19 +3922,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             return feature
           }
 
-          if (control.kind === 'anchor') {
-            const currentAnchor = anchorPointForIndex(nextProfile, control.index)
-
-            if (!currentAnchor) {
-              return feature
-            }
-
+          function moveAnchor(anchorIndex: number, nextPoint: Point): void {
+            const currentAnchor = anchorPointForIndex(nextProfile, anchorIndex)
             const incomingIndex = nextProfile.closed
-              ? (control.index - 1 + segmentCount) % segmentCount
-              : control.index > 0
-                ? control.index - 1
+              ? (anchorIndex - 1 + segmentCount) % segmentCount
+              : anchorIndex > 0
+                ? anchorIndex - 1
                 : null
-            const outgoingIndex = control.index < segmentCount ? control.index : null
+            const outgoingIndex = anchorIndex < segmentCount ? anchorIndex : null
             const originalIncoming = incomingIndex !== null ? nextProfile.segments[incomingIndex] : null
             const originalOutgoing = outgoingIndex !== null ? nextProfile.segments[outgoingIndex] : null
             const originalIncomingStart =
@@ -3943,37 +3938,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 : incomingIndex === 0
                   ? nextProfile.start
                   : nextProfile.segments[incomingIndex - 1]?.to
-            const originalOutgoingStart = currentAnchor
             const incomingArcThrough =
               originalIncoming?.type === 'arc' && originalIncomingStart
                 ? arcControlPoint(originalIncomingStart, originalIncoming)
                 : null
             const outgoingArcThrough =
-              originalOutgoing?.type === 'arc' && originalOutgoingStart
-                ? arcControlPoint(originalOutgoingStart, originalOutgoing)
+              originalOutgoing?.type === 'arc'
+                ? arcControlPoint(currentAnchor, originalOutgoing)
                 : null
 
-            const dx = point.x - currentAnchor.x
-            const dy = point.y - currentAnchor.y
+            const dx = nextPoint.x - currentAnchor.x
+            const dy = nextPoint.y - currentAnchor.y
 
-            if (control.index === 0) {
-              nextProfile.start = point
+            if (anchorIndex === 0) {
+              nextProfile.start = nextPoint
               const closingSegment = nextProfile.closed ? nextProfile.segments[segmentCount - 1] : null
               if (closingSegment) {
-                closingSegment.to = point
+                closingSegment.to = nextPoint
                 if (closingSegment.type === 'bezier') {
                   closingSegment.control2 = translatePoint(closingSegment.control2, dx, dy)
                 }
               }
-            } else if (control.index === anchorCount - 1 && !nextProfile.closed) {
-              nextProfile.segments[segmentCount - 1].to = point
+            } else if (anchorIndex === anchorCount - 1 && !nextProfile.closed) {
+              nextProfile.segments[segmentCount - 1].to = nextPoint
               const incomingSegment = nextProfile.segments[segmentCount - 1]
               if (incomingSegment.type === 'bezier') {
                 incomingSegment.control2 = translatePoint(incomingSegment.control2, dx, dy)
               }
-            } else if (control.index > 0) {
-              nextProfile.segments[control.index - 1].to = point
-              const incomingSegment = nextProfile.segments[control.index - 1]
+            } else if (anchorIndex > 0) {
+              nextProfile.segments[anchorIndex - 1].to = nextPoint
+              const incomingSegment = nextProfile.segments[anchorIndex - 1]
               if (incomingSegment.type === 'bezier') {
                 incomingSegment.control2 = translatePoint(incomingSegment.control2, dx, dy)
               }
@@ -3982,7 +3976,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             const incomingSegment = incomingIndex !== null ? nextProfile.segments[incomingIndex] : null
             if (incomingSegment?.type === 'arc' && incomingArcThrough) {
               const incomingStart =
-                incomingIndex === 0
+                incomingIndex !== null && incomingIndex === 0
                   ? nextProfile.start
                   : incomingIndex !== null
                     ? nextProfile.segments[incomingIndex - 1]?.to
@@ -3997,8 +3991,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
             const outgoingSegment = outgoingIndex !== null ? nextProfile.segments[outgoingIndex] : null
             if (outgoingSegment?.type === 'arc' && outgoingArcThrough) {
-              const outgoingStart =
-                control.index === 0 ? nextProfile.start : nextProfile.segments[control.index - 1]?.to
+              const outgoingStart = anchorIndex === 0 ? nextProfile.start : nextProfile.segments[anchorIndex - 1]?.to
               if (outgoingStart) {
                 const rebuiltOutgoing = buildArcSegmentFromThreePoints(outgoingStart, outgoingSegment.to, outgoingArcThrough)
                 if (rebuiltOutgoing && outgoingIndex !== null) {
@@ -4010,6 +4003,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             if (outgoingSegment?.type === 'bezier') {
               outgoingSegment.control1 = translatePoint(outgoingSegment.control1, dx, dy)
             }
+          }
+
+          if (control.kind === 'anchor') {
+            moveAnchor(control.index, point)
+          } else if (control.kind === 'segment') {
+            const segment = nextProfile.segments[control.index]
+            if (segment?.type !== 'line') {
+              return feature
+            }
+
+            const segmentStartIndex = control.index
+            const segmentEndIndex = nextProfile.closed ? (control.index + 1) % anchorCount : control.index + 1
+            const segmentStart = anchorPointForIndex(nextProfile, segmentStartIndex)
+            const hitPoint = lerpPoint(segmentStart, segment.to, Math.max(0, Math.min(1, control.t ?? 0.5)))
+            const dx = point.x - hitPoint.x
+            const dy = point.y - hitPoint.y
+            moveAnchor(segmentStartIndex, translatePoint(segmentStart, dx, dy))
+            moveAnchor(segmentEndIndex, translatePoint(segment.to, dx, dy))
           } else if (control.kind === 'out_handle') {
             const outgoingSegment = nextProfile.segments[control.index]
             if (outgoingSegment?.type === 'bezier') {

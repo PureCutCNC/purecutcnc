@@ -199,14 +199,23 @@ export function drawActiveEditMeasurements(
   }
 
   if (activeControl.kind === 'anchor') {
-    const indices: number[] = []
+    const indices = new Set<number>()
     if (profile.closed || activeControl.index > 0) {
-      indices.push((activeControl.index - 1 + profile.segments.length) % profile.segments.length)
+      indices.add((activeControl.index - 1 + profile.segments.length) % profile.segments.length)
     }
     if (activeControl.index < profile.segments.length) {
-      indices.push(activeControl.index)
+      indices.add(activeControl.index)
     }
-    drawProfileLineMeasurements(ctx, profile, vt, units, { segmentIndices: indices })
+
+    for (const index of indices) {
+      const segment = profile.segments[index]
+      const start = anchorPointForIndex(profile, index)
+      if (segment?.type === 'line' || segment?.type === 'bezier') {
+        drawLineLengthMeasurement(ctx, start, segment.to, vt, units)
+      } else if (segment?.type === 'arc') {
+        drawArcRadiusMeasurement(ctx, start, segment, vt, units)
+      }
+    }
     return
   }
 
@@ -214,6 +223,14 @@ export function drawActiveEditMeasurements(
     const segment = profile.segments[activeControl.index]
     if (segment?.type === 'arc') {
       drawArcRadiusMeasurement(ctx, anchorPointForIndex(profile, activeControl.index), segment, vt, units)
+    }
+    return
+  }
+
+  if (activeControl.kind === 'segment') {
+    const segment = profile.segments[activeControl.index]
+    if (segment?.type === 'line') {
+      drawLineLengthMeasurement(ctx, anchorPointForIndex(profile, activeControl.index), segment.to, vt, units)
     }
   }
 }

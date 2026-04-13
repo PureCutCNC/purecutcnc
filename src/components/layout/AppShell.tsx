@@ -24,6 +24,7 @@ interface AppShellProps {
   onToolbarOrientationChange: (orientation: 'top' | 'left') => void
   rightTab: 'operations' | 'tools' | 'ai'
   onRightTabChange: (tab: 'operations' | 'tools' | 'ai') => void
+  statusBarExtras?: ReactNode
 }
 
 function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 | -1): T {
@@ -52,6 +53,7 @@ export function AppShell({
   onToolbarOrientationChange,
   rightTab,
   onRightTabChange,
+  statusBarExtras,
 }: AppShellProps) {
   const { project } = useProjectStore()
   const stockBounds = getStockBounds(project.stock)
@@ -380,6 +382,7 @@ export function AppShell({
         </span>
         <span>{project.grid.visible ? 'Grid Visible' : 'Grid Hidden'}</span>
         <span>{project.stock.visible ? 'Stock Visible' : 'Stock Hidden'}</span>
+        {statusBarExtras}
       </footer>
     </div>
   )
