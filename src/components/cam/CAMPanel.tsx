@@ -760,25 +760,17 @@ export function CAMPanel({
     }
   }
 
-  function handleDuplicateOperation() {
-    if (!selectedOperation) {
-      return
-    }
-
-    const operationId = duplicateOperation(selectedOperation.id)
-    if (operationId) {
-      onSelectedOperationIdChange(operationId)
+  function handleDuplicateOperation(operationId: string) {
+    const newId = duplicateOperation(operationId)
+    if (newId) {
+      onSelectedOperationIdChange(newId)
     }
   }
 
-  function handleDeleteOperation() {
-    if (!selectedOperation) {
-      return
-    }
-
-    const currentIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
+  function handleDeleteOperation(operationId: string) {
+    const currentIndex = project.operations.findIndex((operation) => operation.id === operationId)
     const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
-    deleteOperation(selectedOperation.id)
+    deleteOperation(operationId)
     onSelectedOperationIdChange(fallback)
   }
 
@@ -1026,6 +1018,30 @@ export function CAMPanel({
                               {operation.showToolpath ? '◉' : '○'}
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title="Duplicate operation"
+                              aria-label="Duplicate operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDuplicateOperation(operation.id)
+                              }}
+                            >
+                              ⧉
+                            </button>
+                            <button
+                              className="tree-action-btn tree-action-btn--delete"
+                              type="button"
+                              title="Delete operation"
+                              aria-label="Delete operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDeleteOperation(operation.id)
+                              }}
+                            >
+                              ✕
+                            </button>
                           </span>
                         </div>
                       ))}
@@ -1041,16 +1057,6 @@ export function CAMPanel({
                 <span>Properties</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-toolbar cam-section-toolbar--end">
-                  <div className="cam-section-header-actions">
-                  <button className="cam-header-action" type="button" onClick={handleDuplicateOperation} disabled={!selectedOperation}>
-                    Duplicate
-                  </button>
-                  <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteOperation} disabled={!selectedOperation}>
-                    Delete
-                  </button>
-                  </div>
-                </div>
                 <div className="cam-section-body">
                 {selectedOperation ? (
                   <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
