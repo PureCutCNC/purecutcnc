@@ -21,6 +21,7 @@ import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, Toolpath
 import {
   DEFAULT_CLIPPER_SCALE,
   applyContourDirection,
+  checkMaxCutDepthWarning,
   flattenProfile,
   fromClipperPath,
   getOperationSafeZ,
@@ -338,6 +339,15 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     .filter((feature) => feature.operation === expectedFeatureOperation)
 
   const warnings: string[] = []
+  const maxFeatureDepth = targetFeatures.reduce((max, feature) => {
+    const span = resolveFeatureZSpan(project, feature)
+    return Math.max(max, span.height)
+  }, 0)
+  const depthWarning = checkMaxCutDepthWarning(tool, maxFeatureDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
+
   if (targetFeatures.length !== operation.target.featureIds.length) {
     warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation} features`)
   }

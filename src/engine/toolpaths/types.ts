@@ -68,6 +68,7 @@ export interface NormalizedTool {
   defaultPlungeFeed: number
   defaultStepdown: number
   defaultStepover: number
+  maxCutDepth: number
 }
 
 export interface ResolvedFeatureZSpan {

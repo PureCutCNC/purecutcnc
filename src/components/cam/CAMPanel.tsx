@@ -31,6 +31,7 @@ import type {
 } from '../../types/project'
 import { featureHasClosedGeometry } from '../../text'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
+import { PanelSplit } from './PanelSplit'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -458,9 +459,11 @@ export function CAMPanel({
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
-  const [libraryName, setLibraryName] = useState('Bundled Tool Library')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState<string | null>(null)
+  const [showLibraryBrowser, setShowLibraryBrowser] = useState(false)
+  const [libraryTypeFilter, setLibraryTypeFilter] = useState<ToolType | 'all'>('all')
+  const [libraryUnitsFilter, setLibraryUnitsFilter] = useState<Tool['units'] | 'all'>('all')
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
   const [selectedNewOperationKind, setSelectedNewOperationKind] = useState<OperationKind | null>(null)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
@@ -499,9 +502,13 @@ export function CAMPanel({
     ? project.tools.find((tool) => tool.id === selectedToolId) ?? null
     : null
 
-  const missingLibraryTools = useMemo(
-    () => libraryTools.filter((libraryTool) => !project.tools.some((tool) => toolMatchesLibraryEntry(tool, libraryTool))),
-    [libraryTools, project.tools]
+  const filteredLibraryTools = useMemo(
+    () => libraryTools.filter((libraryTool) => {
+      if (libraryTypeFilter !== 'all' && libraryTool.type !== libraryTypeFilter) return false
+      if (libraryUnitsFilter !== 'all' && libraryTool.units !== libraryUnitsFilter) return false
+      return true
+    }),
+    [libraryTools, libraryTypeFilter, libraryUnitsFilter]
   )
 
   const selectedOperationId =
@@ -532,7 +539,6 @@ export function CAMPanel({
     setLibraryLoading(true)
     try {
       const library = await loadBundledToolLibrary()
-      setLibraryName(library.name)
       setLibraryTools(library.tools)
       setLibraryError(null)
       return library.tools
@@ -637,52 +643,57 @@ export function CAMPanel({
     setSelectedToolId(toolId)
   }
 
-  function handleDuplicateTool() {
-    if (!selectedTool) {
+  function handleDeleteTool(toolId?: string) {
+    const id = toolId ?? selectedTool?.id
+    if (!id) {
       return
     }
 
-    const toolId = duplicateTool(selectedTool.id)
-    if (toolId) {
-      setSelectedToolId(toolId)
-    }
-  }
-
-  function handleDeleteTool() {
-    if (!selectedTool) {
+    const inUse = project.operations.some((op) => op.toolRef === id)
+    if (inUse) {
       return
     }
 
-    const currentIndex = project.tools.findIndex((tool) => tool.id === selectedTool.id)
+    const currentIndex = project.tools.findIndex((tool) => tool.id === id)
     const fallback = project.tools[currentIndex - 1]?.id ?? project.tools[currentIndex + 1]?.id ?? null
-    deleteTool(selectedTool.id)
+    deleteTool(id)
     setSelectedToolId(fallback)
   }
 
-  async function handleImportLibrary() {
-    const sourceTools = libraryTools.length > 0 ? libraryTools : await ensureBundledLibraryLoaded()
-    const importCandidates = sourceTools.filter((libraryTool) => !project.tools.some((tool) => toolMatchesLibraryEntry(tool, libraryTool)))
-
-    if (importCandidates.length === 0) {
-      return
+  function handleDuplicateToolById(toolId: string) {
+    const toolToDupe = project.tools.find((t) => t.id === toolId)
+    if (!toolToDupe) return
+    const newId = duplicateTool(toolId)
+    if (newId) {
+      setSelectedToolId(newId)
     }
+  }
 
-    const importedIds = importTools(importCandidates.map((tool) => ({
-      name: tool.name,
-      units: tool.units,
-      type: tool.type,
-      diameter: tool.diameter,
-      vBitAngle: tool.vBitAngle,
-      flutes: tool.flutes,
-      material: tool.material,
-      defaultRpm: tool.defaultRpm,
-      defaultFeed: tool.defaultFeed,
-      defaultPlungeFeed: tool.defaultPlungeFeed,
-      defaultStepdown: tool.defaultStepdown,
-      defaultStepover: tool.defaultStepover,
-    })))
+  async function handleOpenLibraryBrowser() {
+    if (!showLibraryBrowser) {
+      await ensureBundledLibraryLoaded()
+    }
+    setShowLibraryBrowser((prev) => !prev)
+  }
+
+  function handleImportLibraryTool(entry: ToolLibraryEntry) {
+    const importedIds = importTools([{
+      name: entry.name,
+      units: entry.units,
+      type: entry.type,
+      diameter: entry.diameter,
+      vBitAngle: entry.vBitAngle,
+      flutes: entry.flutes,
+      material: entry.material,
+      defaultRpm: entry.defaultRpm,
+      defaultFeed: entry.defaultFeed,
+      defaultPlungeFeed: entry.defaultPlungeFeed,
+      defaultStepdown: entry.defaultStepdown,
+      defaultStepover: entry.defaultStepover,
+      maxCutDepth: entry.maxCutDepth,
+    }])
     if (importedIds.length > 0) {
-      setSelectedToolId(importedIds[importedIds.length - 1] ?? null)
+      setSelectedToolId(importedIds[0] ?? null)
     }
   }
 
@@ -736,25 +747,17 @@ export function CAMPanel({
     }
   }
 
-  function handleDuplicateOperation() {
-    if (!selectedOperation) {
-      return
-    }
-
-    const operationId = duplicateOperation(selectedOperation.id)
-    if (operationId) {
-      onSelectedOperationIdChange(operationId)
+  function handleDuplicateOperation(operationId: string) {
+    const newId = duplicateOperation(operationId)
+    if (newId) {
+      onSelectedOperationIdChange(newId)
     }
   }
 
-  function handleDeleteOperation() {
-    if (!selectedOperation) {
-      return
-    }
-
-    const currentIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
+  function handleDeleteOperation(operationId: string) {
+    const currentIndex = project.operations.findIndex((operation) => operation.id === operationId)
     const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
-    deleteOperation(selectedOperation.id)
+    deleteOperation(operationId)
     onSelectedOperationIdChange(fallback)
   }
 
@@ -847,7 +850,7 @@ export function CAMPanel({
     <div className="cam-panel">
       {mode === 'operations' ? (
         <div className="cam-operations-shell">
-          <div className="cam-operations-layout">
+          <PanelSplit className="cam-operations-layout" storageKey="operations" initialRatio={0.54} minFirst={160} minSecond={160}>
             <section className="cam-section cam-section--tree">
               <div className="cam-section-header">
                 <span>Operations</span>
@@ -1002,6 +1005,30 @@ export function CAMPanel({
                               {operation.showToolpath ? '◉' : '○'}
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title="Duplicate operation"
+                              aria-label="Duplicate operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDuplicateOperation(operation.id)
+                              }}
+                            >
+                              ⧉
+                            </button>
+                            <button
+                              className="tree-action-btn tree-action-btn--delete"
+                              type="button"
+                              title="Delete operation"
+                              aria-label="Delete operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDeleteOperation(operation.id)
+                              }}
+                            >
+                              ✕
+                            </button>
                           </span>
                         </div>
                       ))}
@@ -1017,19 +1044,9 @@ export function CAMPanel({
                 <span>Properties</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-toolbar cam-section-toolbar--end">
-                  <div className="cam-section-header-actions">
-                  <button className="cam-header-action" type="button" onClick={handleDuplicateOperation} disabled={!selectedOperation}>
-                    Duplicate
-                  </button>
-                  <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteOperation} disabled={!selectedOperation}>
-                    Delete
-                  </button>
-                  </div>
-                </div>
                 <div className="cam-section-body">
                 {selectedOperation ? (
-                  <div key={selectedOperation.id} className="properties-panel cam-tool-properties">
+                  <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
                     <div className="properties-group">
                   <label className="properties-field">
                     <span>Name</span>
@@ -1178,11 +1195,27 @@ export function CAMPanel({
                     <span>Tool</span>
                     <select
                       value={selectedOperation.toolRef ?? ''}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const newToolId = event.target.value || null
+                        const newTool = newToolId ? project.tools.find((t) => t.id === newToolId) ?? null : null
+                        const toolInProjectUnits = newTool && newTool.units !== project.meta.units
+                          ? convertToolUnits(newTool, project.meta.units)
+                          : newTool
+                        const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
                         updateOperation(selectedOperation.id, {
-                          toolRef: event.target.value || null,
+                          toolRef: newToolId,
+                          ...(toolInProjectUnits ? {
+                            feed: toolInProjectUnits.defaultFeed,
+                            plungeFeed: toolInProjectUnits.defaultPlungeFeed,
+                            stepdown: toolInProjectUnits.defaultStepdown,
+                            stepover: toolInProjectUnits.defaultStepover,
+                            rpm: toolInProjectUnits.defaultRpm,
+                            ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {
+                              maxCarveDepth: toolInProjectUnits.maxCutDepth,
+                            } : {}),
+                          } : {}),
                         })
-                      }
+                      }}
                     >
                       <option value="">No Tool</option>
                       {(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
@@ -1288,11 +1321,11 @@ export function CAMPanel({
                 </div>
               </div>
             </section>
-          </div>
+          </PanelSplit>
         </div>
       ) : (
         <div className="cam-tools">
-          <div className="cam-tools-layout">
+          <PanelSplit className="cam-tools-layout" storageKey="tools" initialRatio={0.42} minFirst={140} minSecond={140}>
             <section className="cam-section">
               <div className="cam-section-header">
                 <span>Tools</span>
@@ -1304,57 +1337,123 @@ export function CAMPanel({
                     Add Tool
                   </button>
                   <button
-                    className="cam-header-action"
+                    className={['cam-header-action', showLibraryBrowser ? 'cam-header-action--active' : ''].join(' ')}
                     type="button"
-                    onClick={handleImportLibrary}
-                    disabled={libraryLoading || (libraryTools.length > 0 && missingLibraryTools.length === 0)}
-                    title={libraryLoading ? 'Loading bundled tool library' : undefined}
+                    onClick={handleOpenLibraryBrowser}
+                    disabled={libraryLoading}
+                    title={libraryLoading ? 'Loading bundled tool library...' : undefined}
                   >
-                    Import Library
+                    {libraryLoading ? 'Loading...' : 'Import from Library'}
                   </button>
                 </div>
-                <div className="cam-section-body cam-section-body--stack">
-                  <div className="cam-section-note">
-                    {libraryLoading
-                      ? 'Loading bundled tool library...'
-                      : libraryError
-                        ? `Tool library: ${libraryError}`
-                        : libraryTools.length > 0
-                          ? `${libraryName}: ${libraryTools.length} tools, ${missingLibraryTools.length} missing from project.`
-                          : 'Bundled tool library not loaded yet.'}
+                {showLibraryBrowser ? (
+                  <div className="cam-library-browser">
+                    <div className="cam-library-browser__filters">
+                      <select
+                        value={libraryTypeFilter}
+                        onChange={(event) => setLibraryTypeFilter(event.target.value as ToolType | 'all')}
+                      >
+                        <option value="all">All Types</option>
+                        <option value="flat_endmill">Flat Endmill</option>
+                        <option value="ball_endmill">Ball Endmill</option>
+                        <option value="v_bit">V-Bit</option>
+                        <option value="drill">Drill</option>
+                      </select>
+                      <select
+                        value={libraryUnitsFilter}
+                        onChange={(event) => setLibraryUnitsFilter(event.target.value as Tool['units'] | 'all')}
+                      >
+                        <option value="all">All Units</option>
+                        <option value="mm">mm</option>
+                        <option value="inch">in</option>
+                      </select>
+                    </div>
+                    {libraryError ? (
+                      <div className="cam-section-note">{libraryError}</div>
+                    ) : filteredLibraryTools.length === 0 ? (
+                      <div className="cam-section-note">No tools match the selected filters.</div>
+                    ) : (
+                      <div className="cam-library-browser__list">
+                        {filteredLibraryTools.map((entry) => {
+                          const alreadyImported = project.tools.some((tool) => toolMatchesLibraryEntry(tool, entry))
+                          return (
+                            <div key={entry.key} className={['cam-library-tool', alreadyImported ? 'cam-library-tool--imported' : ''].join(' ')}>
+                              <span className="cam-library-tool__name">{entry.name}</span>
+                              <span className="cam-library-tool__meta">
+                                {toolTypeLabel(entry.type)} · ⌀{formatLength(entry.diameter, entry.units)} {toolUnitsLabel(entry.units)}{entry.maxCutDepth > 0 ? ` · max ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}` : ''}
+                              </span>
+                              <button
+                                className="cam-header-action"
+                                type="button"
+                                disabled={alreadyImported}
+                                onClick={() => handleImportLibraryTool(entry)}
+                              >
+                                {alreadyImported ? 'Imported' : 'Import'}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
+                ) : null}
+                <div className="cam-section-body cam-section-body--stack">
                   <div className="feature-tree-panel cam-tool-tree">
                     {project.tools.length === 0 ? (
                       <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
                     ) : (
                       <div className="tree-list">
-                        {project.tools.map((tool) => (
-                          <div
-                            key={tool.id}
-                            className={[
-                              'tree-row',
-                              'tree-row--feature',
-                              tool.id === selectedToolId ? 'tree-row--selected' : '',
-                            ].join(' ')}
-                            onClick={() => setSelectedToolId(tool.id)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                setSelectedToolId(tool.id)
-                              }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                          >
-                            <span className="tree-branch" aria-hidden="true" />
-                            <span className="tree-label cam-tool-label" title={tool.name}>
-                              <span className="cam-tool-label__name">{tool.name}</span>
-                              <span className="cam-tool-label__meta">
-                                {toolTypeLabel(tool.type)} · {formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}
+                        {project.tools.map((tool) => {
+                          const usedByOperation = project.operations.some((op) => op.toolRef === tool.id)
+                          return (
+                            <div
+                              key={tool.id}
+                              className={[
+                                'tree-row',
+                                'tree-row--feature',
+                                tool.id === selectedToolId ? 'tree-row--selected' : '',
+                              ].join(' ')}
+                              onClick={() => setSelectedToolId(tool.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  setSelectedToolId(tool.id)
+                                }
+                              }}
+                              role="button"
+                              tabIndex={0}
+                            >
+                              <span className="tree-branch" aria-hidden="true" />
+                              <span className="tree-label cam-tool-label" title={tool.name}>
+                                <span className="cam-tool-label__name">{tool.name}</span>
+                                <span className="cam-tool-label__meta">
+                                  {toolTypeLabel(tool.type)} · ⌀{formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}{tool.maxCutDepth > 0 ? ` · max ${formatLength(tool.maxCutDepth, tool.units)} ${toolUnitsLabel(tool.units)}` : ''}
+                                </span>
                               </span>
-                            </span>
-                          </div>
-                        ))}
+                              <div className="tree-row-actions" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  className="tree-action-btn"
+                                  title="Duplicate tool"
+                                  aria-label="Duplicate tool"
+                                  onClick={() => handleDuplicateToolById(tool.id)}
+                                >
+                                  ⧉
+                                </button>
+                                <button
+                                  type="button"
+                                  className={['tree-action-btn', usedByOperation ? 'tree-action-btn--muted' : 'tree-action-btn--delete'].join(' ')}
+                                  title={usedByOperation ? 'Tool is used by an operation' : 'Delete tool'}
+                                  aria-label={usedByOperation ? 'Tool is used by an operation' : 'Delete tool'}
+                                  disabled={usedByOperation}
+                                  onClick={() => handleDeleteTool(tool.id)}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -1367,16 +1466,6 @@ export function CAMPanel({
                 <span>Properties</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-toolbar cam-section-toolbar--end">
-                  <div className="cam-section-header-actions">
-                    <button className="cam-header-action" type="button" onClick={handleDuplicateTool} disabled={!selectedTool}>
-                      Duplicate
-                    </button>
-                    <button className="cam-header-action cam-header-action--danger" type="button" onClick={handleDeleteTool} disabled={!selectedTool}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
                 <div className="cam-section-body">
                   {selectedTool ? (
                     <div key={selectedTool.id} className="properties-panel cam-tool-properties">
@@ -1488,6 +1577,15 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
+                        <span>Max Cut Depth</span>
+                        <DraftLengthInput
+                          value={selectedTool.maxCutDepth}
+                          units={selectedTool.units}
+                          min={0}
+                          onCommit={(value) => updateTool(selectedTool.id, { maxCutDepth: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
                         <span>Stepover Ratio</span>
                         <DraftNumberInput
                           value={selectedTool.defaultStepover}
@@ -1504,7 +1602,7 @@ export function CAMPanel({
                 </div>
               </div>
             </section>
-          </div>
+          </PanelSplit>
         </div>
       )}
     </div>

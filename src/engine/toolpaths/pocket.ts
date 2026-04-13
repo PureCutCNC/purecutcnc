@@ -28,6 +28,7 @@ import type {
 import {
   DEFAULT_CLIPPER_SCALE,
   applyContourDirection,
+  checkMaxCutDepthWarning,
   fromClipperPath,
   getOperationSafeZ,
   normalizeWinding,
@@ -1076,6 +1077,11 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   const direction = operation.cutDirection ?? 'conventional'
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
+  const maxBandDepth = resolved.bands.reduce((max, band) => Math.max(max, Math.abs(band.topZ - band.bottomZ)), 0)
+  const depthWarning = checkMaxCutDepthWarning(tool, maxBandDepth)
+  if (depthWarning) {
+    warnings.push(depthWarning)
+  }
   const allStepLevels = new Set<number>()
 
   const formatZ = (value: number) => Number(value.toFixed(6)).toString()

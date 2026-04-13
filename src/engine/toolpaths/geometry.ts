@@ -82,6 +82,7 @@ export function normalizeToolForProject(tool: Tool, project: Project): Normalize
     defaultPlungeFeed: normalizedTool.defaultPlungeFeed,
     defaultStepdown: normalizedTool.defaultStepdown,
     defaultStepover: normalizedTool.defaultStepover,
+    maxCutDepth: normalizedTool.maxCutDepth,
   }
 }
 
@@ -156,6 +157,13 @@ export function toClipperPath(points: Point[], scale = DEFAULT_CLIPPER_SCALE): C
 
 export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE): Point[] {
   return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
+}
+
+export function checkMaxCutDepthWarning(tool: NormalizedTool, cutDepth: number): string | null {
+  if (tool.maxCutDepth > 0 && cutDepth > tool.maxCutDepth) {
+    return `Cut depth ${cutDepth.toFixed(3)} ${tool.units} exceeds tool max cut depth ${tool.maxCutDepth.toFixed(3)} ${tool.units}`
+  }
+  return null
 }
 
 export function getOperationClearance(project: Project): number {
