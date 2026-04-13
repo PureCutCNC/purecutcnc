@@ -17000,6 +17000,363 @@
       "z_bottom": -1,
       "visible": false,
       "locked": false
+    },
+    {
+      "id": "icon_view-bottom_1",
+      "name": "view-bottom_shape_1",
+      "kind": "composite",
+      "folderId": "folder_view-bottom",
+      "sketch": {
+        "profile": {
+          "start": { "x": 4, "y": 4 },
+          "segments": [
+            { "type": "line", "to": { "x": 20, "y": 4 } },
+            { "type": "line", "to": { "x": 20, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 4 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-bottom_2",
+      "name": "view-bottom_shape_2",
+      "kind": "composite",
+      "folderId": "folder_view-bottom",
+      "sketch": {
+        "profile": {
+          "start": { "x": 12, "y": 7 },
+          "segments": [
+            { "type": "line", "to": { "x": 12, "y": 16 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-bottom_3",
+      "name": "view-bottom_shape_3",
+      "kind": "composite",
+      "folderId": "folder_view-bottom",
+      "sketch": {
+        "profile": {
+          "start": { "x": 9, "y": 13 },
+          "segments": [
+            { "type": "line", "to": { "x": 12, "y": 17 } },
+            { "type": "line", "to": { "x": 15, "y": 13 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-front_1",
+      "name": "view-front_shape_1",
+      "kind": "composite",
+      "folderId": "folder_view-front",
+      "sketch": {
+        "profile": {
+          "start": { "x": 4, "y": 4 },
+          "segments": [
+            { "type": "line", "to": { "x": 20, "y": 4 } },
+            { "type": "line", "to": { "x": 20, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 4 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-front_2",
+      "name": "view-front_shape_2",
+      "kind": "composite",
+      "folderId": "folder_view-front",
+      "sketch": {
+        "profile": {
+          "start": { "x": 12, "y": 7 },
+          "segments": [
+            { "type": "line", "to": { "x": 17, "y": 12 } },
+            { "type": "line", "to": { "x": 12, "y": 17 } },
+            { "type": "line", "to": { "x": 7, "y": 12 } },
+            { "type": "line", "to": { "x": 12, "y": 7 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-back_1",
+      "name": "view-back_shape_1",
+      "kind": "composite",
+      "folderId": "folder_view-back",
+      "sketch": {
+        "profile": {
+          "start": { "x": 4, "y": 4 },
+          "segments": [
+            { "type": "line", "to": { "x": 20, "y": 4 } },
+            { "type": "line", "to": { "x": 20, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 4 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-back_2",
+      "name": "view-back_shape_2",
+      "kind": "composite",
+      "folderId": "folder_view-back",
+      "sketch": {
+        "profile": {
+          "start": { "x": 8, "y": 8 },
+          "segments": [
+            { "type": "line", "to": { "x": 16, "y": 16 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-back_3",
+      "name": "view-back_shape_3",
+      "kind": "composite",
+      "folderId": "folder_view-back",
+      "sketch": {
+        "profile": {
+          "start": { "x": 16, "y": 8 },
+          "segments": [
+            { "type": "line", "to": { "x": 8, "y": 16 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-right_1",
+      "name": "view-right_shape_1",
+      "kind": "composite",
+      "folderId": "folder_view-right",
+      "sketch": {
+        "profile": {
+          "start": { "x": 4, "y": 4 },
+          "segments": [
+            { "type": "line", "to": { "x": 20, "y": 4 } },
+            { "type": "line", "to": { "x": 20, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 4 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-right_2",
+      "name": "view-right_shape_2",
+      "kind": "composite",
+      "folderId": "folder_view-right",
+      "sketch": {
+        "profile": {
+          "start": { "x": 7, "y": 12 },
+          "segments": [
+            { "type": "line", "to": { "x": 16, "y": 12 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-right_3",
+      "name": "view-right_shape_3",
+      "kind": "composite",
+      "folderId": "folder_view-right",
+      "sketch": {
+        "profile": {
+          "start": { "x": 13, "y": 9 },
+          "segments": [
+            { "type": "line", "to": { "x": 17, "y": 12 } },
+            { "type": "line", "to": { "x": 13, "y": 15 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-left_1",
+      "name": "view-left_shape_1",
+      "kind": "composite",
+      "folderId": "folder_view-left",
+      "sketch": {
+        "profile": {
+          "start": { "x": 4, "y": 4 },
+          "segments": [
+            { "type": "line", "to": { "x": 20, "y": 4 } },
+            { "type": "line", "to": { "x": 20, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 20 } },
+            { "type": "line", "to": { "x": 4, "y": 4 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-left_2",
+      "name": "view-left_shape_2",
+      "kind": "composite",
+      "folderId": "folder_view-left",
+      "sketch": {
+        "profile": {
+          "start": { "x": 17, "y": 12 },
+          "segments": [
+            { "type": "line", "to": { "x": 8, "y": 12 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
+    },
+    {
+      "id": "icon_view-left_3",
+      "name": "view-left_shape_3",
+      "kind": "composite",
+      "folderId": "folder_view-left",
+      "sketch": {
+        "profile": {
+          "start": { "x": 11, "y": 9 },
+          "segments": [
+            { "type": "line", "to": { "x": 7, "y": 12 } },
+            { "type": "line", "to": { "x": 11, "y": 15 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false
     }
   ],
   "featureFolders": [
@@ -17289,6 +17646,31 @@
       "collapsed": true
     },
     {
+      "id": "folder_view-bottom",
+      "name": "view-bottom",
+      "collapsed": true
+    },
+    {
+      "id": "folder_view-front",
+      "name": "view-front",
+      "collapsed": true
+    },
+    {
+      "id": "folder_view-back",
+      "name": "view-back",
+      "collapsed": true
+    },
+    {
+      "id": "folder_view-right",
+      "name": "view-right",
+      "collapsed": true
+    },
+    {
+      "id": "folder_view-left",
+      "name": "view-left",
+      "collapsed": true
+    },
+    {
       "id": "folder_play",
       "name": "play",
       "collapsed": true
@@ -17532,6 +17914,26 @@
     {
       "type": "folder",
       "folderId": "folder_view-top"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_view-bottom"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_view-front"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_view-back"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_view-right"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_view-left"
     },
     {
       "type": "folder",
