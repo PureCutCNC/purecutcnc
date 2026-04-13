@@ -140,9 +140,10 @@ export function normalizeWinding(points: Point[], wantClockwise: boolean): Point
 }
 
 export function applyContourDirection(contours: Point[][], direction: 'conventional' | 'climb' = 'conventional'): Point[][] {
-  // Conventional = no-op: the natural Clipper output is already conventional for every
-  // operation (both inside cuts like pocket and outside cuts like edge_route_outside after
-  // the flattenFeatureToClipperPath fix). Climb simply reverses each contour.
+  // Conventional = no-op: Clipper's natural output is CCW in machine Y-up (isClockwise=false),
+  // which equals conventional direction for inside/pocket cuts.  For outside edge cuts the
+  // caller must invert the direction before calling here (CCW = climb for outside cuts).
+  // Climb simply reverses each contour.
   if (direction === 'conventional') {
     return contours
   }
