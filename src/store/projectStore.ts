@@ -2485,6 +2485,41 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }),
 
+  refreshMachineDefinitions: () =>
+    set((s) => {
+      const bundledDefinitions = copyBundledDefinitions()
+      const bundledIds = new Set(bundledDefinitions.map((definition) => definition.id))
+      const customDefinitions = s.project.meta.machineDefinitions.filter(
+        (definition) => !definition.builtin && !bundledIds.has(definition.id)
+      )
+      const machineDefinitions = [...bundledDefinitions, ...customDefinitions]
+      const selectedMachineId = machineDefinitions.some(
+        (definition) => definition.id === s.project.meta.selectedMachineId
+      )
+        ? s.project.meta.selectedMachineId
+        : null
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          machineDefinitions,
+          selectedMachineId,
+          modified: new Date().toISOString(),
+        },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   loadProject: (p) =>
     set((state) => {
       const normalizedProject = normalizeProject(p)

@@ -16,11 +16,13 @@
 
 import type { MachineDefinition } from '../types'
 import type { Project } from '../../../types/project'
+import generic from './generic.json'
 import grbl from './grbl.json'
 import mach3 from './mach3.json'
 import linuxcnc from './linuxcnc.json'
 
 export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
+  generic as unknown as MachineDefinition,
   grbl as unknown as MachineDefinition,
   mach3 as unknown as MachineDefinition,
   linuxcnc as unknown as MachineDefinition,

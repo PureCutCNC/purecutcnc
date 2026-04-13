@@ -16,6 +16,7 @@
 
 import { useRef } from 'react'
 import type { ChangeEvent } from 'react'
+import { Icon } from '../Icon'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -154,6 +155,7 @@ export function PropertiesPanel() {
     setSelectedMachineId,
     addMachineDefinition,
     removeMachineDefinition,
+    refreshMachineDefinitions,
     setOrigin,
     startPlaceOrigin,
     loadBackdropImage,
@@ -372,8 +374,19 @@ export function PropertiesPanel() {
               onCommit={(next) => setProjectClearances({ clampClearanceZ: next })}
             />
           </label>
-          <label className="properties-field">
-            <span>Machine</span>
+          <label className="properties-field properties-field--machine">
+            <div className="properties-field-label-row">
+              <span>Machine</span>
+              <button
+                type="button"
+                className="tree-action-btn properties-refresh-btn"
+                onClick={refreshMachineDefinitions}
+                aria-label="Refresh machine definitions"
+                title="Refresh machine definitions"
+              >
+                <Icon id="refresh" size={15} />
+              </button>
+            </div>
             <select
               value={project.meta.selectedMachineId ?? ''}
               onChange={(event) => setSelectedMachineId(event.target.value || null)}
@@ -388,14 +401,14 @@ export function PropertiesPanel() {
           </label>
           <div className="properties-actions">
             <button type="button" onClick={() => machineFileInputRef.current?.click()}>
-              Add Machine
+              Add machine
             </button>
             <button
               type="button"
               onClick={() => selectedMachine && removeMachineDefinition(selectedMachine.id)}
               disabled={!selectedMachine || selectedMachine.builtin}
             >
-              Remove
+              Remove machine
             </button>
           </div>
           <input

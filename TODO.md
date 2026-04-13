@@ -148,13 +148,13 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Longer term, machine definitions may want their own export tolerance if we keep linearized output for some controllers.
 
 ### Unit-specific G-code number formatting
-- Status: Open
+- Status: Done
 - Priority: Medium
-- Summary: Make G-code numeric precision depend on export units instead of one fixed decimal count per machine definition.
+- Summary: G-code numeric precision now depends on export units instead of one fixed decimal count per machine definition.
 - Notes:
-  - The current `numberFormat.decimalPlaces` model is too coarse because inch and mm exports need different practical precision.
-  - Example: bundled `grbl` is currently `3` decimals for both unit systems, which is acceptable for mm but too coarse for inch.
-  - Update the machine-definition schema and formatter so unit-specific precision is explicit rather than implied.
+  - `numberFormat.decimalPlaces` now supports explicit `{ mm, inch }` precision, with backwards compatibility for older single-number definitions.
+  - Bundled machine definitions were updated to use `3` decimals for mm and `4` for inch.
+  - Existing projects still carry project-local snapshots of bundled machine definitions, so built-in formatting changes only apply after refreshing the machine definitions for that project.
   - Coordinate this with CAM flattening tolerance so exported point spacing is not finer than controller formatting can represent.
 
 ### Machine add/remove validation
