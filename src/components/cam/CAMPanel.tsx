@@ -31,6 +31,7 @@ import type {
 } from '../../types/project'
 import { featureHasClosedGeometry } from '../../text'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
+import { PanelSplit } from './PanelSplit'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -870,7 +871,7 @@ export function CAMPanel({
     <div className="cam-panel">
       {mode === 'operations' ? (
         <div className="cam-operations-shell">
-          <div className="cam-operations-layout">
+          <PanelSplit className="cam-operations-layout" storageKey="operations" initialRatio={0.54} minFirst={160} minSecond={160}>
             <section className="cam-section cam-section--tree">
               <div className="cam-section-header">
                 <span>Operations</span>
@@ -1327,11 +1328,11 @@ export function CAMPanel({
                 </div>
               </div>
             </section>
-          </div>
+          </PanelSplit>
         </div>
       ) : (
         <div className="cam-tools">
-          <div className="cam-tools-layout">
+          <PanelSplit className="cam-tools-layout" storageKey="tools" initialRatio={0.42} minFirst={140} minSecond={140}>
             <section className="cam-section">
               <div className="cam-section-header">
                 <span>Tools</span>
@@ -1608,7 +1609,7 @@ export function CAMPanel({
                 </div>
               </div>
             </section>
-          </div>
+          </PanelSplit>
         </div>
       )}
     </div>

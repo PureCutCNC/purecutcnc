@@ -18,6 +18,7 @@ import type { ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
+import { PanelSplit } from '../cam/PanelSplit'
 import '../../styles/layout.css'
 
 interface AppShellProps {
@@ -98,19 +99,21 @@ export function AppShell({
         ) : null}
 
         <aside className="panel-left">
-          <section className="panel panel-tree">
-            <div className="panel-header">
-              Project Tree
-              <span className="feature-count">
-                {project.features.length + project.featureFolders.length + project.tabs.length + project.clamps.length + 6}
-              </span>
-            </div>
-            <div className="panel-content">{featureTree}</div>
-          </section>
-          <section className="panel panel-properties">
-            <div className="panel-header">Properties</div>
-            <div className="panel-content">{propertiesPanel}</div>
-          </section>
+          <PanelSplit storageKey="project-tree" initialRatio={0.55} minFirst={160} minSecond={160}>
+            <section className="panel panel-tree">
+              <div className="panel-header">
+                Project Tree
+                <span className="feature-count">
+                  {project.features.length + project.featureFolders.length + project.tabs.length + project.clamps.length + 6}
+                </span>
+              </div>
+              <div className="panel-content">{featureTree}</div>
+            </section>
+            <section className="panel panel-properties">
+              <div className="panel-header">Properties</div>
+              <div className="panel-content">{propertiesPanel}</div>
+            </section>
+          </PanelSplit>
         </aside>
 
         <main className="panel-centre">

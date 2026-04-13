@@ -350,9 +350,6 @@
 
 .panel-left {
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(220px, 1fr) minmax(220px, 0.8fr);
-  gap: 10px;
 }
 
 .panel {
@@ -1626,9 +1623,6 @@
 }
 
 .cam-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
   min-height: 0;
   height: 100%;
 }
@@ -1663,17 +1657,13 @@
 }
 
 .cam-tools {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
   min-height: 0;
+  height: 100%;
 }
 
 .cam-operations-shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
   min-height: 0;
+  height: 100%;
 }
 
 .cam-pass-toggle {
@@ -1683,18 +1673,45 @@
 }
 
 .cam-tools-layout {
-  display: grid;
-  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 8px;
   min-height: 0;
 }
 
 .cam-operations-layout {
-  display: grid;
-  grid-template-rows: minmax(220px, 1fr) minmax(220px, 0.85fr);
-  gap: 8px;
   min-height: 0;
   height: 100%;
+}
+
+.panel-split {
+  min-height: 0;
+  height: 100%;
+}
+
+.panel-split > * {
+  min-height: 0;
+  min-width: 0;
+}
+
+.panel-split__divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.panel-split__divider::before {
+  content: '';
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s;
+}
+
+.panel-split__divider:hover::before,
+.panel-split__divider:active::before {
+  background: var(--line-bright);
 }
 
 .cam-section {
@@ -1915,9 +1932,6 @@
   overflow: auto;
 }
 
-.cam-tools-layout > * {
-  min-width: 0;
-}
 
 .cam-tool-tree {
   padding-top: 8px;
@@ -2106,10 +2120,6 @@
       'left'
       'centre'
       'right';
-  }
-
-  .panel-left {
-    grid-template-rows: minmax(200px, 0.9fr) minmax(180px, 0.8fr);
   }
 
   .toolbar {
