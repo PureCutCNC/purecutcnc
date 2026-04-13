@@ -221,8 +221,8 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
 
 function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
   const flattened = flattenProfile(feature.sketch.profile)
-  // Normalize to CCW on screen (isClockwise=true) so Clipper treats it as an outer polygon.
-  // Offsetting outward then preserves CCW orientation → conventional cut by default (CW in machine after Y-flip).
+  // Clipper normalises closed paths to CCW in Y-up (its outer-polygon convention) regardless
+  // of the winding supplied here, so the input orientation does not affect offset output.
   return toClipperPath(normalizeWinding(flattened.points, true), DEFAULT_CLIPPER_SCALE)
 }
 
@@ -367,6 +367,12 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   let currentPosition: ToolpathPoint | null = null
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
+  // Clipper's ClipperOffset always normalises closed-polygon paths to CCW in machine
+  // Y-up coords (isClockwise=false) before applying the delta, so the output is always
+  // CCW regardless of input winding.  CCW in Y-up = conventional for INSIDE cuts but
+  // = climb for OUTSIDE cuts (where conventional requires CW in Y-up, isClockwise=true).
+  // Invert the requested direction for outside so applyContourDirection maps correctly.
+  const outsideDirection = (direction === 'conventional' ? 'climb' : 'conventional') as typeof direction
 
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
@@ -458,7 +464,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
       if (rawContours.length === 0) {
         warnings.push('No valid combined outer contour could be generated for the selected outside edge targets')
       } else {
-        const contours = applyContourDirection(rawContours, direction)
+        const contours = applyContourDirection(rawContours, outsideDirection)
         const levels =
           operation.pass === 'finish'
             ? [referenceTarget.bottomZ]
@@ -481,7 +487,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
         continue
       }
 
-      const contours = applyContourDirection(rawContours, direction)
+      const contours = applyContourDirection(rawContours, outsideDirection)
       const levels =
         operation.pass === 'finish'
           ? [target.bottomZ]
