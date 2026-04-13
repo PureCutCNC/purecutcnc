@@ -459,7 +459,6 @@ export function CAMPanel({
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
-  const [libraryName, setLibraryName] = useState('Bundled Tool Library')
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [showLibraryBrowser, setShowLibraryBrowser] = useState(false)
@@ -540,7 +539,6 @@ export function CAMPanel({
     setLibraryLoading(true)
     try {
       const library = await loadBundledToolLibrary()
-      setLibraryName(library.name)
       setLibraryTools(library.tools)
       setLibraryError(null)
       return library.tools
@@ -643,17 +641,6 @@ export function CAMPanel({
   function handleAddTool() {
     const toolId = addTool()
     setSelectedToolId(toolId)
-  }
-
-  function handleDuplicateTool() {
-    if (!selectedTool) {
-      return
-    }
-
-    const toolId = duplicateTool(selectedTool.id)
-    if (toolId) {
-      setSelectedToolId(toolId)
-    }
   }
 
   function handleDeleteTool(toolId?: string) {
