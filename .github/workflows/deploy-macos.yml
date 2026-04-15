@@ -1,0 +1,57 @@
+name: Build macOS Desktop App
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp (e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable with universal targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Set version
+        run: npm version "${{ inputs.version }}" --no-git-tag-version
+
+      - name: Build universal macOS app
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Upload DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+        continue-on-error: true
+
+      - name: Upload DMG as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PureCutCNC-macOS-dmg
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg

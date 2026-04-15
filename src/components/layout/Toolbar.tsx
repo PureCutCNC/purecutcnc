@@ -24,6 +24,7 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchEditTool } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
+import { useFileActions } from '../../platform/useFileActions'
 
 interface ToolbarActionButtonProps {
   icon: string
@@ -85,13 +86,13 @@ function ToolbarActionButton({
 
 function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => void) {
   void onImportComplete
+  const fileActions = useFileActions()
+
   const {
     project,
     pendingAdd,
     history,
     setProjectName,
-    saveProject,
-    loadProject,
     undo,
     redo,
     startAddRectPlacement,
@@ -137,41 +138,17 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     }
   }, [editingName, project.meta.name])
 
-  function handleNewProject() {
-    setShowNewProjectDialog(true)
+  async function handleNewProject() {
+    const ok = await fileActions.confirmDiscardIfDirty()
+    if (ok) setShowNewProjectDialog(true)
   }
 
-  function handleSave() {
-    const json = saveProject()
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${project.meta.name.replace(/\s+/g, '_')}.camj`
-    anchor.click()
-    URL.revokeObjectURL(url)
+  async function handleSave() {
+    await fileActions.save()
   }
 
-  function handleLoad() {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.camj,.json'
-    input.onchange = (event) => {
-      const file = (event.target as HTMLInputElement).files?.[0]
-      if (!file) return
-      const reader = new FileReader()
-      reader.onload = (readerEvent) => {
-        try {
-          const parsed = JSON.parse(readerEvent.target?.result as string)
-          loadProject(parsed)
-          setNameVal(parsed.meta?.name ?? 'Untitled')
-        } catch {
-          alert('Failed to parse project file.')
-        }
-      }
-      reader.readAsText(file)
-    }
-    input.click()
+  async function handleLoad() {
+    await fileActions.open()
   }
 
   function handleImport() {

@@ -161,6 +161,14 @@ export interface ProjectStore {
   sketchEditSession: SketchEditSession | null
   history: ProjectHistory
 
+  // ---- Session state (not persisted in .camj) ----
+  /** Filesystem path of the currently open file. Null in the browser or when no file is open. */
+  filePath: string | null
+  /** Path of the most recent G-code export. Null until first export this session. */
+  lastExportPath: string | null
+  /** True when the project has unsaved changes. */
+  dirty: boolean
+
   createNewProject: (template?: Project, name?: string) => void
   setProjectName: (name: string) => void
   setShowFeatureInfo: (visible: boolean) => void
@@ -179,6 +187,12 @@ export interface ProjectStore {
   refreshMachineDefinitions: () => void
   loadProject: (p: Project) => void
   saveProject: () => string
+  /** Called after a successful open — records the file path and clears the session. */
+  openProjectFromText: (content: string, path: string | null) => void
+  /** Called after a successful save — records the path that was written to. */
+  markSaved: (path: string | null) => void
+  /** Called after a successful G-code export — records the export path. */
+  markExported: (path: string) => void
   undo: () => void
   redo: () => void
   beginHistoryTransaction: () => void

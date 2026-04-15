@@ -11,6 +11,7 @@ lerna-debug.log*
 node_modules
 .vite
 dist
+src-tauri/target
 dist-ssr
 coverage
 *.tsbuildinfo

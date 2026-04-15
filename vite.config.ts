@@ -36,6 +36,8 @@ export default defineConfig({
   plugins: [react()],
   base: './',
   server: {
+    port: 1420,
+    strictPort: true,
     fs: {
       allow: [
         searchForWorkspaceRoot(configDir),

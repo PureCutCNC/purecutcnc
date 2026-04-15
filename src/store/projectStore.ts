@@ -2087,9 +2087,43 @@ export function isFirstFeatureValid(features: SketchFeature[]): boolean {
 // Store implementation
 // ============================================================
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+// ---------------------------------------------------------------------------
+// Auto-dirty helper
+// Wraps Zustand's set so any patch that changes `project` also sets
+// `dirty: true`, unless the patch explicitly provides a `dirty` value.
+// ---------------------------------------------------------------------------
+type SetFn = (
+  update: Partial<ProjectStore> | ((state: ProjectStore) => Partial<ProjectStore>)
+) => void
+
+function withAutoDirty(rawSet: SetFn): SetFn {
+  return (update) => {
+    if (typeof update === 'function') {
+      rawSet((state) => {
+        const patch = update(state)
+        if ('project' in patch && patch.project !== state.project && !('dirty' in patch)) {
+          return { ...patch, dirty: true }
+        }
+        return patch
+      })
+    } else {
+      if ('project' in update && !('dirty' in update)) {
+        rawSet({ ...update, dirty: true })
+      } else {
+        rawSet(update)
+      }
+    }
+  }
+}
+
+export const useProjectStore = create<ProjectStore>((rawSet, get) => {
+  const set = withAutoDirty(rawSet)
+  return {
   project: normalizeProject(newProject()),
   backdropImageLoading: false,
+  filePath: null,
+  lastExportPath: null,
+  dirty: false,
   history: {
     past: [],
     future: [],
@@ -2135,6 +2169,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
       return {
         project: nextProject,
+        dirty: false,
+        filePath: null,
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
@@ -2562,6 +2598,49 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     return JSON.stringify(updated, null, 2)
   },
+
+  openProjectFromText: (content, path) => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      throw new Error('Failed to parse project file.')
+    }
+    const normalized = normalizeProject(parsed as ReturnType<typeof normalizeProject>)
+    const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
+    const gridDefaults = defaultGrid(normalized.meta.units)
+    set((state) => ({
+      project: {
+        ...normalized,
+        grid: { ...gridDefaults, ...normalized.grid },
+        stock: {
+          ...stockDefaults,
+          ...normalized.stock,
+          origin: normalized.stock?.origin ?? stockDefaults.origin,
+          profile: normalized.stock?.profile ?? stockDefaults.profile,
+        },
+        origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
+      },
+      filePath: path,
+      dirty: false,
+      pendingAdd: null,
+      pendingMove: null,
+      pendingTransform: null,
+      pendingOffset: null,
+      selection: emptySelection(),
+      history: {
+        past: [...state.history.past, cloneProject(state.project)].slice(-100),
+        future: [],
+        transactionStart: null,
+      },
+    }))
+  },
+
+  markSaved: (path) =>
+    rawSet({ filePath: path, dirty: false }),
+
+  markExported: (path) =>
+    set({ lastExportPath: path }),
 
   undo: () =>
     set((state) => {
@@ -4542,7 +4621,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     get().addFeature(feature)
   },
-}))
+  }
+})
 
 const repairedInitialProject = normalizeProject(useProjectStore.getState().project)
 if (!projectsEqual(repairedInitialProject, useProjectStore.getState().project)) {

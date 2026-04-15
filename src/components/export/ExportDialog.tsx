@@ -16,6 +16,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { platform } from '../../platform'
 import {
   getActiveMachineDefinition,
   runPostProcessor,
@@ -31,7 +32,7 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
-  const { project, selectProject } = useProjectStore()
+  const { project, selectProject, lastExportPath, markExported } = useProjectStore()
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)
   const [emitCoolant, setEmitCoolant] = useState(false)
@@ -89,19 +90,16 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
     return () => clearTimeout(timer)
   }, [activeDefinition, activeOperations, emitCoolant, emitToolChanges, project])
 
-  function handleDownload() {
-    if (!previewResult || !activeDefinition) {
-      return
-    }
+  async function handleExport() {
+    if (!previewResult || !activeDefinition) return
 
-    const blob = new Blob([previewResult.gcode], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${project.meta.name.replace(/\s+/g, '_')}.${activeDefinition.fileExtension}`
-    anchor.click()
-    URL.revokeObjectURL(url)
-    onClose()
+    const suggestedName = project.meta.name.replace(/\s+/g, '_')
+    const ext = activeDefinition.fileExtension
+    const exportedPath = await platform.saveTextFile(suggestedName, previewResult.gcode, ext, lastExportPath)
+    if (exportedPath) {
+      markExported(exportedPath)
+      onClose()
+    }
   }
 
   function handleChangeMachine() {
@@ -208,11 +206,11 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
           <button className="btn-secondary" onClick={onClose} type="button">Cancel</button>
           <button
             className="btn-primary"
-            onClick={handleDownload}
+            onClick={handleExport}
             disabled={!previewResult || !activeDefinition}
             type="button"
           >
-            Download {activeDefinition ? `.${activeDefinition.fileExtension}` : ''}
+            Export {activeDefinition ? `.${activeDefinition.fileExtension}` : ''}
           </button>
         </div>
       </div>
