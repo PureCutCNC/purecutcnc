@@ -22,6 +22,7 @@ import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfInters
 import { useProjectStore } from '../../store/projectStore'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
+import { platform } from '../../platform'
 
 interface DraftTextInputProps {
   value: string
@@ -179,7 +180,6 @@ export function PropertiesPanel() {
     enterTabEdit,
     enterClampEdit,
   } = useProjectStore()
-  const machineFileInputRef = useRef<HTMLInputElement>(null)
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedFeatureIds = selection.selectedFeatureIds
@@ -264,28 +264,16 @@ export function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
-  function handleMachineDefinitionFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
+  async function handleAddMachine() {
+    const content = await platform.pickJsonFile()
+    if (!content) return
+    try {
+      const parsed = JSON.parse(content)
+      const validated = validateMachineDefinition({ ...parsed, builtin: false })
+      addMachineDefinition(validated)
+    } catch (error) {
+      alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
     }
-
-    const reader = new FileReader()
-    reader.onload = (readerEvent) => {
-      try {
-        const parsed = JSON.parse(readerEvent.target?.result as string)
-        const validated = validateMachineDefinition({
-          ...parsed,
-          builtin: false,
-        })
-        addMachineDefinition(validated)
-      } catch (error) {
-        alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
-      } finally {
-        event.target.value = ''
-      }
-    }
-    reader.readAsText(file)
   }
 
   function renderFolderSelect(value: string | null, onChange: (folderId: string | null) => void) {
@@ -400,7 +388,7 @@ export function PropertiesPanel() {
             </select>
           </label>
           <div className="properties-actions">
-            <button type="button" onClick={() => machineFileInputRef.current?.click()}>
+            <button type="button" onClick={handleAddMachine}>
               Add machine
             </button>
             <button
@@ -411,13 +399,6 @@ export function PropertiesPanel() {
               Remove machine
             </button>
           </div>
-          <input
-            ref={machineFileInputRef}
-            type="file"
-            accept=".json,application/json"
-            style={{ display: 'none' }}
-            onChange={handleMachineDefinitionFileChange}
-          />
         </div>
       </div>
     )

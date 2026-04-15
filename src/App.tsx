@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
@@ -28,8 +28,10 @@ import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Too
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { ExportDialog } from './components/export/ExportDialog'
+import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
+import { useDesktopIntegration } from './platform/useDesktopIntegration'
 
 interface TreeContextMenuState {
   entityType: 'feature' | 'tab' | 'clamp'
@@ -65,7 +67,19 @@ function App() {
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
+
+  // Native menu "New" dispatches this after the dirty check — handled once here
+  // rather than in each toolbar variant (GlobalToolbar / CreationToolbar / Toolbar).
+  useEffect(() => {
+    function handleMenuNew() { setShowNewProjectDialog(true) }
+    window.addEventListener('purecutcnc:new-project', handleMenuNew)
+    return () => window.removeEventListener('purecutcnc:new-project', handleMenuNew)
+  }, [])
+
+  const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
+  useDesktopIntegration({ onExportGcode: handleExportGcode })
   const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
@@ -341,6 +355,13 @@ function App() {
 
       const isPrimaryModifier = event.metaKey || event.ctrlKey
       if (!isPrimaryModifier) {
+        return
+      }
+
+      if (event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        const { project, selectFeatures } = useProjectStore.getState()
+        selectFeatures(project.features.filter((f) => f.visible).map((f) => f.id))
         return
       }
 
@@ -668,10 +689,14 @@ function App() {
       />
       
       {showExportDialog && (
-        <ExportDialog 
-          onClose={() => setShowExportDialog(false)} 
+        <ExportDialog
+          onClose={() => setShowExportDialog(false)}
           generateToolpath={generateToolpathForOperation}
         />
+      )}
+
+      {showNewProjectDialog && (
+        <NewProjectDialog onClose={() => setShowNewProjectDialog(false)} />
       )}
 
       {treeContextMenu && menuPosition && (menuFeature || menuTab || menuClamp) ? (

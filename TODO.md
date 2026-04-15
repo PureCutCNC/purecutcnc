@@ -55,6 +55,77 @@ This file tracks follow-up work, open issues, and design questions that come up 
   - Limitation: clicking inside a closed enclosing feature still selects that feature instead of arming marquee.
   - This is workable for now, but later we may want a modifier key, delayed-drag threshold, or explicit select tool behavior.
 
+## Desktop
+
+### Desktop title bar — filename and dirty indicator
+- Status: Open
+- Priority: Low
+- Summary: Window title bar should show the current filename and a dirty indicator (•) when there are unsaved changes.
+- Notes:
+  - `useDesktopIntegration` subscribes to the store and calls `getCurrentWindow().setTitle()`, but the title is currently not updating.
+  - `document.title` updates do not affect the native Tauri window title — only `setTitle()` does.
+  - Investigate whether the `getSetWindowTitle()` cached handle is being called correctly, or if something (e.g. Tauri window initialization timing) is resetting the title after it is set.
+
+### Recent files list
+- Status: Open
+- Priority: Medium
+- Summary: Track recently opened `.camj` files and expose them in the native File menu under a Recent Files submenu.
+- Notes:
+  - Needs persistent storage across sessions — use Tauri's `plugin-store` or a simple JSON file in the app data directory.
+  - File menu submenu rebuilds dynamically from the stored list.
+  - On open, add the path to the front of the list (cap at ~10 entries).
+  - On open-from-recent, run the same dirty check as a normal open.
+  - Clear Recent Files entry at the bottom of the submenu.
+
+### File associations for `.camj`
+- Status: Open
+- Priority: Medium
+- Summary: Register `.camj` as a file type so double-clicking a file in Finder opens it in PureCutCNC.
+- Notes:
+  - macOS: requires `CFBundleDocumentTypes` and `UTExportedTypeDeclarations` in the app's `Info.plist` — configured via Tauri's `bundle.macOS` in `tauri.conf.json`.
+  - Windows: requires registry entries, configured via Tauri's `bundle.windows` NSIS/WiX settings.
+  - The Tauri app needs to handle the `open-file` event on startup and while running.
+  - Deferred from Phase 3 — `associations` key in `bundle` is not valid in this Tauri version; needs platform-specific config.
+
+### Drag-and-drop `.camj` open
+- Status: Open
+- Priority: Low
+- Summary: Allow opening `.camj` files by dragging them onto the app window.
+- Notes:
+  - Should trigger the same dirty check as a normal open.
+  - Desktop and web should both support this.
+
+### Windows and Linux CI build targets
+- Status: Open
+- Priority: Medium
+- Summary: Add `deploy-windows.yml` and `deploy-linux.yml` workflows for Windows installer and Linux AppImage/deb.
+- Notes:
+  - Follow the same manual dispatch + version input pattern as `deploy-macos.yml`.
+  - Windows needs NSIS or WiX installer config in `tauri.conf.json`.
+  - Linux needs AppImage and/or `.deb` bundle config.
+
+### macOS code signing and notarization
+- Status: Open
+- Priority: Medium
+- Summary: Sign and notarize the macOS DMG so users don't get Gatekeeper warnings.
+- Notes:
+  - Requires Apple Developer account ($99/year).
+  - Needs `APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD` secrets in GitHub Actions.
+  - Tauri has built-in notarization support via environment variables.
+
+### Feature copy / cut / paste
+- Status: Open
+- Priority: Medium
+- Summary: Implement copy, cut, and paste for features so the native Edit menu items do something useful in the canvas context.
+- Notes:
+  - Currently the native Edit menu has `PredefinedMenuItem::copy/cut/paste` which only act on focused text fields (native webview behavior). There is no feature-level clipboard.
+  - Needs a clipboard model — likely an in-memory store of serialized `SketchFeature[]` (no OS clipboard required for first pass).
+  - Copy: serialize selected features to clipboard, keep originals.
+  - Cut: serialize selected features to clipboard, delete originals (dirty).
+  - Paste: deserialize clipboard features, offset slightly from original positions, add to project, select the pasted features.
+  - Wire `PredefinedMenuItem::copy/cut/paste` → custom menu item IDs → `useDesktopIntegration` handlers, similar to `select_all`.
+  - Also add Cmd+C / Cmd+X / Cmd+V keyboard shortcuts in App.tsx (guarded against text fields, same pattern as existing shortcuts).
+
 ## Backlog
 
 ### Refactor UI to use SVG Sprite Icon system

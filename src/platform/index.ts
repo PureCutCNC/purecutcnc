@@ -14,17 +14,17 @@
  * limitations under the License.
  */
 
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
-import { applyVersionToTitle } from './utils/version'
+import type { PlatformApi } from './api'
+import { browserPlatform } from './browser'
+import { desktopPlatform } from './desktop'
 
-// In the desktop app, the window title is managed by useDesktopIntegration
-// (showing filename + dirty flag). Only apply the version title in browser.
-if (!('__TAURI_INTERNALS__' in window)) {
-  applyVersionToTitle()
-}
+export type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
 
-createRoot(document.getElementById('root')!).render(
-  <App />,
-)
+/**
+ * True when the app is running inside Tauri.
+ * Tauri v2 injects __TAURI_INTERNALS__ into the window object.
+ */
+const isDesktop =
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+export const platform: PlatformApi = isDesktop ? desktopPlatform : browserPlatform
