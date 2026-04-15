@@ -40,6 +40,14 @@ function unitsLabel(units: Units): string {
   return units === 'inch' ? 'Inch' : 'Millimeter'
 }
 
+function defaultJoinTolerance(units: Units): string {
+  return units === 'inch' ? '0.02' : '0.5'
+}
+
+function joinToleranceStep(units: Units): string {
+  return units === 'inch' ? '0.001' : '0.01'
+}
+
 function detectSourceType(fileName: string): ImportSourceType | null {
   const lowerName = fileName.toLowerCase()
   if (lowerName.endsWith('.svg')) {
@@ -55,6 +63,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const { project, importShapes } = useProjectStore()
   const [loadedFile, setLoadedFile] = useState<LoadedImportFile | null>(null)
   const [sourceUnits, setSourceUnits] = useState<Units | ''>('')
+  const [joinTolerance, setJoinTolerance] = useState(defaultJoinTolerance(project.meta.units))
+  const [allowCrossLayerJoins, setAllowCrossLayerJoins] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -80,6 +90,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     if (!nextSourceType) {
       setLoadedFile(null)
       setSourceUnits('')
+      setJoinTolerance(defaultJoinTolerance(project.meta.units))
+      setAllowCrossLayerJoins(false)
       setDialogError('Unsupported import format. Use .svg or .dxf.')
       return
     }
@@ -96,10 +108,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           inspection,
         })
         setSourceUnits(inspection.detectedUnits ?? '')
+        setJoinTolerance(defaultJoinTolerance(project.meta.units))
+        setAllowCrossLayerJoins(false)
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
         setSourceUnits('')
+        setJoinTolerance(defaultJoinTolerance(project.meta.units))
+        setAllowCrossLayerJoins(false)
         setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
       }
     }
@@ -122,6 +138,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     try {
       const keepDetectedScale = loadedFile.inspection.detectedUnits === sourceUnits
       const sourceUnitScale = keepDetectedScale ? loadedFile.inspection.sourceUnitScale : 1
+      const parsedJoinTolerance = Number.parseFloat(joinTolerance)
+      if (loadedFile.sourceType === 'dxf' && (!Number.isFinite(parsedJoinTolerance) || parsedJoinTolerance < 0)) {
+        setDialogError('Join tolerance must be a non-negative number.')
+        setBusy(false)
+        return
+      }
       const result = loadedFile.sourceType === 'svg'
         ? importSvgString(loadedFile.text, {
           fileName: loadedFile.fileName,
@@ -134,6 +156,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           targetUnits: project.meta.units,
           sourceUnits,
           sourceUnitScale,
+          joinTolerance: parsedJoinTolerance,
+          allowCrossLayerJoins,
         })
 
       const createdIds = importShapes({
@@ -164,6 +188,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
   const inspectionWarnings = loadedFile?.inspection.warnings ?? []
   const detectionKnown = Boolean(loadedFile?.inspection.detectedUnits)
+  const showJoinTolerance = loadedFile?.sourceType === 'dxf'
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -216,6 +241,37 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                   Source units were not detected from the file. Choose the intended units before importing.
                 </div>
               ) : null}
+              {showJoinTolerance ? (
+                <>
+                  <div className="properties-field import-dialog__units-field">
+                    <span>Join Tolerance</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step={joinToleranceStep(project.meta.units)}
+                      value={joinTolerance}
+                      onChange={(event) => setJoinTolerance(event.target.value)}
+                      disabled={!loadedFile}
+                    />
+                  </div>
+                  <div className="import-dialog__field-note">
+                    Connect nearby open DXF endpoints within {unitsLabel(project.meta.units).toLowerCase()} project units.
+                  </div>
+                  <label className="import-dialog__toggle-row">
+                    <span className="import-dialog__toggle-label">Cross-Layer Join</span>
+                    <input
+                      className="import-dialog__toggle-input"
+                      type="checkbox"
+                      checked={allowCrossLayerJoins}
+                      onChange={(event) => setAllowCrossLayerJoins(event.target.checked)}
+                      disabled={!loadedFile}
+                    />
+                  </label>
+                  <div className="import-dialog__field-note">
+                    Allow endpoint stitching even when touching shapes come from different DXF layers.
+                  </div>
+                </>
+              ) : null}
               {dialogError ? <div className="cam-field-message">{dialogError}</div> : null}
             </div>
           </div>
@@ -238,6 +294,18 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     <span>Project Units</span>
                     <strong>{unitsLabel(project.meta.units)}</strong>
                   </div>
+                  {showJoinTolerance ? (
+                    <div className="project-template-preview__row">
+                      <span>Join Tolerance</span>
+                      <strong>{joinTolerance || defaultJoinTolerance(project.meta.units)} {project.meta.units}</strong>
+                    </div>
+                  ) : null}
+                  {showJoinTolerance ? (
+                    <div className="project-template-preview__row">
+                      <span>Cross-Layer Join</span>
+                      <strong>{allowCrossLayerJoins ? 'On' : 'Off'}</strong>
+                    </div>
+                  ) : null}
                   <div className="project-template-preview__row">
                     <span>Detection</span>
                     <strong>{loadedFile.inspection.unitsReliable ? 'Confirmed' : 'Needs review'}</strong>

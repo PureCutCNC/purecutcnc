@@ -258,6 +258,43 @@
   grid-template-columns: minmax(74px, 88px) minmax(0, 1fr);
 }
 
+.import-dialog__field-note {
+  margin-top: -2px;
+  color: color-mix(in oklab, var(--text-dim) 88%, #d6e2f0 12%);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.import-dialog__toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.import-dialog__toggle-label {
+  color: #cbd8e6;
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.import-dialog__toggle-input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.import-dialog__toggle-input:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .import-dialog__preview {
   white-space: normal;
 }
