@@ -120,6 +120,8 @@ export function applyMatrixToPoint(point: Point, matrix: AffineMatrix2D): Point 
 
 export function transformProfile(profile: SketchProfile, matrix: AffineMatrix2D): SketchProfile {
   const transformPoint = (point: Point) => applyMatrixToPoint(point, matrix)
+  const det = matrix.a * matrix.d - matrix.b * matrix.c
+  const reflected = det < 0
 
   const segments: Segment[] = profile.segments.map((segment) => {
     if (segment.type === 'arc') {
@@ -127,6 +129,7 @@ export function transformProfile(profile: SketchProfile, matrix: AffineMatrix2D)
         ...segment,
         to: transformPoint(segment.to),
         center: transformPoint(segment.center),
+        clockwise: reflected ? !segment.clockwise : segment.clockwise,
       }
     }
 

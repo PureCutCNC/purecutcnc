@@ -299,6 +299,76 @@
   white-space: normal;
 }
 
+.import-dialog__layers-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.import-dialog__layers-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.import-dialog__layers-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1.4;
+}
+
+.import-dialog__layers-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.import-dialog__layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 6px;
+  padding: 4px 0;
+  background: var(--surface-raised, rgba(0,0,0,0.15));
+}
+
+.import-dialog__layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  min-height: 26px;
+}
+
+.import-dialog__layer-row:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.import-dialog__layer-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.import-dialog__layer-name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .import-dialog__summary {
   color: var(--text-dim);
   font-size: 12px;

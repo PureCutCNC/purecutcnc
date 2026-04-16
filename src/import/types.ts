@@ -32,6 +32,8 @@ export interface ImportInspection {
   unitsReliable: boolean
   summary: string
   warnings: string[]
+  /** Layer names present in the file, sorted. Empty for formats without layers (SVG). */
+  layers: string[]
 }
 
 export interface ImportParseResult {
@@ -46,4 +48,9 @@ export interface ImportContext {
   sourceUnitScale?: number
   joinTolerance?: number
   allowCrossLayerJoins?: boolean
+  /**
+   * When set, only shapes whose layerName is in this list are imported.
+   * Shapes with a null layerName are always included regardless of this filter.
+   */
+  layerFilter?: string[] | null
 }

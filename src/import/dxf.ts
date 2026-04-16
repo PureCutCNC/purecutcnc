@@ -892,6 +892,20 @@ function splitShapesAtInteriorHits(shapes: ImportedShape[], tolerance: number, a
 
       const endpoints = [shape.profile.start, profileEnd(shape.profile)]
       for (const endpoint of endpoints) {
+        // If this endpoint already has a close endpoint-to-endpoint match with another
+        // shape, skip T-junction splitting. Stitching will connect them via endpoint
+        // matching, and we don't want a nearby unrelated segment to be incorrectly split.
+        const hasEndpointMatch = splitShapes.some((other, otherIndex) => {
+          if (otherIndex === shapeIndex) {
+            return false
+          }
+          return pointsNear(endpoint, other.profile.start, tolerance)
+            || pointsNear(endpoint, profileEnd(other.profile), tolerance)
+        })
+        if (hasEndpointMatch) {
+          continue
+        }
+
         const hit = bestInteriorSegmentHit(endpoint, shapeIndex, splitShapes, tolerance, allowCrossLayerJoins)
         if (!hit) {
           continue
@@ -1390,9 +1404,41 @@ function instantiateEntity(
   }
 }
 
+function extractLayerNames(pairs: DxfPair[]): string[] {
+  const layers = new Set<string>()
+  let inGeometry = false
+  let inEntities = false
+
+  for (let index = 0; index < pairs.length; index += 1) {
+    const pair = pairs[index]
+    if (pair.code === 0 && pair.value === 'SECTION') {
+      const next = pairs[index + 1]
+      const sectionName = next?.code === 2 ? next.value : null
+      inGeometry = sectionName === 'ENTITIES' || sectionName === 'BLOCKS'
+      inEntities = sectionName === 'ENTITIES'
+    }
+    if (pair.code === 0 && pair.value === 'ENDSEC') {
+      inGeometry = false
+      inEntities = false
+    }
+    // Non-zero layer names from both ENTITIES and BLOCKS sections
+    if (inGeometry && pair.code === 8 && pair.value && pair.value !== '0') {
+      layers.add(pair.value)
+    }
+    // Layer '0' only when it appears explicitly in the ENTITIES section
+    // (block-internal '0' entities just inherit from their INSERT and don't count)
+    if (inEntities && pair.code === 8 && pair.value === '0') {
+      layers.add('0')
+    }
+  }
+
+  return [...layers].sort()
+}
+
 export function inspectDxfString(text: string): ImportInspection {
   const pairs = parsePairs(text)
   const detected = parseDxfSourceUnits(pairs)
+  const layers = extractLayerNames(pairs)
 
   if (!detected) {
     return {
@@ -1401,6 +1447,7 @@ export function inspectDxfString(text: string): ImportInspection {
       unitsReliable: false,
       summary: 'No supported DXF $INSUNITS value found.',
       warnings: ['Could not detect DXF source units from $INSUNITS. Choose the source units before importing.'],
+      layers,
     }
   }
 
@@ -1410,6 +1457,7 @@ export function inspectDxfString(text: string): ImportInspection {
     unitsReliable: true,
     summary: 'Detected source units from DXF $INSUNITS.',
     warnings: [],
+    layers,
   }
 }
 
@@ -1445,9 +1493,14 @@ export function importDxfString(text: string, context: ImportContext): ImportPar
     )
   }
 
+  const layerFilter = context.layerFilter ?? null
+  const visibleShapes = layerFilter
+    ? shapes.filter((s) => layerFilter.includes(s.layerName ?? '0'))
+    : shapes
+
   return {
     shapes: stitchShapes(
-      splitShapesAtInteriorHits(dedupeIdenticalShapes(shapes), joinTolerance, allowCrossLayerJoins),
+      dedupeIdenticalShapes(visibleShapes),
       joinTolerance,
       allowCrossLayerJoins,
     ),

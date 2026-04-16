@@ -65,6 +65,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [sourceUnits, setSourceUnits] = useState<Units | ''>('')
   const [joinTolerance, setJoinTolerance] = useState(defaultJoinTolerance(project.meta.units))
   const [allowCrossLayerJoins, setAllowCrossLayerJoins] = useState(false)
+  const [selectedLayers, setSelectedLayers] = useState<Set<string>>(new Set())
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -92,6 +93,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       setSourceUnits('')
       setJoinTolerance(defaultJoinTolerance(project.meta.units))
       setAllowCrossLayerJoins(false)
+      setSelectedLayers(new Set())
       setDialogError('Unsupported import format. Use .svg or .dxf.')
       return
     }
@@ -110,16 +112,34 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setSourceUnits(inspection.detectedUnits ?? '')
         setJoinTolerance(defaultJoinTolerance(project.meta.units))
         setAllowCrossLayerJoins(false)
+        setSelectedLayers(new Set(inspection.layers))
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
         setSourceUnits('')
         setJoinTolerance(defaultJoinTolerance(project.meta.units))
         setAllowCrossLayerJoins(false)
+        setSelectedLayers(new Set())
         setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
       }
     }
     reader.readAsText(file)
+  }
+
+  function toggleLayer(layer: string) {
+    setSelectedLayers((prev) => {
+      const next = new Set(prev)
+      if (next.has(layer)) {
+        next.delete(layer)
+      } else {
+        next.add(layer)
+      }
+      return next
+    })
+  }
+
+  function setAllLayersSelected(value: boolean) {
+    setSelectedLayers(value ? new Set(loadedFile?.inspection.layers ?? []) : new Set())
   }
 
   function handleImport() {
@@ -144,6 +164,10 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setBusy(false)
         return
       }
+
+      const hasDxfLayers = loadedFile.sourceType === 'dxf' && loadedFile.inspection.layers.length > 0
+      const layerFilter = hasDxfLayers ? [...selectedLayers] : null
+
       const result = loadedFile.sourceType === 'svg'
         ? importSvgString(loadedFile.text, {
           fileName: loadedFile.fileName,
@@ -158,6 +182,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           sourceUnitScale,
           joinTolerance: parsedJoinTolerance,
           allowCrossLayerJoins,
+          layerFilter,
         })
 
       const createdIds = importShapes({
@@ -189,6 +214,10 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const inspectionWarnings = loadedFile?.inspection.warnings ?? []
   const detectionKnown = Boolean(loadedFile?.inspection.detectedUnits)
   const showJoinTolerance = loadedFile?.sourceType === 'dxf'
+  const dxfLayers = loadedFile?.sourceType === 'dxf' ? (loadedFile.inspection.layers ?? []) : []
+  const showLayers = dxfLayers.length > 0
+  const allLayersSelected = dxfLayers.length > 0 && dxfLayers.every((l) => selectedLayers.has(l))
+  const someLayersSelected = dxfLayers.some((l) => selectedLayers.has(l))
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -244,7 +273,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               {showJoinTolerance ? (
                 <>
                   <div className="properties-field import-dialog__units-field">
-                    <span>Join Tolerance</span>
+                    <span>Join Tolerance ({project.meta.units === 'inch' ? 'in' : 'mm'})</span>
                     <input
                       type="number"
                       min="0"
@@ -255,7 +284,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     />
                   </div>
                   <div className="import-dialog__field-note">
-                    Connect nearby open DXF endpoints within {unitsLabel(project.meta.units).toLowerCase()} project units.
+                    Connect open path endpoints within this distance. Always in project units — independent of the source units selected above.
                   </div>
                   <label className="import-dialog__toggle-row">
                     <span className="import-dialog__toggle-label">Cross-Layer Join</span>
@@ -274,6 +303,40 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               ) : null}
               {dialogError ? <div className="cam-field-message">{dialogError}</div> : null}
             </div>
+
+            {showLayers ? (
+              <div className="dialog-section-group">
+                <div className="import-dialog__layers-header">
+                  <label className="dialog-section-title">Layers</label>
+                  <div className="import-dialog__layers-actions">
+                    <button
+                      className="import-dialog__layers-toggle"
+                      type="button"
+                      onClick={() => setAllLayersSelected(!allLayersSelected)}
+                      disabled={!loadedFile}
+                    >
+                      {allLayersSelected ? 'Deselect all' : 'Select all'}
+                    </button>
+                  </div>
+                </div>
+                <div className="import-dialog__layer-list">
+                  {dxfLayers.map((layer) => (
+                    <label key={layer} className="import-dialog__layer-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedLayers.has(layer)}
+                        onChange={() => toggleLayer(layer)}
+                        disabled={!loadedFile}
+                      />
+                      <span className="import-dialog__layer-name">{layer}</span>
+                    </label>
+                  ))}
+                </div>
+                {!someLayersSelected && loadedFile ? (
+                  <div className="cam-field-message">Select at least one layer to import.</div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="dialog-preview-container">
@@ -306,6 +369,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                       <strong>{allowCrossLayerJoins ? 'On' : 'Off'}</strong>
                     </div>
                   ) : null}
+                  {showLayers ? (
+                    <div className="project-template-preview__row">
+                      <span>Layers</span>
+                      <strong>{selectedLayers.size} / {dxfLayers.length} selected</strong>
+                    </div>
+                  ) : null}
                   <div className="project-template-preview__row">
                     <span>Detection</span>
                     <strong>{loadedFile.inspection.unitsReliable ? 'Confirmed' : 'Needs review'}</strong>
@@ -330,7 +399,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">Cancel</button>
-          <button className="btn-primary" onClick={handleImport} type="button" disabled={!loadedFile || !sourceUnits || busy}>
+          <button
+            className="btn-primary"
+            onClick={handleImport}
+            type="button"
+            disabled={!loadedFile || !sourceUnits || busy || (showLayers && !someLayersSelected)}
+          >
             Import
           </button>
         </div>
