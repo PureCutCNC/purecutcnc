@@ -17,12 +17,15 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { isDesktop } from './platform'
+import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
 
 // In the desktop app, the window title is managed by useDesktopIntegration
 // (showing filename + dirty flag). Only apply the version title in browser.
-if (!('__TAURI_INTERNALS__' in window)) {
+if (!isDesktop) {
   applyVersionToTitle()
+  installAnalytics()
 }
 
 createRoot(document.getElementById('root')!).render(
