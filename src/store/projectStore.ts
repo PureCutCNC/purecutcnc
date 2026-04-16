@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
-import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName } from '../import'
+import { createImportedFeature, isProfileDegenerate, uniqueName } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -3559,7 +3559,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           shape.name || folderDisplayName,
           [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
         )
-        // Closed profiles are additive material; open profiles are subtractive cuts.
+        // All closed profiles import as 'add'; open profiles as 'subtract'.
+        // User can change individual features after import if needed.
         const operation: FeatureOperation = shape.profile.closed ? 'add' : 'subtract'
         const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
         const feature = normalizeFeatureZRange({

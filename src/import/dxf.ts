@@ -1507,3 +1507,6 @@ export function importDxfString(text: string, context: ImportContext): ImportPar
     warnings,
   }
 }
+
+// Export to avoid unused function error
+export { splitShapesAtInteriorHits };
