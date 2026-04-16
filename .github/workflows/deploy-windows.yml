@@ -38,10 +38,24 @@ jobs:
       - name: Set version
         run: npm version "${{ inputs.version }}" --no-git-tag-version
 
-      - name: Build Windows app
+      - name: Build Windows app for prerelease version
+        if: contains(inputs.version, '-')
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Build Windows app for stable version
+        if: ${{ !contains(inputs.version, '-') }}
         run: npm run tauri build
 
-      - name: Upload installers to release
+      - name: Upload prerelease installer to release
+        if: contains(inputs.version, '-')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          files: src-tauri/target/release/bundle/nsis/*.exe
+        continue-on-error: true
+
+      - name: Upload stable installers to release
+        if: ${{ !contains(inputs.version, '-') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
@@ -50,7 +64,15 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
         continue-on-error: true
 
-      - name: Upload Windows installers as artifacts
+      - name: Upload prerelease Windows installer as artifact
+        if: contains(inputs.version, '-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: PureCutCNC-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Upload stable Windows installers as artifacts
+        if: ${{ !contains(inputs.version, '-') }}
         uses: actions/upload-artifact@v4
         with:
           name: PureCutCNC-windows-installers
