@@ -65,6 +65,62 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
         continue-on-error: true
 
+      - name: Checkout pages repo
+        uses: actions/checkout@v4
+        with:
+          repository: PureCutCNC/purecutcnc.github.io
+          token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          path: pages-repo
+
+      - name: Write Windows download metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: v${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ contains(inputs.version, '-') && 'snapshot' || 'stable' }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const releaseTag = process.env.RELEASE_TAG;
+            const channel = process.env.RELEASE_CHANNEL;
+            const assets = [];
+            const appendAssets = (dir, extension, label, kind) => {
+              if (!fs.existsSync(dir)) return;
+              for (const name of fs.readdirSync(dir).filter((file) => file.endsWith(extension)).sort()) {
+                assets.push({
+                  name,
+                  label,
+                  kind,
+                  url: 'https://github.com/PureCutCNC/purecutcnc/releases/download/' + releaseTag + '/' + encodeURIComponent(name),
+                });
+              }
+            };
+            appendAssets('src-tauri/target/release/bundle/nsis', '.exe', 'Download Installer (.exe)', 'nsis');
+            appendAssets('src-tauri/target/release/bundle/msi', '.msi', 'Download Installer (.msi)', 'msi');
+            const outputDir = path.join('pages-repo', 'downloads', channel);
+            fs.mkdirSync(outputDir, { recursive: true });
+            const payload = {
+              platform: 'windows',
+              channel,
+              version: process.env.RELEASE_VERSION,
+              tag: releaseTag,
+              releaseUrl: 'https://github.com/PureCutCNC/purecutcnc/releases/tag/' + releaseTag,
+              updatedAt: new Date().toISOString(),
+              assets,
+            };
+            fs.writeFileSync(path.join(outputDir, 'windows.json'), JSON.stringify(payload, null, 2) + '\n');
+          "
+
+      - name: Commit and push Windows download metadata
+        shell: bash
+        run: |
+          cd pages-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add downloads/
+          git diff --cached --quiet || git commit -m "downloads: update Windows ${{ contains(inputs.version, '-') && 'snapshot' || 'stable' }} metadata for v${{ inputs.version }}"
+          git push
+
       - name: Upload prerelease Windows installer as artifact
         if: contains(inputs.version, '-')
         uses: actions/upload-artifact@v4

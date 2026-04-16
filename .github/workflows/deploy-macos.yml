@@ -60,6 +60,55 @@ jobs:
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
         continue-on-error: true
 
+      - name: Checkout pages repo
+        uses: actions/checkout@v4
+        with:
+          repository: PureCutCNC/purecutcnc.github.io
+          token: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          path: pages-repo
+
+      - name: Write macOS download metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: v${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ contains(inputs.version, '-') && 'snapshot' || 'stable' }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const assetDir = 'src-tauri/target/universal-apple-darwin/release/bundle/dmg';
+            const assets = fs.readdirSync(assetDir)
+              .filter((name) => name.endsWith('.dmg'))
+              .sort()
+              .map((name) => ({
+                name,
+                label: 'Download DMG',
+                kind: 'dmg',
+                url: 'https://github.com/PureCutCNC/purecutcnc/releases/download/' + process.env.RELEASE_TAG + '/' + encodeURIComponent(name),
+              }));
+            const outputDir = path.join('pages-repo', 'downloads', process.env.RELEASE_CHANNEL);
+            fs.mkdirSync(outputDir, { recursive: true });
+            const payload = {
+              platform: 'macos',
+              channel: process.env.RELEASE_CHANNEL,
+              version: process.env.RELEASE_VERSION,
+              tag: process.env.RELEASE_TAG,
+              releaseUrl: 'https://github.com/PureCutCNC/purecutcnc/releases/tag/' + process.env.RELEASE_TAG,
+              updatedAt: new Date().toISOString(),
+              assets,
+            };
+            fs.writeFileSync(path.join(outputDir, 'macos.json'), JSON.stringify(payload, null, 2) + '\n');
+          "
+
+      - name: Commit and push macOS download metadata
+        run: |
+          cd pages-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add downloads/
+          git diff --cached --quiet || git commit -m "downloads: update macOS ${{ contains(inputs.version, '-') && 'snapshot' || 'stable' }} metadata for v${{ inputs.version }}"
+          git push
+
       - name: Upload DMG as artifact
         uses: actions/upload-artifact@v4
         with:
