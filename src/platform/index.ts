@@ -24,7 +24,7 @@ export type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
  * True when the app is running inside Tauri.
  * Tauri v2 injects __TAURI_INTERNALS__ into the window object.
  */
-const isDesktop =
+export const isDesktop =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export const platform: PlatformApi = isDesktop ? desktopPlatform : browserPlatform
