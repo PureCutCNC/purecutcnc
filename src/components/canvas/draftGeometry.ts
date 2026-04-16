@@ -206,10 +206,14 @@ export function segmentPointAt(start: Point, segment: Segment, t: number): Point
   const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
 
   let sweep = endAngle - startAngle
-  if (segment.clockwise && sweep > 0) {
-    sweep -= Math.PI * 2
-  } else if (!segment.clockwise && sweep < 0) {
-    sweep += Math.PI * 2
+  if (segment.type === 'circle') {
+    sweep = segment.clockwise ? -Math.PI * 2 : Math.PI * 2
+  } else {
+    if (segment.clockwise && sweep > 0) {
+      sweep -= Math.PI * 2
+    } else if (!segment.clockwise && sweep < 0) {
+      sweep += Math.PI * 2
+    }
   }
 
   const angle = startAngle + sweep * t

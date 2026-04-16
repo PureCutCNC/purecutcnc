@@ -127,6 +127,14 @@ function cloneSegment(segment: Segment): Segment {
     }
   }
 
+  if (segment.type === 'circle') {
+    return {
+      ...segment,
+      center: clonePoint(segment.center),
+      to: clonePoint(segment.to),
+    }
+  }
+
   return {
     ...segment,
     to: clonePoint(segment.to),
@@ -134,6 +142,10 @@ function cloneSegment(segment: Segment): Segment {
 }
 
 function normalizeEditableProfileClosure(profile: SketchProfile): SketchProfile {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    return { ...profile, closed: true }
+  }
+
   if (profile.segments.length === 0) {
     return {
       ...profile,
@@ -211,7 +223,7 @@ function splitBezierSegment(start: Point, segment: Extract<Segment, { type: 'bez
   ]
 }
 
-function splitArcSegment(segment: Extract<Segment, { type: 'arc' }>, point: Point): [Segment, Segment] {
+function splitArcSegment(segment: Extract<Segment, { type: 'arc' | 'circle' }>, point: Point): [Segment, Segment] {
   return [
     {
       type: 'arc',
@@ -648,7 +660,7 @@ function translateProfile(profile: SketchFeature['sketch']['profile'], dx: numbe
     ...profile,
     start: translatePoint(profile.start, dx, dy),
     segments: profile.segments.map((segment) => {
-      if (segment.type === 'arc') {
+      if (segment.type === 'arc' || segment.type === 'circle') {
         return {
           ...segment,
           to: translatePoint(segment.to, dx, dy),
@@ -681,7 +693,7 @@ function transformProfile(
     ...profile,
     start: transformPoint(profile.start),
     segments: profile.segments.map((segment) => {
-      if (segment.type === 'arc') {
+      if (segment.type === 'arc' || segment.type === 'circle') {
         return {
           ...segment,
           to: transformPoint(segment.to),
@@ -1981,7 +1993,28 @@ function normalizeMachineDefinitions(project: Project): {
   }
 }
 
-function normalizeProject(project: Project): Project {
+export function normalizeProject(project: Project): Project {
+  // Migration: convert 4-arc circles to native circle segments
+  const upgradedFeatures = project.features.map((feature) => {
+    if (feature.kind === 'circle' && feature.sketch.profile.segments.length === 4) {
+      const { profile } = feature.sketch
+      const firstArc = profile.segments[0]
+      if (firstArc.type === 'arc') {
+        const cx = firstArc.center.x
+        const cy = firstArc.center.y
+        const r = Math.hypot(profile.start.x - cx, profile.start.y - cy)
+        return {
+          ...feature,
+          sketch: {
+            ...feature.sketch,
+            profile: circleProfile(cx, cy, r),
+          },
+        }
+      }
+    }
+    return feature
+  })
+
   const normalizedMachines = normalizeMachineDefinitions(project)
   const meta = {
     ...project.meta,
@@ -2012,7 +2045,7 @@ function normalizeProject(project: Project): Project {
         closed: project.stock.profile.closed ?? true,
       },
     },
-    features: project.features.map(normalizeFeatureZRange),
+    features: upgradedFeatures.map(normalizeFeatureZRange),
     featureFolders: project.featureFolders ?? [],
     featureTree: project.featureTree ?? [],
     tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
@@ -4107,6 +4140,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               if (rebuiltSegment) {
                 nextProfile.segments[segmentIndex] = rebuiltSegment
               }
+            }
+          } else if (control.kind === 'circle_center') {
+            const seg = nextProfile.segments[control.index]
+            if (seg?.type === 'circle') {
+              const dx = point.x - seg.center.x
+              const dy = point.y - seg.center.y
+              seg.center = point
+              nextProfile.start = translatePoint(nextProfile.start, dx, dy)
+              seg.to = nextProfile.start
             }
           } else {
             const incomingSegment =

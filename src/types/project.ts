@@ -26,26 +26,33 @@ export interface Point {
   y: number
 }
 
-export type LineSegment = {
+export interface LineSegment {
   type: 'line'
   to: Point
 }
 
-export type ArcSegment = {
+export interface ArcSegment {
   type: 'arc'
   to: Point
   center: Point
   clockwise: boolean
 }
 
-export type BezierSegment = {
+export interface BezierSegment {
   type: 'bezier'
   to: Point
   control1: Point
   control2: Point
 }
 
-export type Segment = LineSegment | ArcSegment | BezierSegment
+export type CircleSegment = {
+  type: 'circle'
+  center: Point
+  to: Point
+  clockwise: boolean
+}
+
+export type Segment = LineSegment | ArcSegment | BezierSegment | CircleSegment
 
 export interface SketchProfile {
   start: Point
@@ -404,14 +411,11 @@ export function rectProfile(x: number, y: number, w: number, h: number): SketchP
 }
 
 export function circleProfile(cx: number, cy: number, r: number): SketchProfile {
-  // Approximate circle as 4 arcs
+  const start = { x: cx + r, y: cy }
   return {
-    start: { x: cx + r, y: cy },
+    start,
     segments: [
-      { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: false },
-      { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: false },
-      { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: false },
-      { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: false },
+      { type: 'circle', center: { x: cx, y: cy }, to: start, clockwise: true },
     ],
     closed: true,
   }
@@ -451,6 +455,11 @@ function isAxisAlignedLine(from: Point, to: Point, epsilon = 1e-9): boolean {
 
 export function inferFeatureKind(profile: SketchProfile): FeatureKind {
   const { start, segments } = profile
+
+  if (segments.length === 1 && segments[0].type === 'circle') {
+    return 'circle'
+  }
+
   if (segments.length === 4 && segments.every((segment) => segment.type === 'arc')) {
     const firstCenter = segments[0].type === 'arc' ? segments[0].center : null
     const closed = pointsEqual(segments[segments.length - 1].to, start)
@@ -665,6 +674,11 @@ export interface Bounds2D {
 
 // Returns editable vertices (without duplicate closure vertex).
 export function profileVertices(profile: SketchProfile): Point[] {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    // Circle has one vertex: the radius handle at profile.start
+    return [profile.start]
+  }
+
   const points: Point[] = [profile.start, ...profile.segments.map((segment) => segment.to)]
   if (profile.closed && points.length > 1) {
     const first = points[0]
@@ -701,6 +715,21 @@ export function sampleProfilePoints(
       continue
     }
 
+    if (segment.type === 'circle') {
+      const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y)
+      const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
+      const segmentCount = 64 // Smooth sampling for a full circle
+      for (let index = 1; index <= segmentCount; index += 1) {
+        const angle = startAngle + (segment.clockwise ? -1 : 1) * (Math.PI * 2 * index) / segmentCount
+        points.push({
+          x: segment.center.x + Math.cos(angle) * radius,
+          y: segment.center.y + Math.sin(angle) * radius,
+        })
+      }
+      current = profile.start
+      continue
+    }
+
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
     const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
     const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y)
@@ -725,7 +754,7 @@ export function sampleProfilePoints(
 
   const first = points[0]
   const last = points[points.length - 1]
-  if (profile.closed && first && last && first.x === last.x && first.y === last.y) {
+  if (profile.closed && first && last && Math.hypot(last.x - first.x, last.y - first.y) < 1e-6) {
     points.pop()
   }
 
@@ -733,6 +762,17 @@ export function sampleProfilePoints(
 }
 
 export function getProfileBounds(profile: SketchProfile): Bounds2D {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    const seg = profile.segments[0]
+    const r = Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y)
+    return {
+      minX: seg.center.x - r,
+      maxX: seg.center.x + r,
+      minY: seg.center.y - r,
+      maxY: seg.center.y + r,
+    }
+  }
+
   const points = sampleProfilePoints(profile)
   let minX = points[0]?.x ?? 0
   let maxX = points[0]?.x ?? 0

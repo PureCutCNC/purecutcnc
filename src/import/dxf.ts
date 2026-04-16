@@ -389,6 +389,12 @@ function convertProfileToTarget(
           control2: convertPoint(segment.control2, sourceUnits, sourceUnitScale, targetUnits),
         }
       }
+      if (segment.type === 'circle') {
+        return {
+          ...segment,
+          center: convertPoint(segment.center, sourceUnits, sourceUnitScale, targetUnits),
+        }
+      }
       return {
         ...segment,
         to: convertPoint(segment.to, sourceUnits, sourceUnitScale, targetUnits),
@@ -471,6 +477,12 @@ function translateProfile(profile: SketchProfile, dx: number, dy: number): Sketc
           control2: translatePoint(segment.control2, dx, dy),
         }
       }
+      if (segment.type === 'circle') {
+        return {
+          ...segment,
+          center: translatePoint(segment.center, dx, dy),
+        }
+      }
       return {
         ...segment,
         to: translatePoint(segment.to, dx, dy),
@@ -480,9 +492,13 @@ function translateProfile(profile: SketchProfile, dx: number, dy: number): Sketc
 }
 
 function reverseProfile(profile: SketchProfile): SketchProfile {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    return { ...profile }
+  }
+
   const reversedSegments = []
   let previous = profile.start
-  const vertices = [profile.start, ...profile.segments.map((segment) => segment.to)]
+  const vertices = [profile.start, ...profile.segments.map((segment) => (segment as any).to)]
 
   for (let index = profile.segments.length - 1; index >= 0; index -= 1) {
     const segment = profile.segments[index]
