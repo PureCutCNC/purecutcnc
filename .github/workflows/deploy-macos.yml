@@ -43,7 +43,17 @@ jobs:
       - name: Build universal macOS app
         run: npm run tauri build -- --target universal-apple-darwin
 
-      - name: Upload DMG to release
+      - name: Upload prerelease DMG to release
+        if: contains(inputs.version, '-')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          prerelease: true
+          files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+        continue-on-error: true
+
+      - name: Upload stable DMG to release
+        if: ${{ !contains(inputs.version, '-') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
