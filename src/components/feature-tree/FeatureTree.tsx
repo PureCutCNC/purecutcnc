@@ -264,7 +264,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
           onDrop={handleDrop}
         />
-        {featuresCollapsed ? null : project.features.length === 0 ? (
+        {featuresCollapsed ? null : rootEntries.length === 0 ? (
           <div className="feature-tree-empty">No feature nodes yet.</div>
         ) : (
           <div className="tree-children">

@@ -215,6 +215,7 @@ export interface ProjectStore {
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
+  updateFeatures: (ids: string[], patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
   deleteFeatures: (ids: string[]) => void
   mergeSelectedFeatures: (keepOriginals?: boolean) => string[]
