@@ -728,6 +728,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
         unitsReliable: true,
         summary: 'Detected source units from SVG size and viewBox.',
         warnings,
+        layers: [],
       }
     }
   }
@@ -740,6 +741,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
       unitsReliable: false,
       summary: 'Detected source units from SVG size attributes.',
       warnings,
+      layers: [],
     }
   }
 
@@ -750,6 +752,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
     unitsReliable: false,
     summary: 'No explicit physical SVG units detected.',
     warnings,
+    layers: [],
   }
 }
 

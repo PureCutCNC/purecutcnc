@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
-import { createImportedFeature, isProfileDegenerate, stripFileExtension, uniqueName } from '../import'
+import { createImportedFeature, isProfileDegenerate, uniqueName } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -3523,41 +3523,55 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       return []
     }
 
-    const folderId = nextUniqueGeneratedId(state.project, 'fd')
-    const folderName = uniqueFolderName(stripFileExtension(input.fileName), state.project.featureFolders)
-    const folder: FeatureFolder = {
-      id: folderId,
-      name: folderName,
-      collapsed: false,
+    // Group shapes by layer name. Null layer (DXF layer "0") → keyed as '0'.
+    const layerGroups = new Map<string, typeof sourceShapes>()
+    for (const shape of sourceShapes) {
+      const key = shape.layerName ?? '0'
+      const existing = layerGroups.get(key)
+      if (existing) {
+        existing.push(shape)
+      } else {
+        layerGroups.set(key, [shape])
+      }
     }
 
-    const existingNames = state.project.features.map((feature) => feature.name)
+    const existingFeatureNames = state.project.features.map((f) => f.name)
+    const newFolders: FeatureFolder[] = []
     const createdFeatures: SketchFeature[] = []
+
     let nextProjectLike: Project = {
       ...state.project,
       features: [...state.project.features],
-      featureFolders: [...state.project.featureFolders, folder],
+      featureFolders: [...state.project.featureFolders],
     }
 
-    sourceShapes.forEach((shape, index) => {
-      const featureName = uniqueName(
-        shape.name || `${input.sourceType.toUpperCase()} ${index + 1}`,
-        [...existingNames, ...createdFeatures.map((feature) => feature.name)],
-      )
-      const isFirstFeature = state.project.features.length === 0 && createdFeatures.length === 0
+    for (const [layerKey, layerShapes] of layerGroups) {
+      const folderDisplayName = layerKey || '0'
+      const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
+      const folderName = uniqueFolderName(folderDisplayName, nextProjectLike.featureFolders)
+      const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
 
-      const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
-      const feature = normalizeFeatureZRange({
-        ...createImportedFeature(shape, state.project, folderId, featureName, isFirstFeature ? 'add' : 'subtract'),
-        id: nextId,
-      })
+      newFolders.push(folder)
+      nextProjectLike = { ...nextProjectLike, featureFolders: [...nextProjectLike.featureFolders, folder] }
 
-      createdFeatures.push(feature)
-      nextProjectLike = {
-        ...nextProjectLike,
-        features: [...nextProjectLike.features, feature],
+      for (const shape of layerShapes) {
+        const featureName = uniqueName(
+          shape.name || folderDisplayName,
+          [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
+        )
+        // All closed profiles import as 'add'; open profiles as 'subtract'.
+        // User can change individual features after import if needed.
+        const operation: FeatureOperation = shape.profile.closed ? 'add' : 'subtract'
+        const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
+        const feature = normalizeFeatureZRange({
+          ...createImportedFeature(shape, state.project, folderId, featureName, operation),
+          id: nextId,
+        })
+
+        createdFeatures.push(feature)
+        nextProjectLike = { ...nextProjectLike, features: [...nextProjectLike.features, feature] }
       }
-    })
+    }
 
     if (createdFeatures.length === 0) {
       return []
@@ -3566,13 +3580,17 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => {
       const nextProject = syncFeatureTreeProject({
         ...s.project,
-        featureFolders: [...s.project.featureFolders, folder],
-        featureTree: [...s.project.featureTree, { type: 'folder', folderId }],
+        featureFolders: [...s.project.featureFolders, ...newFolders],
+        featureTree: [
+          ...s.project.featureTree,
+          ...newFolders.map((f) => ({ type: 'folder' as const, folderId: f.id })),
+        ],
         features: [...s.project.features, ...createdFeatures],
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
-      const createdIds = createdFeatures.map((feature) => feature.id)
+      const createdIds = createdFeatures.map((f) => f.id)
       const primaryId = createdIds.at(-1) ?? null
+      const primaryFolderId = newFolders.at(-1)?.id ?? null
 
       return {
         project: nextProject,
@@ -3580,7 +3598,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           ...s.selection,
           selectedFeatureId: primaryId,
           selectedFeatureIds: createdIds,
-          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : { type: 'folder', folderId },
+          selectedNode: primaryId
+            ? { type: 'feature', featureId: primaryId }
+            : primaryFolderId
+              ? { type: 'folder', folderId: primaryFolderId }
+              : s.selection.selectedNode,
           mode: 'feature',
           activeControl: null,
         },
@@ -3592,7 +3614,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     })
 
-    return createdFeatures.map((feature) => feature.id)
+    return createdFeatures.map((f) => f.id)
   },
 
   updateFeature: (id, patch) =>
