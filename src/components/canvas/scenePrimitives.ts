@@ -100,6 +100,37 @@ export function drawSketchControls(
     }
   }
 
+  // Native Circle special rendering
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    const seg = profile.segments[0]
+    const center = worldToCanvas(seg.center, vt)
+    const radius = Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y) * vt.scale
+
+    const startAngle = Math.atan2(profile.start.y - seg.center.y, profile.start.x - seg.center.x)
+    const endAngle = startAngle + (seg.clockwise ? -Math.PI * 2 : Math.PI * 2)
+
+    // Dashed outline
+    ctx.beginPath()
+    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, seg.clockwise)
+    ctx.setLineDash([5, 5])
+    ctx.strokeStyle = 'rgba(210, 221, 230, 0.3)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Center crosshair
+    const active = activeControl?.kind === 'circle_center' && activeControl.index === 0
+    const crossSize = active ? 8 : 6
+    ctx.beginPath()
+    ctx.moveTo(center.cx - crossSize, center.cy)
+    ctx.lineTo(center.cx + crossSize, center.cy)
+    ctx.moveTo(center.cx, center.cy - crossSize)
+    ctx.lineTo(center.cx, center.cy + crossSize)
+    ctx.strokeStyle = active ? '#f2b95c' : '#d2dde6'
+    ctx.lineWidth = active ? 2 : 1.2
+    ctx.stroke()
+  }
+
   for (let index = 0; index < vertices.length; index += 1) {
     const vertex = vertices[index]
     const { cx, cy } = worldToCanvas(vertex, vt)

@@ -36,7 +36,7 @@ export function translateProfile(profile: SketchProfile, dx: number, dy: number)
     ...profile,
     start: { x: profile.start.x + dx, y: profile.start.y + dy },
     segments: profile.segments.map((segment) => {
-      if (segment.type === 'arc') {
+      if (segment.type === 'arc' || segment.type === 'circle') {
         return {
           ...segment,
           to: { x: segment.to.x + dx, y: segment.to.y + dy },
@@ -263,8 +263,12 @@ export function traceDraftSegments(
     const center = worldToCanvas(segment.center, vt)
     const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
-    const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
-    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+    if (segment.type === 'circle') {
+      ctx.arc(center.cx, center.cy, radius, startAngle, startAngle + Math.PI * 2, segment.clockwise)
+    } else {
+      const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+      ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+    }
     current = segment.to
   }
 }

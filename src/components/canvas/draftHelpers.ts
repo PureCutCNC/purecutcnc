@@ -90,6 +90,16 @@ export function computeEditDimSteps(profile: SketchProfile, anchorIndex: number)
   const n = profile.segments.length
   const vertices = profileVertices(profile)
 
+  // Native Circle special case
+  if (n === 1 && profile.segments[0].type === 'circle') {
+    steps.push({
+      kind: 'arc_radius',
+      control: { kind: 'anchor', index: 0 },
+      arcStartAnchorIndex: 0,
+    })
+    return steps
+  }
+
   const hasIncoming = profile.closed || anchorIndex > 0
   if (hasIncoming) {
     const incomingSegIdx = profile.closed ? (anchorIndex - 1 + n) % n : anchorIndex - 1

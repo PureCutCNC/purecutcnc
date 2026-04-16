@@ -1538,15 +1538,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (let index = 0; index < profile.segments.length; index += 1) {
       const segment = profile.segments[index]
-      if (segment.type !== 'arc') {
-        continue
+      if (segment.type === 'arc') {
+        const handleCanvas = worldToCanvas(arcControlPoint(anchorPointForIndex(profile, index), segment), vt)
+        const d2 = distance2(point, handleCanvas)
+        if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
+          bestDistanceSq = d2
+          bestControl = { kind: 'arc_handle', index }
+        }
       }
 
-      const handleCanvas = worldToCanvas(arcControlPoint(anchorPointForIndex(profile, index), segment), vt)
-      const d2 = distance2(point, handleCanvas)
-      if (d2 <= Math.min(bestDistanceSq, HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS)) {
-        bestDistanceSq = d2
-        bestControl = { kind: 'arc_handle', index }
+      if (segment.type === 'circle') {
+        const centerCanvas = worldToCanvas(segment.center, vt)
+        const d2 = distance2(point, centerCanvas)
+        if (d2 <= bestDistanceSq) {
+          bestDistanceSq = d2
+          bestControl = { kind: 'circle_center', index }
+        }
       }
     }
 
@@ -2474,10 +2481,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       })
     } else {
       const seg = profile.segments[step.control.index]
-      if (!seg || seg.type !== 'arc') return
+      if (!seg || (seg.type !== 'arc' && seg.type !== 'circle')) return
       const arcStart = anchorPointForIndex(profile, step.arcStartAnchorIndex)
-      const radius = Math.hypot(arcStart.x - seg.center.x, arcStart.y - seg.center.y)
-      const arcMid = arcControlPoint(arcStart, seg)
+      const radius = seg.type === 'arc'
+        ? Math.hypot(arcStart.x - seg.center.x, arcStart.y - seg.center.y)
+        : Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y)
+      const arcMid = seg.type === 'arc'
+        ? arcControlPoint(arcStart, seg)
+        : seg.center
       setDimensionEdit({
         shape: 'circle',
         anchor: arcMid,

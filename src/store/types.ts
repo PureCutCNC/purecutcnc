@@ -49,7 +49,7 @@ export interface SelectionState {
 }
 
 export interface SketchControlRef {
-  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle' | 'segment'
+  kind: 'anchor' | 'in_handle' | 'out_handle' | 'arc_handle' | 'segment' | 'circle_center'
   index: number
   t?: number
 }

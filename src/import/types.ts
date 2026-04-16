@@ -44,4 +44,6 @@ export interface ImportContext {
   targetUnits: Units
   sourceUnits?: Units
   sourceUnitScale?: number
+  joinTolerance?: number
+  allowCrossLayerJoins?: boolean
 }

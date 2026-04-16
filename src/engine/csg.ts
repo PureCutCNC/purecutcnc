@@ -71,8 +71,7 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
         seg.to.y,
       )
     } else {
-      // Arc segment
-      const { to, center, clockwise } = seg as Extract<Segment, { type: 'arc' }>
+      const { type, to, center, clockwise } = seg as Extract<Segment, { type: 'arc' | 'circle' }>
       const startAngle = Math.atan2(
         shape.currentPoint.y - center.y,
         shape.currentPoint.x - center.x
@@ -82,7 +81,16 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
         shape.currentPoint.x - center.x,
         shape.currentPoint.y - center.y
       )
-      shape.absarc(center.x, center.y, radius, startAngle, endAngle, clockwise)
+
+      let sweep = endAngle - startAngle
+      if (type === 'circle') {
+        sweep = clockwise ? -Math.PI * 2 : Math.PI * 2
+      } else {
+        if (clockwise && sweep > 0) sweep -= Math.PI * 2
+        else if (!clockwise && sweep < 0) sweep += Math.PI * 2
+      }
+
+      shape.absarc(center.x, center.y, radius, startAngle, startAngle + sweep, clockwise)
     }
   }
 
@@ -113,16 +121,17 @@ function profileToPolygon(profile: SketchProfile): [number, number][] {
       continue
     }
 
-    const { to, center, clockwise } = seg
+    const { type, to, center, clockwise } = seg as Extract<Segment, { type: 'arc' | 'circle' }>
     const startAngle = Math.atan2(current.y - center.y, current.x - center.x)
     const endAngle = Math.atan2(to.y - center.y, to.x - center.x)
     const radius = Math.hypot(current.x - center.x, current.y - center.y)
 
     let sweep = endAngle - startAngle
-    if (clockwise && sweep > 0) {
-      sweep -= Math.PI * 2
-    } else if (!clockwise && sweep < 0) {
-      sweep += Math.PI * 2
+    if (type === 'circle') {
+      sweep = clockwise ? -Math.PI * 2 : Math.PI * 2
+    } else {
+      if (clockwise && sweep > 0) sweep -= Math.PI * 2
+      else if (!clockwise && sweep < 0) sweep += Math.PI * 2
     }
 
     const segmentCount = Math.max(8, Math.ceil(Math.abs(sweep) / ARC_STEP_RADIANS))

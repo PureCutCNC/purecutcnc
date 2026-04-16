@@ -78,7 +78,12 @@ export function isProfileDegenerate(profile: SketchProfile, epsilon = 1e-9): boo
     return true
   }
 
-  const points = [profile.start, ...profile.segments.map((segment) => segment.to)]
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    const seg = profile.segments[0]
+    return Math.abs(profile.start.x - seg.center.x) <= epsilon && Math.abs(profile.start.y - seg.center.y) <= epsilon
+  }
+
+  const points = [profile.start, ...profile.segments.map((segment) => (segment as any).to)]
   return points.every((point) => Math.abs(point.x - points[0].x) <= epsilon && Math.abs(point.y - points[0].y) <= epsilon)
 }
 
@@ -134,6 +139,13 @@ export function transformProfile(profile: SketchProfile, matrix: AffineMatrix2D)
       }
     }
 
+    if (segment.type === 'circle') {
+      return {
+        ...segment,
+        center: transformPoint(segment.center),
+        to: transformPoint(segment.to),
+      }
+    }
     return {
       ...segment,
       to: transformPoint(segment.to),
