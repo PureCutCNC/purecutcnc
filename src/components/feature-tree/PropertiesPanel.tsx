@@ -71,11 +71,12 @@ function DraftTextInput({ value, disabled = false, onCommit }: DraftTextInputPro
 }
 
 interface DraftNumberInputProps {
-  value: number
+  value: number | null
   units: 'mm' | 'inch'
   min?: number
   max?: number
   disabled?: boolean
+  placeholder?: string
   onCommit: (value: number) => void
   validate?: (value: number) => boolean
 }
@@ -86,11 +87,12 @@ function DraftNumberInput({
   min,
   max,
   disabled = false,
+  placeholder,
   onCommit,
   validate,
 }: DraftNumberInputProps) {
   function reset(element: HTMLInputElement) {
-    element.value = formatLength(value, units)
+    element.value = value === null ? '' : formatLength(value, units)
   }
 
   function isValid(next: number) {
@@ -102,13 +104,18 @@ function DraftNumberInput({
   }
 
   function commit(element: HTMLInputElement) {
+    if (element.value.trim() === '') {
+      reset(element)
+      return
+    }
+
     const next = parseLengthInput(element.value, units)
     if (next === null || !isValid(next)) {
       reset(element)
       return
     }
 
-    if (next !== value) {
+    if (value === null || next !== value) {
       onCommit(next)
     } else {
       reset(element)
@@ -119,7 +126,8 @@ function DraftNumberInput({
     <input
       type="text"
       inputMode="decimal"
-      defaultValue={formatLength(value, units)}
+      defaultValue={value === null ? '' : formatLength(value, units)}
+      placeholder={placeholder}
       disabled={disabled}
       spellCheck={false}
       data-numeric-entry="true"
@@ -174,6 +182,7 @@ export function PropertiesPanel() {
     updateClamp,
     updateFeatureFolder,
     updateFeature,
+    updateFeatures,
     deleteFeature,
     deleteFeatures,
     enterSketchEdit,
@@ -211,6 +220,37 @@ export function PropertiesPanel() {
     allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
       ? allSelectedFeatures[0]?.folderId ?? null
       : '__mixed__'
+  const commonSelectedOperation =
+    allSelectedFeatures.length > 0 &&
+    allSelectedFeatures.every((feature) => feature.operation === allSelectedFeatures[0]?.operation)
+      ? allSelectedFeatures[0]?.operation ?? null
+      : '__mixed__'
+  const commonSelectedZTop =
+    allSelectedFeatures.length > 0 &&
+    typeof allSelectedFeatures[0]?.z_top === 'number' &&
+    allSelectedFeatures.every((feature) => feature.z_top === allSelectedFeatures[0]?.z_top)
+      ? allSelectedFeatures[0]?.z_top ?? null
+      : null
+  const commonSelectedZBottom =
+    allSelectedFeatures.length > 0 &&
+    typeof allSelectedFeatures[0]?.z_bottom === 'number' &&
+    allSelectedFeatures.every((feature) => feature.z_bottom === allSelectedFeatures[0]?.z_bottom)
+      ? allSelectedFeatures[0]?.z_bottom ?? null
+      : null
+  const selectedNumericZBottoms = allSelectedFeatures
+    .map((feature) => feature.z_bottom)
+    .filter((value): value is number => typeof value === 'number')
+  const selectedNumericZTops = allSelectedFeatures
+    .map((feature) => feature.z_top)
+    .filter((value): value is number => typeof value === 'number')
+  const multiEditMinZTop =
+    selectedNumericZBottoms.length === allSelectedFeatures.length
+      ? Math.max(...selectedNumericZBottoms)
+      : null
+  const multiEditMaxZBottom =
+    selectedNumericZTops.length === allSelectedFeatures.length
+      ? Math.min(...selectedNumericZTops)
+      : null
   const selectedMachine = project.meta.selectedMachineId
       ? project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
       : null
@@ -276,12 +316,16 @@ export function PropertiesPanel() {
     }
   }
 
-  function renderFolderSelect(value: string | null, onChange: (folderId: string | null) => void) {
+  function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void) {
     return (
       <select
         value={value ?? ''}
-        onChange={(event) => onChange(event.target.value === '' ? null : event.target.value)}
+        onChange={(event) =>
+          onChange(event.target.value === '' || event.target.value === '__mixed__' ? null : event.target.value)}
       >
+        {value === '__mixed__' ? (
+          <option value="__mixed__">Mixed folders</option>
+        ) : null}
         <option value="">Root</option>
         {project.featureFolders.map((folder) => (
           <option key={folder.id} value={folder.id}>
@@ -979,25 +1023,49 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Folder</span>
+              {renderFolderSelect(commonSelectedFolderId, (folderId) =>
+                assignFeaturesToFolder(selectedFeatureIds, folderId),
+              )}
+            </label>
+            <label className="properties-field">
+              <span>Operation</span>
               <select
-                value={commonSelectedFolderId ?? ''}
+                value={commonSelectedOperation ?? ''}
                 onChange={(event) =>
-                  assignFeaturesToFolder(
-                    selectedFeatureIds,
-                    event.target.value === '' || event.target.value === '__mixed__' ? null : event.target.value,
-                  )
-                }
+                  updateFeatures(selectedFeatureIds, {
+                    operation: event.target.value as 'add' | 'subtract',
+                  })}
               >
-                {commonSelectedFolderId === '__mixed__' ? (
-                  <option value="__mixed__">Mixed folders</option>
+                {commonSelectedOperation === '__mixed__' ? (
+                  <option value="__mixed__">Mixed operations</option>
                 ) : null}
-                <option value="">Root</option>
-                {project.featureFolders.map((folder) => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.name}
-                  </option>
-                ))}
+                <option value="subtract">Subtract</option>
+                <option value="add">Add</option>
               </select>
+            </label>
+            <label className="properties-field">
+              <span>Z Top</span>
+              <DraftNumberInput
+                key={`multi-feature-ztop-${selectedFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
+                value={commonSelectedZTop}
+                units={units}
+                min={0}
+                placeholder="Mixed values"
+                validate={(next) => multiEditMinZTop === null || next >= multiEditMinZTop}
+                onCommit={(next) => updateFeatures(selectedFeatureIds, { z_top: next })}
+              />
+            </label>
+            <label className="properties-field">
+              <span>Z Bottom</span>
+              <DraftNumberInput
+                key={`multi-feature-zbottom-${selectedFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
+                value={commonSelectedZBottom}
+                units={units}
+                min={0}
+                placeholder="Mixed values"
+                validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
+                onCommit={(next) => updateFeatures(selectedFeatureIds, { z_bottom: next })}
+              />
             </label>
           </div>
           <div className="properties-actions">

@@ -3455,7 +3455,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
       // Determine folder context and insertion point from current selection.
-      const selectedNode = !isFirst ? s.selection.selectedNode : null
+      const selectedNode = s.selection.selectedNode
       let effectiveFolderId: string | null = feature.folderId ?? null
       let insertAfterFeatureId: string | null = null
       if (selectedNode?.type === 'folder') {
@@ -3466,7 +3466,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         insertAfterFeatureId = selectedNode.featureId
       }
       const safeFeature: SketchFeature = isFirst
-        ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: null, operation: 'add' })
+        ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
         : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
       // Build features and featureTree arrays with correct insertion position.
       let nextFeatures: SketchFeature[]
@@ -3631,6 +3631,46 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         features: features.map((f) =>
           f.id === id ? normalizeFeatureZRange({ ...f, ...safePatch }) : f
         ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  updateFeatures: (ids, patch) =>
+    set((s) => {
+      if (ids.length === 0) {
+        return {}
+      }
+
+      const selectedIds = new Set(ids)
+      const features = s.project.features
+      const nextProject = {
+        ...s.project,
+        features: features.map((feature, index) => {
+          if (!selectedIds.has(feature.id)) {
+            return feature
+          }
+
+          const safePatch: Partial<SketchFeature> =
+            index === 0 && patch.operation !== undefined && patch.operation !== 'add'
+              ? { ...patch, operation: 'add' }
+              : patch
+
+          return normalizeFeatureZRange({ ...feature, ...safePatch })
+        }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
