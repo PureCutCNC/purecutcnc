@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { circleProfile, polygonProfile, type Point, type Segment, type SketchProfile } from '../types/project'
+import { generateTextShapes } from '../text'
+import { circleProfile, getProfileBounds, polygonProfile, type Point, type Segment, type SketchProfile, type TextFontId } from '../types/project'
 import { convertLength } from '../utils/units'
 import {
   identityMatrix,
@@ -26,11 +27,30 @@ import {
 import type { ImportContext, ImportedShape, ImportInspection, ImportParseResult } from './types'
 
 const KAPPA = 0.5522847498307936
+const SVG_PATH_AUTO_CLOSE_EPSILON = 1e-6
+const SVG_SILENT_TAGS = new Set([
+  'defs',
+  'desc',
+  'metadata',
+  'namedview',
+  'sodipodi:namedview',
+  'style',
+  'title',
+])
 
 interface SvgUnitContext {
   sourceUnits: ImportContext['targetUnits']
   targetUnits: ImportContext['targetUnits']
   userUnitScale: number
+}
+
+interface SvgPresentationContext {
+  fill: string | null
+  fontSize: number
+  fontFamily: string | null
+  fontWeight: string | null
+  fontStyle: string | null
+  textAnchor: 'start' | 'middle' | 'end'
 }
 
 function convertSvgUserValue(value: number, units: SvgUnitContext): number {
@@ -148,6 +168,74 @@ function parseTransform(transformText: string | null | undefined, units: SvgUnit
   return matrix
 }
 
+function parseStyleProperties(styleText: string | null | undefined): Map<string, string> {
+  if (!styleText) {
+    return new Map()
+  }
+
+  return new Map(
+    styleText
+      .split(';')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const separatorIndex = entry.indexOf(':')
+        if (separatorIndex < 0) {
+          return null
+        }
+        const key = entry.slice(0, separatorIndex).trim().toLowerCase()
+        const value = entry.slice(separatorIndex + 1).trim()
+        return key && value ? [key, value] : null
+      })
+      .filter((entry): entry is [string, string] => entry !== null),
+  )
+}
+
+function presentationValue(element: Element, key: string): string | null {
+  const attributeValue = element.getAttribute(key)
+  if (attributeValue && attributeValue.trim()) {
+    return attributeValue.trim()
+  }
+
+  const styles = parseStyleProperties(element.getAttribute('style'))
+  return styles.get(key.toLowerCase()) ?? null
+}
+
+function hasVisiblePaint(value: string | null | undefined): boolean {
+  if (!value) {
+    return false
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized !== '' && normalized !== 'none' && normalized !== 'transparent'
+}
+
+function resolvePresentationContext(
+  element: Element,
+  inherited: SvgPresentationContext,
+  units: SvgUnitContext,
+): SvgPresentationContext {
+  const fill = presentationValue(element, 'fill') ?? inherited.fill
+  const fontFamily = presentationValue(element, 'font-family') ?? inherited.fontFamily
+  const fontWeight = presentationValue(element, 'font-weight') ?? inherited.fontWeight
+  const fontStyle = presentationValue(element, 'font-style') ?? inherited.fontStyle
+
+  const fontSizeValue = presentationValue(element, 'font-size')
+  const fontSize = fontSizeValue ? parseSvgLength(fontSizeValue, units) : inherited.fontSize
+
+  const textAnchorValue = (presentationValue(element, 'text-anchor') ?? inherited.textAnchor).toLowerCase()
+  const textAnchor = textAnchorValue === 'middle' || textAnchorValue === 'end' ? textAnchorValue : 'start'
+
+  return {
+    fill,
+    fontSize,
+    fontFamily,
+    fontWeight,
+    fontStyle,
+    textAnchor,
+  }
+}
+
 function lineProfile(start: Point, end: Point): SketchProfile {
   return {
     start,
@@ -203,6 +291,55 @@ function ellipseProfile(cx: number, cy: number, rx: number, ry: number): SketchP
   }
 }
 
+function roundedRectProfile(x: number, y: number, w: number, h: number, rx: number, ry: number): SketchProfile {
+  const clampedRx = Math.max(0, Math.min(rx, w / 2))
+  const clampedRy = Math.max(0, Math.min(ry, h / 2))
+
+  if (clampedRx <= 1e-9 && clampedRy <= 1e-9) {
+    return polygonProfile([
+      { x, y },
+      { x: x + w, y },
+      { x: x + w, y: y + h },
+      { x, y: y + h },
+    ])
+  }
+
+  return {
+    start: { x: x + clampedRx, y },
+    closed: true,
+    segments: [
+      { type: 'line', to: { x: x + w - clampedRx, y } },
+      {
+        type: 'bezier',
+        control1: { x: x + w - clampedRx + clampedRx * KAPPA, y },
+        control2: { x: x + w, y: y + clampedRy - clampedRy * KAPPA },
+        to: { x: x + w, y: y + clampedRy },
+      },
+      { type: 'line', to: { x: x + w, y: y + h - clampedRy } },
+      {
+        type: 'bezier',
+        control1: { x: x + w, y: y + h - clampedRy + clampedRy * KAPPA },
+        control2: { x: x + w - clampedRx + clampedRx * KAPPA, y: y + h },
+        to: { x: x + w - clampedRx, y: y + h },
+      },
+      { type: 'line', to: { x: x + clampedRx, y: y + h } },
+      {
+        type: 'bezier',
+        control1: { x: x + clampedRx - clampedRx * KAPPA, y: y + h },
+        control2: { x, y: y + h - clampedRy + clampedRy * KAPPA },
+        to: { x, y: y + h - clampedRy },
+      },
+      { type: 'line', to: { x, y: y + clampedRy } },
+      {
+        type: 'bezier',
+        control1: { x, y: y + clampedRy - clampedRy * KAPPA },
+        control2: { x: x + clampedRx - clampedRx * KAPPA, y },
+        to: { x: x + clampedRx, y },
+      },
+    ],
+  }
+}
+
 function tokenizePathData(pathData: string): string[] {
   const matches = pathData.match(/[AaCcHhLlMmQqSsTtVvZz]|[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g)
   return matches ?? []
@@ -221,6 +358,10 @@ function quadraticToBezier(current: Point, control: Point, end: Point): Extract<
     },
     to: end,
   }
+}
+
+function pointsNear(a: Point, b: Point, epsilon = SVG_PATH_AUTO_CLOSE_EPSILON): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= epsilon
 }
 
 function vectorAngle(ux: number, uy: number, vx: number, vy: number): number {
@@ -340,7 +481,7 @@ function svgArcToBeziers(
   return resultSegments
 }
 
-function parsePathProfiles(pathData: string): SketchProfile[] {
+function parsePathProfiles(pathData: string, closeOpenSubpaths: boolean): SketchProfile[] {
   const tokens = tokenizePathData(pathData)
   const profiles: SketchProfile[] = []
   let index = 0
@@ -353,10 +494,31 @@ function parsePathProfiles(pathData: string): SketchProfile[] {
 
   const finishSubpath = () => {
     if (currentSegments.length > 0 || (profiles.length === 0 && tokens.length > 0)) {
+      let closed = false
+      const lastSegment = currentSegments[currentSegments.length - 1]
+
+      if (lastSegment && pointsNear(lastSegment.to, subpathStart)) {
+        closed = true
+        currentSegments[currentSegments.length - 1] = {
+          ...lastSegment,
+          to: { ...subpathStart },
+        }
+
+        const previousPoint = currentSegments.length > 1
+          ? currentSegments[currentSegments.length - 2].to
+          : subpathStart
+        if (lastSegment.type === 'line' && pointsNear(previousPoint, subpathStart)) {
+          currentSegments.pop()
+        }
+      } else if (closeOpenSubpaths && currentSegments.length > 0) {
+        currentSegments.push({ type: 'line', to: { ...subpathStart } })
+        closed = true
+      }
+
       profiles.push({
-        start: subpathStart,
+        start: { ...subpathStart },
         segments: [...currentSegments],
-        closed: false,
+        closed,
       })
       currentSegments = []
     }
@@ -597,27 +759,143 @@ function shapeName(element: Element, fallback: string): string {
   return element.getAttribute('id') || element.getAttribute('inkscape:label') || fallback
 }
 
+function normalizeSvgTextContent(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function pickTextFontId(presentation: SvgPresentationContext): TextFontId {
+  const family = (presentation.fontFamily ?? '').toLowerCase()
+  const weight = (presentation.fontWeight ?? '').toLowerCase()
+  const style = (presentation.fontStyle ?? '').toLowerCase()
+
+  const numericWeight = Number.parseInt(weight, 10)
+  const bold = weight.includes('bold') || (Number.isFinite(numericWeight) && numericWeight >= 600)
+  const italic = style.includes('italic') || style.includes('oblique')
+  const condensed = family.includes('condensed') || family.includes('narrow')
+
+  if (family.includes('mono')) {
+    return italic ? 'droid_sans_mono_regular_italic' : 'droid_sans_mono_regular'
+  }
+
+  if (family.includes('serif') || family.includes('times') || family.includes('georgia')) {
+    if (bold) {
+      return italic ? 'droid_serif_bold_italic' : 'droid_serif_bold'
+    }
+    return italic ? 'droid_serif_regular_italic' : 'droid_serif_regular'
+  }
+
+  if (family.includes('gentilis')) {
+    if (bold) {
+      return italic ? 'gentilis_bold_italic' : 'gentilis_bold'
+    }
+    return italic ? 'gentilis_regular_italic' : 'gentilis_regular'
+  }
+
+  if (family.includes('optimer')) {
+    if (bold) {
+      return italic ? 'optimer_bold_italic' : 'optimer_bold'
+    }
+    return italic ? 'optimer_regular_italic' : 'optimer_regular'
+  }
+
+  if (bold) {
+    if (condensed) {
+      return italic ? 'helvetiker_bold_condensed_italic' : 'helvetiker_bold_condensed'
+    }
+    return italic ? 'helvetiker_bold_italic' : 'helvetiker_bold'
+  }
+
+  if (condensed) {
+    return italic ? 'helvetiker_regular_condensed_italic' : 'helvetiker_regular_condensed'
+  }
+
+  return italic ? 'helvetiker_regular_italic' : 'helvetiker_regular'
+}
+
+function parseTextProfiles(
+  element: Element,
+  units: SvgUnitContext,
+  matrix: AffineMatrix2D,
+  presentation: SvgPresentationContext,
+): Array<{ name: string; profile: SketchProfile }> {
+  const text = normalizeSvgTextContent(element.textContent)
+  if (!text || presentation.fontSize <= 0) {
+    return []
+  }
+
+  const x = parseSvgLength(element.getAttribute('x'), units)
+  const y = parseSvgLength(element.getAttribute('y'), units)
+  const dx = parseSvgLength(element.getAttribute('dx'), units)
+  const dy = parseSvgLength(element.getAttribute('dy'), units)
+  const fontId = pickTextFontId(presentation)
+  const generated = generateTextShapes(
+    {
+      text,
+      style: 'outline',
+      fontId,
+      size: presentation.fontSize,
+      operation: 'subtract',
+    },
+    { x: 0, y: 0 },
+  )
+
+  if (generated.length === 0) {
+    return []
+  }
+
+  const bounds = generated
+    .map((shape) => getProfileBounds(shape.profile))
+    .reduce(
+      (acc, next) => ({
+        minX: Math.min(acc.minX, next.minX),
+        maxX: Math.max(acc.maxX, next.maxX),
+        minY: Math.min(acc.minY, next.minY),
+        maxY: Math.max(acc.maxY, next.maxY),
+      }),
+      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
+    )
+
+  let offsetX = x + dx - bounds.minX
+  if (presentation.textAnchor === 'middle') {
+    offsetX -= (bounds.maxX - bounds.minX) / 2
+  } else if (presentation.textAnchor === 'end') {
+    offsetX -= bounds.maxX - bounds.minX
+  }
+
+  const offsetY = y + dy - bounds.maxY
+  const translation = { a: 1, b: 0, c: 0, d: 1, e: offsetX, f: offsetY }
+
+  const name = shapeName(element, 'text')
+  return generated.map((shape, index) => ({
+    name: generated.length > 1 ? `${name} ${index + 1}` : name,
+    profile: transformProfile(shape.profile, multiplyMatrix(matrix, translation)),
+  }))
+}
+
 function parseElementProfiles(
   element: Element,
   units: SvgUnitContext,
   matrix: AffineMatrix2D,
+  presentation: SvgPresentationContext,
 ): Array<{ name: string; profile: SketchProfile }> {
   const tagName = element.tagName.toLowerCase()
   const profiles: Array<{ name: string; profile: SketchProfile }> = []
   const name = shapeName(element, tagName)
+  const closeOpenSubpaths = hasVisiblePaint(presentation.fill)
 
   if (tagName === 'rect') {
     const x = parseSvgLength(element.getAttribute('x'), units)
     const y = parseSvgLength(element.getAttribute('y'), units)
     const w = parseSvgLength(element.getAttribute('width'), units)
     const h = parseSvgLength(element.getAttribute('height'), units)
+    const rxValue = element.getAttribute('rx')
+    const ryValue = element.getAttribute('ry')
+    const rawRx = rxValue ? parseSvgLength(rxValue, units) : null
+    const rawRy = ryValue ? parseSvgLength(ryValue, units) : null
+    const rx = rawRx ?? rawRy ?? 0
+    const ry = rawRy ?? rawRx ?? 0
     if (w > 0 && h > 0) {
-      profiles.push({ name, profile: transformProfile(polygonProfile([
-        { x, y },
-        { x: x + w, y },
-        { x: x + w, y: y + h },
-        { x, y: y + h },
-      ]), matrix) })
+      profiles.push({ name, profile: transformProfile(roundedRectProfile(x, y, w, h, rx, ry), matrix) })
     }
     return profiles
   }
@@ -655,7 +933,7 @@ function parseElementProfiles(
 
   if (tagName === 'polygon' || tagName === 'polyline') {
     const points = parsePointsAttribute(element.getAttribute('points'), units)
-    const profile = polylineProfile(points, tagName === 'polygon')
+    const profile = polylineProfile(points, tagName === 'polygon' || closeOpenSubpaths)
     if (profile) {
       profiles.push({ name, profile: transformProfile(profile, matrix) })
     }
@@ -664,13 +942,18 @@ function parseElementProfiles(
 
   if (tagName === 'path') {
     const pathData = element.getAttribute('d') ?? ''
-    const pathProfiles = parsePathProfiles(pathData)
+    const pathProfiles = parsePathProfiles(pathData, closeOpenSubpaths)
     pathProfiles.forEach((profile, index) => {
       profiles.push({
         name: pathProfiles.length > 1 ? `${name} ${index + 1}` : name,
         profile: transformProfile(convertProfileFromSvgUserUnits(profile, units), matrix),
       })
     })
+    return profiles
+  }
+
+  if (tagName === 'text') {
+    return parseTextProfiles(element, units, matrix, presentation)
   }
 
   return profiles
@@ -689,7 +972,69 @@ function parseSvgDocument(text: string): Document {
   return document
 }
 
-function inspectSvgRoot(root: Element): ImportInspection {
+function appendUniqueWarning(warnings: string[], message: string) {
+  if (!warnings.includes(message)) {
+    warnings.push(message)
+  }
+}
+
+function inspectSvgContent(document: Document, warnings: string[]) {
+  const hasText = document.querySelector('text') !== null
+  const hasTextPath = document.querySelector('textPath') !== null
+  const hasClipPath = document.querySelector('clipPath') !== null
+  const hasMask = document.querySelector('mask') !== null
+  const hasFilter = document.querySelector('filter') !== null
+  const hasUse = document.querySelector('use') !== null
+  const hasImage = document.querySelector('image') !== null
+  const hasForeignObject = document.querySelector('foreignObject') !== null
+  const hasPattern = document.querySelector('pattern') !== null
+  const hasSymbol = document.querySelector('symbol') !== null
+
+  if (hasText) {
+    appendUniqueWarning(
+      warnings,
+      'SVG contains live text. Import uses fallback outline fonts; convert text to paths for exact results.',
+    )
+  }
+
+  if (hasTextPath) {
+    appendUniqueWarning(
+      warnings,
+      'SVG uses text on a path. Convert text to paths before export for accurate geometry.',
+    )
+  }
+
+  if (hasClipPath || hasMask) {
+    appendUniqueWarning(
+      warnings,
+      'SVG uses clipping or masking. Geometry import ignores those effects; expand artwork to paths before export.',
+    )
+  }
+
+  if (hasFilter) {
+    appendUniqueWarning(
+      warnings,
+      'SVG uses filters or visual effects. Geometry import ignores filters.',
+    )
+  }
+
+  if (hasUse || hasSymbol) {
+    appendUniqueWarning(
+      warnings,
+      'SVG uses cloned or symbol-based elements. Expand clones before export if geometry is missing.',
+    )
+  }
+
+  if (hasImage || hasPattern || hasForeignObject) {
+    appendUniqueWarning(
+      warnings,
+      'SVG contains raster, pattern, or embedded HTML content that geometry import does not convert.',
+    )
+  }
+}
+
+function inspectSvgRoot(document: Document): ImportInspection {
+  const root = document.documentElement
   const warnings: string[] = []
   const width = parseExplicitLength(root.getAttribute('width'))
   const height = parseExplicitLength(root.getAttribute('height'))
@@ -722,6 +1067,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
         warnings.push('SVG width/viewBox and height/viewBox imply different scales. Using the first detected scale.')
       }
 
+      inspectSvgContent(document, warnings)
       return {
         detectedUnits: rootUnits,
         sourceUnitScale: scale,
@@ -735,6 +1081,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
 
   if (rootUnits) {
     warnings.push('SVG declares physical size but no usable viewBox. Unitless geometry will be treated as the detected units.')
+    inspectSvgContent(document, warnings)
     return {
       detectedUnits: rootUnits,
       sourceUnitScale: 1,
@@ -746,6 +1093,7 @@ function inspectSvgRoot(root: Element): ImportInspection {
   }
 
   warnings.push('Could not detect SVG source units from the file.')
+  inspectSvgContent(document, warnings)
   return {
     detectedUnits: null,
     sourceUnitScale: 1,
@@ -758,12 +1106,12 @@ function inspectSvgRoot(root: Element): ImportInspection {
 
 export function inspectSvgString(text: string): ImportInspection {
   const document = parseSvgDocument(text)
-  return inspectSvgRoot(document.documentElement)
+  return inspectSvgRoot(document)
 }
 
 export function importSvgString(text: string, context: ImportContext): ImportParseResult {
   const document = parseSvgDocument(text)
-  const inspection = inspectSvgRoot(document.documentElement)
+  const inspection = inspectSvgRoot(document)
   const units: SvgUnitContext = {
     sourceUnits: context.sourceUnits ?? inspection.detectedUnits ?? context.targetUnits,
     targetUnits: context.targetUnits,
@@ -772,19 +1120,32 @@ export function importSvgString(text: string, context: ImportContext): ImportPar
 
   const warnings: string[] = []
   const shapes: ImportedShape[] = []
+  const rootPresentation: SvgPresentationContext = {
+    fill: 'black',
+    fontSize: convertSvgUserValue(16, units),
+    fontFamily: null,
+    fontWeight: null,
+    fontStyle: null,
+    textAnchor: 'start',
+  }
 
-  const visit = (element: Element, inheritedMatrix: AffineMatrix2D) => {
+  const visit = (element: Element, inheritedMatrix: AffineMatrix2D, inheritedPresentation: SvgPresentationContext) => {
     const nextMatrix = multiplyMatrix(inheritedMatrix, parseTransform(element.getAttribute('transform'), units))
     const tagName = element.tagName.toLowerCase()
+    const nextPresentation = resolvePresentationContext(element, inheritedPresentation, units)
 
     if (['svg', 'g'].includes(tagName)) {
       for (const child of Array.from(element.children)) {
-        visit(child, nextMatrix)
+        visit(child, nextMatrix, nextPresentation)
       }
       return
     }
 
-    const profiles = parseElementProfiles(element, units, nextMatrix)
+    if (SVG_SILENT_TAGS.has(tagName)) {
+      return
+    }
+
+    const profiles = parseElementProfiles(element, units, nextMatrix, nextPresentation)
     if (profiles.length === 0) {
       warnings.push(`Skipped unsupported or empty SVG element <${tagName}>.`)
       return
@@ -792,7 +1153,6 @@ export function importSvgString(text: string, context: ImportContext): ImportPar
 
     for (const entry of profiles) {
       if (isProfileDegenerate(entry.profile)) {
-        warnings.push(`Skipped degenerate SVG shape "${entry.name}".`)
         continue
       }
 
@@ -805,6 +1165,6 @@ export function importSvgString(text: string, context: ImportContext): ImportPar
     }
   }
 
-  visit(document.documentElement, identityMatrix())
+  visit(document.documentElement, identityMatrix(), rootPresentation)
   return { shapes, warnings }
 }
