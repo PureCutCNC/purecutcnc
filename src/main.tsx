@@ -28,6 +28,34 @@ if (!isDesktop) {
   installAnalytics()
 }
 
+function isPhoneSizedTouchDevice() {
+  if (typeof window === 'undefined' || isDesktop) {
+    return false
+  }
+
+  return window.matchMedia('(max-width: 760px) and (pointer: coarse)').matches
+}
+
+function UnsupportedMobileScreen() {
+  return (
+    <main className="unsupported-mobile-shell">
+      <div className="unsupported-mobile-card">
+        <div className="unsupported-mobile-eyebrow">Desktop Browser Only</div>
+        <h1>PureCut CNC is not supported on phones.</h1>
+        <p>
+          The browser app is designed for a desktop-sized workspace and does not
+          behave well on phone screens. Use a desktop browser or install a
+          desktop build for macOS, Windows, or Linux.
+        </p>
+        <div className="unsupported-mobile-actions">
+          <a href="https://purecutcnc.github.io/downloads.html">Desktop Downloads</a>
+          <a href="https://purecutcnc.github.io/">Project Website</a>
+        </div>
+      </div>
+    </main>
+  )
+}
+
 createRoot(document.getElementById('root')!).render(
-  <App />,
+  isPhoneSizedTouchDevice() ? <UnsupportedMobileScreen /> : <App />,
 )

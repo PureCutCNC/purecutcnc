@@ -60,3 +60,70 @@ button,
 input {
   font: inherit;
 }
+
+.unsupported-mobile-shell {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at top, rgba(90, 143, 204, 0.22), transparent 36%),
+    linear-gradient(180deg, #091018 0%, #0a1016 100%);
+}
+
+.unsupported-mobile-card {
+  width: min(100%, 32rem);
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(16, 24, 33, 0.94);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.unsupported-mobile-eyebrow {
+  margin-bottom: 0.85rem;
+  color: var(--cut);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.unsupported-mobile-card h1 {
+  margin: 0 0 0.85rem;
+  font-size: clamp(1.9rem, 8vw, 2.6rem);
+  line-height: 0.98;
+}
+
+.unsupported-mobile-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.unsupported-mobile-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.unsupported-mobile-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.8rem;
+  background: var(--cut);
+  color: #071019;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.unsupported-mobile-actions a:last-child {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
