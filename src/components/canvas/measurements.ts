@@ -230,7 +230,17 @@ export function drawActiveEditMeasurements(
         drawLineLengthMeasurement(ctx, start, segment.to, vt, units)
       } else if (segment?.type === 'arc') {
         drawArcRadiusMeasurement(ctx, start, segment, vt, units)
+      } else if (segment?.type === 'circle') {
+        drawRadiusMeasurement(ctx, segment.center, start, vt, units)
       }
+    }
+    return
+  }
+
+  if (activeControl.kind === 'circle_center') {
+    const segment = profile.segments[activeControl.index]
+    if (segment?.type === 'circle') {
+      drawRadiusMeasurement(ctx, segment.center, anchorPointForIndex(profile, activeControl.index), vt, units)
     }
     return
   }
