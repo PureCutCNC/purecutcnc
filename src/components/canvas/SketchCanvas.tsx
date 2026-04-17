@@ -1443,6 +1443,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return computeEditDimSteps(profile, control.index)
     }
 
+    if (control.kind === 'circle_center') {
+      return computeEditDimSteps(profile, 0)
+    }
+
     if (control.kind === 'arc_handle') {
       return [{ kind: 'arc_radius', control, arcStartAnchorIndex: control.index }]
     }
