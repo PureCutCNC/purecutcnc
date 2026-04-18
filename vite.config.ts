@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot } from 'vite'
@@ -30,6 +30,11 @@ const candidateSharedRoots = [
 const sharedProjectRoot = candidateSharedRoots.find((candidate) => (
   existsSync(resolve(candidate, 'package.json')) && existsSync(resolve(candidate, 'node_modules'))
 )) ?? configDir
+const realNodeModulesRoot = existsSync(resolve(configDir, 'node_modules'))
+  ? realpathSync(resolve(configDir, 'node_modules'))
+  : null
+const realSharedProjectRoot = realNodeModulesRoot ? resolve(realNodeModulesRoot, '..') : null
+const realManifoldRoot = realNodeModulesRoot ? resolve(realNodeModulesRoot, 'manifold-3d') : null
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -42,6 +47,9 @@ export default defineConfig({
       allow: [
         searchForWorkspaceRoot(configDir),
         sharedProjectRoot,
+        ...(realSharedProjectRoot ? [realSharedProjectRoot] : []),
+        ...(realNodeModulesRoot ? [realNodeModulesRoot] : []),
+        ...(realManifoldRoot ? [realManifoldRoot] : []),
       ],
     },
   },

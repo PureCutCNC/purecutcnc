@@ -1453,6 +1453,9 @@ function defaultOperationForTarget(
 ): Operation {
   const tool = project.tools[0] ?? defaultTool(project.meta.units, 1)
   const toolRef = project.tools[0]?.id ?? null
+  const defaultStepover = project.meta.units === 'inch'
+    ? 0.04
+    : convertLength(1, 'mm', project.meta.units)
 
   return {
     id: `op${index + 1}`,
@@ -1465,7 +1468,7 @@ function defaultOperationForTarget(
     target,
     toolRef,
     stepdown: tool.defaultStepdown,
-    stepover: tool.defaultStepover,
+    stepover: defaultStepover,
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
