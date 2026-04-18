@@ -20,7 +20,8 @@ import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/Sketc
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
-import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation'
+import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield, type SimulationReplayItem } from './engine/simulation'
+import type { SimulationPlaybackInput } from './components/simulation/SimulationViewport'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
@@ -282,6 +283,94 @@ function App() {
 
     return project.operations.filter((operation) => operation.enabled && operation.showToolpath).length
   }, [project.operations, selectedOperation, selectedToolpath, simulationMode])
+
+  const simulationPlaybackInput = useMemo<SimulationPlaybackInput | null>(() => {
+    if (centerTab !== 'simulation' || simulationMode !== 'selected') {
+      return null
+    }
+    if (!selectedOperation || !selectedToolpath) {
+      return null
+    }
+    const toolRecord = selectedOperation.toolRef
+      ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
+      : null
+    if (!toolRecord || toolRecord.type === 'drill') {
+      return null
+    }
+
+    const normalizedSelectedTool = normalizeToolForProject(toolRecord, project)
+
+    // Pre-apply only operations that come BEFORE the selected one in the feature
+    // tree order — operations listed after the selection haven't run yet at this
+    // point in the cycle, so their cuts shouldn't appear in the starting state.
+    const selectedIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
+    const priorOperations = selectedIndex >= 0 ? project.operations.slice(0, selectedIndex) : []
+
+    const priorItems: SimulationReplayItem[] = priorOperations
+      .filter((operation) =>
+        operation.enabled
+        && operation.showToolpath
+        && operation.toolRef,
+      )
+      .map((operation): SimulationReplayItem | null => {
+        const toolpath = generateToolpathForOperation(operation)
+        const operationTool = operation.toolRef
+          ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+          : null
+        if (!toolpath || !operationTool) {
+          return null
+        }
+        const normalizedTool = normalizeToolForProject(operationTool, project)
+        return {
+          operationId: operation.id,
+          operationName: operation.name,
+          toolRef: operationTool.id,
+          toolType: operationTool.type,
+          toolRadius: normalizedTool.radius,
+          vBitAngle: normalizedTool.vBitAngle,
+          toolpath,
+        }
+      })
+      .filter((item): item is SimulationReplayItem => item !== null)
+
+    const baseResult = simulateReplayItemsHeightfield(project, priorItems, {
+      targetLongAxisCells: simulationDetailCells,
+    })
+
+    const diameter = normalizedSelectedTool.radius * 2
+    // Both maxCutDepth and diameter come from `normalizeToolForProject`, so they're
+    // already in project units — mm or inch, whichever the project uses. All the
+    // derived dimensions below stay unit-agnostic by staying diameter-relative.
+    const toolCutLength = normalizedSelectedTool.maxCutDepth > 0
+      ? normalizedSelectedTool.maxCutDepth
+      : diameter * 3
+    const toolShankLength = diameter * 2
+    // Split source moves longer than ~0.4× tool radius so long straights don't
+    // apply a single giant cut in one shot. The playback controller also throttles
+    // by distance-per-frame now, so this is belt-and-suspenders for partial-cut
+    // granularity on very long segments.
+    const maxSegmentLength = normalizedSelectedTool.radius * 0.4
+
+    // Operation feed is stored in project-units-per-minute. The viewport works in
+    // units-per-second, so divide by 60. This becomes the "1×" playback speed so
+    // users can intuitively speed up or slow down relative to the real feed rate.
+    const feedPerSecond = selectedOperation.feed > 0 ? selectedOperation.feed / 60 : undefined
+    // `project.meta.units` uses 'inch'; the playback UI shows the short label 'in'.
+    const units: 'mm' | 'in' = project.meta.units === 'inch' ? 'in' : 'mm'
+
+    return {
+      baseGrid: baseResult.grid,
+      moves: selectedToolpath.moves,
+      toolType: toolRecord.type,
+      toolRadius: normalizedSelectedTool.radius,
+      vBitAngle: normalizedSelectedTool.vBitAngle,
+      toolCutLength,
+      toolShankLength,
+      maxSegmentLength,
+      units,
+      feedPerSecond,
+    }
+  }, [centerTab, generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 
   const visibleToolpaths = useMemo<ToolpathResult[]>(() => {
     return project.operations
@@ -663,6 +752,7 @@ function App() {
             stockColor={project.stock.color}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
+            playbackInput={simulationPlaybackInput}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}

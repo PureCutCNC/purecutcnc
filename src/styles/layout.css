@@ -582,6 +582,120 @@
   color: var(--text);
 }
 
+.simulation-playback-toggle {
+  margin-left: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: rgba(10, 18, 27, 0.85);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.simulation-playback-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.simulation-playback-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(10, 18, 27, 0.92);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  min-width: 460px;
+  pointer-events: auto;
+}
+
+.simulation-playback-bar__controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.simulation-playback-bar__btn {
+  width: 32px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.simulation-playback-bar__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.simulation-playback-bar__btn--primary {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  color: #fff;
+}
+
+.simulation-playback-bar__btn--primary:hover {
+  filter: brightness(1.08);
+}
+
+.simulation-playback-bar__progress {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+}
+
+.simulation-playback-bar__progress input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.simulation-playback-bar__readout {
+  /* Fixed width keeps the slider edge stable as the percentage ticks 0 → 100. */
+  min-width: 36px;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-bar__speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.simulation-playback-bar__speed--slider input[type='range'] {
+  width: 130px;
+  accent-color: var(--accent);
+}
+
+.simulation-playback-bar__speed select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 11px;
+}
+
 .panel-right {
   min-height: 0;
 }

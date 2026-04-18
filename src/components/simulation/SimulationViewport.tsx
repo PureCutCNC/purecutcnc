@@ -19,8 +19,11 @@ import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { buildSimulationGeometry } from '../../engine/simulation/mesh'
-import type { SimulationResult } from '../../engine/simulation'
-import type { Clamp, MachineOrigin, Operation } from '../../types/project'
+import { PlaybackController } from '../../engine/simulation/playback'
+import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
+import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
+import type { ToolpathMove } from '../../engine/toolpaths/types'
+import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 
 const DEFAULT_CAMERA_SPHERICAL = {
   theta: Math.PI / 4,
@@ -71,6 +74,29 @@ const VIEW_PRESETS: Record<ViewPreset, { theta: number; phi: number; up: THREE.V
   },
 }
 
+export interface SimulationPlaybackInput {
+  baseGrid: SimulationGrid
+  moves: ToolpathMove[]
+  toolType: ToolType
+  toolRadius: number
+  vBitAngle: number | null
+  /** Flute / cutting portion length in project units. */
+  toolCutLength?: number
+  /** Shank length above the flutes in project units. */
+  toolShankLength?: number
+  /** Max length of any single internal sub-move. Long sources get split. */
+  maxSegmentLength?: number
+  /** Project units for UI labels ('mm' or 'in'). */
+  units?: 'mm' | 'in'
+  /**
+   * Operation feed rate converted to project-units-per-second. When provided, this
+   * becomes the "1×" baseline for the playback speed multiplier so the user can
+   * scrub faster/slower relative to the real cutting feed. Omit (or pass 0) to
+   * fall back to the generic per-unit default.
+   */
+  feedPerSecond?: number
+}
+
 interface SimulationViewportProps {
   operation: Operation | null
   simulation: SimulationResult | null
@@ -86,6 +112,7 @@ interface SimulationViewportProps {
   stockColor?: string
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
+  playbackInput: SimulationPlaybackInput | null
 }
 
 export interface SimulationViewportHandle {
@@ -95,6 +122,69 @@ export interface SimulationViewportHandle {
 const SIMULATION_DETAIL_MIN = 240
 const SIMULATION_DETAIL_MAX = 720
 const SIMULATION_DETAIL_STEP = 40
+
+/**
+ * Playback speed is a multiplier of the operation's feed rate ("1×" means "play at
+ * the real cutting feed"). The UI renders a log-scaled slider so the low end (where
+ * small changes matter visually) gets as much travel as the high end. When the op
+ * doesn't expose a feed rate we fall back to a generic per-unit default.
+ */
+const PLAYBACK_MULTIPLIER_MIN = 1
+// Above ~30× the per-frame Step cap and the browser's RAF cadence both saturate,
+// so further increases stop translating into faster playback. Cap at 32× to keep
+// the slider's range meaningful end-to-end.
+const PLAYBACK_MULTIPLIER_MAX = 32
+const PLAYBACK_DEFAULT_MULTIPLIER = 2
+const PLAYBACK_SLIDER_STEPS = 100
+const PLAYBACK_FALLBACK_FEED_MM = 50
+const PLAYBACK_FALLBACK_FEED_IN = 2
+
+/**
+ * Map a linear slider position (0..STEPS) to a multiplier using a log scale so the
+ * low end feels precise even when the top end reaches into the hundreds.
+ */
+function sliderPositionToMultiplier(position: number): number {
+  const t = Math.max(0, Math.min(1, position / PLAYBACK_SLIDER_STEPS))
+  const log = Math.log(PLAYBACK_MULTIPLIER_MIN) + t * (Math.log(PLAYBACK_MULTIPLIER_MAX) - Math.log(PLAYBACK_MULTIPLIER_MIN))
+  return Math.exp(log)
+}
+
+function multiplierToSliderPosition(multiplier: number): number {
+  const clamped = Math.max(PLAYBACK_MULTIPLIER_MIN, Math.min(PLAYBACK_MULTIPLIER_MAX, multiplier))
+  const t = (Math.log(clamped) - Math.log(PLAYBACK_MULTIPLIER_MIN))
+    / (Math.log(PLAYBACK_MULTIPLIER_MAX) - Math.log(PLAYBACK_MULTIPLIER_MIN))
+  return Math.round(t * PLAYBACK_SLIDER_STEPS)
+}
+
+function formatMultiplierLabel(multiplier: number): string {
+  if (multiplier >= 10) {
+    return `${Math.round(multiplier)}×`
+  }
+  return `${Number(multiplier.toFixed(1))}×`
+}
+
+/**
+ * Max distance the tool can advance in a single animation frame, expressed in project
+ * units. Chunks are applied via partial-move cuts, so one step can span many small moves
+ * or just a slice of a larger one — per your request, we throttle by distance, not count.
+ */
+const PLAYBACK_STEP_SIZES_MM = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+const PLAYBACK_STEP_SIZES_IN = [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
+// 0.1 in ≈ 2.5 mm — same visual cadence in either unit system.
+const PLAYBACK_DEFAULT_STEP_MM = 2.5
+const PLAYBACK_DEFAULT_STEP_IN = 0.1
+const PLAYBACK_REBUILD_INTERVAL_MS = 0
+
+function formatSpeedLabel(perSecond: number, units: 'mm' | 'in'): string {
+  // Internally the sim advances by distance-per-second (it's what RAF multiplies
+  // by dt), but CNC operators think in feed-per-minute — so display units/min to
+  // match how the operation's feed was authored. Multiply back up by 60.
+  const perMinute = perSecond * 60
+  // Inches read nicer with a couple of decimals, mm can stay whole for normal feeds.
+  const digits = units === 'in' ? 1 : 0
+  const rounded = Number(perMinute.toFixed(digits))
+  return `${rounded} ${units}/min`
+}
 
 function createOrbitControls(
   camera: THREE.PerspectiveCamera,
@@ -351,7 +441,49 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
+  playbackInput,
 }, ref) {
+  const playbackUnits = playbackInput?.units ?? 'mm'
+  const fallbackFeed = playbackUnits === 'in' ? PLAYBACK_FALLBACK_FEED_IN : PLAYBACK_FALLBACK_FEED_MM
+  // Anchor the playback speed multiplier to the operation's feed (units/sec). If the
+  // operation has no feed defined, anchor to a sensible per-unit fallback so the UI
+  // still behaves like "1× = a reasonable starting pace".
+  const baseSpeed = playbackInput?.feedPerSecond && playbackInput.feedPerSecond > 0
+    ? playbackInput.feedPerSecond
+    : fallbackFeed
+  const stepSizes = playbackUnits === 'in' ? PLAYBACK_STEP_SIZES_IN : PLAYBACK_STEP_SIZES_MM
+  const defaultStep = playbackUnits === 'in' ? PLAYBACK_DEFAULT_STEP_IN : PLAYBACK_DEFAULT_STEP_MM
+
+  const [playbackEnabled, setPlaybackEnabled] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackMultiplier, setPlaybackMultiplier] = useState<number>(PLAYBACK_DEFAULT_MULTIPLIER)
+  const [playbackMaxStep, setPlaybackMaxStep] = useState(defaultStep)
+  const [playbackProgress, setPlaybackProgress] = useState(0)
+  const playbackControllerRef = useRef<PlaybackController | null>(null)
+  const toolMeshRef = useRef<THREE.Group | null>(null)
+  const playbackMaterialMeshRef = useRef<THREE.Mesh | null>(null)
+  const playbackFrameRef = useRef<number>(0)
+  const playbackLastTimeRef = useRef<number>(0)
+  const playbackLastRebuildRef = useRef<number>(0)
+  const isPlayingRef = useRef(false)
+  const playbackSpeedRef = useRef(baseSpeed * PLAYBACK_DEFAULT_MULTIPLIER)
+  const playbackMaxStepRef = useRef(playbackMaxStep)
+  useEffect(() => {
+    isPlayingRef.current = isPlaying
+  }, [isPlaying])
+  useEffect(() => {
+    // The RAF tick reads speed from a ref so it stays current without restarting
+    // the loop. Recompute on every baseSpeed or multiplier change.
+    playbackSpeedRef.current = baseSpeed * playbackMultiplier
+  }, [baseSpeed, playbackMultiplier])
+  useEffect(() => {
+    playbackMaxStepRef.current = playbackMaxStep
+  }, [playbackMaxStep])
+  // Reset the step default if the project units change under us — but leave the
+  // multiplier alone so the user's chosen pace is preserved across operations.
+  useEffect(() => {
+    setPlaybackMaxStep(defaultStep)
+  }, [defaultStep])
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -502,6 +634,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
+    if (playbackEnabled) {
+      disposeCurrentMesh(scene)
+      return
+    }
+
     disposeCurrentMesh(scene)
 
     if (!simulation) {
@@ -527,7 +664,226 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         hasAutoFramedRef.current = true
       }
     }
-  }, [disposeCurrentMesh, simulation])
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
+
+  const rebuildPlaybackGeometry = useCallback(() => {
+    const mesh = playbackMaterialMeshRef.current
+    const controller = playbackControllerRef.current
+    if (!mesh || !controller) {
+      return
+    }
+    const nextGeometry = buildSimulationGeometry(controller.liveGrid)
+    mesh.geometry.dispose()
+    mesh.geometry = nextGeometry
+  }, [])
+
+  const updateToolMeshPose = useCallback(() => {
+    const controller = playbackControllerRef.current
+    const tool = toolMeshRef.current
+    if (!controller || !tool) {
+      return
+    }
+    const pose = controller.getPose()
+    // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
+    tool.position.set(pose.x, pose.z, pose.y)
+  }, [])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) {
+      return
+    }
+
+    if (!playbackEnabled || !playbackInput) {
+      if (playbackMaterialMeshRef.current) {
+        scene.remove(playbackMaterialMeshRef.current)
+        playbackMaterialMeshRef.current.geometry.dispose()
+        const material = playbackMaterialMeshRef.current.material
+        if (Array.isArray(material)) {
+          material.forEach((entry) => entry.dispose())
+        } else {
+          material.dispose()
+        }
+        playbackMaterialMeshRef.current = null
+      }
+      if (toolMeshRef.current) {
+        scene.remove(toolMeshRef.current)
+        disposeToolMesh(toolMeshRef.current)
+        toolMeshRef.current = null
+      }
+      playbackControllerRef.current = null
+      setIsPlaying(false)
+      setPlaybackProgress(0)
+      return
+    }
+
+    const controller = new PlaybackController(
+      playbackInput.baseGrid,
+      playbackInput.moves,
+      {
+        toolType: playbackInput.toolType,
+        toolRadius: playbackInput.toolRadius,
+        vBitAngle: playbackInput.vBitAngle,
+      },
+      { maxSegmentLength: playbackInput.maxSegmentLength },
+    )
+    playbackControllerRef.current = controller
+
+    const geometry = buildSimulationGeometry(controller.liveGrid)
+    const material = new THREE.MeshStandardMaterial({
+      color: stockColor ? new THREE.Color(stockColor) : 0xb5beca,
+      roughness: 0.86,
+      metalness: 0.05,
+      flatShading: true,
+      side: THREE.DoubleSide,
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    scene.add(mesh)
+    playbackMaterialMeshRef.current = mesh
+
+    const tool = buildToolMesh({
+      toolType: playbackInput.toolType,
+      toolRadius: playbackInput.toolRadius,
+      vBitAngle: playbackInput.vBitAngle,
+      cutLength: playbackInput.toolCutLength,
+      shankLength: playbackInput.toolShankLength,
+    })
+    scene.add(tool)
+    toolMeshRef.current = tool
+
+    setPlaybackProgress(0)
+    updateToolMeshPose()
+
+    return () => {
+      if (playbackMaterialMeshRef.current) {
+        scene.remove(playbackMaterialMeshRef.current)
+        playbackMaterialMeshRef.current.geometry.dispose()
+        const material = playbackMaterialMeshRef.current.material
+        if (Array.isArray(material)) {
+          material.forEach((entry) => entry.dispose())
+        } else {
+          material.dispose()
+        }
+        playbackMaterialMeshRef.current = null
+      }
+      if (toolMeshRef.current) {
+        scene.remove(toolMeshRef.current)
+        disposeToolMesh(toolMeshRef.current)
+        toolMeshRef.current = null
+      }
+      playbackControllerRef.current = null
+    }
+  }, [playbackEnabled, playbackInput, stockColor, updateToolMeshPose])
+
+  useEffect(() => {
+    if (!playbackEnabled || !isPlaying) {
+      cancelAnimationFrame(playbackFrameRef.current)
+      playbackFrameRef.current = 0
+      return
+    }
+
+    const controller = playbackControllerRef.current
+    if (!controller) {
+      return
+    }
+
+    playbackLastTimeRef.current = performance.now()
+    playbackLastRebuildRef.current = performance.now()
+
+    const tick = () => {
+      const controllerInner = playbackControllerRef.current
+      if (!controllerInner || !isPlayingRef.current) {
+        playbackFrameRef.current = 0
+        return
+      }
+
+      const now = performance.now()
+      const dt = Math.min((now - playbackLastTimeRef.current) / 1000, 0.1)
+      playbackLastTimeRef.current = now
+
+      // Advance by speed × dt, but never more than the user-selected "step per frame"
+      // distance. This is what makes geometry-heavy operations (long straights) pace
+      // the same as move-heavy ones (tight arcs) — we step by distance, not by move.
+      const requested = playbackSpeedRef.current * dt
+      const step = playbackMaxStepRef.current > 0
+        ? Math.min(requested, playbackMaxStepRef.current)
+        : requested
+      const gridChanged = controllerInner.advance(step)
+      updateToolMeshPose()
+
+      if (gridChanged && now - playbackLastRebuildRef.current >= PLAYBACK_REBUILD_INTERVAL_MS) {
+        rebuildPlaybackGeometry()
+        playbackLastRebuildRef.current = now
+      }
+
+      setPlaybackProgress(controllerInner.totalPathLength > 0
+        ? controllerInner.getDistanceTraveled() / controllerInner.totalPathLength
+        : 1)
+
+      if (controllerInner.isFinished()) {
+        rebuildPlaybackGeometry()
+        setIsPlaying(false)
+        playbackFrameRef.current = 0
+        return
+      }
+
+      playbackFrameRef.current = requestAnimationFrame(tick)
+    }
+
+    playbackFrameRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(playbackFrameRef.current)
+      playbackFrameRef.current = 0
+    }
+  }, [isPlaying, playbackEnabled, rebuildPlaybackGeometry, updateToolMeshPose])
+
+  useEffect(() => {
+    if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
+      setPlaybackEnabled(false)
+    }
+  }, [mode, playbackEnabled, playbackInput])
+
+  const handlePlaybackToggle = useCallback(() => {
+    setPlaybackEnabled((current) => !current)
+  }, [])
+
+  const handlePlayPause = useCallback(() => {
+    const controller = playbackControllerRef.current
+    if (!controller) {
+      return
+    }
+    if (controller.isFinished()) {
+      controller.reset()
+      rebuildPlaybackGeometry()
+      setPlaybackProgress(0)
+      updateToolMeshPose()
+    }
+    setIsPlaying((current) => !current)
+  }, [rebuildPlaybackGeometry, updateToolMeshPose])
+
+  const handleStop = useCallback(() => {
+    const controller = playbackControllerRef.current
+    if (!controller) {
+      return
+    }
+    setIsPlaying(false)
+    controller.reset()
+    rebuildPlaybackGeometry()
+    updateToolMeshPose()
+    setPlaybackProgress(0)
+  }, [rebuildPlaybackGeometry, updateToolMeshPose])
+
+  const handleSeek = useCallback((fraction: number) => {
+    const controller = playbackControllerRef.current
+    if (!controller) {
+      return
+    }
+    controller.seekToFraction(fraction)
+    rebuildPlaybackGeometry()
+    updateToolMeshPose()
+    setPlaybackProgress(fraction)
+  }, [rebuildPlaybackGeometry, updateToolMeshPose])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -688,6 +1044,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             />
             <span className="simulation-detail-control__value">{detailCells}</span>
           </label>
+          <button
+            className={`simulation-mode-toggle__btn simulation-playback-toggle ${playbackEnabled ? 'simulation-mode-toggle__btn--active' : ''}`}
+            type="button"
+            onClick={handlePlaybackToggle}
+            disabled={mode !== 'selected' || !playbackInput}
+            title={mode !== 'selected'
+              ? 'Switch to Selected mode to use Tool playback'
+              : !playbackInput
+                ? 'Select an operation with a valid toolpath to play'
+                : 'Toggle tool playback'}
+          >
+            Play Tool
+          </button>
         </div>
         <div className="viewport-presets__group viewport-presets__group--views">
           <div className="preset-btn-panel">
@@ -701,6 +1070,75 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           </div>
         </div>
       </div>
+      {playbackEnabled && playbackInput && (
+        <div className="simulation-playback-bar">
+          <div className="simulation-playback-bar__controls">
+            <button
+              type="button"
+              className="simulation-playback-bar__btn simulation-playback-bar__btn--primary"
+              onClick={handlePlayPause}
+              title={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? '❚❚' : '▶'}
+            </button>
+            <button
+              type="button"
+              className="simulation-playback-bar__btn"
+              onClick={handleStop}
+              title="Stop & reset"
+            >
+              ■
+            </button>
+          </div>
+          <div className="simulation-playback-bar__progress">
+            <span className="simulation-playback-bar__readout">
+              {Math.round(playbackProgress * 100)}%
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1000}
+              step={1}
+              value={Math.round(playbackProgress * 1000)}
+              onChange={(event) => handleSeek(Number(event.target.value) / 1000)}
+              aria-label="Playback progress"
+            />
+          </div>
+          <label
+            className="simulation-playback-bar__speed simulation-playback-bar__speed--slider"
+            title={
+              playbackInput.feedPerSecond && playbackInput.feedPerSecond > 0
+                ? `Speed multiplier of operation feed (${formatSpeedLabel(baseSpeed, playbackUnits)} = 1×). Current: ${formatMultiplierLabel(playbackMultiplier)}`
+                : `Speed multiplier of fallback feed (${formatSpeedLabel(baseSpeed, playbackUnits)} = 1×). Current: ${formatMultiplierLabel(playbackMultiplier)}`
+            }
+          >
+            <span>Speed</span>
+            <input
+              type="range"
+              min={0}
+              max={PLAYBACK_SLIDER_STEPS}
+              step={1}
+              value={multiplierToSliderPosition(playbackMultiplier)}
+              onChange={(event) => setPlaybackMultiplier(sliderPositionToMultiplier(Number(event.target.value)))}
+              aria-label="Playback speed multiplier"
+            />
+          </label>
+          <label
+            className="simulation-playback-bar__speed"
+            title="Maximum distance the tool advances per frame. Smaller = smoother motion, larger = faster playback."
+          >
+            <span>Step</span>
+            <select
+              value={playbackMaxStep}
+              onChange={(event) => setPlaybackMaxStep(Number(event.target.value))}
+            >
+              {stepSizes.map((value) => (
+                <option key={value} value={value}>{value} {playbackUnits}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
     </div>
   )
 })
