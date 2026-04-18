@@ -59,11 +59,11 @@ function pointSegmentDistanceAndT(
   return { distance: Math.hypot(px - cx, py - cy), t }
 }
 
-function moveIsMaterialRemoving(move: ToolpathMove): boolean {
+export function moveIsMaterialRemoving(move: ToolpathMove): boolean {
   return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
-function applyMoveToGrid(
+export function applyMoveToGrid(
   grid: SimulationGrid,
   move: ToolpathMove,
   toolRadius: number,
