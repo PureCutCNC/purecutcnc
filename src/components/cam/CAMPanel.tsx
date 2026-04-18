@@ -1155,6 +1155,17 @@ export function CAMPanel({
                     />
                     <span>Debug toolpath</span>
                   </label>
+                  {selectedOperation.kind === 'v_carve_recursive' ? (
+                    <label className="properties-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedOperation.debugOverlay}
+                        disabled={!selectedOperation.debugToolpath}
+                        onChange={(event) => updateOperation(selectedOperation.id, { debugOverlay: event.target.checked })}
+                      />
+                      <span>Debug overlays</span>
+                    </label>
+                  ) : null}
                   <div className="properties-field">
                     <span>Target Source</span>
                     <button

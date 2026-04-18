@@ -273,6 +273,7 @@ export interface Operation {
   enabled: boolean
   showToolpath: boolean
   debugToolpath: boolean
+  debugOverlay: boolean
   target: OperationTarget
   toolRef: string | null
   stepdown: number

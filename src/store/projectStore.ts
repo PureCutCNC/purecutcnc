@@ -1465,6 +1465,7 @@ function defaultOperationForTarget(
     enabled: true,
     showToolpath: true,
     debugToolpath: false,
+    debugOverlay: false,
     target,
     toolRef,
     stepdown: tool.defaultStepdown,

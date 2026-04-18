@@ -31,6 +31,7 @@ const MAX_ESTIMATED_SCAN_STEPS = 250000
 const MAX_ESTIMATED_BOUNDARY_POINTS = 12000
 const SAME_WALL_WINDOW = 4
 const BINARY_SEARCH_ITERATIONS = 6
+const BINARY_SEARCH_NEIGHBOR_COUNT = 12
 
 export interface MatBoundaryPoint extends Point {
   contourType: 'outer' | 'island'
@@ -69,6 +70,11 @@ export interface MatRegionAnalysis {
   regionIndex: number
   boundaryPoints: MatBoundaryPoint[]
   scanStep: number
+  lowBracketPoints: MatSpinePoint[]
+  highBracketPoints: MatSpinePoint[]
+  probePoints: MatSpinePoint[]
+  rawSpinePoints: MatSpinePoint[]
+  rawSpinePaths: MatSpinePoint[][]
   spinePoints: MatSpinePoint[]
   spinePaths: MatSpinePoint[][]
   detection: MatDetectionStats
@@ -89,6 +95,12 @@ interface MatSamplingProfile {
   boundaryResolution: number
   scanStep: number
 }
+
+type RayPointClassification =
+  | { kind: 'candidate'; sameWallDistance: number; otherWallDistance: number }
+  | { kind: 'source-dominated'; sameWallDistance: number; otherWallDistance: number }
+  | { kind: 'other-dominated'; sameWallDistance: number; otherWallDistance: number }
+  | { kind: 'invalid' }
 
 function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
   let bounds: ToolpathBounds | null = null
@@ -415,6 +427,84 @@ function nearestBoundaryPoint(
   return fallback
 }
 
+function nearestBoundaryPoints(
+  point: Point,
+  boundaryPoints: MatBoundaryPoint[],
+  boundaryIndex: MatBoundaryIndex,
+  count: number,
+): Array<{ point: MatBoundaryPoint; distance: number }> {
+  if (boundaryPoints.length === 0 || boundaryIndex.maxCellX < 0 || boundaryIndex.maxCellY < 0) {
+    return []
+  }
+
+  const queryCellX = Math.max(0, Math.min(boundaryIndex.maxCellX, Math.floor((point.x - boundaryIndex.minX) / boundaryIndex.cellSize)))
+  const queryCellY = Math.max(0, Math.min(boundaryIndex.maxCellY, Math.floor((point.y - boundaryIndex.minY) / boundaryIndex.cellSize)))
+  const visited = new Set<number>()
+  const maxRing = Math.max(boundaryIndex.maxCellX, boundaryIndex.maxCellY) + 1
+  const candidates: Array<{ point: MatBoundaryPoint; distance: number }> = []
+
+  for (let ring = 0; ring <= maxRing; ring++) {
+    const minCellX = Math.max(0, queryCellX - ring)
+    const maxCellX = Math.min(boundaryIndex.maxCellX, queryCellX + ring)
+    const minCellY = Math.max(0, queryCellY - ring)
+    const maxCellY = Math.min(boundaryIndex.maxCellY, queryCellY + ring)
+
+    for (let cellY = minCellY; cellY <= maxCellY; cellY++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        if (
+          ring > 0
+          && cellX > minCellX
+          && cellX < maxCellX
+          && cellY > minCellY
+          && cellY < maxCellY
+        ) {
+          continue
+        }
+
+        const bucket = boundaryIndex.cells.get(`${cellX},${cellY}`)
+        if (!bucket) {
+          continue
+        }
+
+        for (const index of bucket) {
+          if (visited.has(index)) {
+            continue
+          }
+          visited.add(index)
+          const boundaryPoint = boundaryPoints[index]
+          candidates.push({
+            point: boundaryPoint,
+            distance: Math.hypot(boundaryPoint.x - point.x, boundaryPoint.y - point.y),
+          })
+        }
+      }
+    }
+
+    if (candidates.length < count) {
+      continue
+    }
+
+    candidates.sort((left, right) => left.distance - right.distance)
+    const kthDistance = candidates[count - 1]?.distance ?? Number.POSITIVE_INFINITY
+    const searchMinX = boundaryIndex.minX + minCellX * boundaryIndex.cellSize
+    const searchMinY = boundaryIndex.minY + minCellY * boundaryIndex.cellSize
+    const searchMaxX = boundaryIndex.minX + (maxCellX + 1) * boundaryIndex.cellSize
+    const searchMaxY = boundaryIndex.minY + (maxCellY + 1) * boundaryIndex.cellSize
+    const nearestOutsideDistance = Math.min(
+      point.x - searchMinX,
+      searchMaxX - point.x,
+      point.y - searchMinY,
+      searchMaxY - point.y,
+    )
+
+    if (kthDistance <= nearestOutsideDistance + 1e-9 || ring === maxRing) {
+      return candidates.slice(0, count)
+    }
+  }
+
+  return candidates.sort((left, right) => left.distance - right.distance).slice(0, count)
+}
+
 function wrappedSampleDistance(a: number, b: number, length: number): number {
   const linear = Math.abs(a - b)
   return Math.min(linear, Math.max(0, length - linear))
@@ -528,30 +618,112 @@ function nearestRayExitDistance(
   return Number.isFinite(bestDistance) ? bestDistance : null
 }
 
+function classifyRayPoint(
+  point: Point,
+  source: MatBoundaryPoint,
+  sourceSegmentStart: Point,
+  sourceSegmentEnd: Point,
+  contourLength: number,
+  boundaryPoints: MatBoundaryPoint[],
+  boundaryIndex: MatBoundaryIndex,
+  tolerance: number,
+): RayPointClassification {
+  const nearest = nearestBoundaryPoints(point, boundaryPoints, boundaryIndex, BINARY_SEARCH_NEIGHBOR_COUNT)
+  if (nearest.length < 2) {
+    return { kind: 'invalid' }
+  }
+
+  const sameWallDistance = distanceToSegment(point, sourceSegmentStart, sourceSegmentEnd)
+  let otherWallDistance = Number.POSITIVE_INFINITY
+
+  for (const candidate of nearest) {
+    if (!isSameWallNeighborhood(source, candidate.point, contourLength)) {
+      otherWallDistance = Math.min(otherWallDistance, candidate.distance)
+    }
+  }
+
+  if (
+    !Number.isFinite(sameWallDistance)
+    || !Number.isFinite(otherWallDistance)
+  ) {
+    return { kind: 'invalid' }
+  }
+
+  if (Math.abs(sameWallDistance - otherWallDistance) <= tolerance) {
+    return { kind: 'candidate', sameWallDistance, otherWallDistance }
+  }
+
+  if (otherWallDistance > sameWallDistance) {
+    return { kind: 'source-dominated', sameWallDistance, otherWallDistance }
+  }
+
+  return { kind: 'other-dominated', sameWallDistance, otherWallDistance }
+}
+
 function refineMedialPoint(
   origin: Point,
   normal: Point,
   lowDistance: number,
   highDistance: number,
   source: MatBoundaryPoint,
+  sourceSegmentStart: Point,
+  sourceSegmentEnd: Point,
   contourLength: number,
   boundaryPoints: MatBoundaryPoint[],
   boundaryIndex: MatBoundaryIndex,
-): Point {
+  tolerance: number,
+  probePoints: MatSpinePoint[],
+  bandTopZ: number,
+  maxBandDepth: number,
+  slope: number,
+  bandIndex: number,
+  regionIndex: number,
+): Point | null {
   let low = lowDistance
   let high = highDistance
+  let foundDistance: number | null = null
 
   for (let iteration = 0; iteration < BINARY_SEARCH_ITERATIONS; iteration++) {
     const mid = (low + high) * 0.5
-    const nearest = nearestBoundaryPoint(offsetPoint(origin, normal, mid), boundaryPoints, boundaryIndex)
-    if (!nearest || isSameWallNeighborhood(source, nearest.point, contourLength)) {
-      low = mid
-    } else {
-      high = mid
+    const point = offsetPoint(origin, normal, mid)
+    const nearestAtProbe = nearestBoundaryPoint(point, boundaryPoints, boundaryIndex)
+    if (nearestAtProbe) {
+      const probeDepth = Math.min(maxBandDepth, nearestAtProbe.distance / slope)
+      probePoints.push({
+        x: point.x,
+        y: point.y,
+        z: bandTopZ - probeDepth,
+        radius: nearestAtProbe.distance,
+        bandIndex,
+        regionIndex,
+      })
     }
+    const classification = classifyRayPoint(
+      point,
+      source,
+      sourceSegmentStart,
+      sourceSegmentEnd,
+      contourLength,
+      boundaryPoints,
+      boundaryIndex,
+      tolerance,
+    )
+    if (classification.kind === 'candidate') {
+      foundDistance = mid
+      break
+    }
+    if (classification.kind === 'source-dominated') {
+      low = mid
+      continue
+    }
+    if (classification.kind === 'other-dominated') {
+      high = mid
+      continue
+    }
+    break
   }
 
-  return offsetPoint(origin, normal, high)
+  return foundDistance === null ? null : offsetPoint(origin, normal, foundDistance)
 }
 
 function scanContourSpinePath(
@@ -567,14 +739,25 @@ function scanContourSpinePath(
   contourStride: number,
   bandIndex: number,
   regionIndex: number,
-): { path: MatSpinePoint[]; rays: number; hits: number } {
+): {
+  path: MatSpinePoint[]
+  lowBracketPoints: MatSpinePoint[]
+  highBracketPoints: MatSpinePoint[]
+  probePoints: MatSpinePoint[]
+  rays: number
+  hits: number
+} {
   const path: MatSpinePoint[] = []
+  const lowBracketPoints: MatSpinePoint[] = []
+  const highBracketPoints: MatSpinePoint[] = []
+  const probePoints: MatSpinePoint[] = []
   const bounds = regionBounds(region)
   if (!bounds || contour.points.length < 2) {
-    return { path, rays: 0, hits: 0 }
+    return { path, lowBracketPoints, highBracketPoints, probePoints, rays: 0, hits: 0 }
   }
 
   const normalProbe = Math.max(scanStep * 0.5, 1e-4)
+  const medialTolerance = scanStep * 0.75
   let rays = 0
   let hits = 0
 
@@ -589,9 +772,57 @@ function scanContourSpinePath(
     rays += 1
     const origin = midpoint(start, end)
     const exitDistance = nearestRayExitDistance(origin, normal, contours, contour, index)
-    if (exitDistance === null || exitDistance <= scanStep) {
+    if (exitDistance === null || exitDistance <= 1e-9) {
       continue
     }
+
+    const lowPoint = origin
+    const lowNearest = nearestBoundaryPoint(lowPoint, boundaryPoints, boundaryIndex)
+    if (lowNearest) {
+      lowBracketPoints.push({
+        x: lowPoint.x,
+        y: lowPoint.y,
+        z: bandTopZ - Math.min(maxBandDepth, lowNearest.distance / slope),
+        radius: lowNearest.distance,
+        bandIndex,
+        regionIndex,
+      })
+    }
+    const lowClassification = classifyRayPoint(
+      lowPoint,
+      start,
+      start,
+      end,
+      contour.points.length,
+      boundaryPoints,
+      boundaryIndex,
+      medialTolerance,
+    )
+
+    const highPoint = offsetPoint(origin, normal, exitDistance)
+    const highNearest = nearestBoundaryPoint(highPoint, boundaryPoints, boundaryIndex)
+    if (highNearest) {
+      highBracketPoints.push({
+        x: highPoint.x,
+        y: highPoint.y,
+        z: bandTopZ - Math.min(maxBandDepth, highNearest.distance / slope),
+        radius: highNearest.distance,
+        bandIndex,
+        regionIndex,
+      })
+    }
+    const highClassification = classifyRayPoint(
+      highPoint,
+      start,
+      start,
+      end,
+      contour.points.length,
+      boundaryPoints,
+      boundaryIndex,
+      medialTolerance,
+    )
+    void lowClassification
+    void highClassification
 
     const refinedPoint = refineMedialPoint(
       origin,
@@ -599,10 +830,22 @@ function scanContourSpinePath(
       0,
       exitDistance,
       start,
+      start,
+      end,
       contour.points.length,
       boundaryPoints,
       boundaryIndex,
+      medialTolerance,
+      probePoints,
+      bandTopZ,
+      maxBandDepth,
+      slope,
+      bandIndex,
+      regionIndex,
     )
+    if (!refinedPoint) {
+      continue
+    }
     const refinedNearest = nearestBoundaryPoint(refinedPoint, boundaryPoints, boundaryIndex)
     if (!refinedNearest) {
       continue
@@ -623,7 +866,7 @@ function scanContourSpinePath(
     }
   }
 
-  return { path, rays, hits }
+  return { path, lowBracketPoints, highBracketPoints, probePoints, rays, hits }
 }
 
 function collapseDuplicatePoints(path: MatSpinePoint[], tolerance: number): MatSpinePoint[] {
@@ -647,7 +890,7 @@ function collapseDuplicatePoints(path: MatSpinePoint[], tolerance: number): MatS
   return collapsed
 }
 
-function distanceToSegment(point: MatSpinePoint, start: MatSpinePoint, end: MatSpinePoint): number {
+function distanceToSegment(point: Point, start: Point, end: Point): number {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const lengthSquared = dx * dx + dy * dy
@@ -685,6 +928,80 @@ function simplifyPath(path: MatSpinePoint[], tolerance: number): MatSpinePoint[]
   return [...left.slice(0, -1), ...right]
 }
 
+function pointDistance(a: MatSpinePoint, b: MatSpinePoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function averagePoints(a: MatSpinePoint, b: MatSpinePoint): MatSpinePoint {
+  return {
+    x: (a.x + b.x) * 0.5,
+    y: (a.y + b.y) * 0.5,
+    z: (a.z + b.z) * 0.5,
+    radius: (a.radius + b.radius) * 0.5,
+    bandIndex: a.bandIndex,
+    regionIndex: a.regionIndex,
+  }
+}
+
+function tryMergeParallelPaths(a: MatSpinePoint[], b: MatSpinePoint[], tolerance: number): MatSpinePoint[] | null {
+  if (a.length < MIN_PATH_POINTS || b.length < MIN_PATH_POINTS) {
+    return null
+  }
+
+  const reversed = pointDistance(a[0], b[b.length - 1]) + pointDistance(a[a.length - 1], b[0])
+    < pointDistance(a[0], b[0]) + pointDistance(a[a.length - 1], b[b.length - 1])
+  const alignedB = reversed ? [...b].reverse() : b
+  const sampleCount = Math.min(a.length, alignedB.length)
+  if (sampleCount < MIN_PATH_POINTS) {
+    return null
+  }
+
+  const merged: MatSpinePoint[] = []
+  let closeSamples = 0
+
+  for (let index = 0; index < sampleCount; index++) {
+    const aIndex = Math.round((index * (a.length - 1)) / Math.max(1, sampleCount - 1))
+    const bIndex = Math.round((index * (alignedB.length - 1)) / Math.max(1, sampleCount - 1))
+    const aPoint = a[aIndex]
+    const bPoint = alignedB[bIndex]
+    if (pointDistance(aPoint, bPoint) > tolerance) {
+      return null
+    }
+    merged.push(averagePoints(aPoint, bPoint))
+    closeSamples += 1
+  }
+
+  return closeSamples >= MIN_PATH_POINTS ? merged : null
+}
+
+function mergeNearbyParallelPaths(paths: MatSpinePoint[][], tolerance: number): MatSpinePoint[][] {
+  const remaining = [...paths]
+  const merged: MatSpinePoint[][] = []
+
+  while (remaining.length > 0) {
+    const current = remaining.shift()!
+    let mergedCurrent = current
+    let didMerge = false
+
+    for (let index = 0; index < remaining.length; index++) {
+      const candidate = remaining[index]
+      const combined = tryMergeParallelPaths(mergedCurrent, candidate, tolerance)
+      if (!combined) {
+        continue
+      }
+
+      mergedCurrent = combined
+      remaining.splice(index, 1)
+      didMerge = true
+      index -= 1
+    }
+
+    merged.push(didMerge ? collapseDuplicatePoints(mergedCurrent, tolerance) : mergedCurrent)
+  }
+
+  return merged
+}
+
 function arePathsEquivalent(a: MatSpinePoint[], b: MatSpinePoint[], tolerance: number): boolean {
   if (a.length === 0 || b.length === 0) {
     return false
@@ -704,7 +1021,7 @@ function connectRegionSpinePaths(paths: MatSpinePoint[][], scanStep: number): Ma
   }
 
   const tolerance = scanStep * 0.75
-  const cleaned = paths
+  const cleaned = mergeNearbyParallelPaths(paths, tolerance)
     .map((path) => collapseDuplicatePoints(path, tolerance))
     .map((path) => simplifyPath(path, tolerance))
     .filter((path) => path.length >= MIN_PATH_POINTS)
@@ -736,8 +1053,17 @@ function detectRegionSpinePaths(
   contourStride: number,
   bandIndex: number,
   regionIndex: number,
-): { spinePaths: MatSpinePoint[][]; detection: MatDetectionStats } {
+): {
+  lowBracketPoints: MatSpinePoint[]
+  highBracketPoints: MatSpinePoint[]
+  probePoints: MatSpinePoint[]
+  spinePaths: MatSpinePoint[][]
+  detection: MatDetectionStats
+} {
   const provisionalPaths: MatSpinePoint[][] = []
+  const lowBracketPoints: MatSpinePoint[] = []
+  const highBracketPoints: MatSpinePoint[] = []
+  const probePoints: MatSpinePoint[] = []
   let scannedRayCount = 0
   let medialHitCount = 0
 
@@ -758,18 +1084,135 @@ function detectRegionSpinePaths(
     )
     scannedRayCount += scan.rays
     medialHitCount += scan.hits
+    lowBracketPoints.push(...scan.lowBracketPoints)
+    highBracketPoints.push(...scan.highBracketPoints)
+    probePoints.push(...scan.probePoints)
     if (scan.path.length > 0) {
       provisionalPaths.push(scan.path)
     }
   }
 
   return {
-    spinePaths: connectRegionSpinePaths(provisionalPaths, scanStep),
+    lowBracketPoints,
+    highBracketPoints,
+    probePoints,
+    spinePaths: provisionalPaths,
     detection: {
       scannedRayCount,
       medialHitCount,
     },
   }
+}
+
+function appendDebugPointMarkers(
+  points: MatSpinePoint[],
+  scanStep: number,
+  safeZ: number,
+  moves: ToolpathMove[],
+  currentPosition: ToolpathMove['to'] | null,
+): ToolpathMove['to'] | null {
+  let position = currentPosition
+  const markerHalfSize = Math.max(scanStep * 0.25, 1e-4)
+
+  for (const point of points) {
+    const startA = { x: point.x - markerHalfSize, y: point.y - markerHalfSize, z: point.z }
+    const endA = { x: point.x + markerHalfSize, y: point.y + markerHalfSize, z: point.z }
+    const startB = { x: point.x - markerHalfSize, y: point.y + markerHalfSize, z: point.z }
+    const endB = { x: point.x + markerHalfSize, y: point.y - markerHalfSize, z: point.z }
+
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(moves, position, startA, safeZ)
+    moves.push({ kind: 'cut', from: startA, to: endA })
+    position = endA
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(moves, position, startB, safeZ)
+    moves.push({ kind: 'cut', from: startB, to: endB })
+    position = endB
+  }
+
+  return retractToSafe(moves, position, safeZ)
+}
+
+function appendDebugProbeMarkers(
+  points: MatSpinePoint[],
+  scanStep: number,
+  safeZ: number,
+  moves: ToolpathMove[],
+  currentPosition: ToolpathMove['to'] | null,
+): ToolpathMove['to'] | null {
+  let position = currentPosition
+  const markerSize = Math.max(scanStep * 0.3, 1e-4)
+
+  for (const point of points) {
+    const top = { x: point.x, y: point.y + markerSize, z: point.z }
+    const left = { x: point.x - markerSize, y: point.y - markerSize, z: point.z }
+    const right = { x: point.x + markerSize, y: point.y - markerSize, z: point.z }
+
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(moves, position, top, safeZ)
+    moves.push({ kind: 'cut', from: top, to: left })
+    moves.push({ kind: 'cut', from: left, to: right })
+    moves.push({ kind: 'cut', from: right, to: top })
+    position = top
+  }
+
+  return retractToSafe(moves, position, safeZ)
+}
+
+function appendDebugSquareMarkers(
+  points: MatSpinePoint[],
+  scanStep: number,
+  safeZ: number,
+  moves: ToolpathMove[],
+  currentPosition: ToolpathMove['to'] | null,
+): ToolpathMove['to'] | null {
+  let position = currentPosition
+  const markerSize = Math.max(scanStep * 0.25, 1e-4)
+
+  for (const point of points) {
+    const topLeft = { x: point.x - markerSize, y: point.y + markerSize, z: point.z }
+    const topRight = { x: point.x + markerSize, y: point.y + markerSize, z: point.z }
+    const bottomRight = { x: point.x + markerSize, y: point.y - markerSize, z: point.z }
+    const bottomLeft = { x: point.x - markerSize, y: point.y - markerSize, z: point.z }
+
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(moves, position, topLeft, safeZ)
+    moves.push({ kind: 'cut', from: topLeft, to: topRight })
+    moves.push({ kind: 'cut', from: topRight, to: bottomRight })
+    moves.push({ kind: 'cut', from: bottomRight, to: bottomLeft })
+    moves.push({ kind: 'cut', from: bottomLeft, to: topLeft })
+    position = topLeft
+  }
+
+  return retractToSafe(moves, position, safeZ)
+}
+
+function appendDebugDiamondMarkers(
+  points: MatSpinePoint[],
+  scanStep: number,
+  safeZ: number,
+  moves: ToolpathMove[],
+  currentPosition: ToolpathMove['to'] | null,
+): ToolpathMove['to'] | null {
+  let position = currentPosition
+  const markerSize = Math.max(scanStep * 0.28, 1e-4)
+
+  for (const point of points) {
+    const top = { x: point.x, y: point.y + markerSize, z: point.z }
+    const right = { x: point.x + markerSize, y: point.y, z: point.z }
+    const bottom = { x: point.x, y: point.y - markerSize, z: point.z }
+    const left = { x: point.x - markerSize, y: point.y, z: point.z }
+
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(moves, position, top, safeZ)
+    moves.push({ kind: 'cut', from: top, to: right })
+    moves.push({ kind: 'cut', from: right, to: bottom })
+    moves.push({ kind: 'cut', from: bottom, to: left })
+    moves.push({ kind: 'cut', from: left, to: top })
+    position = top
+  }
+
+  return retractToSafe(moves, position, safeZ)
 }
 
 function appendSpinePathsAsMoves(
@@ -864,13 +1307,20 @@ function analyzeResolvedVCarveMat(project: Project, operation: Operation, resolv
         bandIndex,
         regionIndex,
       )
-      const spinePaths = scan.spinePaths
+      const rawSpinePaths = scan.spinePaths
+      const spinePaths = connectRegionSpinePaths(rawSpinePaths, scanStep)
+      const rawSpinePoints = rawSpinePaths.flat()
       const spinePoints = spinePaths.flat()
 
       regions.push({
         regionIndex,
         boundaryPoints,
         scanStep,
+        lowBracketPoints: scan.lowBracketPoints,
+        highBracketPoints: scan.highBracketPoints,
+        probePoints: scan.probePoints,
+        rawSpinePoints,
+        rawSpinePaths,
         spinePoints,
         spinePaths,
         detection: scan.detection,
@@ -945,12 +1395,19 @@ export function generateVCarveMatToolpath(project: Project, operation: Operation
 
   const scannedRayCount = analysis.regions.reduce((sum, region) => sum + region.detection.scannedRayCount, 0)
   const medialHitCount = analysis.regions.reduce((sum, region) => sum + region.detection.medialHitCount, 0)
+  const rawPointCount = analysis.regions.reduce((sum, region) => sum + region.rawSpinePoints.length, 0)
   const candidateCount = analysis.regions.reduce((sum, region) => sum + region.spinePoints.length, 0)
   const pathCount = analysis.regions.reduce((sum, region) => sum + region.spinePaths.length, 0)
   analysis.regions.forEach((region) => {
+    if (operation.debugOverlay) {
+      currentPosition = appendDebugSquareMarkers(region.lowBracketPoints, region.scanStep, safeZ, moves, currentPosition)
+      currentPosition = appendDebugDiamondMarkers(region.highBracketPoints, region.scanStep, safeZ, moves, currentPosition)
+      currentPosition = appendDebugProbeMarkers(region.probePoints, region.scanStep, safeZ, moves, currentPosition)
+      currentPosition = appendDebugPointMarkers(region.rawSpinePoints, region.scanStep, safeZ, moves, currentPosition)
+    }
     currentPosition = appendSpinePathsAsMoves(region.spinePaths, safeZ, moves, currentPosition)
   })
-  warnings.push(`MAT scaffold kept ${candidateCount}/${medialHitCount}/${scannedRayCount} spine points (final/hits/rays) across ${pathCount} provisional paths`)
+  warnings.push(`MAT scaffold kept ${candidateCount}/${rawPointCount}/${medialHitCount}/${scannedRayCount} spine points (final/raw/hits/rays) across ${pathCount} provisional paths`)
 
   return {
     operationId: operation.id,
