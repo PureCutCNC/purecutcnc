@@ -17,6 +17,7 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { IconGalleryRoute } from './components/IconGallery'
 import { isDesktop } from './platform'
 import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
@@ -56,6 +57,16 @@ function UnsupportedMobileScreen() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(
-  isPhoneSizedTouchDevice() ? <UnsupportedMobileScreen /> : <App />,
-)
+// Dev-only: #icons shows the sprite gallery for visual QA.
+const isIconGalleryRoute =
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.location.hash === '#icons'
+
+function rootElement() {
+  if (isPhoneSizedTouchDevice()) return <UnsupportedMobileScreen />
+  if (isIconGalleryRoute) return <IconGalleryRoute />
+  return <App />
+}
+
+createRoot(document.getElementById('root')!).render(rootElement())

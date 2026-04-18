@@ -120,7 +120,7 @@ function addProfileSnapCandidates(
       pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'midpoint', segmentMidpoint(start, segment))
     }
 
-    if (activeModes.has('center') && segment.type === 'arc') {
+    if (activeModes.has('center') && (segment.type === 'arc' || segment.type === 'circle')) {
       pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'center', segment.center)
     }
 
