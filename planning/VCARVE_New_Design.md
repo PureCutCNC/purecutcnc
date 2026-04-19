@@ -1,7 +1,7 @@
 # Design Specification: Boundary-Normal MAT V-Carve for PureCutCNC
 
 ## 1. Overview
-The goal is to implement a V-carving toolpath generator that finds the local medial spine by scanning inward from the true boundary. Instead of testing every interior grid point, the solver traces rays along inward normals from the digitized wall and records the point where the nearest wall "flips" to a different boundary neighborhood.
+The goal is to implement a V-carving toolpath generator that finds the local medial spine by scanning inward from the true boundary. Instead of testing every interior grid point, the solver traces rays along inward normals from the digitized wall, finds where that ray first meets the opposite side of the material, and then refines the medial point along that 1D interval.
 
 This keeps the critical V-carve invariant:
 
@@ -23,15 +23,21 @@ Convert all input Clipper paths into a dense point cloud.
 For each contour in order:
 1. Take consecutive boundary samples $(P_i, P_{i+1})$.
 2. Compute the local inward normal from that segment.
-3. Start from the segment midpoint and step inward by `gridScale` increments.
-4. At each test point, query the nearest boundary sample.
-5. As long as the nearest boundary is still the originating wall neighborhood, continue stepping inward.
-6. The moment the nearest boundary is no longer the originating wall, the scan has crossed the medial axis.
+3. Use the segment midpoint as the ray origin.
+4. Cast the inward ray and find the first forward intersection with any boundary segment other than the source segment.
+5. This source-to-exit interval becomes the 1D search domain for the medial point.
 
 ### Step 3: Medial Hit Refinement
-When a scan crosses from the source wall to a different wall neighborhood:
-- Refine the crossing interval with a short binary search.
-- Use the refined point as the provisional spine point.
+Within the source-to-exit interval:
+- Start at the midpoint of the interval.
+- Measure:
+  - $d_{source}$ = exact distance from the test point to the source segment
+  - $d_{other}$ = shortest distance to any non-source boundary sample
+- Apply the binary update rule:
+  - if $|d_{source} - d_{other}| \le tolerance$, accept the point
+  - if $d_{other} < d_{source}$, the test point is too far inward, so move the upper bound back toward the source
+  - if $d_{other} > d_{source}$, the test point is still source-dominated, so move the lower bound outward toward the previous farther point
+- Use the accepted point as the provisional spine point.
 - Compute its carving radius from the nearest boundary distance.
 - Compute Z from the V-bit slope:
   $$Z = Z_{top} - \min\left(D_{max}, \frac{R_{min}}{\tan(\theta / 2)}\right)$$
@@ -47,6 +53,15 @@ Because scans are emitted in boundary order, provisional spine hits already arri
 - Optionally simplify final paths.
 - Emit `G01` cut moves along each spine path with computed Z.
 - Emit safe retract and rapid moves between disconnected branches.
+
+### Step 6: Debug Instrumentation
+During solver development, the preview can optionally draw:
+- low bracket points near the source wall
+- high bracket points at the ray exit
+- binary-search probe points
+- accepted raw medial hits
+
+These overlays are diagnostic only and should stay independently switchable from the main MAT toolpath preview.
 
 ## 3. Reference Loop
 
@@ -69,28 +84,38 @@ function scanSpineFromBoundary(
       continue;
     }
 
-    let lastSame = 0;
-    let dist = stepSize;
+    const exitDistance = nearestRayExitDistance(origin, normal, region, i);
+    if (exitDistance === null) {
+      continue;
+    }
 
-    while (dist < maxDistanceForRegion(region)) {
+    let low = 0;
+    let high = exitDistance;
+
+    for (let iteration = 0; iteration < 6; iteration++) {
+      const mid = (low + high) * 0.5;
       const sample = {
-        x: origin.x + normal.x * dist,
-        y: origin.y + normal.y * dist,
+        x: origin.x + normal.x * mid,
+        y: origin.y + normal.y * mid,
       };
 
-      if (!pointInRegionMaterial(sample, region)) {
+      const dSource = distanceToSegment(sample, p1, p2);
+      const dOther = nearestOtherBoundaryDistance(sample, p1, boundaryCloud, boundaryIndex);
+
+      if (Math.abs(dSource - dOther) <= stepSize * 0.75) {
+        hits.push({
+          x: sample.x,
+          y: sample.y,
+          radius: Math.min(dSource, dOther),
+        });
         break;
       }
 
-      const nearest = nearestBoundaryPoints(sample, boundaryCloud, boundaryIndex, 1)[0];
-      if (!isSameWallNeighborhood(p1, nearest.point)) {
-        const refined = refineFlip(origin, normal, lastSame, dist);
-        hits.push(refined);
-        break;
+      if (dOther < dSource) {
+        high = mid;
+      } else {
+        low = mid;
       }
-
-      lastSame = dist;
-      dist += stepSize;
     }
   }
 
@@ -99,8 +124,10 @@ function scanSpineFromBoundary(
 ```
 
 ## 4. Operational Notes
-- Boundary resolution still needs to be finer than the normal scan step.
+- Boundary resolution should stay at least as fine as the ray step, and often finer around corners.
 - The nearest-boundary query is still performance critical, so the spatial index remains mandatory.
 - Inward normal selection should be validated against the actual material region, not assumed from polygon winding alone.
+- The current prototype measures the source side against the exact source segment, not an approximate source sample neighborhood.
 - Duplicate path cleanup is expected because opposite walls can converge to the same medial branch.
+- Corner cleanup and junction cleanup remain separate post-processing problems even when the medial hit detection is correct.
 - This approach favors ordered tracing and stable Z evaluation over dense interior classification.

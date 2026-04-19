@@ -30,8 +30,12 @@ const MAX_REGION_PATHS = 64
 const MAX_ESTIMATED_SCAN_STEPS = 250000
 const MAX_ESTIMATED_BOUNDARY_POINTS = 12000
 const SAME_WALL_WINDOW = 4
-const BINARY_SEARCH_ITERATIONS = 6
+const BINARY_SEARCH_ITERATIONS = 10
 const BINARY_SEARCH_NEIGHBOR_COUNT = 12
+const CORNER_RAY_MIN_TURN_ANGLE = Math.PI / 6
+const clipperPointInPolygon = (ClipperLib.Clipper as typeof ClipperLib.Clipper & {
+  PointInPolygon: (point: { X: number; Y: number }, path: MatClipperPath) => number
+}).PointInPolygon
 
 export interface MatBoundaryPoint extends Point {
   contourType: 'outer' | 'island'
@@ -58,7 +62,15 @@ interface MatBoundaryIndex {
   minY: number
   maxCellX: number
   maxCellY: number
-  cells: Map<string, number[]>
+  gridWidth: number
+  cells: Map<number, number[]>
+}
+
+type MatClipperPath = ReturnType<typeof toClipperPath>
+
+interface MatRegionMaterial {
+  outerPath: MatClipperPath
+  islandPaths: MatClipperPath[]
 }
 
 interface MatDetectionStats {
@@ -94,6 +106,14 @@ interface MatComplexityEstimate {
 interface MatSamplingProfile {
   boundaryResolution: number
   scanStep: number
+}
+
+interface MatRaySource {
+  contourType: MatBoundaryPoint['contourType']
+  contourIndex: number
+  contourLength: number
+  sampleIndices: number[]
+  segments: Array<{ start: Point; end: Point }>
 }
 
 type RayPointClassification =
@@ -254,7 +274,7 @@ function buildBoundaryContours(region: ResolvedPocketRegion, resolution: number)
 }
 
 function buildBoundaryIndex(boundaryPoints: MatBoundaryPoint[], cellSize: number): MatBoundaryIndex {
-  const cells = new Map<string, number[]>()
+  const cells = new Map<number, number[]>()
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
@@ -274,14 +294,21 @@ function buildBoundaryIndex(boundaryPoints: MatBoundaryPoint[], cellSize: number
       minY: 0,
       maxCellX: -1,
       maxCellY: -1,
+      gridWidth: 0,
       cells,
     }
   }
 
+  const maxCellX = Math.floor((maxX - minX) / cellSize)
+  const maxCellY = Math.floor((maxY - minY) / cellSize)
+  const gridWidth = maxCellX + 1
+
+  const cellKey = (cellX: number, cellY: number) => cellY * gridWidth + cellX
+
   boundaryPoints.forEach((point, index) => {
     const cellX = Math.floor((point.x - minX) / cellSize)
     const cellY = Math.floor((point.y - minY) / cellSize)
-    const key = `${cellX},${cellY}`
+    const key = cellKey(cellX, cellY)
     const bucket = cells.get(key)
     if (bucket) {
       bucket.push(index)
@@ -294,23 +321,34 @@ function buildBoundaryIndex(boundaryPoints: MatBoundaryPoint[], cellSize: number
     cellSize,
     minX,
     minY,
-    maxCellX: Math.floor((maxX - minX) / cellSize),
-    maxCellY: Math.floor((maxY - minY) / cellSize),
+    maxCellX,
+    maxCellY,
+    gridWidth,
     cells,
   }
 }
 
-function pointInRegionMaterial(point: Point, region: ResolvedPocketRegion): boolean {
+function buildRegionMaterial(region: ResolvedPocketRegion): MatRegionMaterial {
+  return {
+    outerPath: toClipperPath(region.outer),
+    islandPaths: region.islands.map((island) => toClipperPath(island)),
+  }
+}
+
+function pointInRegionMaterial(point: Point, material: MatRegionMaterial): boolean {
   const clipperPoint = { X: Math.round(point.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE) }
-  const pointInPolygon = (ClipperLib.Clipper as typeof ClipperLib.Clipper & {
-    PointInPolygon: (point: { X: number; Y: number }, path: ReturnType<typeof toClipperPath>) => number
-  }).PointInPolygon
-  const insideOuter = pointInPolygon(clipperPoint, toClipperPath(region.outer)) !== 0
+  const insideOuter = clipperPointInPolygon(clipperPoint, material.outerPath) !== 0
   if (!insideOuter) {
     return false
   }
 
-  return !region.islands.some((island) => pointInPolygon(clipperPoint, toClipperPath(island)) !== 0)
+  for (const islandPath of material.islandPaths) {
+    if (clipperPointInPolygon(clipperPoint, islandPath) !== 0) {
+      return false
+    }
+  }
+
+  return true
 }
 
 function regionBounds(region: ResolvedPocketRegion): ToolpathBounds | null {
@@ -353,7 +391,9 @@ function nearestBoundaryPoint(
   const queryCellY = Math.max(0, Math.min(boundaryIndex.maxCellY, Math.floor((point.y - boundaryIndex.minY) / boundaryIndex.cellSize)))
   const visited = new Set<number>()
   const maxRing = Math.max(boundaryIndex.maxCellX, boundaryIndex.maxCellY) + 1
-  let best: { point: MatBoundaryPoint; distance: number } | null = null
+  let bestPoint: MatBoundaryPoint | null = null
+  let bestDistanceSquared = Number.POSITIVE_INFINITY
+  const cellKey = (cellX: number, cellY: number) => cellY * boundaryIndex.gridWidth + cellX
 
   for (let ring = 0; ring <= maxRing; ring++) {
     const minCellX = Math.max(0, queryCellX - ring)
@@ -373,7 +413,7 @@ function nearestBoundaryPoint(
           continue
         }
 
-        const bucket = boundaryIndex.cells.get(`${cellX},${cellY}`)
+        const bucket = boundaryIndex.cells.get(cellKey(cellX, cellY))
         if (!bucket) {
           continue
         }
@@ -385,18 +425,18 @@ function nearestBoundaryPoint(
           visited.add(index)
 
           const boundaryPoint = boundaryPoints[index]
-          const distance = Math.hypot(boundaryPoint.x - point.x, boundaryPoint.y - point.y)
-          if (!best || distance < best.distance) {
-            best = {
-              point: boundaryPoint,
-              distance,
-            }
+          const dx = boundaryPoint.x - point.x
+          const dy = boundaryPoint.y - point.y
+          const distanceSquared = dx * dx + dy * dy
+          if (distanceSquared < bestDistanceSquared) {
+            bestDistanceSquared = distanceSquared
+            bestPoint = boundaryPoint
           }
         }
       }
     }
 
-    if (!best) {
+    if (!bestPoint) {
       continue
     }
 
@@ -411,20 +451,29 @@ function nearestBoundaryPoint(
       searchMaxY - point.y,
     )
 
-    const currentBest = best as { point: MatBoundaryPoint; distance: number }
-    if (currentBest.distance <= nearestOutsideDistance + 1e-9 || ring === maxRing) {
-      return currentBest
+    const nearestOutsideDistanceSquared = nearestOutsideDistance * nearestOutsideDistance
+    if (bestDistanceSquared <= nearestOutsideDistanceSquared + 1e-9 || ring === maxRing) {
+      return {
+        point: bestPoint,
+        distance: Math.sqrt(bestDistanceSquared),
+      }
     }
   }
 
-  let fallback: { point: MatBoundaryPoint; distance: number } | null = null
+  let fallbackPoint: MatBoundaryPoint | null = null
+  let fallbackDistanceSquared = Number.POSITIVE_INFINITY
   for (const boundaryPoint of boundaryPoints) {
-    const distance = Math.hypot(boundaryPoint.x - point.x, boundaryPoint.y - point.y)
-    if (!fallback || distance < fallback.distance) {
-      fallback = { point: boundaryPoint, distance }
+    const dx = boundaryPoint.x - point.x
+    const dy = boundaryPoint.y - point.y
+    const distanceSquared = dx * dx + dy * dy
+    if (distanceSquared < fallbackDistanceSquared) {
+      fallbackDistanceSquared = distanceSquared
+      fallbackPoint = boundaryPoint
     }
   }
-  return fallback
+  return fallbackPoint
+    ? { point: fallbackPoint, distance: Math.sqrt(fallbackDistanceSquared) }
+    : null
 }
 
 function nearestBoundaryPoints(
@@ -436,12 +485,30 @@ function nearestBoundaryPoints(
   if (boundaryPoints.length === 0 || boundaryIndex.maxCellX < 0 || boundaryIndex.maxCellY < 0) {
     return []
   }
+  if (count <= 0) {
+    return []
+  }
 
   const queryCellX = Math.max(0, Math.min(boundaryIndex.maxCellX, Math.floor((point.x - boundaryIndex.minX) / boundaryIndex.cellSize)))
   const queryCellY = Math.max(0, Math.min(boundaryIndex.maxCellY, Math.floor((point.y - boundaryIndex.minY) / boundaryIndex.cellSize)))
   const visited = new Set<number>()
   const maxRing = Math.max(boundaryIndex.maxCellX, boundaryIndex.maxCellY) + 1
-  const candidates: Array<{ point: MatBoundaryPoint; distance: number }> = []
+  const candidates: Array<{ point: MatBoundaryPoint; distanceSquared: number }> = []
+  const cellKey = (cellX: number, cellY: number) => cellY * boundaryIndex.gridWidth + cellX
+  const insertCandidate = (candidate: { point: MatBoundaryPoint; distanceSquared: number }) => {
+    if (candidates.length === count && candidate.distanceSquared >= (candidates[candidates.length - 1]?.distanceSquared ?? Number.POSITIVE_INFINITY)) {
+      return
+    }
+
+    let insertIndex = candidates.length
+    while (insertIndex > 0 && candidates[insertIndex - 1]!.distanceSquared > candidate.distanceSquared) {
+      insertIndex -= 1
+    }
+    candidates.splice(insertIndex, 0, candidate)
+    if (candidates.length > count) {
+      candidates.pop()
+    }
+  }
 
   for (let ring = 0; ring <= maxRing; ring++) {
     const minCellX = Math.max(0, queryCellX - ring)
@@ -461,7 +528,7 @@ function nearestBoundaryPoints(
           continue
         }
 
-        const bucket = boundaryIndex.cells.get(`${cellX},${cellY}`)
+        const bucket = boundaryIndex.cells.get(cellKey(cellX, cellY))
         if (!bucket) {
           continue
         }
@@ -472,9 +539,11 @@ function nearestBoundaryPoints(
           }
           visited.add(index)
           const boundaryPoint = boundaryPoints[index]
-          candidates.push({
+          const dx = boundaryPoint.x - point.x
+          const dy = boundaryPoint.y - point.y
+          insertCandidate({
             point: boundaryPoint,
-            distance: Math.hypot(boundaryPoint.x - point.x, boundaryPoint.y - point.y),
+            distanceSquared: dx * dx + dy * dy,
           })
         }
       }
@@ -484,8 +553,7 @@ function nearestBoundaryPoints(
       continue
     }
 
-    candidates.sort((left, right) => left.distance - right.distance)
-    const kthDistance = candidates[count - 1]?.distance ?? Number.POSITIVE_INFINITY
+    const kthDistanceSquared = candidates[count - 1]?.distanceSquared ?? Number.POSITIVE_INFINITY
     const searchMinX = boundaryIndex.minX + minCellX * boundaryIndex.cellSize
     const searchMinY = boundaryIndex.minY + minCellY * boundaryIndex.cellSize
     const searchMaxX = boundaryIndex.minX + (maxCellX + 1) * boundaryIndex.cellSize
@@ -497,12 +565,19 @@ function nearestBoundaryPoints(
       searchMaxY - point.y,
     )
 
-    if (kthDistance <= nearestOutsideDistance + 1e-9 || ring === maxRing) {
-      return candidates.slice(0, count)
+    const nearestOutsideDistanceSquared = nearestOutsideDistance * nearestOutsideDistance
+    if (kthDistanceSquared <= nearestOutsideDistanceSquared + 1e-9 || ring === maxRing) {
+      return candidates.slice(0, count).map((candidate) => ({
+        point: candidate.point,
+        distance: Math.sqrt(candidate.distanceSquared),
+      }))
     }
   }
 
-  return candidates.sort((left, right) => left.distance - right.distance).slice(0, count)
+  return candidates.map((candidate) => ({
+    point: candidate.point,
+    distance: Math.sqrt(candidate.distanceSquared),
+  }))
 }
 
 function wrappedSampleDistance(a: number, b: number, length: number): number {
@@ -510,14 +585,18 @@ function wrappedSampleDistance(a: number, b: number, length: number): number {
   return Math.min(linear, Math.max(0, length - linear))
 }
 
-function isSameWallNeighborhood(
-  source: MatBoundaryPoint,
-  candidate: MatBoundaryPoint,
-  contourLength: number,
-): boolean {
-  return source.contourType === candidate.contourType
-    && source.contourIndex === candidate.contourIndex
-    && wrappedSampleDistance(source.sampleIndex, candidate.sampleIndex, contourLength) <= SAME_WALL_WINDOW
+function minWrappedSampleDistance(sampleIndex: number, sourceIndices: number[], contourLength: number): number {
+  let best = Number.POSITIVE_INFINITY
+  for (const sourceIndex of sourceIndices) {
+    best = Math.min(best, wrappedSampleDistance(sampleIndex, sourceIndex, contourLength))
+  }
+  return best
+}
+
+function isSameWallNeighborhood(candidate: MatBoundaryPoint, source: MatRaySource): boolean {
+  return candidate.contourType === source.contourType
+    && candidate.contourIndex === source.contourIndex
+    && minWrappedSampleDistance(candidate.sampleIndex, source.sampleIndices, source.contourLength) <= SAME_WALL_WINDOW
 }
 
 function midpoint(a: Point, b: Point): Point {
@@ -534,7 +613,7 @@ function offsetPoint(origin: Point, normal: Point, distance: number): Point {
   }
 }
 
-function inwardNormalForSegment(start: Point, end: Point, region: ResolvedPocketRegion, testDistance: number): Point | null {
+function inwardNormalForSegment(start: Point, end: Point, material: MatRegionMaterial, testDistance: number): Point | null {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const length = Math.hypot(dx, dy)
@@ -545,14 +624,67 @@ function inwardNormalForSegment(start: Point, end: Point, region: ResolvedPocket
   const origin = midpoint(start, end)
   const left = { x: -dy / length, y: dx / length }
   const right = { x: dy / length, y: -dx / length }
-  const leftInside = pointInRegionMaterial(offsetPoint(origin, left, testDistance), region)
-  const rightInside = pointInRegionMaterial(offsetPoint(origin, right, testDistance), region)
+  const leftInside = pointInRegionMaterial(offsetPoint(origin, left, testDistance), material)
+  const rightInside = pointInRegionMaterial(offsetPoint(origin, right, testDistance), material)
 
   if (leftInside === rightInside) {
     return null
   }
 
   return leftInside ? left : right
+}
+
+function turnAngleAtVertex(previous: Point, current: Point, next: Point): number {
+  const incomingX = current.x - previous.x
+  const incomingY = current.y - previous.y
+  const outgoingX = next.x - current.x
+  const outgoingY = next.y - current.y
+  const incomingLength = Math.hypot(incomingX, incomingY)
+  const outgoingLength = Math.hypot(outgoingX, outgoingY)
+  if (!(incomingLength > 1e-9) || !(outgoingLength > 1e-9)) {
+    return 0
+  }
+
+  const cosine = Math.max(
+    -1,
+    Math.min(1, (incomingX * outgoingX + incomingY * outgoingY) / (incomingLength * outgoingLength)),
+  )
+  return Math.acos(cosine)
+}
+
+function inwardBisectorAtVertex(previous: Point, current: Point, next: Point, material: MatRegionMaterial, testDistance: number): Point | null {
+  const previousNormal = inwardNormalForSegment(previous, current, material, testDistance)
+  const nextNormal = inwardNormalForSegment(current, next, material, testDistance)
+  if (!previousNormal && !nextNormal) {
+    return null
+  }
+  if (!previousNormal) {
+    return nextNormal
+  }
+  if (!nextNormal) {
+    return previousNormal
+  }
+
+  const bisector = {
+    x: previousNormal.x + nextNormal.x,
+    y: previousNormal.y + nextNormal.y,
+  }
+  const length = Math.hypot(bisector.x, bisector.y)
+  if (!(length > 1e-9)) {
+    return previousNormal
+  }
+
+  const normalized = { x: bisector.x / length, y: bisector.y / length }
+  if (pointInRegionMaterial(offsetPoint(current, normalized, testDistance), material)) {
+    return normalized
+  }
+  if (pointInRegionMaterial(offsetPoint(current, previousNormal, testDistance), material)) {
+    return previousNormal
+  }
+  if (pointInRegionMaterial(offsetPoint(current, nextNormal, testDistance), material)) {
+    return nextNormal
+  }
+  return null
 }
 
 function cross2d(a: Point, b: Point): number {
@@ -592,7 +724,7 @@ function nearestRayExitDistance(
   normal: Point,
   contours: MatBoundaryContour[],
   sourceContour: MatBoundaryContour,
-  sourceSegmentIndex: number,
+  ignoredSegmentIndices: number[],
 ): number | null {
   let bestDistance = Number.POSITIVE_INFINITY
 
@@ -601,7 +733,7 @@ function nearestRayExitDistance(
       if (
         contour.contourType === sourceContour.contourType
         && contour.contourIndex === sourceContour.contourIndex
-        && index === sourceSegmentIndex
+        && ignoredSegmentIndices.includes(index)
       ) {
         continue
       }
@@ -620,10 +752,7 @@ function nearestRayExitDistance(
 
 function classifyRayPoint(
   point: Point,
-  source: MatBoundaryPoint,
-  sourceSegmentStart: Point,
-  sourceSegmentEnd: Point,
-  contourLength: number,
+  source: MatRaySource,
   boundaryPoints: MatBoundaryPoint[],
   boundaryIndex: MatBoundaryIndex,
   tolerance: number,
@@ -633,11 +762,14 @@ function classifyRayPoint(
     return { kind: 'invalid' }
   }
 
-  const sameWallDistance = distanceToSegment(point, sourceSegmentStart, sourceSegmentEnd)
+  let sameWallDistance = Number.POSITIVE_INFINITY
+  for (const segment of source.segments) {
+    sameWallDistance = Math.min(sameWallDistance, distanceToSegment(point, segment.start, segment.end))
+  }
   let otherWallDistance = Number.POSITIVE_INFINITY
 
   for (const candidate of nearest) {
-    if (!isSameWallNeighborhood(source, candidate.point, contourLength)) {
+    if (!isSameWallNeighborhood(candidate.point, source)) {
       otherWallDistance = Math.min(otherWallDistance, candidate.distance)
     }
   }
@@ -665,10 +797,7 @@ function refineMedialPoint(
   normal: Point,
   lowDistance: number,
   highDistance: number,
-  source: MatBoundaryPoint,
-  sourceSegmentStart: Point,
-  sourceSegmentEnd: Point,
-  contourLength: number,
+  source: MatRaySource,
   boundaryPoints: MatBoundaryPoint[],
   boundaryIndex: MatBoundaryIndex,
   tolerance: number,
@@ -701,9 +830,6 @@ function refineMedialPoint(
     const classification = classifyRayPoint(
       point,
       source,
-      sourceSegmentStart,
-      sourceSegmentEnd,
-      contourLength,
       boundaryPoints,
       boundaryIndex,
       tolerance,
@@ -714,22 +840,116 @@ function refineMedialPoint(
     }
     if (classification.kind === 'source-dominated') {
       low = mid
-      continue
-    }
-    if (classification.kind === 'other-dominated') {
+    } else if (classification.kind === 'other-dominated') {
       high = mid
-      continue
+    } else {
+      break
     }
-    break
+
+    if (high - low <= tolerance) {
+      foundDistance = (low + high) * 0.5
+      break
+    }
   }
 
   return foundDistance === null ? null : offsetPoint(origin, normal, foundDistance)
+}
+
+function traceRaySpinePoint(
+  origin: Point,
+  normal: Point,
+  sourceContour: MatBoundaryContour,
+  ignoredSegmentIndices: number[],
+  source: MatRaySource,
+  boundaryPoints: MatBoundaryPoint[],
+  boundaryIndex: MatBoundaryIndex,
+  contours: MatBoundaryContour[],
+  bandTopZ: number,
+  maxBandDepth: number,
+  slope: number,
+  medialTolerance: number,
+  bandIndex: number,
+  regionIndex: number,
+  lowBracketPoints: MatSpinePoint[],
+  highBracketPoints: MatSpinePoint[],
+  probePoints: MatSpinePoint[],
+): MatSpinePoint | null {
+  const exitDistance = nearestRayExitDistance(origin, normal, contours, sourceContour, ignoredSegmentIndices)
+  if (exitDistance === null || exitDistance <= 1e-9) {
+    return null
+  }
+
+  const lowNearest = nearestBoundaryPoint(origin, boundaryPoints, boundaryIndex)
+  if (lowNearest) {
+    lowBracketPoints.push({
+      x: origin.x,
+      y: origin.y,
+      z: bandTopZ - Math.min(maxBandDepth, lowNearest.distance / slope),
+      radius: lowNearest.distance,
+      bandIndex,
+      regionIndex,
+    })
+  }
+
+  const highPoint = offsetPoint(origin, normal, exitDistance)
+  const highNearest = nearestBoundaryPoint(highPoint, boundaryPoints, boundaryIndex)
+  if (highNearest) {
+    highBracketPoints.push({
+      x: highPoint.x,
+      y: highPoint.y,
+      z: bandTopZ - Math.min(maxBandDepth, highNearest.distance / slope),
+      radius: highNearest.distance,
+      bandIndex,
+      regionIndex,
+    })
+  }
+
+  const refinedPoint = refineMedialPoint(
+    origin,
+    normal,
+    0,
+    exitDistance,
+    source,
+    boundaryPoints,
+    boundaryIndex,
+    medialTolerance,
+    probePoints,
+    bandTopZ,
+    maxBandDepth,
+    slope,
+    bandIndex,
+    regionIndex,
+  )
+  if (!refinedPoint) {
+    return null
+  }
+
+  const refinedNearest = nearestBoundaryPoint(refinedPoint, boundaryPoints, boundaryIndex)
+  if (!refinedNearest) {
+    return null
+  }
+
+  const radius = refinedNearest.distance
+  const depth = Math.min(maxBandDepth, radius / slope)
+  if (!(depth > 0)) {
+    return null
+  }
+
+  return {
+    x: refinedPoint.x,
+    y: refinedPoint.y,
+    z: bandTopZ - depth,
+    radius,
+    bandIndex,
+    regionIndex,
+  }
 }
 
 function scanContourSpinePath(
   contour: MatBoundaryContour,
   contours: MatBoundaryContour[],
   region: ResolvedPocketRegion,
+  material: MatRegionMaterial,
   boundaryPoints: MatBoundaryPoint[],
   boundaryIndex: MatBoundaryIndex,
   bandTopZ: number,
@@ -757,111 +977,95 @@ function scanContourSpinePath(
   }
 
   const normalProbe = Math.max(scanStep * 0.5, 1e-4)
-  const medialTolerance = scanStep * 0.75
+  const medialTolerance = scanStep * 0.3
   let rays = 0
   let hits = 0
 
-  for (let index = 0; index < contour.points.length; index += contourStride) {
+  for (let index = 0; index < contour.points.length; index++) {
     const start = contour.points[index]
     const end = contour.points[(index + 1) % contour.points.length]
-    const normal = inwardNormalForSegment(start, end, region, normalProbe)
-    if (!normal) {
+
+    if (index % contourStride === 0) {
+      const normal = inwardNormalForSegment(start, end, material, normalProbe)
+      if (normal) {
+        rays += 1
+        const segmentSource: MatRaySource = {
+          contourType: contour.contourType,
+          contourIndex: contour.contourIndex,
+          contourLength: contour.points.length,
+          sampleIndices: [start.sampleIndex],
+          segments: [{ start, end }],
+        }
+        const hit = traceRaySpinePoint(
+          midpoint(start, end),
+          normal,
+          contour,
+          [index],
+          segmentSource,
+          boundaryPoints,
+          boundaryIndex,
+          contours,
+          bandTopZ,
+          maxBandDepth,
+          slope,
+          medialTolerance,
+          bandIndex,
+          regionIndex,
+          lowBracketPoints,
+          highBracketPoints,
+          probePoints,
+        )
+        if (hit) {
+          path.push(hit)
+          hits += 1
+        }
+      }
+    }
+
+    const previousIndex = (index - 1 + contour.points.length) % contour.points.length
+    const previous = contour.points[previousIndex]
+    const turnAngle = turnAngleAtVertex(previous, start, end)
+    if (turnAngle < CORNER_RAY_MIN_TURN_ANGLE) {
+      continue
+    }
+
+    const bisector = inwardBisectorAtVertex(previous, start, end, material, normalProbe)
+    if (!bisector) {
       continue
     }
 
     rays += 1
-    const origin = midpoint(start, end)
-    const exitDistance = nearestRayExitDistance(origin, normal, contours, contour, index)
-    if (exitDistance === null || exitDistance <= 1e-9) {
-      continue
+    const cornerSource: MatRaySource = {
+      contourType: contour.contourType,
+      contourIndex: contour.contourIndex,
+      contourLength: contour.points.length,
+      sampleIndices: [start.sampleIndex],
+      segments: [
+        { start: previous, end: start },
+        { start, end },
+      ],
     }
-
-    const lowPoint = origin
-    const lowNearest = nearestBoundaryPoint(lowPoint, boundaryPoints, boundaryIndex)
-    if (lowNearest) {
-      lowBracketPoints.push({
-        x: lowPoint.x,
-        y: lowPoint.y,
-        z: bandTopZ - Math.min(maxBandDepth, lowNearest.distance / slope),
-        radius: lowNearest.distance,
-        bandIndex,
-        regionIndex,
-      })
-    }
-    const lowClassification = classifyRayPoint(
-      lowPoint,
+    const hit = traceRaySpinePoint(
       start,
-      start,
-      end,
-      contour.points.length,
+      bisector,
+      contour,
+      [previousIndex, index],
+      cornerSource,
       boundaryPoints,
       boundaryIndex,
-      medialTolerance,
-    )
-
-    const highPoint = offsetPoint(origin, normal, exitDistance)
-    const highNearest = nearestBoundaryPoint(highPoint, boundaryPoints, boundaryIndex)
-    if (highNearest) {
-      highBracketPoints.push({
-        x: highPoint.x,
-        y: highPoint.y,
-        z: bandTopZ - Math.min(maxBandDepth, highNearest.distance / slope),
-        radius: highNearest.distance,
-        bandIndex,
-        regionIndex,
-      })
-    }
-    const highClassification = classifyRayPoint(
-      highPoint,
-      start,
-      start,
-      end,
-      contour.points.length,
-      boundaryPoints,
-      boundaryIndex,
-      medialTolerance,
-    )
-    void lowClassification
-    void highClassification
-
-    const refinedPoint = refineMedialPoint(
-      origin,
-      normal,
-      0,
-      exitDistance,
-      start,
-      start,
-      end,
-      contour.points.length,
-      boundaryPoints,
-      boundaryIndex,
-      medialTolerance,
-      probePoints,
+      contours,
       bandTopZ,
       maxBandDepth,
       slope,
+      medialTolerance,
       bandIndex,
       regionIndex,
+      lowBracketPoints,
+      highBracketPoints,
+      probePoints,
     )
-    if (!refinedPoint) {
-      continue
-    }
-    const refinedNearest = nearestBoundaryPoint(refinedPoint, boundaryPoints, boundaryIndex)
-    if (!refinedNearest) {
-      continue
-    }
-
-    const radius = refinedNearest.distance
-    const depth = Math.min(maxBandDepth, radius / slope)
-    if (depth > 0) {
-      path.push({
-        x: refinedPoint.x,
-        y: refinedPoint.y,
-        z: bandTopZ - depth,
-        radius,
-        bandIndex,
-        regionIndex,
-      })
+    if (hit) {
+      path.push(hit)
       hits += 1
     }
   }
@@ -932,6 +1136,14 @@ function pointDistance(a: MatSpinePoint, b: MatSpinePoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
+function pathArcLength(path: MatSpinePoint[]): number {
+  let length = 0
+  for (let index = 1; index < path.length; index++) {
+    length += pointDistance(path[index - 1], path[index])
+  }
+  return length
+}
+
 function averagePoints(a: MatSpinePoint, b: MatSpinePoint): MatSpinePoint {
   return {
     x: (a.x + b.x) * 0.5,
@@ -941,6 +1153,65 @@ function averagePoints(a: MatSpinePoint, b: MatSpinePoint): MatSpinePoint {
     bandIndex: a.bandIndex,
     regionIndex: a.regionIndex,
   }
+}
+
+function smoothPathSafely(path: MatSpinePoint[], tolerance: number): MatSpinePoint[] {
+  if (path.length < 5) {
+    return path
+  }
+
+  const maxShift = tolerance * 0.35
+  const maxTurnAngle = Math.PI / 3
+  const smoothed: MatSpinePoint[] = [path[0]]
+
+  for (let index = 1; index < path.length - 1; index++) {
+    const previous = path[index - 1]
+    const current = path[index]
+    const next = path[index + 1]
+    const prevLength = pointDistance(previous, current)
+    const nextLength = pointDistance(current, next)
+
+    if (prevLength <= 1e-9 || nextLength <= 1e-9) {
+      smoothed.push(current)
+      continue
+    }
+
+    const prevDirX = (current.x - previous.x) / prevLength
+    const prevDirY = (current.y - previous.y) / prevLength
+    const nextDirX = (next.x - current.x) / nextLength
+    const nextDirY = (next.y - current.y) / nextLength
+    const cosine = Math.max(-1, Math.min(1, prevDirX * nextDirX + prevDirY * nextDirY))
+    const turnAngle = Math.acos(cosine)
+
+    if (turnAngle > maxTurnAngle) {
+      smoothed.push(current)
+      continue
+    }
+
+    const targetX = (previous.x + current.x * 2 + next.x) * 0.25
+    const targetY = (previous.y + current.y * 2 + next.y) * 0.25
+    let deltaX = targetX - current.x
+    let deltaY = targetY - current.y
+    const shift = Math.hypot(deltaX, deltaY)
+
+    if (shift > maxShift && shift > 1e-9) {
+      const scale = maxShift / shift
+      deltaX *= scale
+      deltaY *= scale
+    }
+
+    smoothed.push({
+      x: current.x + deltaX,
+      y: current.y + deltaY,
+      z: (previous.z + current.z * 2 + next.z) * 0.25,
+      radius: (previous.radius + current.radius * 2 + next.radius) * 0.25,
+      bandIndex: current.bandIndex,
+      regionIndex: current.regionIndex,
+    })
+  }
+
+  smoothed.push(path[path.length - 1])
+  return smoothed
 }
 
 function tryMergeParallelPaths(a: MatSpinePoint[], b: MatSpinePoint[], tolerance: number): MatSpinePoint[] | null {
@@ -1024,7 +1295,9 @@ function connectRegionSpinePaths(paths: MatSpinePoint[][], scanStep: number): Ma
   const cleaned = mergeNearbyParallelPaths(paths, tolerance)
     .map((path) => collapseDuplicatePoints(path, tolerance))
     .map((path) => simplifyPath(path, tolerance))
-    .filter((path) => path.length >= MIN_PATH_POINTS)
+    .map((path) => smoothPathSafely(path, tolerance))
+    .map((path) => collapseDuplicatePoints(path, tolerance))
+    .filter((path) => path.length >= MIN_PATH_POINTS || pathArcLength(path) >= scanStep * 2)
     .sort((left, right) => right.length - left.length)
 
   const unique: MatSpinePoint[][] = []
@@ -1066,12 +1339,14 @@ function detectRegionSpinePaths(
   const probePoints: MatSpinePoint[] = []
   let scannedRayCount = 0
   let medialHitCount = 0
+  const material = buildRegionMaterial(region)
 
   for (const contour of contours) {
     const scan = scanContourSpinePath(
       contour,
       contours,
       region,
+      material,
       boundaryPoints,
       boundaryIndex,
       bandTopZ,
