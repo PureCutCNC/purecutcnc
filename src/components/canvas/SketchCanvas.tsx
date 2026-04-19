@@ -19,7 +19,7 @@ import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchControlRef, SketchEditTool } from '../../store/types'
-import { filletFeatureFromPoint, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   buildArcSegmentFromThreePoints,
   buildPendingDraftProfile,
@@ -35,6 +35,7 @@ import {
 import {
   drawActiveEditMeasurements,
   drawAngleMeasurement,
+  drawArcRadiusMeasurement,
   drawLineLengthMeasurement,
   drawProfileLineMeasurements,
   drawRadiusMeasurement,
@@ -201,6 +202,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [operationDimEdit, setOperationDimEdit] = useState<OperationDimEdit | null>(null)
   const operationDimEditRef = useRef<OperationDimEdit | null>(null)
   operationDimEditRef.current = operationDimEdit
+  const [filletDimensionEdit, setFilletDimensionEdit] = useState<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
+  const filletDimensionEditRef = useRef<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
+  filletDimensionEditRef.current = filletDimensionEdit
+  const filletRadiusInputRef = useRef<HTMLInputElement>(null)
 
   const {
     project,
@@ -1141,13 +1146,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
-        drawMoveGuide(ctx, pendingSketchFilletRef.current.corner, sketchEditPreviewRef.current.point, vt)
-        const previewFeature = filletFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+        const typedRadius = filletDimensionEditRef.current
+          ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+          : null
+        const useTyped = typedRadius !== null && typedRadius > 0
+        if (!useTyped) {
+          drawMoveGuide(ctx, pendingSketchFilletRef.current.corner, sketchEditPreviewRef.current.point, vt)
+        }
+        const previewFeature = useTyped
+          ? filletFeatureFromRadius(editingFeature, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+          : filletFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
         if (previewFeature) {
           drawPreviewProfile(ctx, previewFeature.sketch.profile, vt, 'Fillet preview')
+          const arcIndex = pendingSketchFilletRef.current.anchorIndex
+          const arcSegment = previewFeature.sketch.profile.segments[arcIndex]
+          if (arcSegment?.type === 'arc') {
+            const arcStart = anchorPointForIndex(previewFeature.sketch.profile, arcIndex)
+            drawArcRadiusMeasurement(ctx, arcStart, arcSegment, vt, project.meta.units)
+          }
         }
       }
-      drawSketchEditPreviewPoint(ctx, sketchEditPreviewRef.current, vt)
+      if (!filletDimensionEditRef.current) {
+        drawSketchEditPreviewPoint(ctx, sketchEditPreviewRef.current, vt)
+      }
     }
 
     drawSnapIndicator(ctx, activeSnapRef.current, vt)
@@ -1218,6 +1239,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
     return () => window.cancelAnimationFrame(frame)
   }, [dimensionEdit?.activeField, !dimensionEdit])
+
+  useEffect(() => {
+    if (!filletDimensionEdit) return
+    const frame = window.requestAnimationFrame(() => {
+      filletRadiusInputRef.current?.focus({ preventScroll: true })
+      filletRadiusInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [!filletDimensionEdit])
+
+  useEffect(() => {
+    if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
+      setFilletDimensionEdit(null)
+    }
+  }, [selection.mode, selection.sketchEditTool])
 
   useEffect(() => {
     if (!pendingAdd) {
@@ -2145,15 +2181,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
         if (feature && selection.sketchEditTool === 'fillet') {
           if (pendingSketchFilletRef.current) {
-            if (!pickedPoint) {
-              return
-            }
-            const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
-            if (radius) {
-              filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+            const typedRadius = filletDimensionEditRef.current
+              ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+              : null
+            if (typedRadius !== null && typedRadius > 0) {
+              filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+            } else {
+              if (!pickedPoint) {
+                return
+              }
+              const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
+              if (radius) {
+                filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+              }
             }
             pendingSketchFilletRef.current = null
             sketchEditPreviewRef.current = null
+            setFilletDimensionEdit(null)
             scheduleDraw()
             return
           }
@@ -2815,6 +2859,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (
+      event.key === 'Tab'
+      && selection.mode === 'sketch_edit'
+      && !pendingAdd
+      && pendingSketchFilletRef.current
+      && sketchEditPreviewRef.current
+    ) {
+      event.preventDefault()
+      const units = projectRef.current.meta.units
+      const featureId = selection.selectedFeatureId
+      const feature = featureId ? projectRef.current.features.find((f) => f.id === featureId) ?? null : null
+      if (!feature) return
+      const current = filletDimensionEditRef.current
+      if (!current) {
+        const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+        setFilletDimensionEdit({
+          anchorIndex: pendingSketchFilletRef.current.anchorIndex,
+          corner: pendingSketchFilletRef.current.corner,
+          radius: radius ? formatLength(radius, units) : '',
+        })
+      } else {
+        setFilletDimensionEdit(null)
+        canvasRef.current?.focus({ preventScroll: true })
+      }
+      return
+    }
+
     if (event.key === 'Tab' && selection.mode === 'sketch_edit' && !pendingAdd) {
       event.preventDefault()
       const currentEdit = dimensionEditRef.current
@@ -2943,6 +3014,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (event.key === 'Enter' && pendingShapeAction) {
       completePendingShapeAction()
+      return
+    }
+
+    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
+      const featureId = selection.selectedFeatureId
+      const typedRadius = parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+      if (featureId && typedRadius !== null && typedRadius > 0) {
+        filletFeaturePoint(featureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+      }
+      pendingSketchFilletRef.current = null
+      sketchEditPreviewRef.current = null
+      setFilletDimensionEdit(null)
+      scheduleDraw()
+      return
+    }
+
+    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
+      pendingSketchFilletRef.current = null
+      sketchEditPreviewRef.current = null
+      setFilletDimensionEdit(null)
+      scheduleDraw()
       return
     }
 
@@ -3310,6 +3402,56 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </>
         )
       })()}
+      {filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const cornerC = worldToCanvas(filletDimensionEdit.corner, vt)
+        return (
+          <input
+            key="fillet-radius"
+            ref={filletRadiusInputRef}
+            className="sketch-dim-input"
+            style={{ left: cornerC.cx, top: cornerC.cy, transform: 'translate(-50%, -50%)' }}
+            value={filletDimensionEdit.radius}
+            onChange={(e) => {
+              const value = e.target.value
+              setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: value } : null))
+              scheduleDraw()
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                const current = filletDimensionEditRef.current
+                const featureId = selectionRef.current.selectedFeatureId
+                if (!current || !featureId) return
+                const typedRadius = parseLengthInput(current.radius, projectRef.current.meta.units)
+                if (typedRadius !== null && typedRadius > 0) {
+                  filletFeaturePoint(featureId, current.anchorIndex, typedRadius)
+                }
+                pendingSketchFilletRef.current = null
+                sketchEditPreviewRef.current = null
+                setFilletDimensionEdit(null)
+                canvasRef.current?.focus({ preventScroll: true })
+                scheduleDraw()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                pendingSketchFilletRef.current = null
+                sketchEditPreviewRef.current = null
+                setFilletDimensionEdit(null)
+                canvasRef.current?.focus({ preventScroll: true })
+                scheduleDraw()
+              } else if (e.key === 'Tab') {
+                e.preventDefault()
+                setFilletDimensionEdit(null)
+                canvasRef.current?.focus({ preventScroll: true })
+              }
+            }}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        )
+      })()}
       {operationDimEdit && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
@@ -3570,7 +3712,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? 'Delete Point active. Click anchors to remove them. Press '
                 : selection.sketchEditTool === 'fillet'
                 ? pendingSketchFilletRef.current
-                    ? 'Fillet active. Click a second point to define the corner round. Press '
+                    ? 'Fillet active. Click a second point to define the corner round, or press Tab to type the radius. Press '
                     : 'Fillet active. Click a line-line corner to start. Press '
                   : 'Drag nodes or straight segments to reshape. Hover a node and press Tab to type length/angle. Press '}
             <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.

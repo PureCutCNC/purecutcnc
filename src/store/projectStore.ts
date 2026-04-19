@@ -1089,6 +1089,14 @@ export function filletFeatureFromPoint(
     return null
   }
 
+  return filletFeatureFromRadius(feature, anchorIndex, radius)
+}
+
+export function filletFeatureFromRadius(
+  feature: SketchFeature,
+  anchorIndex: number,
+  radius: number,
+): SketchFeature | null {
   const profile = applyLineCornerFillet(feature.sketch.profile, anchorIndex, radius)
   if (!profile) {
     return null
