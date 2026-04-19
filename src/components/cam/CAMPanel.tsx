@@ -21,6 +21,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import type {
   CutDirection,
+  DrillType,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -243,6 +244,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Surface clean'
     case 'follow_line':
       return 'Engrave'
+    case 'drilling':
+      return 'Drill'
   }
 }
 
@@ -262,11 +265,26 @@ function operationAddButtonLabel(kind: OperationKind): string {
       return 'Surface'
     case 'follow_line':
       return 'Engrave'
+    case 'drilling':
+      return 'Drill'
   }
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive'
+  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive' && kind !== 'drilling'
+}
+
+function drillTypeLabel(type: DrillType): string {
+  switch (type) {
+    case 'simple':
+      return 'Simple (G81)'
+    case 'peck':
+      return 'Peck (G83)'
+    case 'dwell':
+      return 'Dwell (G82)'
+    case 'chip_breaking':
+      return 'Chip breaking (G73)'
+  }
 }
 
 function operationTargetSummary(project: Project, target: OperationTarget): string {
@@ -295,6 +313,24 @@ function operationRequiresClosedProfiles(kind: OperationKind): boolean {
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
+  if (kind === 'drilling') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    return features.every((feature) => feature.kind === 'circle')
+      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+      : null
+  }
+
   if (kind === 'follow_line') {
     if (selection.selectedFeatureIds.length === 0) {
       return null
@@ -371,6 +407,20 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 }
 
 function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
+  if (kind === 'drilling') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select one or more circle features first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    return features.every((feature) => feature.kind === 'circle')
+      ? null
+      : 'Drilling only accepts circle features'
+  }
+
   if (kind === 'follow_line') {
     if (selection.selectedFeatureIds.length === 0) {
       return 'Select one or more open or closed features first'
@@ -595,6 +645,11 @@ export function CAMPanel({
         label: operationAddButtonLabel('follow_line'),
         hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
       },
+      {
+        kind: 'drilling',
+        label: operationAddButtonLabel('drilling'),
+        hint: getOperationAddHint(project, selection, 'drilling') ?? undefined,
+      },
     ]),
     [project, selection]
   )
@@ -704,7 +759,7 @@ export function CAMPanel({
       return
     }
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive') && mode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling') && mode === 'pair') {
       const operationId = addOperation(kind, 'rough', target)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
@@ -1056,7 +1111,7 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
                     <label className="properties-field">
                       <span>Pass</span>
                       <select
@@ -1122,6 +1177,52 @@ export function CAMPanel({
                         onCommit={(value) => updateOperation(selectedOperation.id, { carveDepth: value })}
                       />
                     </label>
+                  ) : null}
+                  {selectedOperation.kind === 'drilling' ? (
+                    <>
+                      <label className="properties-field">
+                        <span>Drill Type</span>
+                        <select
+                          value={selectedOperation.drillType ?? 'simple'}
+                          onChange={(event) => updateOperation(selectedOperation.id, { drillType: event.target.value as DrillType })}
+                        >
+                          <option value="simple">{drillTypeLabel('simple')}</option>
+                          <option value="peck">{drillTypeLabel('peck')}</option>
+                          <option value="dwell">{drillTypeLabel('dwell')}</option>
+                          <option value="chip_breaking">{drillTypeLabel('chip_breaking')}</option>
+                        </select>
+                      </label>
+                      {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
+                        <label className="properties-field">
+                          <span>Peck Depth</span>
+                          <DraftLengthInput
+                            value={selectedOperation.peckDepth ?? 0}
+                            units={project.meta.units}
+                            min={0}
+                            onCommit={(value) => updateOperation(selectedOperation.id, { peckDepth: value })}
+                          />
+                        </label>
+                      ) : null}
+                      {selectedOperation.drillType === 'dwell' ? (
+                        <label className="properties-field">
+                          <span>Dwell Time (s)</span>
+                          <DraftNumberInput
+                            value={selectedOperation.dwellTime ?? 0}
+                            min={0}
+                            onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="properties-field">
+                        <span>Retract Height</span>
+                        <DraftLengthInput
+                          value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
+                          units={project.meta.units}
+                          min={0}
+                          onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
+                        />
+                      </label>
+                    </>
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish' ? (
                     <>
@@ -1236,7 +1337,7 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
                     <label className="properties-field">
                       <span>Stepdown</span>
                       <DraftLengthInput
@@ -1247,7 +1348,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind !== 'follow_line' ? (
+                  {selectedOperation.kind !== 'follow_line' && selectedOperation.kind !== 'drilling' ? (
                     <label className="properties-field">
                       <span>
                         {selectedOperation.kind === 'v_carve_recursive'
@@ -1291,7 +1392,8 @@ export function CAMPanel({
                   </label>
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
-                    && selectedOperation.kind !== 'v_carve_recursive' ? (
+                    && selectedOperation.kind !== 'v_carve_recursive'
+                    && selectedOperation.kind !== 'drilling' ? (
                     <>
                       <label className="properties-field">
                         <span>Stock To Leave Radial</span>

@@ -1349,6 +1349,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Surface clean'
     case 'follow_line':
       return 'Engrave'
+    case 'drilling':
+      return 'Drill'
   }
 }
 
@@ -1366,6 +1368,22 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
 }
 
 function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
+  if (kind === 'drilling') {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    return features.every((feature) => feature.kind === 'circle')
+  }
+
   if (kind === 'follow_line') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
@@ -1430,7 +1448,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -1478,10 +1496,23 @@ function defaultOperationForTarget(
     carveDepth: convertLength(1, 'mm', project.meta.units),
     maxCarveDepth: convertLength(1, 'mm', project.meta.units),
     cutDirection: 'conventional',
+    ...(kind === 'drilling' ? {
+      drillType: 'simple' as const,
+      peckDepth: convertLength(2, 'mm', project.meta.units),
+      dwellTime: 0.5,
+      retractHeight: project.stock.thickness + convertLength(1, 'mm', project.meta.units),
+    } : {}),
   }
 }
 
 function fallbackOperationTarget(project: Project, kind: OperationKind): OperationTarget {
+  if (kind === 'drilling') {
+    const firstCircle = project.features.find((feature) => feature.kind === 'circle')
+    return firstCircle
+      ? { source: 'features', featureIds: [firstCircle.id] }
+      : { source: 'stock' }
+  }
+
   if (kind === 'follow_line') {
     const firstFeature = project.features[0]
     return firstFeature
