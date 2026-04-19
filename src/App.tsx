@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
-import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
+import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFollowLineToolpath, generatePocketToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
 import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield, type SimulationReplayItem } from './engine/simulation'
@@ -203,6 +203,10 @@ function App() {
 
       if (operation.kind === 'follow_line') {
         return applyClampWarnings(project, generateFollowLineToolpath(project, operation), operation)
+      }
+
+      if (operation.kind === 'drilling') {
+        return applyClampWarnings(project, generateDrillingToolpath(project, operation), operation)
       }
 
       return null

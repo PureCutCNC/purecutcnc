@@ -16,6 +16,7 @@
 
 export * from './clamps'
 export * from './carving'
+export * from './drilling'
 export * from './edge'
 export * from './geometry'
 export * from './pocket'

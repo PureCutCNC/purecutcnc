@@ -256,10 +256,12 @@ export type OperationKind =
   | 'edge_route_outside'
   | 'surface_clean'
   | 'follow_line'
+  | 'drilling'
 
 export type OperationPass = 'rough' | 'finish'
 export type PocketPattern = 'offset' | 'parallel'
 export type CutDirection = 'conventional' | 'climb'
+export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -289,6 +291,10 @@ export interface Operation {
   carveDepth: number
   maxCarveDepth: number
   cutDirection?: CutDirection
+  drillType?: DrillType
+  peckDepth?: number
+  dwellTime?: number
+  retractHeight?: number
 }
 
 // ============================================================

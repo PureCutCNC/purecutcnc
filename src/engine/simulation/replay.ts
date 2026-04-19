@@ -79,12 +79,20 @@ export function applyMoveToGrid(
   const [rowStart, rowEnd] = pointToCellRange(minY, maxY, grid.originY, grid.cellSize, grid.rows)
   let changed = 0
 
+  const xyDx = move.to.x - move.from.x
+  const xyDy = move.to.y - move.from.y
+  const xyStationary = (xyDx * xyDx + xyDy * xyDy) <= 1e-12
+
   for (let row = rowStart; row <= rowEnd; row += 1) {
     const y = grid.originY + (row + 0.5) * grid.cellSize
     for (let col = colStart; col <= colEnd; col += 1) {
       const x = grid.originX + (col + 0.5) * grid.cellSize
       const { distance, t } = pointSegmentDistanceAndT(x, y, move.from.x, move.from.y, move.to.x, move.to.y)
-      const toolCenterZ = move.from.z + (move.to.z - move.from.z) * t
+      // For stationary-XY moves (plunges), the cutter sweeps every Z between
+      // from.z and to.z at this cell — record the deepest reach.
+      const toolCenterZ = xyStationary
+        ? Math.min(move.from.z, move.to.z)
+        : move.from.z + (move.to.z - move.from.z) * t
       const cutZ = cutterSurfaceZ(
         toolType,
         toolRadius,
@@ -131,11 +139,6 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
 
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: string[] } {
   const warnings: string[] = []
-  if (item.toolType === 'drill') {
-    warnings.push(`Operation "${item.operationName}" uses unsupported tool type "${item.toolType}" for simulation.`)
-    return { processedMoveCount: 0, warnings }
-  }
-
   let processedMoveCount = 0
   for (const move of item.toolpath.moves) {
     if (!moveIsMaterialRemoving(move)) {
