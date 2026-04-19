@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { SketchEditTool } from '../../store/types'
+import type { FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
 import { useFileActions } from '../../platform/useFileActions'
@@ -108,6 +108,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startJoinSelectedFeatures,
     startCutSelectedFeatures,
     startOffsetSelectedFeatures,
+    alignFeatures,
+    distributeFeatures,
     startMoveBackdrop,
     startResizeBackdrop,
     startRotateBackdrop,
@@ -187,6 +189,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
   const hasOffsetEligibleSelectedFeatures =
     hasClosedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
+  const alignableFeatureCount = selectedFeatures.filter((feature) => !feature.locked).length
+  const canAlignSelectedFeatures = alignableFeatureCount >= 2
+  const canDistributeSelectedFeatures = alignableFeatureCount >= 3
   const featureSketchEditActive =
     selection.mode === 'sketch_edit'
     && selection.selectedNode?.type === 'feature'
@@ -320,6 +325,26 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startOffsetSelectedFeatures()
   }
 
+  function handleAlignSelectedFeatures(alignment: FeatureAlignment) {
+    const eligibleIds = selectedFeatures
+      .filter((feature) => !feature.locked)
+      .map((feature) => feature.id)
+    if (eligibleIds.length < 2) {
+      return
+    }
+    alignFeatures(eligibleIds, alignment)
+  }
+
+  function handleDistributeSelectedFeatures(distribution: FeatureDistribution) {
+    const eligibleIds = selectedFeatures
+      .filter((feature) => !feature.locked)
+      .map((feature) => feature.id)
+    if (eligibleIds.length < 3) {
+      return
+    }
+    distributeFeatures(eligibleIds, distribution)
+  }
+
   function toggleSketchEditTool(tool: SketchEditTool) {
     if (!featureSketchEditActive) {
       return
@@ -346,6 +371,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     hasLockedSelectedFeatures,
     hasClosedSelectedFeatures,
     hasOffsetEligibleSelectedFeatures,
+    canAlignSelectedFeatures,
+    canDistributeSelectedFeatures,
     featureSketchEditActive,
     sketchEditTool: selection.sketchEditTool,
     setProjectName,
@@ -380,6 +407,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleJoinSelectedFeatures,
     handleCutSelectedFeatures,
     handleOffsetSelectedFeatures,
+    handleAlignSelectedFeatures,
+    handleDistributeSelectedFeatures,
     handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
     handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
     handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
@@ -640,6 +669,156 @@ function FeatureEditActions({
         />
       </div>
     </>
+  )
+}
+
+interface PopoverMenuOption<T extends string> {
+  value: T
+  icon: string
+  label: string
+}
+
+function ToolbarPopoverMenu<T extends string>({
+  triggerIcon,
+  triggerLabelOpen,
+  triggerLabelClosed,
+  enabled,
+  tooltipSide,
+  columns,
+  options,
+  onSelect,
+}: {
+  triggerIcon: string
+  triggerLabelOpen: string
+  triggerLabelClosed: string
+  enabled: boolean
+  tooltipSide?: 'bottom' | 'right'
+  columns: number
+  options: PopoverMenuOption<T>[]
+  onSelect: (value: T) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const effectiveOpen = open && enabled
+
+  useEffect(() => {
+    if (!effectiveOpen) {
+      return
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!containerRef.current) {
+        return
+      }
+      if (!containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [effectiveOpen])
+
+  return (
+    <div className="toolbar-group toolbar-popover-host" ref={containerRef}>
+      <ToolbarActionButton
+        icon={triggerIcon}
+        label={effectiveOpen ? triggerLabelOpen : triggerLabelClosed}
+        active={effectiveOpen}
+        disabled={!enabled}
+        tooltipSide={tooltipSide}
+        onClick={() => setOpen((prev) => !prev)}
+      />
+      {effectiveOpen ? (
+        <div
+          className={`toolbar-popover toolbar-popover--${tooltipSide ?? 'bottom'}`}
+          style={{ gridTemplateColumns: `repeat(${columns}, auto)` }}
+          role="menu"
+        >
+          {options.map((option) => (
+            <ToolbarActionButton
+              key={option.value}
+              icon={option.icon}
+              label={option.label}
+              tooltipSide="bottom"
+              onClick={() => {
+                onSelect(option.value)
+                setOpen(false)
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const ALIGNMENT_OPTIONS: PopoverMenuOption<FeatureAlignment>[] = [
+  { value: 'left', icon: 'align-left', label: 'Align left' },
+  { value: 'center_horizontal', icon: 'align-center-horizontal', label: 'Align center horizontally' },
+  { value: 'right', icon: 'align-right', label: 'Align right' },
+  { value: 'top', icon: 'align-top', label: 'Align top' },
+  { value: 'center_vertical', icon: 'align-center-vertical', label: 'Align center vertically' },
+  { value: 'bottom', icon: 'align-bottom', label: 'Align bottom' },
+]
+
+const DISTRIBUTION_OPTIONS: PopoverMenuOption<FeatureDistribution>[] = [
+  { value: 'horizontal_gaps', icon: 'distribute-horizontal-gaps', label: 'Distribute horizontally (equal gaps)' },
+  { value: 'horizontal_centers', icon: 'distribute-horizontal-centers', label: 'Distribute horizontally (equal centers)' },
+  { value: 'vertical_gaps', icon: 'distribute-vertical-gaps', label: 'Distribute vertically (equal gaps)' },
+  { value: 'vertical_centers', icon: 'distribute-vertical-centers', label: 'Distribute vertically (equal centers)' },
+]
+
+function AlignmentActions({
+  enabled,
+  tooltipSide,
+  onAlign,
+}: {
+  enabled: boolean
+  tooltipSide?: 'bottom' | 'right'
+  onAlign: (alignment: FeatureAlignment) => void
+}) {
+  return (
+    <ToolbarPopoverMenu
+      triggerIcon="align"
+      triggerLabelOpen="Close alignment menu"
+      triggerLabelClosed="Align selected features"
+      enabled={enabled}
+      tooltipSide={tooltipSide}
+      columns={3}
+      options={ALIGNMENT_OPTIONS}
+      onSelect={onAlign}
+    />
+  )
+}
+
+function DistributionActions({
+  enabled,
+  tooltipSide,
+  onDistribute,
+}: {
+  enabled: boolean
+  tooltipSide?: 'bottom' | 'right'
+  onDistribute: (distribution: FeatureDistribution) => void
+}) {
+  return (
+    <ToolbarPopoverMenu
+      triggerIcon="distribute"
+      triggerLabelOpen="Close distribute menu"
+      triggerLabelClosed="Distribute selected features"
+      enabled={enabled}
+      tooltipSide={tooltipSide}
+      columns={2}
+      options={DISTRIBUTION_OPTIONS}
+      onSelect={onDistribute}
+    />
   )
 }
 
@@ -979,6 +1158,16 @@ export function CreationToolbar({
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
         />
+        <AlignmentActions
+          enabled={toolbar.canAlignSelectedFeatures}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onAlign={toolbar.handleAlignSelectedFeatures}
+        />
+        <DistributionActions
+          enabled={toolbar.canDistributeSelectedFeatures}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onDistribute={toolbar.handleDistributeSelectedFeatures}
+        />
         <SketchEditActions
           enabled={toolbar.featureSketchEditActive}
           activeTool={toolbar.sketchEditTool}
@@ -1085,6 +1274,14 @@ export function Toolbar({
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
+        />
+        <AlignmentActions
+          enabled={toolbar.canAlignSelectedFeatures}
+          onAlign={toolbar.handleAlignSelectedFeatures}
+        />
+        <DistributionActions
+          enabled={toolbar.canDistributeSelectedFeatures}
+          onDistribute={toolbar.handleDistributeSelectedFeatures}
         />
         <SketchEditActions
           enabled={toolbar.featureSketchEditActive}

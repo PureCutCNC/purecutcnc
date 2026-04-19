@@ -108,6 +108,38 @@
   display: inline-flex;
 }
 
+.toolbar-popover-host {
+  position: relative;
+}
+
+.toolbar-popover {
+  position: absolute;
+  z-index: 30;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(104, 129, 151, 0.6);
+  background: linear-gradient(180deg, #1e2c3b, #111923);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
+}
+
+.toolbar-popover--bottom {
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.toolbar-popover--right {
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.toolbar-popover .toolbar-icon-btn {
+  border-radius: 6px;
+}
+
 .icon-sprite {
   display: block;
 }
