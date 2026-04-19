@@ -3939,6 +3939,180 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
+  alignFeatures: (ids, alignment) =>
+    set((s) => {
+      const idSet = new Set(ids)
+      const eligibleFeatures = s.project.features.filter((feature) => idSet.has(feature.id) && !feature.locked)
+      if (eligibleFeatures.length < 2) {
+        return {}
+      }
+
+      const featureBounds = new Map(
+        eligibleFeatures.map((feature) => [feature.id, getProfileBounds(feature.sketch.profile)] as const),
+      )
+
+      let refMinX = Infinity
+      let refMaxX = -Infinity
+      let refMinY = Infinity
+      let refMaxY = -Infinity
+      for (const bounds of featureBounds.values()) {
+        if (bounds.minX < refMinX) refMinX = bounds.minX
+        if (bounds.maxX > refMaxX) refMaxX = bounds.maxX
+        if (bounds.minY < refMinY) refMinY = bounds.minY
+        if (bounds.maxY > refMaxY) refMaxY = bounds.maxY
+      }
+      const refCenterX = (refMinX + refMaxX) / 2
+      const refCenterY = (refMinY + refMaxY) / 2
+
+      const nextFeatures = s.project.features.map((feature) => {
+        const bounds = featureBounds.get(feature.id)
+        if (!bounds) {
+          return feature
+        }
+        let dx = 0
+        let dy = 0
+        switch (alignment) {
+          case 'left':
+            dx = refMinX - bounds.minX
+            break
+          case 'right':
+            dx = refMaxX - bounds.maxX
+            break
+          case 'center_horizontal':
+            dx = refCenterX - (bounds.minX + bounds.maxX) / 2
+            break
+          case 'top':
+            dy = refMinY - bounds.minY
+            break
+          case 'bottom':
+            dy = refMaxY - bounds.maxY
+            break
+          case 'center_vertical':
+            dy = refCenterY - (bounds.minY + bounds.maxY) / 2
+            break
+        }
+        if (dx === 0 && dy === 0) {
+          return feature
+        }
+        return {
+          ...feature,
+          sketch: {
+            ...feature.sketch,
+            profile: translateProfile(feature.sketch.profile, dx, dy),
+          },
+        }
+      })
+
+      const nextProject = {
+        ...s.project,
+        features: nextFeatures,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  distributeFeatures: (ids, distribution) =>
+    set((s) => {
+      const idSet = new Set(ids)
+      const eligibleFeatures = s.project.features.filter((feature) => idSet.has(feature.id) && !feature.locked)
+      if (eligibleFeatures.length < 3) {
+        return {}
+      }
+
+      const axis: 'x' | 'y' =
+        distribution === 'horizontal_gaps' || distribution === 'horizontal_centers' ? 'x' : 'y'
+      const mode: 'gaps' | 'centers' =
+        distribution === 'horizontal_gaps' || distribution === 'vertical_gaps' ? 'gaps' : 'centers'
+
+      const entries = eligibleFeatures.map((feature) => {
+        const bounds = getProfileBounds(feature.sketch.profile)
+        const min = axis === 'x' ? bounds.minX : bounds.minY
+        const max = axis === 'x' ? bounds.maxX : bounds.maxY
+        return { feature, bounds, min, max, center: (min + max) / 2, size: max - min }
+      })
+
+      entries.sort((a, b) => (mode === 'centers' ? a.center - b.center : a.min - b.min))
+
+      const offsets = new Map<string, number>()
+      if (mode === 'centers') {
+        const firstCenter = entries[0].center
+        const lastCenter = entries[entries.length - 1].center
+        const step = (lastCenter - firstCenter) / (entries.length - 1)
+        entries.forEach((entry, index) => {
+          if (index === 0 || index === entries.length - 1) {
+            return
+          }
+          const targetCenter = firstCenter + step * index
+          const delta = targetCenter - entry.center
+          if (delta !== 0) {
+            offsets.set(entry.feature.id, delta)
+          }
+        })
+      } else {
+        const spanStart = entries[0].min
+        const spanEnd = entries[entries.length - 1].max
+        const totalSize = entries.reduce((sum, entry) => sum + entry.size, 0)
+        const gap = (spanEnd - spanStart - totalSize) / (entries.length - 1)
+        let cursor = entries[0].max
+        for (let index = 1; index < entries.length - 1; index++) {
+          const entry = entries[index]
+          const targetMin = cursor + gap
+          const delta = targetMin - entry.min
+          if (delta !== 0) {
+            offsets.set(entry.feature.id, delta)
+          }
+          cursor = targetMin + entry.size
+        }
+      }
+
+      if (offsets.size === 0) {
+        return {}
+      }
+
+      const nextFeatures = s.project.features.map((feature) => {
+        const delta = offsets.get(feature.id)
+        if (delta === undefined) {
+          return feature
+        }
+        const dx = axis === 'x' ? delta : 0
+        const dy = axis === 'y' ? delta : 0
+        return {
+          ...feature,
+          sketch: {
+            ...feature.sketch,
+            profile: translateProfile(feature.sketch.profile, dx, dy),
+          },
+        }
+      })
+
+      const nextProject = {
+        ...s.project,
+        features: nextFeatures,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
   addClamp: () => {
     const state = get()
     const bounds = getStockBounds(state.project.stock)

@@ -56,6 +56,20 @@ export interface SketchControlRef {
 
 export type SketchEditTool = 'add_point' | 'delete_point' | 'fillet'
 
+export type FeatureAlignment =
+  | 'left'
+  | 'center_horizontal'
+  | 'right'
+  | 'top'
+  | 'center_vertical'
+  | 'bottom'
+
+export type FeatureDistribution =
+  | 'horizontal_gaps'
+  | 'horizontal_centers'
+  | 'vertical_gaps'
+  | 'vertical_centers'
+
 export type SketchInsertTarget =
   | { kind: 'segment'; segmentIndex: number; point: Point; t: number }
   | { kind: 'extend_start'; point: Point }
@@ -222,6 +236,8 @@ export interface ProjectStore {
   cutSelectedFeatures: (keepOriginals?: boolean) => string[]
   offsetSelectedFeatures: (distance: number) => string[]
   reorderFeatures: (ids: string[]) => void
+  alignFeatures: (ids: string[], alignment: FeatureAlignment) => void
+  distributeFeatures: (ids: string[], distribution: FeatureDistribution) => void
 
   addClamp: () => string
   updateClamp: (id: string, patch: Partial<Clamp>) => void
