@@ -16,6 +16,7 @@
 
 import type { ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
+import type { SnapMode } from '../sketch/snapping'
 import type {
   BackdropImage,
   Clamp,
@@ -163,6 +164,21 @@ export interface SketchEditSession {
   pastLength: number
 }
 
+export interface PendingConstraint {
+  featureId: string
+  anchor: {
+    point: Point
+    snapMode: SnapMode | null
+  } | null
+  reference: {
+    point: Point
+    featureId: string | null
+    snapMode: SnapMode | null
+    segment?: { a: Point; b: Point }
+  } | null
+  session: number
+}
+
 export interface ProjectStore {
   project: Project
   selection: SelectionState
@@ -173,6 +189,7 @@ export interface ProjectStore {
   pendingShapeAction: PendingShapeActionTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
+  pendingConstraint: PendingConstraint | null
   history: ProjectHistory
 
   // ---- Session state (not persisted in .camj) ----
@@ -345,4 +362,10 @@ export interface ProjectStore {
   addCircleFeature: (name: string, cx: number, cy: number, r: number, depth: number) => void
   addPolygonFeature: (name: string, points: Point[], depth: number) => void
   addSplineFeature: (name: string, points: Point[], depth: number) => void
+
+  beginConstraint: (featureId: string) => void
+  setConstraintAnchor: (anchor: { point: Point; snapMode: SnapMode | null }) => void
+  setConstraintReference: (reference: { point: Point; featureId: string | null; snapMode: SnapMode | null; segment?: { a: Point; b: Point } }) => void
+  commitConstraintDistance: (distance: number) => void
+  cancelPendingConstraint: () => void
 }

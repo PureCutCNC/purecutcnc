@@ -46,6 +46,7 @@ import type {
   FeatureOperation,
   FeatureFolder,
   FeatureTreeEntry,
+  LocalConstraint,
   Operation,
   OperationKind,
   OperationPass,
@@ -103,6 +104,7 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
+import { propagateConstraintsOnTranslate, type FeatureOffset } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
   ProjectStore,
@@ -683,6 +685,23 @@ function translateProfile(profile: SketchFeature['sketch']['profile'], dx: numbe
       }
     }),
   }
+}
+
+function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>): SketchFeature[] {
+  if (movedIds.size === 0) return features
+  let anyChanged = false
+  const next = features.map((feature) => {
+    const owns = movedIds.has(feature.id)
+    const kept = feature.sketch.constraints.filter((c) => {
+      if (c.type !== 'fixed_distance') return true
+      if (owns) return false
+      return !c.segment_ids.some((id) => movedIds.has(id))
+    })
+    if (kept.length === feature.sketch.constraints.length) return feature
+    anyChanged = true
+    return { ...feature, sketch: { ...feature.sketch, constraints: kept } }
+  })
+  return anyChanged ? next : features
 }
 
 function transformProfile(
@@ -2196,6 +2215,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   filePath: null,
   lastExportPath: null,
   dirty: false,
+  pendingConstraint: null,
   history: {
     past: [],
     future: [],
@@ -2209,6 +2229,9 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createPendingCompletionSlice(set, get, {
     cloneProject,
     projectsEqual,
+    clearStaleConstraints,
+    propagateConstraintsOnTranslate: (features, offsets) =>
+      propagateConstraintsOnTranslate(features, offsets, { translateProfile }),
     translateProfile,
     translateClamp,
     translateTab,
@@ -3950,6 +3973,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   alignFeatures: (ids, alignment) =>
     set((s) => {
       const idSet = new Set(ids)
+      const movedOffsets = new Map<string, FeatureOffset>()
       const eligibleFeatures = s.project.features.filter((feature) => idSet.has(feature.id) && !feature.locked)
       if (eligibleFeatures.length < 2) {
         return {}
@@ -4002,6 +4026,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         if (dx === 0 && dy === 0) {
           return feature
         }
+        movedOffsets.set(feature.id, { dx, dy })
         return {
           ...feature,
           sketch: {
@@ -4011,9 +4036,10 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
       })
 
+      const cleaned = propagateConstraintsOnTranslate(nextFeatures, movedOffsets, { translateProfile })
       const nextProject = {
         ...s.project,
-        features: nextFeatures,
+        features: cleaned,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
@@ -4032,6 +4058,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   distributeFeatures: (ids, distribution) =>
     set((s) => {
       const idSet = new Set(ids)
+      const movedOffsetsDist = new Map<string, FeatureOffset>()
       const eligibleFeatures = s.project.features.filter((feature) => idSet.has(feature.id) && !feature.locked)
       if (eligibleFeatures.length < 3) {
         return {}
@@ -4094,6 +4121,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
         const dx = axis === 'x' ? delta : 0
         const dy = axis === 'y' ? delta : 0
+        movedOffsetsDist.set(feature.id, { dx, dy })
         return {
           ...feature,
           sketch: {
@@ -4103,9 +4131,10 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
       })
 
+      const cleanedDist = propagateConstraintsOnTranslate(nextFeatures, movedOffsetsDist, { translateProfile })
       const nextProject = {
         ...s.project,
-        features: nextFeatures,
+        features: cleanedDist,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
@@ -4533,12 +4562,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
             sketch: {
               ...feature.sketch,
               profile: normalizedProfile,
+              constraints: feature.sketch.constraints.filter((c) => c.type !== 'fixed_distance'),
             },
             kind: inferFeatureKind(normalizedProfile),
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
+      nextProject.features = clearStaleConstraints(nextProject.features, new Set([featureId]))
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -4844,6 +4875,152 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         },
       }
     }),
+
+  // ── Constraints ──────────────────────────────────────────
+
+  beginConstraint: (featureId) =>
+    set((s) => {
+      const feature = s.project.features.find((f) => f.id === featureId)
+      if (!feature || feature.locked) {
+        return {}
+      }
+      return {
+        pendingConstraint: {
+          featureId,
+          anchor: null,
+          reference: null,
+          session: nextPlacementSession(),
+        },
+      }
+    }),
+
+  setConstraintAnchor: (anchor) =>
+    set((s) => {
+      if (!s.pendingConstraint) {
+        return {}
+      }
+      return {
+        pendingConstraint: { ...s.pendingConstraint, anchor },
+      }
+    }),
+
+  setConstraintReference: (reference) =>
+    set((s) => {
+      if (!s.pendingConstraint || !s.pendingConstraint.anchor) {
+        return {}
+      }
+      if (s.pendingConstraint.featureId === reference.featureId) {
+        return {}
+      }
+      return {
+        pendingConstraint: { ...s.pendingConstraint, reference },
+      }
+    }),
+
+  commitConstraintDistance: (distance) =>
+    set((s) => {
+      const pending = s.pendingConstraint
+      if (!pending || !pending.anchor || !pending.reference || !Number.isFinite(distance) || distance < 0) {
+        return {}
+      }
+      const feature = s.project.features.find((f) => f.id === pending.featureId)
+      if (!feature || feature.locked) {
+        return { pendingConstraint: null }
+      }
+
+      const anchor = pending.anchor.point
+      const ref = pending.reference.point
+      const segment = pending.reference.segment
+      let newAnchor: Point
+      if (segment) {
+        const sx = segment.b.x - segment.a.x
+        const sy = segment.b.y - segment.a.y
+        const segLen = Math.hypot(sx, sy)
+        let nx = 0
+        let ny = 1
+        if (segLen > 1e-9) {
+          nx = -sy / segLen
+          ny = sx / segLen
+        }
+        const signedDist = (anchor.x - segment.a.x) * nx + (anchor.y - segment.a.y) * ny
+        const side = signedDist >= 0 ? 1 : -1
+        const foot = {
+          x: anchor.x - signedDist * nx,
+          y: anchor.y - signedDist * ny,
+        }
+        newAnchor = {
+          x: foot.x + side * distance * nx,
+          y: foot.y + side * distance * ny,
+        }
+      } else {
+        const dx = anchor.x - ref.x
+        const dy = anchor.y - ref.y
+        const currentLen = Math.hypot(dx, dy)
+        let ux = 1
+        let uy = 0
+        if (currentLen > 1e-9) {
+          ux = dx / currentLen
+          uy = dy / currentLen
+        }
+        newAnchor = {
+          x: ref.x + ux * distance,
+          y: ref.y + uy * distance,
+        }
+      }
+      const translateDx = newAnchor.x - anchor.x
+      const translateDy = newAnchor.y - anchor.y
+
+      const constraintId = nextUniqueGeneratedId(s.project, 'c')
+      const referenceIds = pending.reference.featureId
+        ? [pending.reference.featureId]
+        : []
+      const newConstraint: LocalConstraint = {
+        id: constraintId,
+        type: 'fixed_distance',
+        segment_ids: referenceIds,
+        value: distance,
+        anchor_point: newAnchor,
+        reference_point: ref,
+        reference_segment: segment,
+      }
+
+      const nextFeatures = s.project.features.map((f) => {
+        if (f.id !== pending.featureId) {
+          return f
+        }
+        const nextProfile =
+          Math.abs(translateDx) < 1e-9 && Math.abs(translateDy) < 1e-9
+            ? f.sketch.profile
+            : translateProfile(f.sketch.profile, translateDx, translateDy)
+        return {
+          ...f,
+          sketch: {
+            ...f.sketch,
+            profile: nextProfile,
+            constraints: [...f.sketch.constraints, newConstraint],
+          },
+        }
+      })
+
+      const nextProject = {
+        ...s.project,
+        features: nextFeatures,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      return {
+        project: nextProject,
+        pendingConstraint: null,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  cancelPendingConstraint: () =>
+    set((s) => (s.pendingConstraint ? { pendingConstraint: null } : {})),
 
   // ── Convenience constructors ─────────────────────────────
 

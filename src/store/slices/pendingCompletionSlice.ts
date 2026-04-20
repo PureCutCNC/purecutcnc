@@ -27,6 +27,8 @@ import type { ProjectStore } from '../types'
 export interface PendingCompletionSliceDependencies {
   cloneProject: (project: Project) => Project
   projectsEqual: (a: Project, b: Project) => boolean
+  clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
+  propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   translateProfile: (profile: SketchFeature['sketch']['profile'], dx: number, dy: number) => SketchFeature['sketch']['profile']
   translateClamp: (clamp: Clamp, dx: number, dy: number) => Clamp
   translateTab: (tab: Tab, dx: number, dy: number) => Tab
@@ -166,24 +168,32 @@ export function createPendingCompletionSlice(
               ? deps.buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
               : []
 
+          const translatedFeatures =
+            mode === 'copy'
+              ? [...s.project.features, ...createdFeatures]
+              : s.project.features.map((feature) => {
+                  if (!entityIds.includes(feature.id) || feature.locked) {
+                    return feature
+                  }
+
+                  return {
+                    ...feature,
+                    sketch: {
+                      ...feature.sketch,
+                      profile: deps.translateProfile(feature.sketch.profile, dx, dy),
+                    },
+                  }
+                })
+          const resolvedFeatures =
+            mode === 'copy'
+              ? deps.clearStaleConstraints(translatedFeatures, new Set(createdFeatures.map((f) => f.id)))
+              : deps.propagateConstraintsOnTranslate(
+                  translatedFeatures,
+                  new Map(entityIds.filter((id) => !s.project.features.find((f) => f.id === id)?.locked).map((id) => [id, { dx, dy }])),
+                )
           const nextProject = {
             ...s.project,
-            features:
-              mode === 'copy'
-                ? [...s.project.features, ...createdFeatures]
-                : s.project.features.map((feature) => {
-                    if (!entityIds.includes(feature.id) || feature.locked) {
-                      return feature
-                    }
-
-                    return {
-                      ...feature,
-                      sketch: {
-                        ...feature.sketch,
-                        profile: deps.translateProfile(feature.sketch.profile, dx, dy),
-                      },
-                    }
-                  }),
+            features: resolvedFeatures,
             featureTree:
               mode === 'copy'
                 ? [
@@ -380,9 +390,13 @@ export function createPendingCompletionSlice(
           transformedFeatures.set(feature.id, transformed)
         }
 
+        const movedTransformedIds = new Set(transformedFeatures.keys())
         const nextProject = {
           ...s.project,
-          features: s.project.features.map((feature) => transformedFeatures.get(feature.id) ?? feature),
+          features: deps.clearStaleConstraints(
+            s.project.features.map((feature) => transformedFeatures.get(feature.id) ?? feature),
+            movedTransformedIds,
+          ),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 

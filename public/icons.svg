@@ -410,4 +410,11 @@
     <path d="M 21 12 L 23 12" />
     <path d="M 21 19 L 23 19" />
   </symbol>
+  <symbol id="constraint" viewBox="0 0 24 24">
+    <circle cx="5" cy="12" r="2.2" />
+    <circle cx="19" cy="12" r="2.2" />
+    <path d="M 7.5 12 L 16.5 12" stroke-dasharray="2 2" />
+    <path d="M 5 8 L 5 16" />
+    <path d="M 19 8 L 19 16" />
+  </symbol>
 </svg>

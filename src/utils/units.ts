@@ -142,6 +142,18 @@ function convertLocalConstraint(constraint: LocalConstraint, from: Units, to: Un
     return {
       ...constraint,
       value: convertLength(constraint.value, from, to),
+      anchor_point: constraint.anchor_point
+        ? { x: convertLength(constraint.anchor_point.x, from, to), y: convertLength(constraint.anchor_point.y, from, to) }
+        : constraint.anchor_point,
+      reference_point: constraint.reference_point
+        ? { x: convertLength(constraint.reference_point.x, from, to), y: convertLength(constraint.reference_point.y, from, to) }
+        : constraint.reference_point,
+      reference_segment: constraint.reference_segment
+        ? {
+            a: { x: convertLength(constraint.reference_segment.a.x, from, to), y: convertLength(constraint.reference_segment.a.y, from, to) },
+            b: { x: convertLength(constraint.reference_segment.b.x, from, to), y: convertLength(constraint.reference_segment.b.y, from, to) },
+          }
+        : constraint.reference_segment,
     }
   }
 

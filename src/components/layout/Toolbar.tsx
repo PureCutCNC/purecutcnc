@@ -116,6 +116,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     deleteBackdrop,
     deleteFeatures,
     setSketchEditTool,
+    beginConstraint,
+    pendingConstraint,
+    cancelPendingConstraint,
     cancelPendingAdd,
     pendingMove,
     pendingTransform,
@@ -412,6 +415,19 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
     handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
     handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
+    handleFeatureConstraint: () => {
+      if (pendingConstraint) {
+        cancelPendingConstraint()
+        return
+      }
+      const featureId =
+        (selection.selectedNode?.type === 'feature' ? selection.selectedNode.featureId : null) ??
+        selection.selectedFeatureId
+      if (!featureId) return
+      if (featureSketchEditActive) setSketchEditTool(null)
+      beginConstraint(featureId)
+    },
+    constraintActive: !!pendingConstraint,
   }
 }
 
@@ -1175,6 +1191,8 @@ export function CreationToolbar({
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
           onFillet={toolbar.handleSketchEditFillet}
+          onConstraint={toolbar.handleSketchEditConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
@@ -1289,6 +1307,8 @@ export function Toolbar({
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
           onFillet={toolbar.handleSketchEditFillet}
+          onConstraint={toolbar.handleSketchEditConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

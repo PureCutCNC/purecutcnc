@@ -40,6 +40,7 @@ interface SnapCandidate {
   distancePx: number
   priority: number
   guide?: SnapGuide
+  perpendicularSegment?: { a: Point; b: Point }
 }
 
 export interface ResolvedSnap {
@@ -47,6 +48,7 @@ export interface ResolvedSnap {
   point: Point
   mode: SnapMode | null
   guide?: SnapGuide
+  perpendicularSegment?: { a: Point; b: Point }
 }
 
 function distanceToCanvas(a: { cx: number; cy: number }, b: { cx: number; cy: number }): number {
@@ -81,6 +83,7 @@ function pushSnapCandidate(
   mode: SnapMode,
   point: Point,
   guide?: SnapGuide,
+  perpendicularSegment?: { a: Point; b: Point },
 ) {
   const distancePx = distanceToCanvas(worldToCanvas(rawPoint, vt), worldToCanvas(point, vt))
   if (distancePx > snapRadiusPx) {
@@ -93,6 +96,7 @@ function pushSnapCandidate(
     distancePx,
     priority: snapPriority(mode),
     guide,
+    perpendicularSegment,
   })
 }
 
@@ -151,6 +155,7 @@ function addProfileSnapCandidates(
           'perpendicular',
           perpendicularPoint,
           { kind: 'perpendicular', from: referencePoint, to: perpendicularPoint },
+          { a: start, b: segment.to },
         )
       }
       continue
@@ -265,5 +270,6 @@ export function resolveSketchSnap(input: {
     point: best.point,
     mode: best.mode,
     guide: best.guide,
+    perpendicularSegment: best.perpendicularSegment,
   }
 }

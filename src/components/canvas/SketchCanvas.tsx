@@ -96,6 +96,7 @@ import {
 } from './scenePrimitives'
 import { generateTextShapes } from '../../text'
 import {
+  getProfileBounds,
   polygonProfile,
   profileExceedsStock,
   profileHasSelfIntersection,
@@ -206,6 +207,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const filletDimensionEditRef = useRef<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
   filletDimensionEditRef.current = filletDimensionEdit
   const filletRadiusInputRef = useRef<HTMLInputElement>(null)
+  const [constraintDistanceInput, setConstraintDistanceInput] = useState<string | null>(null)
+  const constraintDistanceInputRef = useRef<HTMLInputElement>(null)
 
   const {
     project,
@@ -214,6 +217,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingTransform,
     pendingOffset,
     pendingShapeAction,
+    pendingConstraint,
     selection,
     selectFeature,
     selectFeatures,
@@ -264,6 +268,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingShapeAction,
     setPendingShapeActionKeepOriginals,
     setBackdropImageLoading,
+    beginConstraint,
+    setConstraintAnchor,
+    setConstraintReference,
+    commitConstraintDistance,
+    cancelPendingConstraint,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
   const projectRef = useRef(project)
@@ -273,6 +282,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingTransformRef = useRef(pendingTransform)
   const pendingOffsetRef = useRef(pendingOffset)
   const pendingShapeActionRef = useRef(pendingShapeAction)
+  const pendingConstraintRef = useRef(pendingConstraint)
   const viewStateRef = useRef(viewState)
   const backdropImageRef = useRef(backdropImage)
   const toolpathsRef = useRef(toolpaths)
@@ -288,6 +298,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingTransformRef.current = pendingTransform
   pendingOffsetRef.current = pendingOffset
   pendingShapeActionRef.current = pendingShapeAction
+  pendingConstraintRef.current = pendingConstraint
   viewStateRef.current = viewState
   backdropImageRef.current = backdropImage
   toolpathsRef.current = toolpaths
@@ -348,6 +359,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingAdd = pendingAddRef.current
+    const pendingConstraintLive = pendingConstraintRef.current
+
+    if (pendingConstraintLive?.anchor && !pendingConstraintLive.reference) {
+      return pendingConstraintLive.anchor.point
+    }
 
     if (pendingMove?.fromPoint) {
       return pendingMove.fromPoint
@@ -500,8 +516,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const pendingConstraintLive = pendingConstraintRef.current
+    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
+    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
+    const constraintPicking = constraintAnchorPicking || constraintRefPicking
     const resolvedSnap = resolveCurrentSketchSnap(livePoint, vt, {
-      excludeActiveEditGeometry: isDraggingNodeRef.current,
+      excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
     })
     const snapped = resolvedSnap.point
     const sketchEditTool = selection.sketchEditTool
@@ -513,6 +533,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || !!pendingOffset
       || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
       || isDraggingNodeRef.current
+      || constraintPicking
 
     updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
@@ -656,6 +677,96 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (editControl && (isDraggingNodeRef.current || dimensionEditControlRef.current || hoveredEditControl)) {
           drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
+      }
+
+      if (feature.sketch.constraints && feature.sketch.constraints.length > 0) {
+        const b = getProfileBounds(feature.sketch.profile)
+        const badgeWorld = { x: b.minX, y: b.maxY }
+        const badgeC = worldToCanvas(badgeWorld, vt)
+        ctx.save()
+        ctx.fillStyle = 'rgba(91, 165, 216, 0.85)'
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(badgeC.cx - 8, badgeC.cy - 8, 7, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = '#fff'
+        ctx.font = 'bold 10px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
+        ctx.restore()
+      }
+    }
+
+    const pendingConstraintDraw = pendingConstraintRef.current
+    if (pendingConstraintDraw && pendingConstraintDraw.anchor) {
+      const anchorC = worldToCanvas(pendingConstraintDraw.anchor.point, vt)
+      ctx.save()
+      ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
+      ctx.beginPath()
+      ctx.arc(anchorC.cx, anchorC.cy, 4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      if (pendingConstraintDraw.reference) {
+        const refC = worldToCanvas(pendingConstraintDraw.reference.point, vt)
+        ctx.strokeStyle = 'rgba(247, 211, 148, 0.95)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([6, 4])
+        ctx.beginPath()
+        ctx.moveTo(refC.cx, refC.cy)
+        ctx.lineTo(anchorC.cx, anchorC.cy)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
+        ctx.beginPath()
+        ctx.arc(refC.cx, refC.cy, 4, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    for (const feature of project.features) {
+      if (!feature.visible) continue
+      for (const c of feature.sketch.constraints) {
+        if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
+        const aC = worldToCanvas(c.anchor_point, vt)
+        const rC = worldToCanvas(c.reference_point, vt)
+        ctx.save()
+        ctx.strokeStyle = 'rgba(91, 165, 216, 0.8)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([5, 3])
+        ctx.beginPath()
+        ctx.moveTo(aC.cx, aC.cy)
+        ctx.lineTo(rC.cx, rC.cy)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(91, 165, 216, 0.9)'
+        ctx.beginPath()
+        ctx.arc(aC.cx, aC.cy, 3, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(rC.cx, rC.cy, 3, 0, Math.PI * 2)
+        ctx.fill()
+        if (typeof c.value === 'number') {
+          const midX = (aC.cx + rC.cx) / 2
+          const midY = (aC.cy + rC.cy) / 2
+          const label = formatLength(c.value, project.meta.units)
+          ctx.font = '11px sans-serif'
+          const metrics = ctx.measureText(label)
+          const padX = 4
+          const padY = 2
+          ctx.fillStyle = 'rgba(18, 26, 36, 0.85)'
+          ctx.fillRect(midX - metrics.width / 2 - padX, midY - 7 - padY, metrics.width + padX * 2, 14 + padY * 2)
+          ctx.fillStyle = 'rgba(200, 220, 240, 0.95)'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(label, midX, midY)
+        }
+        ctx.restore()
       }
     }
 
@@ -1250,6 +1361,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [!filletDimensionEdit])
 
   useEffect(() => {
+    if (constraintDistanceInput == null) return
+    const frame = window.requestAnimationFrame(() => {
+      constraintDistanceInputRef.current?.focus({ preventScroll: true })
+      constraintDistanceInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [constraintDistanceInput == null])
+
+  useEffect(() => {
+    if (!pendingConstraint) setConstraintDistanceInput(null)
+  }, [pendingConstraint])
+
+  useEffect(() => {
     if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
       setFilletDimensionEdit(null)
     }
@@ -1764,6 +1888,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    const pendingConstraintLive = pendingConstraintRef.current
+    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
+    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
+    const constraintPicking = constraintAnchorPicking || constraintRefPicking
     const shouldPreviewSnap =
       !zoomWindowActive && (
         !!pendingAdd
@@ -1772,10 +1900,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         || !!pendingOffset
         || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
         || isDraggingNodeRef.current
+        || constraintPicking
       )
     const resolvedSnap = shouldPreviewSnap
       ? resolveCurrentSketchSnap(world, vt, {
-          excludeActiveEditGeometry: isDraggingNodeRef.current,
+          excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
         })
       : { rawPoint: world, point: world, mode: null as null }
     const snapped = resolvedSnap.point
@@ -2131,8 +2260,45 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const resolvedSnap = resolveCurrentSketchSnap(world, vt)
+    const pendingConstraint = pendingConstraintRef.current
+    const constraintRefPickingClick = !!pendingConstraint && !!pendingConstraint.anchor && !pendingConstraint.reference
+    const resolvedSnap = resolveCurrentSketchSnap(world, vt, {
+      excludeActiveEditGeometry: constraintRefPickingClick,
+    })
     const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
+
+    if (pendingConstraint && !pendingConstraint.anchor) {
+      if (!pickedPoint) {
+        return
+      }
+      setConstraintAnchor({
+        point: pickedPoint,
+        snapMode: resolvedSnap.mode,
+      })
+      return
+    }
+
+    if (pendingConstraint && pendingConstraint.anchor && !pendingConstraint.reference) {
+      if (!pickedPoint) {
+        return
+      }
+      const targetFeatureId = findHitFeatureId(pickedPoint, project.features, vt)
+      const targetId =
+        targetFeatureId && targetFeatureId !== pendingConstraint.featureId
+          ? targetFeatureId
+          : null
+      setConstraintReference({
+        point: pickedPoint,
+        featureId: targetId,
+        snapMode: resolvedSnap.mode,
+        segment: resolvedSnap.mode === 'perpendicular' ? resolvedSnap.perpendicularSegment : undefined,
+      })
+      const dx = pendingConstraint.anchor.point.x - pickedPoint.x
+      const dy = pendingConstraint.anchor.point.y - pickedPoint.y
+      const currentDistance = Math.hypot(dx, dy)
+      setConstraintDistanceInput(formatLength(currentDistance, project.meta.units))
+      return
+    }
 
     if (selection.mode === 'sketch_edit') {
       if (selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
@@ -3048,6 +3214,44 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (pendingConstraintRef.current) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        cancelPendingConstraint()
+        setConstraintDistanceInput(null)
+        canvasRef.current?.focus({ preventScroll: true })
+        return
+      }
+      if (event.key === 'Enter' && pendingConstraintRef.current.reference && constraintDistanceInput != null) {
+        event.preventDefault()
+        const parsed = parseLengthInput(constraintDistanceInput, project.meta.units)
+        if (parsed != null && parsed >= 0) {
+          commitConstraintDistance(parsed)
+          setConstraintDistanceInput(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+      return
+    }
+
+    if (
+      event.key === 'c'
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+      && selection.mode === 'sketch_edit'
+      && selection.selectedNode?.type === 'feature'
+      && selection.selectedFeatureId
+      && !selection.sketchEditTool
+      && !dimensionEditRef.current
+      && !filletDimensionEditRef.current
+    ) {
+      event.preventDefault()
+      beginConstraint(selection.selectedFeatureId)
+      return
+    }
+
     if (event.key === 'Enter' && selection.mode === 'sketch_edit') {
       stopNodeDrag()
       applySketchEdit()
@@ -3452,6 +3656,43 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           />
         )
       })()}
+      {pendingConstraint && pendingConstraint.anchor && pendingConstraint.reference && constraintDistanceInput != null && (() => {
+        const canvas = canvasRef.current
+        if (!canvas) return null
+        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const aC = worldToCanvas(pendingConstraint.anchor.point, vt)
+        const rC = worldToCanvas(pendingConstraint.reference.point, vt)
+        const midX = (aC.cx + rC.cx) / 2
+        const midY = (aC.cy + rC.cy) / 2
+        return (
+          <input
+            key="constraint-distance"
+            ref={constraintDistanceInputRef}
+            className="sketch-dim-input"
+            style={{ left: midX, top: midY, transform: 'translate(-50%, -50%)' }}
+            value={constraintDistanceInput}
+            onChange={(e) => setConstraintDistanceInput(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                const parsed = parseLengthInput(constraintDistanceInput, project.meta.units)
+                if (parsed != null && parsed >= 0) {
+                  commitConstraintDistance(parsed)
+                  setConstraintDistanceInput(null)
+                  canvasRef.current?.focus({ preventScroll: true })
+                }
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelPendingConstraint()
+                setConstraintDistanceInput(null)
+                canvasRef.current?.focus({ preventScroll: true })
+              }
+            }}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        )
+      })()}
       {operationDimEdit && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
@@ -3810,6 +4051,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           {pendingDraftExceedsStock ? (
             <div className="sketch-banner-warning">This profile extends outside the stock boundary.</div>
           ) : null}
+        </div>
+      )}
+      {pendingConstraint && (
+        <div className="sketch-place-banner">
+          <div>
+            <strong>Constraint:</strong>{' '}
+            {!pendingConstraint.anchor
+              ? 'Click a snap point on this feature to set the anchor.'
+              : !pendingConstraint.reference
+                ? 'Click a snap point on another feature to set the reference.'
+                : 'Type the distance and press Enter.'}
+            {' '}Press <kbd>Esc</kbd> to cancel.
+          </div>
         </div>
       )}
       {pendingMove && (
