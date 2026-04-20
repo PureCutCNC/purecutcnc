@@ -780,6 +780,8 @@ function nearestRayExitDistance(
   return Number.isFinite(bestDistance) ? bestDistance : null
 }
 
+/* the baseline code */
+/*
 function classifyRayPoint(
   point: Point,
   source: MatRaySource,
@@ -790,28 +792,28 @@ function classifyRayPoint(
   rayNormal?: Point,
 ): RayPointClassification {
   const nearest = nearestBoundaryPoints(point, boundaryPoints, boundaryIndex, BINARY_SEARCH_NEIGHBOR_COUNT)
-  if (nearest.length < 2) {
+  if (nearest.length < 2 || !rayOrigin) {
     return { kind: 'invalid' }
   }
 
-  let sameWallDistance = Number.POSITIVE_INFINITY
-  for (const segment of source.segments) {
-    sameWallDistance = Math.min(sameWallDistance, distanceToSegment(point, segment.start, segment.end))
-  }
+  // STEP 1: Use distance strictly to the ray start point (origin)
+  const sameWallDistance = Math.hypot(point.x - rayOrigin.x, point.y - rayOrigin.y)
+  
   let otherWallDistance = Number.POSITIVE_INFINITY
 
+  // We keep the existing search for the "Other" wall distance
   for (const candidate of nearest) {
-    // Exclude neighbors that are too close along the contour (same edge)
+    // Standard check to ensure we don't hit the starting point itself
     const isSourceNeighbor = 
-      Math.hypot(candidate.point.x - source.segments[0].start.x, candidate.point.y - source.segments[0].start.y) < 1e-6 ||
-      Math.abs(candidate.point.sampleIndex - source.sampleIndices[0]) <= 1  // Exclude adjacent digitized points
+      candidate.point.contourType === source.contourType &&
+      candidate.point.contourIndex === source.contourIndex &&
+      Math.abs(candidate.point.sampleIndex - source.sampleIndices[0]) <= 1 // Keeping original window for now
     
-    // If ray info provided, also filter by ray direction (only consider points along ray forward)
     let isAlongRay = true
-    if (rayOrigin && rayNormal) {
+    if (rayNormal) {
       const toPoint = { x: candidate.point.x - rayOrigin.x, y: candidate.point.y - rayOrigin.y }
       const dotProduct = toPoint.x * rayNormal.x + toPoint.y * rayNormal.y
-      isAlongRay = dotProduct > -1e-6  // Allow slight tolerance for numerical errors
+      isAlongRay = dotProduct > -1e-6 
     }
     
     if (!isSourceNeighbor && isAlongRay) {
@@ -819,10 +821,7 @@ function classifyRayPoint(
     }
   }
 
-  if (
-    !Number.isFinite(sameWallDistance)
-    || !Number.isFinite(otherWallDistance)
-  ) {
+  if (!Number.isFinite(sameWallDistance) || !Number.isFinite(otherWallDistance)) {
     return { kind: 'invalid' }
   }
 
@@ -830,11 +829,81 @@ function classifyRayPoint(
     return { kind: 'candidate', sameWallDistance, otherWallDistance }
   }
 
-  if (otherWallDistance > sameWallDistance) {
-    return { kind: 'source-dominated', sameWallDistance, otherWallDistance }
+  return otherWallDistance > sameWallDistance 
+    ? { kind: 'source-dominated', sameWallDistance, otherWallDistance }
+    : { kind: 'other-dominated', sameWallDistance, otherWallDistance }
+}
+*/
+
+/* work in progress, ideas, etc */
+function classifyRayPoint(
+  point: Point,
+  source: MatRaySource,
+  boundaryPoints: MatBoundaryPoint[],
+  boundaryIndex: MatBoundaryIndex,
+  tolerance: number,
+  rayOrigin?: Point,
+  rayNormal?: Point,
+): RayPointClassification {
+  const nearest = nearestBoundaryPoints(point, boundaryPoints, boundaryIndex, BINARY_SEARCH_NEIGHBOR_COUNT);
+  
+  if (nearest.length < 2 || !rayOrigin) {
+    return { kind: 'invalid' };
   }
 
-  return { kind: 'other-dominated', sameWallDistance, otherWallDistance }
+  // 1. SOURCE: Strict distance back to the Ray Origin point
+  const sameWallDistance = Math.hypot(point.x - rayOrigin.x, point.y - rayOrigin.y);
+  
+  let otherWallDistance = Number.POSITIVE_INFINITY;
+  const SAME_WALL_WINDOW = 3; 
+
+  for (const candidate of nearest) {
+    const bp = candidate.point;
+
+    // 2. EXCLUSION: Skip points part of the source vertex neighborhood
+    const isSourceNeighbor = 
+      bp.contourType === source.contourType &&
+      bp.contourIndex === source.contourIndex &&
+      Math.abs(bp.sampleIndex - source.sampleIndices[0]) <= SAME_WALL_WINDOW;
+    
+    if (isSourceNeighbor) continue;
+
+    // 3. OTHER SIDE: Segment Calculation
+    // Find the next point in the global boundaryPoints array to form a segment.
+    // We must ensure the next point belongs to the same contour.
+    const currentIdx = boundaryPoints.indexOf(bp);
+    const nextIdx = currentIdx + 1;
+    
+    let p2 = bp; // Fallback to point distance if no segment found
+    if (nextIdx < boundaryPoints.length) {
+      const candidateNext = boundaryPoints[nextIdx];
+      // Only use as a segment if it's the same contour and sequential
+      if (candidateNext.contourIndex === bp.contourIndex && 
+          candidateNext.contourType === bp.contourType) {
+        p2 = candidateNext;
+      }
+    }
+
+    // Measure distance to the segment if p1 != p2, otherwise just point distance
+    const distToOpposing = (bp.x === p2.x && bp.y === p2.y)
+      ? Math.hypot(point.x - bp.x, point.y - bp.y)
+      : distanceToSegment(point, bp, p2);
+
+    otherWallDistance = Math.min(otherWallDistance, distToOpposing);
+  }
+
+  if (!Number.isFinite(sameWallDistance) || !Number.isFinite(otherWallDistance)) {
+    return { kind: 'invalid' };
+  }
+
+  // 4. COMPARISON: Balance Point distance vs Segment distance
+  if (Math.abs(sameWallDistance - otherWallDistance) <= tolerance) {
+    return { kind: 'candidate', sameWallDistance, otherWallDistance };
+  }
+
+  return otherWallDistance > sameWallDistance 
+    ? { kind: 'source-dominated', sameWallDistance, otherWallDistance }
+    : { kind: 'other-dominated', sameWallDistance, otherWallDistance };
 }
 
 function refineMedialPoint(
@@ -1018,104 +1087,69 @@ function scanContourSpinePath(
   const lowBracketPoints: MatSpinePoint[] = []
   const highBracketPoints: MatSpinePoint[] = []
   const probePoints: MatSpinePoint[] = []
+  
   const bounds = regionBounds(region)
-  if (!bounds || contour.points.length < 2) {
+  if (!bounds || contour.points.length < 3) {
     return { path, lowBracketPoints, highBracketPoints, probePoints, rays: 0, hits: 0 }
   }
 
   const normalProbe = Math.max(scanStep * 0.5, 1e-4)
-  const medialTolerance = scanStep * 0.3
+  const medialTolerance = scanStep * 0.3 
   let rays = 0
   let hits = 0
 
   for (let index = 0; index < contour.points.length; index++) {
-    const start = contour.points[index]
-    const end = contour.points[(index + 1) % contour.points.length]
+    // Standardize: Every ray is emitted from a vertex at the given stride
+    if (index % contourStride !== 0) {
+      continue
+    }
 
-    if (index % contourStride === 0) {
-      const previous = contour.points[(index - 1 + contour.points.length) % contour.points.length]
-      const end = contour.points[(index + 1) % contour.points.length]
-      const normal = inwardNormalForPoint(previous, start, end, material, normalProbe)
-      if (normal) {
-        rays += 1
-        const segmentSource: MatRaySource = {
-          contourType: contour.contourType,
-          contourIndex: contour.contourIndex,
-          contourLength: contour.points.length,
-          sampleIndices: [start.sampleIndex],
-          segments: [{ start, end }],
-        }
-        const hit = traceRaySpinePoint(
-          start,
-          normal,
-          contour,
-          [index],
-          segmentSource,
-          boundaryPoints,
-          boundaryIndex,
-          contours,
-          bandTopZ,
-          maxBandDepth,
-          slope,
-          medialTolerance,
-          bandIndex,
-          regionIndex,
-          lowBracketPoints,
-          highBracketPoints,
-          probePoints,
-        )
-        if (hit) {
-          path.push(hit)
-          hits += 1
-        }
+    const current = contour.points[index]
+    const previous = contour.points[(index - 1 + contour.points.length) % contour.points.length]
+    const next = contour.points[(index + 1) % contour.points.length]
+
+    // Calculate direction using the 3-point angle (bisector)
+    const direction = inwardBisectorAtVertex(previous, current, next, material, normalProbe)
+
+    if (direction) {
+      rays += 1
+
+      const vertexSource: MatRaySource = {
+        contourType: contour.contourType,
+        contourIndex: contour.contourIndex,
+        contourLength: contour.points.length,
+        sampleIndices: [current.sampleIndex],
+        segments: [
+          { start: previous, end: current },
+          { start: current, end: next }
+        ],
       }
-    }
 
-    const previousIndex = (index - 1 + contour.points.length) % contour.points.length
-    const previous = contour.points[previousIndex]
-    const turnAngle = turnAngleAtVertex(previous, start, end)
-    if (turnAngle < CORNER_RAY_MIN_TURN_ANGLE) {
-      continue
-    }
+      // traceRaySpinePoint now uses the vertex 'current' as the startPoint
+      const hit = traceRaySpinePoint(
+        current,   // Origin: Start point of the vertex
+        direction, // Direction: Angle bisector
+        contour,
+        [(index - 1 + contour.points.length) % contour.points.length, index], 
+        vertexSource,
+        boundaryPoints,
+        boundaryIndex,
+        contours,
+        bandTopZ,
+        maxBandDepth,
+        slope,
+        medialTolerance,
+        bandIndex,
+        regionIndex,
+        lowBracketPoints,
+        highBracketPoints,
+        probePoints,
+      )
 
-    const bisector = inwardBisectorAtVertex(previous, start, end, material, normalProbe)
-    if (!bisector) {
-      continue
-    }
-
-    rays += 1
-    const cornerSource: MatRaySource = {
-      contourType: contour.contourType,
-      contourIndex: contour.contourIndex,
-      contourLength: contour.points.length,
-      sampleIndices: [start.sampleIndex],
-      segments: [
-        { start: previous, end: start },
-        { start, end },
-      ],
-    }
-    const hit = traceRaySpinePoint(
-      start,
-      bisector,
-      contour,
-      [previousIndex, index],
-      cornerSource,
-      boundaryPoints,
-      boundaryIndex,
-      contours,
-      bandTopZ,
-      maxBandDepth,
-      slope,
-      medialTolerance,
-      bandIndex,
-      regionIndex,
-      lowBracketPoints,
-      highBracketPoints,
-      probePoints,
-    )
-    if (hit) {
-      path.push(hit)
-      hits += 1
+      if (hit) {
+        path.push(hit)
+        hits += 1
+      }
     }
   }
 
