@@ -29,7 +29,6 @@ const MIN_PATH_POINTS = 3
 const MAX_REGION_PATHS = 64
 const MAX_ESTIMATED_SCAN_STEPS = 250000
 const MAX_ESTIMATED_BOUNDARY_POINTS = 12000
-const SAME_WALL_WINDOW = 4
 const BINARY_SEARCH_ITERATIONS = 10
 const BINARY_SEARCH_NEIGHBOR_COUNT = 12
 const CORNER_RAY_MIN_TURN_ANGLE = Math.PI / 6
@@ -580,24 +579,25 @@ function nearestBoundaryPoints(
   }))
 }
 
-function wrappedSampleDistance(a: number, b: number, length: number): number {
-  const linear = Math.abs(a - b)
-  return Math.min(linear, Math.max(0, length - linear))
-}
+// Utility functions below commented out as no longer needed with simplified algorithm
+// function wrappedSampleDistance(a: number, b: number, length: number): number {
+//   const linear = Math.abs(a - b)
+//   return Math.min(linear, Math.max(0, length - linear))
+// }
 
-function minWrappedSampleDistance(sampleIndex: number, sourceIndices: number[], contourLength: number): number {
-  let best = Number.POSITIVE_INFINITY
-  for (const sourceIndex of sourceIndices) {
-    best = Math.min(best, wrappedSampleDistance(sampleIndex, sourceIndex, contourLength))
-  }
-  return best
-}
+// function minWrappedSampleDistance(sampleIndex: number, sourceIndices: number[], contourLength: number): number {
+//   let best = Number.POSITIVE_INFINITY
+//   for (const sourceIndex of sourceIndices) {
+//     best = Math.min(best, wrappedSampleDistance(sampleIndex, sourceIndex, contourLength))
+//   }
+//   return best
+// }
 
-function isSameWallNeighborhood(candidate: MatBoundaryPoint, source: MatRaySource): boolean {
-  return candidate.contourType === source.contourType
-    && candidate.contourIndex === source.contourIndex
-    && minWrappedSampleDistance(candidate.sampleIndex, source.sampleIndices, source.contourLength) <= SAME_WALL_WINDOW
-}
+// function isSameWallNeighborhood(candidate: MatBoundaryPoint, source: MatRaySource): boolean {
+//   return candidate.contourType === source.contourType
+//     && candidate.contourIndex === source.contourIndex
+//     && minWrappedSampleDistance(candidate.sampleIndex, source.sampleIndices, source.contourLength) <= SAME_WALL_WINDOW
+// }
 
 function midpoint(a: Point, b: Point): Point {
   return {
@@ -631,6 +631,36 @@ function inwardNormalForSegment(start: Point, end: Point, material: MatRegionMat
     return null
   }
 
+  return leftInside ? left : right
+}
+
+function inwardNormalForPoint(previous: Point, current: Point, next: Point, material: MatRegionMaterial, testDistance: number): Point | null {
+  // Calculate normal using three points for smoother direction
+  const incomingX = current.x - previous.x
+  const incomingY = current.y - previous.y
+  const outgoingX = next.x - current.x
+  const outgoingY = next.y - current.y
+  
+  // Average direction
+  const avgX = incomingX + outgoingX
+  const avgY = incomingY + outgoingY
+  const avgLength = Math.hypot(avgX, avgY)
+  
+  if (!(avgLength > 1e-9)) {
+    return null
+  }
+  
+  // Perpendicular to average direction
+  const left = { x: -avgY / avgLength, y: avgX / avgLength }
+  const right = { x: avgY / avgLength, y: -avgX / avgLength }
+  
+  const leftInside = pointInRegionMaterial(offsetPoint(current, left, testDistance), material)
+  const rightInside = pointInRegionMaterial(offsetPoint(current, right, testDistance), material)
+  
+  if (leftInside === rightInside) {
+    return null
+  }
+  
   return leftInside ? left : right
 }
 
@@ -756,6 +786,8 @@ function classifyRayPoint(
   boundaryPoints: MatBoundaryPoint[],
   boundaryIndex: MatBoundaryIndex,
   tolerance: number,
+  rayOrigin?: Point,
+  rayNormal?: Point,
 ): RayPointClassification {
   const nearest = nearestBoundaryPoints(point, boundaryPoints, boundaryIndex, BINARY_SEARCH_NEIGHBOR_COUNT)
   if (nearest.length < 2) {
@@ -769,7 +801,20 @@ function classifyRayPoint(
   let otherWallDistance = Number.POSITIVE_INFINITY
 
   for (const candidate of nearest) {
-    if (!isSameWallNeighborhood(candidate.point, source)) {
+    // Exclude neighbors that are too close along the contour (same edge)
+    const isSourceNeighbor = 
+      Math.hypot(candidate.point.x - source.segments[0].start.x, candidate.point.y - source.segments[0].start.y) < 1e-6 ||
+      Math.abs(candidate.point.sampleIndex - source.sampleIndices[0]) <= 1  // Exclude adjacent digitized points
+    
+    // If ray info provided, also filter by ray direction (only consider points along ray forward)
+    let isAlongRay = true
+    if (rayOrigin && rayNormal) {
+      const toPoint = { x: candidate.point.x - rayOrigin.x, y: candidate.point.y - rayOrigin.y }
+      const dotProduct = toPoint.x * rayNormal.x + toPoint.y * rayNormal.y
+      isAlongRay = dotProduct > -1e-6  // Allow slight tolerance for numerical errors
+    }
+    
+    if (!isSourceNeighbor && isAlongRay) {
       otherWallDistance = Math.min(otherWallDistance, candidate.distance)
     }
   }
@@ -833,6 +878,8 @@ function refineMedialPoint(
       boundaryPoints,
       boundaryIndex,
       tolerance,
+      origin,
+      normal,
     )
     if (classification.kind === 'candidate') {
       foundDistance = mid
@@ -986,7 +1033,9 @@ function scanContourSpinePath(
     const end = contour.points[(index + 1) % contour.points.length]
 
     if (index % contourStride === 0) {
-      const normal = inwardNormalForSegment(start, end, material, normalProbe)
+      const previous = contour.points[(index - 1 + contour.points.length) % contour.points.length]
+      const end = contour.points[(index + 1) % contour.points.length]
+      const normal = inwardNormalForPoint(previous, start, end, material, normalProbe)
       if (normal) {
         rays += 1
         const segmentSource: MatRaySource = {
@@ -997,7 +1046,7 @@ function scanContourSpinePath(
           segments: [{ start, end }],
         }
         const hit = traceRaySpinePoint(
-          midpoint(start, end),
+          start,
           normal,
           contour,
           [index],
