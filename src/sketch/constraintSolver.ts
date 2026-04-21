@@ -63,11 +63,27 @@ export function solveFeatureTranslation(
         const ay = c.anchor.y + dy
         const vx = ax - c.reference.x
         const vy = ay - c.reference.y
-        const len = Math.hypot(vx, vy)
-        if (len < 1e-12) continue
-        const residual = len - c.distance
-        const jx = vx / len
-        const jy = vy / len
+        
+        // For point constraints, preserve the original direction relationship
+        // Calculate original direction vector from the initial anchor->reference
+        const origVx = c.anchor.x - c.reference.x
+        const origVy = c.anchor.y - c.reference.y
+        const origLen = Math.hypot(origVx, origVy)
+        
+        if (origLen < 1e-12) continue
+        
+        // Normalize the original direction vector
+        const origUx = origVx / origLen
+        const origUy = origVy / origLen
+        
+        // Calculate current signed distance in the direction of the original vector
+        const currentSignedDist = vx * origUx + vy * origUy
+        const residual = currentSignedDist - c.distance
+        
+        // Use the original direction vector for derivatives (Jacobian)
+        const jx = origUx
+        const jy = origUy
+        
         A00 += jx * jx
         A01 += jx * jy
         A11 += jy * jy
@@ -224,6 +240,55 @@ export function propagateConstraintsOnTranslate(
           dependents.set(refId, set)
         }
         set.add(feature.id)
+      }
+    }
+  }
+
+  // First, directly move features that reference moved features by the same offset
+  // This ensures they maintain their relative position to their references
+  for (const [id, feature] of byId) {
+    if (movedIds.has(id)) continue
+    if (feature.locked) continue
+    
+    let totalDx = 0
+    let totalDy = 0
+    let refCount = 0
+    
+    for (const c of feature.sketch.constraints) {
+      if (c.type !== 'fixed_distance' || c.segment_ids.length === 0) continue
+      for (const refId of c.segment_ids) {
+        const offset = movedOffsets.get(refId)
+        if (offset) {
+          totalDx += offset.dx
+          totalDy += offset.dy
+          refCount++
+        }
+      }
+    }
+    
+    if (refCount > 0) {
+      const avgDx = totalDx / refCount
+      const avgDy = totalDy / refCount
+      
+      if (Math.hypot(avgDx, avgDy) > 1e-7) {
+        // Move the feature by the average offset of its references
+        const nextProfile = translateProfile(feature.sketch.profile, avgDx, avgDy)
+        const nextConstraints = feature.sketch.constraints.map((c) => translateAnchorFields(c, avgDx, avgDy))
+        byId.set(id, {
+          ...feature,
+          sketch: { ...feature.sketch, profile: nextProfile, constraints: nextConstraints },
+        })
+        
+        // Also update reference points for features that depend on this one
+        for (const dep of dependents.get(id) ?? []) {
+          if (movedIds.has(dep) || dep === id) continue
+          const depFeature = byId.get(dep)
+          if (!depFeature) continue
+          const depConstraints = depFeature.sketch.constraints.map((c) =>
+            translateReferenceFieldsIfMatches(c, id, avgDx, avgDy),
+          )
+          byId.set(dep, { ...depFeature, sketch: { ...depFeature.sketch, constraints: depConstraints } })
+        }
       }
     }
   }

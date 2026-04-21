@@ -618,6 +618,8 @@ function FeatureEditActions({
   onResize,
   onRotate,
   onOffset,
+  onConstraint,
+  constraintActive,
 }: {
   enabled: boolean
   hasLockedSelection: boolean
@@ -632,6 +634,8 @@ function FeatureEditActions({
   onResize: () => void
   onRotate: () => void
   onOffset: () => void
+  onConstraint: () => void
+  constraintActive: boolean
 }) {
   return (
     <>
@@ -682,6 +686,14 @@ function FeatureEditActions({
           disabled={!enabled || hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
           onClick={onOffset}
+        />
+        <ToolbarActionButton
+          icon="snap"
+          label={constraintActive ? 'Cancel constraint' : 'Add constraint'}
+          active={constraintActive}
+          disabled={!enabled || hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onConstraint}
         />
       </div>
     </>
@@ -1173,6 +1185,8 @@ export function CreationToolbar({
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
+          onConstraint={toolbar.handleFeatureConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <AlignmentActions
           enabled={toolbar.canAlignSelectedFeatures}
@@ -1191,8 +1205,6 @@ export function CreationToolbar({
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
           onFillet={toolbar.handleSketchEditFillet}
-          onConstraint={toolbar.handleSketchEditConstraint}
-          constraintActive={toolbar.constraintActive}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
@@ -1292,6 +1304,8 @@ export function Toolbar({
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
+          onConstraint={toolbar.handleFeatureConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <AlignmentActions
           enabled={toolbar.canAlignSelectedFeatures}
@@ -1307,8 +1321,6 @@ export function Toolbar({
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
           onFillet={toolbar.handleSketchEditFillet}
-          onConstraint={toolbar.handleSketchEditConstraint}
-          constraintActive={toolbar.constraintActive}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
