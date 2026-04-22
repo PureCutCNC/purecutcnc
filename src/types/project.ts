@@ -99,6 +99,12 @@ export interface LocalConstraint {
   type: LocalConstraintType
   segment_ids: string[]
   value?: number
+  anchor_point?: Point
+  reference_point?: Point
+  reference_segment?: {
+    a: Point
+    b: Point
+  }
 }
 
 export interface GlobalConstraint {

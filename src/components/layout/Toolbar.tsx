@@ -116,6 +116,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     deleteBackdrop,
     deleteFeatures,
     setSketchEditTool,
+    beginConstraint,
+    pendingConstraint,
+    cancelPendingConstraint,
     cancelPendingAdd,
     pendingMove,
     pendingTransform,
@@ -412,6 +415,19 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
     handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
     handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
+    handleFeatureConstraint: () => {
+      if (pendingConstraint) {
+        cancelPendingConstraint()
+        return
+      }
+      const featureId =
+        (selection.selectedNode?.type === 'feature' ? selection.selectedNode.featureId : null) ??
+        selection.selectedFeatureId
+      if (!featureId) return
+      if (featureSketchEditActive) setSketchEditTool(null)
+      beginConstraint(featureId)
+    },
+    constraintActive: !!pendingConstraint,
   }
 }
 
@@ -602,6 +618,8 @@ function FeatureEditActions({
   onResize,
   onRotate,
   onOffset,
+  onConstraint,
+  constraintActive,
 }: {
   enabled: boolean
   hasLockedSelection: boolean
@@ -616,6 +634,8 @@ function FeatureEditActions({
   onResize: () => void
   onRotate: () => void
   onOffset: () => void
+  onConstraint: () => void
+  constraintActive: boolean
 }) {
   return (
     <>
@@ -666,6 +686,14 @@ function FeatureEditActions({
           disabled={!enabled || hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
           onClick={onOffset}
+        />
+        <ToolbarActionButton
+          icon="snap"
+          label={constraintActive ? 'Cancel constraint' : 'Add constraint'}
+          active={constraintActive}
+          disabled={!enabled || hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onConstraint}
         />
       </div>
     </>
@@ -1157,6 +1185,8 @@ export function CreationToolbar({
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
+          onConstraint={toolbar.handleFeatureConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <AlignmentActions
           enabled={toolbar.canAlignSelectedFeatures}
@@ -1274,6 +1304,8 @@ export function Toolbar({
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
           onOffset={toolbar.handleOffsetSelectedFeatures}
+          onConstraint={toolbar.handleFeatureConstraint}
+          constraintActive={toolbar.constraintActive}
         />
         <AlignmentActions
           enabled={toolbar.canAlignSelectedFeatures}

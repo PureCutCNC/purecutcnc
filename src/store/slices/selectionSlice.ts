@@ -590,6 +590,7 @@ export function createSelectionSlice(
       set((s) => ({
         selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
         sketchEditSession: null,
+        pendingConstraint: null,
       })),
 
     cancelSketchEdit: () =>
@@ -598,6 +599,7 @@ export function createSelectionSlice(
           return {
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
             sketchEditSession: null,
+            pendingConstraint: null,
           }
         }
 
@@ -611,6 +613,7 @@ export function createSelectionSlice(
             activeControl: null,
           },
           sketchEditSession: null,
+          pendingConstraint: null,
           history: {
             past: s.history.past.slice(0, s.sketchEditSession.pastLength),
             future: [],
