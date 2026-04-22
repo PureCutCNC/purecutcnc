@@ -209,6 +209,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const filletRadiusInputRef = useRef<HTMLInputElement>(null)
   const [constraintDistanceInput, setConstraintDistanceInput] = useState<string | null>(null)
   const constraintDistanceInputRef = useRef<HTMLInputElement>(null)
+  const [constraintEdit, setConstraintEdit] = useState<{ featureId: string; constraintId: string; value: string; cx: number; cy: number } | null>(null)
+  const constraintEditRef = useRef<typeof constraintEdit>(null)
+  const constraintEditInputRef = useRef<HTMLInputElement>(null)
+  // Stores label hit areas for click detection: { featureId, constraintId, cx, cy, halfW, halfH }
+  const constraintLabelRectsRef = useRef<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>([])
 
   const {
     project,
@@ -273,6 +278,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setConstraintReference,
     commitConstraintDistance,
     cancelPendingConstraint,
+    updateConstraintValue,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
   const projectRef = useRef(project)
@@ -307,6 +313,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   snapSettingsRef.current = snapSettings
   copyCountDraftRef.current = copyCountDraft
   dimensionEditRef.current = dimensionEdit
+  constraintEditRef.current = constraintEdit
 
   function updateActiveSnap(nextSnap: ResolvedSnap | null) {
     activeSnapRef.current = nextSnap?.mode ? nextSnap : null
@@ -729,14 +736,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ctx.restore()
     }
 
+    // Reset label rects before rebuilding
+    constraintLabelRectsRef.current = []
     for (const feature of project.features) {
       if (!feature.visible) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
+        const isInvalid = !!c.is_invalid
+        const lineColor = isInvalid ? 'rgba(220, 60, 60, 0.85)' : 'rgba(91, 165, 216, 0.8)'
+        const dotColor = isInvalid ? 'rgba(220, 60, 60, 0.9)' : 'rgba(91, 165, 216, 0.9)'
+        const labelColor = isInvalid ? 'rgba(255, 180, 180, 0.95)' : 'rgba(200, 220, 240, 0.95)'
         const aC = worldToCanvas(c.anchor_point, vt)
         const rC = worldToCanvas(c.reference_point, vt)
         ctx.save()
-        ctx.strokeStyle = 'rgba(91, 165, 216, 0.8)'
+        ctx.strokeStyle = lineColor
         ctx.lineWidth = 1
         ctx.setLineDash([5, 3])
         ctx.beginPath()
@@ -744,7 +757,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.lineTo(rC.cx, rC.cy)
         ctx.stroke()
         ctx.setLineDash([])
-        ctx.fillStyle = 'rgba(91, 165, 216, 0.9)'
+        ctx.fillStyle = dotColor
         ctx.beginPath()
         ctx.arc(aC.cx, aC.cy, 3, 0, Math.PI * 2)
         ctx.fill()
@@ -754,17 +767,30 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (typeof c.value === 'number') {
           const midX = (aC.cx + rC.cx) / 2
           const midY = (aC.cy + rC.cy) / 2
-          const label = formatLength(c.value, project.meta.units)
+          const label = isInvalid
+            ? `⚠ ${formatLength(c.value, project.meta.units)}`
+            : formatLength(c.value, project.meta.units)
           ctx.font = '11px sans-serif'
           const metrics = ctx.measureText(label)
           const padX = 4
           const padY = 2
-          ctx.fillStyle = 'rgba(18, 26, 36, 0.85)'
-          ctx.fillRect(midX - metrics.width / 2 - padX, midY - 7 - padY, metrics.width + padX * 2, 14 + padY * 2)
-          ctx.fillStyle = 'rgba(200, 220, 240, 0.95)'
+          const halfW = metrics.width / 2 + padX
+          const halfH = 7 + padY
+          ctx.fillStyle = isInvalid ? 'rgba(80, 20, 20, 0.9)' : 'rgba(18, 26, 36, 0.85)'
+          ctx.fillRect(midX - halfW, midY - halfH, halfW * 2, halfH * 2)
+          ctx.fillStyle = labelColor
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           ctx.fillText(label, midX, midY)
+          // Record hit area for click-to-edit
+          constraintLabelRectsRef.current.push({
+            featureId: feature.id,
+            constraintId: c.id,
+            cx: midX,
+            cy: midY,
+            halfW,
+            halfH,
+          })
         }
         ctx.restore()
       }
@@ -1368,6 +1394,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
     return () => window.cancelAnimationFrame(frame)
   }, [constraintDistanceInput == null])
+
+  useEffect(() => {
+    if (!constraintEdit) return
+    const frame = window.requestAnimationFrame(() => {
+      constraintEditInputRef.current?.focus({ preventScroll: true })
+      constraintEditInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [constraintEdit?.constraintId])
 
   useEffect(() => {
     if (!pendingConstraint) setConstraintDistanceInput(null)
@@ -2506,6 +2541,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       setPendingOffsetPreviewPointRef(null)
       setPendingOffsetRawPreviewPointRef(null)
       return
+    }
+
+    // Hit-test constraint labels for click-to-edit
+    if (!pendingConstraint && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset) {
+      for (const rect of constraintLabelRectsRef.current) {
+        if (
+          point.cx >= rect.cx - rect.halfW && point.cx <= rect.cx + rect.halfW &&
+          point.cy >= rect.cy - rect.halfH && point.cy <= rect.cy + rect.halfH
+        ) {
+          const feature = project.features.find((f) => f.id === rect.featureId)
+          const constraint = feature?.sketch.constraints.find((c) => c.id === rect.constraintId)
+          if (constraint && typeof constraint.value === 'number') {
+            setConstraintEdit({
+              featureId: rect.featureId,
+              constraintId: rect.constraintId,
+              value: formatLength(constraint.value, project.meta.units),
+              cx: rect.cx,
+              cy: rect.cy,
+            })
+          }
+          return
+        }
+      }
     }
 
     const hitClampId = findHitClampId(world, project.clamps)
@@ -3693,6 +3751,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           />
         )
       })()}
+      {constraintEdit && (
+        <input
+          key={`constraint-edit-${constraintEdit.constraintId}`}
+          ref={constraintEditInputRef}
+          className="sketch-dim-input"
+          style={{ left: constraintEdit.cx, top: constraintEdit.cy, transform: 'translate(-50%, -50%)' }}
+          value={constraintEdit.value}
+          onChange={(e) => setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              const edit = constraintEditRef.current
+              if (!edit) return
+              const parsed = parseLengthInput(edit.value, project.meta.units)
+              if (parsed != null && parsed >= 0) {
+                updateConstraintValue(edit.featureId, edit.constraintId, parsed)
+              }
+              setConstraintEdit(null)
+              canvasRef.current?.focus({ preventScroll: true })
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setConstraintEdit(null)
+              canvasRef.current?.focus({ preventScroll: true })
+            }
+          }}
+          onBlur={() => setConstraintEdit(null)}
+          onFocus={(e) => e.currentTarget.select()}
+        />
+      )}
       {operationDimEdit && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null

@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import type { LocalConstraint, Point, SketchFeature } from '../types/project'
+import type { LocalConstraint, Point, SketchFeature, SketchProfile } from '../types/project'
+import { profileVertices, getProfileBounds } from '../types/project'
 
 export interface PointDistanceInput {
   kind: 'point'
@@ -78,6 +79,422 @@ function averageTransforms(list: Transform[]): Transform {
     angle: sumAngle / n,
     pivot: { x: sumPivotX / n, y: sumPivotY / n },
   }
+}
+
+// ============================================================
+// Semantic geometry re-derivation
+// ============================================================
+
+/**
+ * Calculate the geometric center of a profile (Natural Center, index -1).
+ */
+export function calculateGeometricCenter(profile: SketchProfile): Point {
+  const bounds = getProfileBounds(profile)
+  return {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+  }
+}
+
+/**
+ * Get a vertex point from a profile by index.
+ * Index -1 returns the natural center.
+ */
+function getVertexPoint(profile: SketchProfile, index: number): Point | null {
+  if (index === -1) return calculateGeometricCenter(profile)
+  const vertices = profileVertices(profile)
+  return vertices[index] ?? null
+}
+
+/**
+ * Get a point at fractional position t [0,1] along a segment by index.
+ */
+function getSegmentPointAtT(profile: SketchProfile, index: number, t: number): Point | null {
+  const vertices = profileVertices(profile)
+  const a = vertices[index]
+  const b = vertices[(index + 1) % vertices.length]
+  if (!a || !b) return null
+  const clampedT = Math.max(0, Math.min(1, t))
+  return { x: a.x + (b.x - a.x) * clampedT, y: a.y + (b.y - a.y) * clampedT }
+}
+
+/**
+ * Compute the fractional t [0,1] of a point projected onto a segment.
+ */
+export function projectPointOntoSegmentT(point: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const lenSq = dx * dx + dy * dy
+  if (lenSq < 1e-12) return 0
+  return Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq))
+}
+
+/**
+ * Get a midpoint of a segment by segment index.
+ * Index -1 returns the natural center.
+ */
+function getMidpoint(profile: SketchProfile, index: number): Point | null {
+  if (index === -1) return calculateGeometricCenter(profile)
+  const vertices = profileVertices(profile)
+  const a = vertices[index]
+  const b = vertices[(index + 1) % vertices.length]
+  if (!a || !b) return null
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/**
+ * Get a segment pair {a, b} by segment index.
+ * Index -1 returns a degenerate segment at the natural center.
+ */
+function getSegmentPair(profile: SketchProfile, index: number): { a: Point; b: Point } | null {
+  if (index === -1) {
+    const c = calculateGeometricCenter(profile)
+    return { a: c, b: c }
+  }
+  const vertices = profileVertices(profile)
+  const a = vertices[index]
+  const b = vertices[(index + 1) % vertices.length]
+  if (!a || !b) return null
+  return { a, b }
+}
+
+export interface RederiveResult {
+  anchorPoint: Point
+  referencePoint?: Point
+  referenceSegment?: { a: Point; b: Point }
+  isValid: boolean
+  errorMessage?: string
+}
+
+/**
+ * Re-derive the geometric points for a constraint from semantic indices.
+ * Returns null if the constraint has no semantic fields (legacy constraint).
+ */
+export function rederiveConstraintGeometry(
+  ownerProfile: SketchProfile,
+  referenceProfile: SketchProfile | null,
+  constraint: LocalConstraint,
+): RederiveResult | null {
+  // Only process constraints with semantic fields
+  if (
+    constraint.anchor_index === undefined ||
+    constraint.anchor_type === undefined ||
+    constraint.reference_index === undefined ||
+    constraint.reference_type === undefined
+  ) {
+    return null
+  }
+
+  // Derive anchor point
+  let anchorPoint: Point | null = null
+  if (constraint.anchor_type === 'anchor') {
+    anchorPoint = getVertexPoint(ownerProfile, constraint.anchor_index)
+  } else {
+    anchorPoint = getMidpoint(ownerProfile, constraint.anchor_index)
+  }
+
+  if (!anchorPoint) {
+    return {
+      anchorPoint: { x: 0, y: 0 },
+      isValid: false,
+      errorMessage: `Anchor index ${constraint.anchor_index} out of bounds`,
+    }
+  }
+
+  // If no reference profile, we can't derive reference geometry
+  if (!referenceProfile) {
+    return {
+      anchorPoint,
+      isValid: false,
+      errorMessage: 'Reference feature not found',
+    }
+  }
+
+  // Derive reference geometry
+  if (constraint.reference_type === 'segment') {
+    const seg = getSegmentPair(referenceProfile, constraint.reference_index)
+    if (!seg) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: `Reference segment index ${constraint.reference_index} out of bounds`,
+      }
+    }
+    // Compute foot of perpendicular as reference_point for rendering
+    const sx = seg.b.x - seg.a.x
+    const sy = seg.b.y - seg.a.y
+    const segLen = Math.hypot(sx, sy)
+    let footPoint: Point | undefined
+    if (segLen > 1e-12) {
+      const nx = -sy / segLen
+      const ny = sx / segLen
+      const signedDist = (anchorPoint.x - seg.a.x) * nx + (anchorPoint.y - seg.a.y) * ny
+      footPoint = { x: anchorPoint.x - signedDist * nx, y: anchorPoint.y - signedDist * ny }
+    }
+    return { anchorPoint, referencePoint: footPoint, referenceSegment: seg, isValid: true }
+  }
+
+  if (constraint.reference_type === 'point_on_segment') {
+    const t = constraint.reference_t ?? 0
+    const refPoint = getSegmentPointAtT(referenceProfile, constraint.reference_index, t)
+    if (!refPoint) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: `Reference segment index ${constraint.reference_index} out of bounds`,
+      }
+    }
+    return { anchorPoint, referencePoint: refPoint, isValid: true }
+  }
+
+  if (constraint.reference_type === 'midpoint') {
+    const refPoint = getMidpoint(referenceProfile, constraint.reference_index)
+    if (!refPoint) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: `Reference midpoint index ${constraint.reference_index} out of bounds`,
+      }
+    }
+    return { anchorPoint, referencePoint: refPoint, isValid: true }
+  }
+
+  // anchor type
+  const refPoint = getVertexPoint(referenceProfile, constraint.reference_index)
+  if (!refPoint) {
+    return {
+      anchorPoint,
+      isValid: false,
+      errorMessage: `Reference vertex index ${constraint.reference_index} out of bounds`,
+    }
+  }
+  return { anchorPoint, referencePoint: refPoint, isValid: true }
+}
+
+/**
+ * Update a constraint's cached coordinate fields from semantic indices.
+ * Returns the updated constraint, or the original if no semantic fields.
+ */
+export function refreshConstraintCache(
+  constraint: LocalConstraint,
+  ownerProfile: SketchProfile,
+  referenceProfile: SketchProfile | null,
+): LocalConstraint {
+  const result = rederiveConstraintGeometry(ownerProfile, referenceProfile, constraint)
+  if (!result) return constraint
+
+  return {
+    ...constraint,
+    anchor_point: result.anchorPoint,
+    reference_point: result.referencePoint,
+    reference_segment: result.referenceSegment,
+    is_invalid: !result.isValid,
+    error_message: result.errorMessage,
+  }
+}
+
+/**
+ * Validate all fixed_distance constraints on a feature against their stored values.
+ * Marks constraints as invalid when the actual distance deviates beyond tolerance.
+ * Returns the updated feature (or the same object if nothing changed).
+ */
+export function validateConstraintsOnFeature(
+  feature: SketchFeature,
+  featureById: Map<string, SketchFeature>,
+  tolerance = 1e-3,
+): SketchFeature {
+  let anyChanged = false
+  const nextConstraints = feature.sketch.constraints.map((c) => {
+    if (c.type !== 'fixed_distance' || c.value === undefined) return c
+    const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+    const refFeature = refFeatureId ? featureById.get(refFeatureId) : null
+    const result = rederiveConstraintGeometry(
+      feature.sketch.profile,
+      refFeature?.sketch.profile ?? null,
+      c,
+    )
+    if (!result) return c
+    if (!result.isValid) {
+      if (!c.is_invalid) {
+        anyChanged = true
+        return { ...c, is_invalid: true, error_message: result.errorMessage }
+      }
+      return c
+    }
+    // Compute actual distance
+    let actualDist: number | null = null
+    if (result.referenceSegment) {
+      const { a, b } = result.referenceSegment
+      const sx = b.x - a.x; const sy = b.y - a.y
+      const segLen = Math.hypot(sx, sy)
+      if (segLen > 1e-12) {
+        const nx = -sy / segLen; const ny = sx / segLen
+        actualDist = (result.anchorPoint.x - a.x) * nx + (result.anchorPoint.y - a.y) * ny
+      }
+    } else if (result.referencePoint) {
+      actualDist = Math.hypot(
+        result.anchorPoint.x - result.referencePoint.x,
+        result.anchorPoint.y - result.referencePoint.y,
+      )
+    }
+    if (actualDist === null) return c
+    const isNowInvalid = Math.abs(actualDist - c.value) > tolerance
+    const wasInvalid = !!c.is_invalid
+    if (isNowInvalid !== wasInvalid) {
+      anyChanged = true
+      return {
+        ...c,
+        anchor_point: result.anchorPoint,
+        reference_point: result.referencePoint,
+        reference_segment: result.referenceSegment,
+        is_invalid: isNowInvalid,
+        error_message: isNowInvalid ? `Distance ${actualDist.toFixed(4)} does not match constraint value ${c.value.toFixed(4)}` : undefined,
+      }
+    }
+    // Always refresh cache coords
+    return {
+      ...c,
+      anchor_point: result.anchorPoint,
+      reference_point: result.referencePoint,
+      reference_segment: result.referenceSegment,
+      is_invalid: false,
+      error_message: undefined,
+    }
+  })
+  if (!anyChanged && nextConstraints.every((c, i) => c === feature.sketch.constraints[i])) {
+    return feature
+  }
+  return { ...feature, sketch: { ...feature.sketch, constraints: nextConstraints } }
+}
+
+/**
+ * Find the nearest vertex index in a profile to a given point.
+ */
+export function nearestVertexIndex(profile: SketchProfile, point: Point): number {
+  const vertices = profileVertices(profile)
+  let bestIndex = 0
+  let bestDist = Infinity
+  for (let i = 0; i < vertices.length; i++) {
+    const v = vertices[i]
+    if (!v) continue
+    const d = Math.hypot(v.x - point.x, v.y - point.y)
+    if (d < bestDist) {
+      bestDist = d
+      bestIndex = i
+    }
+  }
+  return bestIndex
+}
+
+/**
+ * Find the nearest segment index in a profile to a given point.
+ */
+export function nearestSegmentIndex(profile: SketchProfile, point: Point): number {
+  const vertices = profileVertices(profile)
+  if (vertices.length === 0) return 0
+  let bestIndex = 0
+  let bestDist = Infinity
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i]
+    const b = vertices[(i + 1) % vertices.length]
+    if (!a || !b) continue
+    // midpoint of segment
+    const mx = (a.x + b.x) / 2
+    const my = (a.y + b.y) / 2
+    const d = Math.hypot(mx - point.x, my - point.y)
+    if (d < bestDist) {
+      bestDist = d
+      bestIndex = i
+    }
+  }
+  return bestIndex
+}
+
+/**
+ * Infer semantic anchor/reference indices from snap mode and point positions.
+ * Used when committing a new constraint.
+ */
+export function inferSemanticIndices(
+  ownerProfile: SketchProfile,
+  referenceProfile: SketchProfile | null,
+  anchorPoint: Point,
+  referencePoint: Point,
+  anchorSnapMode: string | null,
+  referenceSnapMode: string | null,
+  referenceSegment?: { a: Point; b: Point },
+): {
+  anchor_index: number
+  anchor_type: 'anchor' | 'midpoint'
+  reference_index: number
+  reference_type: 'anchor' | 'midpoint' | 'segment' | 'point_on_segment'
+  reference_t?: number
+} {
+  // Determine anchor semantics
+  let anchor_type: 'anchor' | 'midpoint' = 'anchor'
+  let anchor_index = 0
+
+  if (anchorSnapMode === 'center') {
+    anchor_index = -1
+    anchor_type = 'anchor'
+  } else if (anchorSnapMode === 'midpoint') {
+    anchor_type = 'midpoint'
+    anchor_index = nearestSegmentIndex(ownerProfile, anchorPoint)
+  } else {
+    anchor_type = 'anchor'
+    anchor_index = nearestVertexIndex(ownerProfile, anchorPoint)
+  }
+
+  // Determine reference semantics
+  let reference_type: 'anchor' | 'midpoint' | 'segment' | 'point_on_segment' = 'anchor'
+  let reference_index = 0
+  let reference_t: number | undefined
+
+  if (!referenceProfile) {
+    return { anchor_index, anchor_type, reference_index, reference_type }
+  }
+
+  if (referenceSnapMode === 'perpendicular' && referenceSegment) {
+    reference_type = 'segment'
+    reference_index = nearestSegmentIndex(referenceProfile, {
+      x: (referenceSegment.a.x + referenceSegment.b.x) / 2,
+      y: (referenceSegment.a.y + referenceSegment.b.y) / 2,
+    })
+  } else if (referenceSnapMode === 'line') {
+    // Point on segment: find nearest segment and compute fractional t
+    reference_index = nearestSegmentIndex(referenceProfile, referencePoint)
+    const vertices = profileVertices(referenceProfile)
+    const a = vertices[reference_index]
+    const b = vertices[(reference_index + 1) % vertices.length]
+    if (a && b) {
+      reference_t = projectPointOntoSegmentT(referencePoint, a, b)
+      // If t is very close to 0 or 1, snap to the vertex instead
+      if (reference_t < 0.01) {
+        reference_type = 'anchor'
+        reference_index = reference_index
+        reference_t = undefined
+      } else if (reference_t > 0.99) {
+        reference_type = 'anchor'
+        reference_index = (reference_index + 1) % vertices.length
+        reference_t = undefined
+      } else {
+        reference_type = 'point_on_segment'
+      }
+    } else {
+      reference_type = 'anchor'
+      reference_index = nearestVertexIndex(referenceProfile, referencePoint)
+    }
+  } else if (referenceSnapMode === 'center') {
+    reference_type = 'anchor'
+    reference_index = -1
+  } else if (referenceSnapMode === 'midpoint') {
+    reference_type = 'midpoint'
+    reference_index = nearestSegmentIndex(referenceProfile, referencePoint)
+  } else {
+    reference_type = 'anchor'
+    reference_index = nearestVertexIndex(referenceProfile, referencePoint)
+  }
+
+  return { anchor_index, anchor_type, reference_index, reference_type, reference_t }
 }
 
 export function solveFeatureTranslation(
@@ -217,10 +634,11 @@ export function propagateRigidTransforms(
         }
       }
 
-      // If THIS feature was moved manually (seed), we update the constraint value to the new distance.
-      if (t && movedIds.has(id) && cChanged) {
+      // If THIS feature was moved manually (seed) with a non-trivial transform, update the constraint value.
+      // A zero-displacement seed (dx:0,dy:0) means the reference geometry changed, not the owner moved.
+      const isNonTrivialMove = t && (Math.abs(t.tx) > 1e-9 || Math.abs(t.ty) > 1e-9 || Math.abs(t.angle) > 1e-9)
+      if (isNonTrivialMove && movedIds.has(id) && cChanged) {
         if (nextC.anchor_point && (nextC.reference_segment || nextC.reference_point)) {
-           // We prefer calculating perpendicular distance to segment if available
            if (nextC.reference_segment) {
              const { a, b } = nextC.reference_segment
              const dx = b.x - a.x
@@ -229,7 +647,10 @@ export function propagateRigidTransforms(
              if (len > 1e-12) {
                const nx = -dy / len
                const ny = dx / len
-               nextC.value = (nextC.anchor_point.x - a.x) * nx + (nextC.anchor_point.y - a.y) * ny
+               const rawSigned = (nextC.anchor_point.x - a.x) * nx + (nextC.anchor_point.y - a.y) * ny
+               // Preserve original sign to prevent side-flipping near the segment
+               const originalSign = (nextC.value ?? 0) >= 0 ? 1 : -1
+               nextC.value = originalSign * Math.abs(rawSigned)
              }
            } else if (nextC.reference_point) {
              nextC.value = Math.hypot(nextC.anchor_point.x - nextC.reference_point.x, nextC.anchor_point.y - nextC.reference_point.y)
@@ -288,6 +709,20 @@ export function propagateRigidTransforms(
     const initialFeature = initialFeatures.get(fid)
     if (!feature || !initialFeature || feature.locked) continue
 
+    // Issue 7: Only freeze if the constraint is STRUCTURALLY invalid (reference deleted/out-of-bounds).
+    // Distance mismatches can be resolved by moving the feature, so don't freeze for those.
+    const hasStructurallyInvalidConstraint = feature.sketch.constraints.some((c) => {
+      if (c.type !== 'fixed_distance' || !c.is_invalid) return false
+      const refId = c.reference_feature_id ?? c.segment_ids[0]
+      if (!refId || (!movedIds.has(refId) && !transforms.has(refId))) return false
+      // Check if the reference geometry is still structurally valid
+      const refFeature = currentById.get(refId)
+      if (!refFeature) return true  // reference deleted — structural
+      const check = rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c)
+      return !check || !check.isValid  // out-of-bounds index — structural
+    })
+    if (hasStructurallyInvalidConstraint) continue
+
     const referencedTransforms: Transform[] = []
     for (const c of feature.sketch.constraints) {
       if (c.type !== 'fixed_distance') continue
@@ -316,12 +751,68 @@ export function propagateRigidTransforms(
     for (const c of feature.sketch.constraints) {
       if (c.type !== 'fixed_distance' || !c.anchor_point) continue
       
-      // Calculate guessed anchor position by applying absolute transform to INITIAL anchor
+      // For the warm-start guess, prefer the current anchor_point over the initial snapshot.
+      // The current anchor preserves side information for segment constraints when the feature
+      // is near the boundary. Apply absoluteGuess on top to account for reference movement.
       const initialAnchor = initialFeature.sketch.constraints.find(ic => ic.id === c.id)?.anchor_point ?? c.anchor_point
-      const guessedAnchor = applyTransform(initialAnchor, absoluteGuess)
-      
-      // We prefer using the segment constraint if available, as it's more flexible during rotation
-      if (c.reference_segment) {
+      const currentAnchor = c.anchor_point
+
+      // If this is a segment constraint, check whether the initial anchor is near the segment
+      // (signed distance close to zero). If so, use the current anchor as the warm start to
+      // preserve which side the feature was on before the reference moved.
+      let baseAnchor = initialAnchor
+      if (c.reference_type === 'segment' || c.reference_segment) {
+        const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+        const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
+        if (refFeature) {
+          const rederivCheck = rederiveConstraintGeometry(initialFeature.sketch.profile, refFeature.sketch.profile, c)
+          if (rederivCheck?.referenceSegment) {
+            const { a, b } = rederivCheck.referenceSegment
+            const sx = b.x - a.x; const sy = b.y - a.y
+            const segLen = Math.hypot(sx, sy)
+            if (segLen > 1e-12) {
+              const nx = -sy / segLen; const ny = sx / segLen
+              const signedFromInitial = (initialAnchor.x - a.x) * nx + (initialAnchor.y - a.y) * ny
+              // If initial anchor is within 10% of the stored value from the segment,
+              // use the current anchor to preserve side information
+              const threshold = Math.abs(c.value ?? 0) * 0.1 + 1e-6
+              if (Math.abs(signedFromInitial) < threshold) {
+                baseAnchor = currentAnchor
+              }
+            }
+          }
+        }
+      }
+
+      const guessedAnchor = applyTransform(baseAnchor, absoluteGuess)
+
+      // Try semantic re-derivation first for the reference geometry
+      const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+      const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
+      const rederived = refFeature
+        ? rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c)
+        : null
+
+      if (rederived && rederived.isValid) {
+        // Use semantically re-derived reference geometry with guessed anchor
+        if (rederived.referenceSegment) {
+          inputs.push({
+            kind: 'segment',
+            anchor: guessedAnchor,
+            segmentA: rederived.referenceSegment.a,
+            segmentB: rederived.referenceSegment.b,
+            signedDistance: c.value ?? 0,
+          })
+        } else if (rederived.referencePoint) {
+          inputs.push({
+            kind: 'point',
+            anchor: guessedAnchor,
+            reference: rederived.referencePoint,
+            distance: c.value ?? 0,
+          })
+        }
+      } else if (c.reference_segment) {
+        // Fall back to cached coordinate-based reference
         inputs.push({
           kind: 'segment',
           anchor: guessedAnchor,
@@ -363,10 +854,27 @@ export function propagateRigidTransforms(
         anchor_point: nextAnchor 
       }
     })
+
+    // Refresh semantic caches for constraints that have semantic indices
+    const refreshedConstraints = nextConstraints.map((c) => {
+      if (c.type !== 'fixed_distance') return c
+      const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+      const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
+      const result = rederiveConstraintGeometry(nextProfile, refFeature?.sketch.profile ?? null, c)
+      if (!result) return c
+      return {
+        ...c,
+        anchor_point: result.anchorPoint,
+        reference_point: result.referencePoint,
+        reference_segment: result.referenceSegment,
+        is_invalid: !result.isValid,
+        error_message: result.errorMessage,
+      }
+    })
     
     currentById.set(fid, {
       ...feature,
-      sketch: { ...feature.sketch, profile: nextProfile, constraints: nextConstraints },
+      sketch: { ...feature.sketch, profile: nextProfile, constraints: refreshedConstraints },
     })
 
     transforms.set(fid, finalAbsoluteTransform)

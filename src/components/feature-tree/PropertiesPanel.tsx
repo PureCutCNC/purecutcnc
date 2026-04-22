@@ -188,6 +188,7 @@ export function PropertiesPanel() {
     enterSketchEdit,
     enterTabEdit,
     enterClampEdit,
+    deleteConstraint,
   } = useProjectStore()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -1249,6 +1250,56 @@ export function PropertiesPanel() {
           Delete Feature
         </button>
       </div>
+      {selectedFeature.sketch.constraints.filter((c) => c.type === 'fixed_distance').length > 0 ? (
+        <div className="properties-group">
+          <span className="properties-section-title">Constraints</span>
+          {selectedFeature.sketch.constraints
+            .filter((c) => c.type === 'fixed_distance')
+            .map((c) => {
+              const refId = c.reference_feature_id ?? c.segment_ids[0]
+              const refFeature = refId ? project.features.find((f) => f.id === refId) : null
+              const label = typeof c.value === 'number' ? formatLength(c.value, units) : '—'
+              const refName = refFeature?.name ?? (refId ? `#${refId}` : 'World')
+              const typeLabel = c.reference_type === 'segment'
+                ? 'perp'
+                : c.reference_type === 'point_on_segment'
+                  ? 'line'
+                  : c.reference_type === 'midpoint'
+                    ? 'midpt'
+                    : c.reference_index === -1
+                      ? 'center'
+                      : 'point'
+              const tooltipText = c.is_invalid
+                ? (c.error_message ?? 'Invalid')
+                : c.reference_type === 'segment'
+                  ? 'Perpendicular distance to segment'
+                  : c.reference_type === 'point_on_segment'
+                    ? `Distance to point on segment (${Math.round((c.reference_t ?? 0) * 100)}%)`
+                    : c.reference_type === 'midpoint'
+                      ? 'Distance to segment midpoint'
+                      : c.reference_index === -1
+                        ? 'Distance to feature center'
+                        : 'Distance to vertex'
+              return (
+                <div key={c.id} className={`properties-constraint-row${c.is_invalid ? ' properties-constraint-row--invalid' : ''}`}>
+                  <span className="properties-constraint-type" title={tooltipText}>{typeLabel}</span>
+                  <span className="properties-constraint-label" title={tooltipText}>
+                    {c.is_invalid ? '⚠ ' : ''}{label} → {refName}
+                  </span>
+                  <button
+                    type="button"
+                    className="tree-action-btn properties-constraint-delete"
+                    onClick={() => deleteConstraint(selectedFeature.id, c.id)}
+                    title="Delete constraint"
+                    aria-label="Delete constraint"
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+        </div>
+      ) : null}
     </div>
   )
 }
