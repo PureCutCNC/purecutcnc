@@ -29,7 +29,8 @@ export interface PendingCompletionSliceDependencies {
   projectsEqual: (a: Project, b: Project) => boolean
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
-  translateProfile: (profile: SketchFeature['sketch']['profile'], dx: number, dy: number) => SketchFeature['sketch']['profile']
+  propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
+  transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile']
   translateClamp: (clamp: Clamp, dx: number, dy: number) => Clamp
   translateTab: (tab: Tab, dx: number, dy: number) => Tab
   buildCopiedFeatures: (
@@ -180,7 +181,7 @@ export function createPendingCompletionSlice(
                     ...feature,
                     sketch: {
                       ...feature.sketch,
-                      profile: deps.translateProfile(feature.sketch.profile, dx, dy),
+                      profile: deps.transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
                   }
                 })
@@ -391,12 +392,29 @@ export function createPendingCompletionSlice(
         }
 
         const movedTransformedIds = new Set(transformedFeatures.keys())
+        const nextFeatures = s.project.features.map((feature) => transformedFeatures.get(feature.id) ?? feature)
+        let resolvedFeatures
+        if (pendingTransform.mode === 'rotate') {
+          const startVector = {
+            x: pendingTransform.referenceEnd.x - pendingTransform.referenceStart.x,
+            y: pendingTransform.referenceEnd.y - pendingTransform.referenceStart.y,
+          }
+          const endVector = {
+            x: previewPoint.x - pendingTransform.referenceStart.x,
+            y: previewPoint.y - pendingTransform.referenceStart.y,
+          }
+          const cross = startVector.x * endVector.y - startVector.y * endVector.x
+          const dot = startVector.x * endVector.x + startVector.y * endVector.y
+          const angle = Math.atan2(cross, dot)
+          const pivot = pendingTransform.referenceStart
+          const movedRotations = new Map([...movedTransformedIds].map(id => [id, { pivot, angle }]))
+          resolvedFeatures = deps.propagateConstraintsOnRotate(nextFeatures, movedRotations)
+        } else {
+          resolvedFeatures = deps.clearStaleConstraints(nextFeatures, movedTransformedIds)
+        }
         const nextProject = {
           ...s.project,
-          features: deps.clearStaleConstraints(
-            s.project.features.map((feature) => transformedFeatures.get(feature.id) ?? feature),
-            movedTransformedIds,
-          ),
+          features: resolvedFeatures,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 

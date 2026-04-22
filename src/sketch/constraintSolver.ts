@@ -39,6 +39,47 @@ export interface FeatureOffset {
   dy: number
 }
 
+export interface Transform {
+  tx: number
+  ty: number
+  angle: number
+  pivot: Point
+}
+
+function applyTransform(p: Point, t: Transform): Point {
+  const localX = p.x - t.pivot.x
+  const localY = p.y - t.pivot.y
+  const cos = Math.cos(t.angle)
+  const sin = Math.sin(t.angle)
+  return {
+    x: t.pivot.x + localX * cos - localY * sin + t.tx,
+    y: t.pivot.y + localX * sin + localY * cos + t.ty,
+  }
+}
+
+function averageTransforms(list: Transform[]): Transform {
+  if (list.length === 0) return { tx: 0, ty: 0, angle: 0, pivot: { x: 0, y: 0 } }
+  let sumTx = 0
+  let sumTy = 0
+  let sumAngle = 0
+  let sumPivotX = 0
+  let sumPivotY = 0
+  for (const t of list) {
+    sumTx += t.tx
+    sumTy += t.ty
+    sumAngle += t.angle
+    sumPivotX += t.pivot.x
+    sumPivotY += t.pivot.y
+  }
+  const n = list.length
+  return {
+    tx: sumTx / n,
+    ty: sumTy / n,
+    angle: sumAngle / n,
+    pivot: { x: sumPivotX / n, y: sumPivotY / n },
+  }
+}
+
 export function solveFeatureTranslation(
   constraints: ConstraintInput[],
   options: { iterations?: number; priorWeight?: number; tolerance?: number } = {},
@@ -63,26 +104,27 @@ export function solveFeatureTranslation(
         const ay = c.anchor.y + dy
         const vx = ax - c.reference.x
         const vy = ay - c.reference.y
+        let currentLen = Math.hypot(vx, vy)
         
-        // For point constraints, preserve the original direction relationship
-        // Calculate original direction vector from the initial anchor->reference
-        const origVx = c.anchor.x - c.reference.x
-        const origVy = c.anchor.y - c.reference.y
-        const origLen = Math.hypot(origVx, origVy)
+        if (currentLen < 1e-12) {
+          if (c.distance > 1e-12) {
+            const ux = 1, uy = 0
+            const residual = -c.distance
+            A00 += ux * ux
+            A11 += uy * uy
+            b0 -= ux * residual
+            b1 -= uy * residual
+            contributed++
+          }
+          continue
+        }
         
-        if (origLen < 1e-12) continue
+        const ux = vx / currentLen
+        const uy = vy / currentLen
+        const residual = currentLen - c.distance
         
-        // Normalize the original direction vector
-        const origUx = origVx / origLen
-        const origUy = origVy / origLen
-        
-        // Calculate current signed distance in the direction of the original vector
-        const currentSignedDist = vx * origUx + vy * origUy
-        const residual = currentSignedDist - c.distance
-        
-        // Use the original direction vector for derivatives (Jacobian)
-        const jx = origUx
-        const jy = origUy
+        const jx = ux
+        const jy = uy
         
         A00 += jx * jx
         A01 += jx * jy
@@ -121,116 +163,91 @@ export function solveFeatureTranslation(
   return { dx, dy }
 }
 
-function signedPerpDistance(p: Point, a: Point, b: Point): number {
-  const sx = b.x - a.x
-  const sy = b.y - a.y
-  const segLen = Math.hypot(sx, sy)
-  if (segLen < 1e-12) return 0
-  const nx = -sy / segLen
-  const ny = sx / segLen
-  return (p.x - a.x) * nx + (p.y - a.y) * ny
-}
-
-function isFixedDistance(
-  c: LocalConstraint,
-): c is LocalConstraint & { anchor_point: Point; value: number } {
-  return c.type === 'fixed_distance' && !!c.anchor_point && typeof c.value === 'number'
-}
-
-function buildInput(c: LocalConstraint): ConstraintInput | null {
-  if (!isFixedDistance(c)) return null
-  if (c.reference_segment) {
-    const signed = signedPerpDistance(c.anchor_point, c.reference_segment.a, c.reference_segment.b)
-    const target = signed >= 0 ? c.value : -c.value
-    return {
-      kind: 'segment',
-      anchor: c.anchor_point,
-      segmentA: c.reference_segment.a,
-      segmentB: c.reference_segment.b,
-      signedDistance: target,
-    }
-  }
-  if (c.reference_point) {
-    return {
-      kind: 'point',
-      anchor: c.anchor_point,
-      reference: c.reference_point,
-      distance: c.value,
-    }
-  }
-  return null
-}
-
-function translateAnchorFields(c: LocalConstraint, dx: number, dy: number): LocalConstraint {
-  if (c.type !== 'fixed_distance' || !c.anchor_point) return c
-  return { ...c, anchor_point: { x: c.anchor_point.x + dx, y: c.anchor_point.y + dy } }
-}
-
-function translateReferenceFieldsIfMatches(
-  c: LocalConstraint,
-  refFeatureId: string,
-  dx: number,
-  dy: number,
-): LocalConstraint {
-  if (c.type !== 'fixed_distance' || c.segment_ids.length === 0 || c.segment_ids[0] !== refFeatureId) {
-    return c
-  }
-  const next: LocalConstraint = { ...c }
-  if (c.reference_point) {
-    next.reference_point = { x: c.reference_point.x + dx, y: c.reference_point.y + dy }
-  }
-  if (c.reference_segment) {
-    next.reference_segment = {
-      a: { x: c.reference_segment.a.x + dx, y: c.reference_segment.a.y + dy },
-      b: { x: c.reference_segment.b.x + dx, y: c.reference_segment.b.y + dy },
-    }
-  }
-  return next
-}
-
 /**
- * Apply a rigid-translation move by `movedOffsets`, then re-solve any features
- * that reference them (and any features transitively referenced by those).
- *
- * Contract for directly-moved features (seeds): their own fixed_distance
- * constraints are cleared. Their reference_points and reference_segments in
- * other features' constraints are translated so downstream features follow.
+ * Apply a rigid‑transform (translation + rotation) to a set of features and propagate constraints.
  */
-export function propagateConstraintsOnTranslate(
+export function propagateRigidTransforms(
   features: SketchFeature[],
-  movedOffsets: Map<string, FeatureOffset>,
-  options: { maxVisitsPerFeature?: number; translateProfile: (profile: SketchFeature['sketch']['profile'], dx: number, dy: number) => SketchFeature['sketch']['profile'] },
+  movedTransforms: Map<string, Transform>,
+  options: { 
+    maxVisitsPerFeature?: number; 
+    transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile'] 
+  },
 ): SketchFeature[] {
-  const { translateProfile } = options
+  const { transformProfile } = options
   const maxVisits = options.maxVisitsPerFeature ?? 6
-  if (movedOffsets.size === 0) return features
+  if (movedTransforms.size === 0) return features
 
-  const byId = new Map<string, SketchFeature>(features.map((f) => [f.id, f]))
-  const movedIds = new Set(movedOffsets.keys())
+  // We MUST keep the state from the START of this propagation to avoid cumulative errors
+  // during multiple visits to the same feature in the queue.
+  const initialFeatures = new Map<string, SketchFeature>(features.map((f) => [f.id, JSON.parse(JSON.stringify(f))]))
+  const currentById = new Map<string, SketchFeature>(features.map((f) => [f.id, f]))
+  const movedIds = new Set(movedTransforms.keys())
 
-  for (const [id, feature] of byId) {
-    if (movedIds.has(id)) {
-      const kept = feature.sketch.constraints.filter((c) => c.type !== 'fixed_distance')
-      if (kept.length !== feature.sketch.constraints.length) {
-        byId.set(id, { ...feature, sketch: { ...feature.sketch, constraints: kept } })
-      }
-      continue
-    }
-    let changed = false
+  // 1. Update reference fields and preserve constraints on moved features (seeds)
+  for (const [id, feature] of currentById) {
+    const t = movedTransforms.get(id)
+    
     const nextConstraints = feature.sketch.constraints.map((c) => {
-      if (c.type !== 'fixed_distance' || c.segment_ids.length === 0) return c
-      const offset = movedOffsets.get(c.segment_ids[0])
-      if (!offset) return c
-      changed = true
-      return translateReferenceFieldsIfMatches(c, c.segment_ids[0], offset.dx, offset.dy)
+      if (c.type !== 'fixed_distance') return c
+      
+      let nextC = { ...c }
+      let cChanged = false
+
+      if (t && nextC.anchor_point) {
+        nextC.anchor_point = applyTransform(nextC.anchor_point, t)
+        cChanged = true
+      }
+
+      if (nextC.segment_ids.length > 0) {
+        const refId = nextC.segment_ids[0]
+        const refT = movedTransforms.get(refId)
+        if (refT) {
+          if (nextC.reference_point) {
+            nextC.reference_point = applyTransform(nextC.reference_point, refT)
+            cChanged = true
+          }
+          if (nextC.reference_segment) {
+            nextC.reference_segment = {
+              a: applyTransform(nextC.reference_segment.a, refT),
+              b: applyTransform(nextC.reference_segment.b, refT),
+            }
+            cChanged = true
+          }
+        }
+      }
+
+      // If THIS feature was moved manually (seed), we update the constraint value to the new distance.
+      if (t && movedIds.has(id) && cChanged) {
+        if (nextC.anchor_point && (nextC.reference_segment || nextC.reference_point)) {
+           // We prefer calculating perpendicular distance to segment if available
+           if (nextC.reference_segment) {
+             const { a, b } = nextC.reference_segment
+             const dx = b.x - a.x
+             const dy = b.y - a.y
+             const len = Math.hypot(dx, dy)
+             if (len > 1e-12) {
+               const nx = -dy / len
+               const ny = dx / len
+               nextC.value = (nextC.anchor_point.x - a.x) * nx + (nextC.anchor_point.y - a.y) * ny
+             }
+           } else if (nextC.reference_point) {
+             nextC.value = Math.hypot(nextC.anchor_point.x - nextC.reference_point.x, nextC.anchor_point.y - nextC.reference_point.y)
+           }
+        }
+      }
+
+      return cChanged ? nextC : c
     })
-    if (changed) {
-      byId.set(id, { ...feature, sketch: { ...feature.sketch, constraints: nextConstraints } })
+
+    if (nextConstraints.some((c, i) => c !== feature.sketch.constraints[i])) {
+      currentById.set(id, { ...feature, sketch: { ...feature.sketch, constraints: nextConstraints } })
     }
   }
 
+  // 2. Dependency graph
   const dependents = new Map<string, Set<string>>()
-  for (const feature of byId.values()) {
+  for (const feature of currentById.values()) {
     for (const c of feature.sketch.constraints) {
       if (c.type !== 'fixed_distance') continue
       for (const refId of c.segment_ids) {
@@ -244,53 +261,11 @@ export function propagateConstraintsOnTranslate(
     }
   }
 
-  // First, directly move features that reference moved features by the same offset
-  // This ensures they maintain their relative position to their references
-  for (const [id, feature] of byId) {
-    if (movedIds.has(id)) continue
-    if (feature.locked) continue
-    
-    let totalDx = 0
-    let totalDy = 0
-    let refCount = 0
-    
-    for (const c of feature.sketch.constraints) {
-      if (c.type !== 'fixed_distance' || c.segment_ids.length === 0) continue
-      for (const refId of c.segment_ids) {
-        const offset = movedOffsets.get(refId)
-        if (offset) {
-          totalDx += offset.dx
-          totalDy += offset.dy
-          refCount++
-        }
-      }
-    }
-    
-    if (refCount > 0) {
-      const avgDx = totalDx / refCount
-      const avgDy = totalDy / refCount
-      
-      if (Math.hypot(avgDx, avgDy) > 1e-7) {
-        // Move the feature by the average offset of its references
-        const nextProfile = translateProfile(feature.sketch.profile, avgDx, avgDy)
-        const nextConstraints = feature.sketch.constraints.map((c) => translateAnchorFields(c, avgDx, avgDy))
-        byId.set(id, {
-          ...feature,
-          sketch: { ...feature.sketch, profile: nextProfile, constraints: nextConstraints },
-        })
-        
-        // Also update reference points for features that depend on this one
-        for (const dep of dependents.get(id) ?? []) {
-          if (movedIds.has(dep) || dep === id) continue
-          const depFeature = byId.get(dep)
-          if (!depFeature) continue
-          const depConstraints = depFeature.sketch.constraints.map((c) =>
-            translateReferenceFieldsIfMatches(c, id, avgDx, avgDy),
-          )
-          byId.set(dep, { ...depFeature, sketch: { ...depFeature.sketch, constraints: depConstraints } })
-        }
-      }
-    }
+  // 3. Propagation
+  // transforms map stores the ABSOLUTE transform from initial state to current state
+  const transforms = new Map<string, Transform>()
+  for (const id of movedIds) {
+    transforms.set(id, movedTransforms.get(id)!)
   }
 
   const queue: string[] = []
@@ -309,37 +284,169 @@ export function propagateConstraintsOnTranslate(
     if (visitCount > maxVisits) continue
     visits.set(fid, visitCount)
 
-    const feature = byId.get(fid)
-    if (!feature || feature.locked) continue
+    const feature = currentById.get(fid)
+    const initialFeature = initialFeatures.get(fid)
+    if (!feature || !initialFeature || feature.locked) continue
 
+    const referencedTransforms: Transform[] = []
+    for (const c of feature.sketch.constraints) {
+      if (c.type !== 'fixed_distance') continue
+      for (const refId of c.segment_ids) {
+        const t = transforms.get(refId)
+        if (t) {
+          referencedTransforms.push(t)
+        } else {
+          // Stationary reference - include identity transform in average
+          const refFeature = currentById.get(refId)
+          if (refFeature) {
+            referencedTransforms.push({
+              tx: 0,
+              ty: 0,
+              angle: 0,
+              pivot: refFeature.sketch.profile.start
+            })
+          }
+        }
+      }
+    }
+    
+    const absoluteGuess = averageTransforms(referencedTransforms)
+    
     const inputs: ConstraintInput[] = []
     for (const c of feature.sketch.constraints) {
-      const input = buildInput(c)
-      if (input) inputs.push(input)
+      if (c.type !== 'fixed_distance' || !c.anchor_point) continue
+      
+      // Calculate guessed anchor position by applying absolute transform to INITIAL anchor
+      const initialAnchor = initialFeature.sketch.constraints.find(ic => ic.id === c.id)?.anchor_point ?? c.anchor_point
+      const guessedAnchor = applyTransform(initialAnchor, absoluteGuess)
+      
+      // We prefer using the segment constraint if available, as it's more flexible during rotation
+      if (c.reference_segment) {
+        inputs.push({
+          kind: 'segment',
+          anchor: guessedAnchor,
+          segmentA: c.reference_segment.a,
+          segmentB: c.reference_segment.b,
+          signedDistance: c.value ?? 0
+        })
+      } else if (c.reference_point) {
+        inputs.push({
+          kind: 'point',
+          anchor: guessedAnchor,
+          reference: c.reference_point,
+          distance: c.value ?? 0
+        })
+      }
     }
-    if (inputs.length === 0) continue
+    
+    const { dx: adjustDx, dy: adjustDy } = solveFeatureTranslation(inputs)
+    
+    const finalAbsoluteTransform: Transform = {
+      tx: absoluteGuess.tx + adjustDx,
+      ty: absoluteGuess.ty + adjustDy,
+      angle: absoluteGuess.angle,
+      pivot: absoluteGuess.pivot
+    }
 
-    const { dx, dy } = solveFeatureTranslation(inputs)
-    if (Math.hypot(dx, dy) < 1e-7) continue
-
-    const nextProfile = translateProfile(feature.sketch.profile, dx, dy)
-    const nextConstraints = feature.sketch.constraints.map((c) => translateAnchorFields(c, dx, dy))
-    byId.set(fid, {
+    // Apply the absolute transform to the INITIAL profile and constraints
+    const nextProfile = transformProfile(initialFeature.sketch.profile, (p) => applyTransform(p, finalAbsoluteTransform))
+    const nextConstraints = initialFeature.sketch.constraints.map((ic) => {
+      const currentC = feature.sketch.constraints.find(cc => cc.id === ic.id) || ic
+      if (ic.type !== 'fixed_distance' || !ic.anchor_point) return ic
+      
+      // Update anchor point from initial
+      const nextAnchor = applyTransform(ic.anchor_point, finalAbsoluteTransform)
+      
+      // Inherit updated reference points/segments from the CURRENT state (which was updated by dependents loop)
+      return { 
+        ...currentC, 
+        anchor_point: nextAnchor 
+      }
+    })
+    
+    currentById.set(fid, {
       ...feature,
       sketch: { ...feature.sketch, profile: nextProfile, constraints: nextConstraints },
     })
 
-    for (const dep of dependents.get(fid) ?? []) {
-      if (movedIds.has(dep) || dep === fid) continue
-      const depFeature = byId.get(dep)
-      if (!depFeature) continue
-      const depConstraints = depFeature.sketch.constraints.map((c) =>
-        translateReferenceFieldsIfMatches(c, fid, dx, dy),
-      )
-      byId.set(dep, { ...depFeature, sketch: { ...depFeature.sketch, constraints: depConstraints } })
-      enqueue(dep)
+    transforms.set(fid, finalAbsoluteTransform)
+
+    // Notify dependents that this feature's absolute transform has changed
+    for (const depId of dependents.get(fid) ?? []) {
+      if (movedIds.has(depId) || depId === fid) continue
+      const depFeature = currentById.get(depId)
+      const depInitialFeature = initialFeatures.get(depId)
+      if (!depFeature || !depInitialFeature) continue
+      
+      const depConstraints = depFeature.sketch.constraints.map((c) => {
+        if (c.type !== 'fixed_distance' || c.segment_ids.length === 0 || c.segment_ids[0] !== fid) return c
+        
+        // Find the initial state for this constraint to apply the absolute transform to reference points
+        const initialC = depInitialFeature.sketch.constraints.find(ic => ic.id === c.id) || c
+        const next: LocalConstraint = { ...c }
+        let cChanged = false
+        
+        if (initialC.reference_point) {
+          next.reference_point = applyTransform(initialC.reference_point, finalAbsoluteTransform)
+          cChanged = true
+        }
+        if (initialC.reference_segment) {
+          next.reference_segment = {
+            a: applyTransform(initialC.reference_segment.a, finalAbsoluteTransform),
+            b: applyTransform(initialC.reference_segment.b, finalAbsoluteTransform),
+          }
+          cChanged = true
+        }
+        return cChanged ? next : c
+      })
+      currentById.set(depId, { ...depFeature, sketch: { ...depFeature.sketch, constraints: depConstraints } })
+      enqueue(depId)
     }
   }
 
-  return features.map((f) => byId.get(f.id) ?? f)
+  return features.map((f) => currentById.get(f.id) ?? f)
+}
+
+export function propagateConstraintsOnTranslate(
+  features: SketchFeature[],
+  movedOffsets: Map<string, FeatureOffset>,
+  options: { maxVisitsPerFeature?: number; transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile'] },
+): SketchFeature[] {
+  if (movedOffsets.size === 0) return features
+
+  const featureById = new Map<string, SketchFeature>(features.map((f) => [f.id, f]))
+  const movedTransforms = new Map<string, Transform>()
+
+  for (const [id, offset] of movedOffsets) {
+    const feature = featureById.get(id)
+    if (!feature) continue
+    movedTransforms.set(id, {
+      tx: offset.dx,
+      ty: offset.dy,
+      angle: 0,
+      pivot: feature.sketch.profile.start,
+    })
+  }
+
+  return propagateRigidTransforms(features, movedTransforms, options)
+}
+
+export function propagateConstraintsOnRotate(
+  features: SketchFeature[],
+  movedRotations: Map<string, { pivot: Point, angle: number }>,
+  options: { maxVisitsPerFeature?: number; transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile'] },
+): SketchFeature[] {
+  if (movedRotations.size === 0) return features
+
+  const movedTransforms = new Map<string, Transform>()
+  for (const [id, rotation] of movedRotations) {
+    movedTransforms.set(id, {
+      tx: 0,
+      ty: 0,
+      angle: rotation.angle,
+      pivot: rotation.pivot,
+    })
+  }
+
+  return propagateRigidTransforms(features, movedTransforms, options)
 }

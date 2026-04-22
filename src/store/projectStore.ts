@@ -104,7 +104,7 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
-import { propagateConstraintsOnTranslate, type FeatureOffset } from '../sketch/constraintSolver'
+import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, type FeatureOffset } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
   ProjectStore,
@@ -2231,8 +2231,10 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     projectsEqual,
     clearStaleConstraints,
     propagateConstraintsOnTranslate: (features, offsets) =>
-      propagateConstraintsOnTranslate(features, offsets, { translateProfile }),
-    translateProfile,
+      propagateConstraintsOnTranslate(features, offsets, { transformProfile }),
+    propagateConstraintsOnRotate: (features, rotations) =>
+      propagateConstraintsOnRotate(features, rotations, { transformProfile }),
+    transformProfile,
     translateClamp,
     translateTab,
     buildCopiedFeatures,
@@ -4036,7 +4038,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
       })
 
-      const cleaned = propagateConstraintsOnTranslate(nextFeatures, movedOffsets, { translateProfile })
+      const cleaned = propagateConstraintsOnTranslate(nextFeatures, movedOffsets, { transformProfile })
       const nextProject = {
         ...s.project,
         features: cleaned,
@@ -4131,7 +4133,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
       })
 
-      const cleanedDist = propagateConstraintsOnTranslate(nextFeatures, movedOffsetsDist, { translateProfile })
+      const cleanedDist = propagateConstraintsOnTranslate(nextFeatures, movedOffsetsDist, { transformProfile })
       const nextProject = {
         ...s.project,
         features: cleanedDist,
