@@ -128,6 +128,25 @@ This file tracks follow-up work, open issues, and design questions that come up 
 
 ## Backlog
 
+### Constraint preservation — segment side-flip (Issue 14)
+- Status: Open
+- Priority: Medium
+- Summary: When a feature constrained perpendicularly to a segment is resized so the constrained feature crosses the segment line, it can end up on the wrong side when the outer shape is resized back.
+- Notes:
+  - The signed-distance value is stored correctly and sign is preserved through `clearStaleConstraints` and `propagateRigidTransforms`.
+  - The solver warm-start heuristic (switching to current `anchor_point` when near the boundary) partially helps but does not fully prevent the flip in all cases.
+  - Root cause: when the feature is exactly on the line (signed distance = 0), the solver's gradient is symmetric and can converge to either side depending on floating-point noise.
+  - Possible fix: store an explicit `side` flag on the constraint that is set at creation time and never updated, and use it to break symmetry in the solver.
+
+### Constraint preservation — small rounding inconsistencies
+- Status: Open
+- Priority: Low
+- Summary: After adding multiple constraints and solving simultaneously, small floating-point rounding errors can cause constraint labels to show values that are slightly off (e.g. `1.000` vs `1.0000001`).
+- Notes:
+  - The multi-constraint solver (`solveFeatureTranslation`) converges to within `tolerance = 1e-9` but the displayed value comes from the stored `value` field, not the actual distance.
+  - The actual distance after solving may differ from the stored value by solver tolerance.
+  - Consider rounding displayed constraint values to the project unit precision before rendering.
+
 ### Refactor UI to use SVG Sprite Icon system
 - Status: Open
 - Priority: Medium

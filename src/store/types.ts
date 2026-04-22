@@ -368,4 +368,6 @@ export interface ProjectStore {
   setConstraintReference: (reference: { point: Point; featureId: string | null; snapMode: SnapMode | null; segment?: { a: Point; b: Point } }) => void
   commitConstraintDistance: (distance: number) => void
   cancelPendingConstraint: () => void
+  deleteConstraint: (featureId: string, constraintId: string) => void
+  updateConstraintValue: (featureId: string, constraintId: string, newValue: number) => void
 }

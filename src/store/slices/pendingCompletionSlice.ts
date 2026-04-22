@@ -30,6 +30,7 @@ export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
+  validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
   transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile']
   translateClamp: (clamp: Clamp, dx: number, dy: number) => Clamp
   translateTab: (tab: Tab, dx: number, dy: number) => Tab
@@ -188,10 +189,10 @@ export function createPendingCompletionSlice(
           const resolvedFeatures =
             mode === 'copy'
               ? deps.clearStaleConstraints(translatedFeatures, new Set(createdFeatures.map((f) => f.id)))
-              : deps.propagateConstraintsOnTranslate(
+              : deps.validateAllConstraints(deps.propagateConstraintsOnTranslate(
                   translatedFeatures,
                   new Map(entityIds.filter((id) => !s.project.features.find((f) => f.id === id)?.locked).map((id) => [id, { dx, dy }])),
-                )
+                ))
           const nextProject = {
             ...s.project,
             features: resolvedFeatures,
@@ -408,9 +409,9 @@ export function createPendingCompletionSlice(
           const angle = Math.atan2(cross, dot)
           const pivot = pendingTransform.referenceStart
           const movedRotations = new Map([...movedTransformedIds].map(id => [id, { pivot, angle }]))
-          resolvedFeatures = deps.propagateConstraintsOnRotate(nextFeatures, movedRotations)
+          resolvedFeatures = deps.validateAllConstraints(deps.propagateConstraintsOnRotate(nextFeatures, movedRotations))
         } else {
-          resolvedFeatures = deps.clearStaleConstraints(nextFeatures, movedTransformedIds)
+          resolvedFeatures = deps.validateAllConstraints(deps.clearStaleConstraints(nextFeatures, movedTransformedIds))
         }
         const nextProject = {
           ...s.project,

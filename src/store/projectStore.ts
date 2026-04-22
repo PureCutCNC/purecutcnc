@@ -104,7 +104,7 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
-import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, type FeatureOffset } from '../sketch/constraintSolver'
+import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput, type FeatureOffset } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
   ProjectStore,
@@ -688,18 +688,103 @@ function translateProfile(profile: SketchFeature['sketch']['profile'], dx: numbe
 }
 
 function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>): SketchFeature[] {
+  // Policy: when the OWNER is moved/edited, update constraint value to new distance.
+  // Do NOT delete constraints — they persist as persistent dimensions.
   if (movedIds.size === 0) return features
   let anyChanged = false
+  const featureById = new Map(features.map((f) => [f.id, f]))
   const next = features.map((feature) => {
-    const owns = movedIds.has(feature.id)
-    const kept = feature.sketch.constraints.filter((c) => {
-      if (c.type !== 'fixed_distance') return true
-      if (owns) return false
-      return !c.segment_ids.some((id) => movedIds.has(id))
+    if (!movedIds.has(feature.id)) return feature
+    // This feature was moved — update constraint values to reflect new distances
+    const updatedConstraints = feature.sketch.constraints.map((c) => {
+      if (c.type !== 'fixed_distance') return c
+      // Issue 11: Never update invalid constraints — keep them frozen at last valid position
+      if (c.is_invalid) return c
+      const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+      const refFeature = refFeatureId ? featureById.get(refFeatureId) : null
+      // Re-derive geometry to get current positions
+      const result = rederiveConstraintGeometry(
+        feature.sketch.profile,
+        refFeature?.sketch.profile ?? null,
+        c,
+      )
+      if (result && result.isValid) {
+        // Compute new distance from re-derived geometry
+        let newValue: number | undefined
+        if (result.referenceSegment) {
+          const { a, b } = result.referenceSegment
+          const sx = b.x - a.x
+          const sy = b.y - a.y
+          const segLen = Math.hypot(sx, sy)
+          if (segLen > 1e-12) {
+            const nx = -sy / segLen
+            const ny = sx / segLen
+            const rawSigned = (result.anchorPoint.x - a.x) * nx + (result.anchorPoint.y - a.y) * ny
+            // Issue 14: Preserve the original sign — only update the magnitude.
+            // This prevents the side from flipping when the feature drifts near the segment.
+            const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
+            newValue = originalSign * Math.abs(rawSigned)
+          }
+        } else if (result.referencePoint) {
+          newValue = Math.hypot(
+            result.anchorPoint.x - result.referencePoint.x,
+            result.anchorPoint.y - result.referencePoint.y,
+          )
+        }
+        if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
+          anyChanged = true
+          return {
+            ...c,
+            value: newValue,
+            anchor_point: result.anchorPoint,
+            reference_point: result.referencePoint,
+            reference_segment: result.referenceSegment,
+            is_invalid: false,
+            error_message: undefined,
+          }
+        }
+        // Update cached coords even if value unchanged
+        return {
+          ...c,
+          anchor_point: result.anchorPoint,
+          reference_point: result.referencePoint,
+          reference_segment: result.referenceSegment,
+          is_invalid: false,
+          error_message: undefined,
+        }
+      }
+      // No semantic fields — fall back to legacy coordinate update
+      if (!c.anchor_point) return c
+      let newValue: number | undefined
+      if (c.reference_segment) {
+        const { a, b } = c.reference_segment
+        const sx = b.x - a.x
+        const sy = b.y - a.y
+        const segLen = Math.hypot(sx, sy)
+        if (segLen > 1e-12) {
+          const nx = -sy / segLen
+          const ny = sx / segLen
+          const rawSigned = (c.anchor_point.x - a.x) * nx + (c.anchor_point.y - a.y) * ny
+          const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
+          newValue = originalSign * Math.abs(rawSigned)
+        }
+      } else if (c.reference_point) {
+        newValue = Math.hypot(
+          c.anchor_point.x - c.reference_point.x,
+          c.anchor_point.y - c.reference_point.y,
+        )
+      }
+      if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
+        anyChanged = true
+        return { ...c, value: newValue }
+      }
+      return c
     })
-    if (kept.length === feature.sketch.constraints.length) return feature
-    anyChanged = true
-    return { ...feature, sketch: { ...feature.sketch, constraints: kept } }
+    if (updatedConstraints.some((c, i) => c !== feature.sketch.constraints[i])) {
+      anyChanged = true
+      return { ...feature, sketch: { ...feature.sketch, constraints: updatedConstraints } }
+    }
+    return feature
   })
   return anyChanged ? next : features
 }
@@ -2234,6 +2319,13 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       propagateConstraintsOnTranslate(features, offsets, { transformProfile }),
     propagateConstraintsOnRotate: (features, rotations) =>
       propagateConstraintsOnRotate(features, rotations, { transformProfile }),
+    validateAllConstraints: (features) => {
+      const byId = new Map(features.map((f) => [f.id, f]))
+      return features.map((f) => {
+        if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+        return validateConstraintsOnFeature(f, byId)
+      })
+    },
     transformProfile,
     translateClamp,
     translateTab,
@@ -3759,9 +3851,26 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   deleteFeatures: (ids) =>
     set((s) => {
       const idsToDelete = new Set(ids)
+      // Mark constraints referencing deleted features as invalid (soft failure)
+      const featuresWithInvalidatedConstraints = s.project.features
+        .filter((feature) => !idsToDelete.has(feature.id))
+        .map((feature) => {
+          const updatedConstraints = feature.sketch.constraints.map((c) => {
+            if (c.type !== 'fixed_distance') return c
+            const refId = c.reference_feature_id ?? c.segment_ids[0]
+            if (refId && idsToDelete.has(refId)) {
+              return { ...c, is_invalid: true, error_message: 'Reference feature was deleted' }
+            }
+            return c
+          })
+          if (updatedConstraints.some((c, i) => c !== feature.sketch.constraints[i])) {
+            return { ...feature, sketch: { ...feature.sketch, constraints: updatedConstraints } }
+          }
+          return feature
+        })
       const nextProject = syncFeatureTreeProject({
         ...s.project,
-        features: s.project.features.filter((feature) => !idsToDelete.has(feature.id)),
+        features: featuresWithInvalidatedConstraints,
         featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idsToDelete.has(entry.featureId))),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
@@ -4039,9 +4148,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       })
 
       const cleaned = propagateConstraintsOnTranslate(nextFeatures, movedOffsets, { transformProfile })
+      const cleanedByIdAlign = new Map(cleaned.map((f) => [f.id, f]))
+      const validatedAlign = cleaned.map((f) => {
+        if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+        return validateConstraintsOnFeature(f, cleanedByIdAlign)
+      })
       const nextProject = {
         ...s.project,
-        features: cleaned,
+        features: validatedAlign,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
@@ -4134,9 +4248,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       })
 
       const cleanedDist = propagateConstraintsOnTranslate(nextFeatures, movedOffsetsDist, { transformProfile })
+      const cleanedDistById = new Map(cleanedDist.map((f) => [f.id, f]))
+      const validatedDist = cleanedDist.map((f) => {
+        if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+        return validateConstraintsOnFeature(f, cleanedDistById)
+      })
       const nextProject = {
         ...s.project,
-        features: cleanedDist,
+        features: validatedDist,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       if (projectsEqual(nextProject, s.project)) {
@@ -4564,14 +4683,26 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
             sketch: {
               ...feature.sketch,
               profile: normalizedProfile,
-              constraints: feature.sketch.constraints.filter((c) => c.type !== 'fixed_distance'),
             },
             kind: inferFeatureKind(normalizedProfile),
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
+      // Update owner constraint values to reflect new geometry (Policy #1: owner edited → update value)
       nextProject.features = clearStaleConstraints(nextProject.features, new Set([featureId]))
+      // Propagate to features that depend on the edited feature (Policy #2: reference edited → dependents follow)
+      nextProject.features = propagateConstraintsOnTranslate(
+        nextProject.features,
+        new Map([[featureId, { dx: 0, dy: 0 }]]),
+        { transformProfile },
+      )
+      // Validate all constraints and mark invalid ones red
+      const featureByIdMap = new Map(nextProject.features.map((f) => [f.id, f]))
+      nextProject.features = nextProject.features.map((f) => {
+        if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+        return validateConstraintsOnFeature(f, featureByIdMap)
+      })
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -4933,7 +5064,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const anchor = pending.anchor.point
       const ref = pending.reference.point
       const segment = pending.reference.segment
-      let newAnchor: Point
+      let storedValue = distance
       if (segment) {
         const sx = segment.b.x - segment.a.x
         const sy = segment.b.y - segment.a.y
@@ -4946,67 +5077,137 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         }
         const signedDist = (anchor.x - segment.a.x) * nx + (anchor.y - segment.a.y) * ny
         const side = signedDist >= 0 ? 1 : -1
-        const foot = {
-          x: anchor.x - signedDist * nx,
-          y: anchor.y - signedDist * ny,
-        }
-        newAnchor = {
-          x: foot.x + side * distance * nx,
-          y: foot.y + side * distance * ny,
-        }
-      } else {
-        const dx = anchor.x - ref.x
-        const dy = anchor.y - ref.y
-        const currentLen = Math.hypot(dx, dy)
-        let ux = 1
-        let uy = 0
-        if (currentLen > 1e-9) {
-          ux = dx / currentLen
-          uy = dy / currentLen
-        }
-        newAnchor = {
-          x: ref.x + ux * distance,
-          y: ref.y + uy * distance,
-        }
+        storedValue = side * distance
       }
-      const translateDx = newAnchor.x - anchor.x
-      const translateDy = newAnchor.y - anchor.y
 
       const constraintId = nextUniqueGeneratedId(s.project, 'c')
       const referenceIds = pending.reference.featureId
         ? [pending.reference.featureId]
         : []
+
+      // Infer semantic indices from snap modes
+      const refFeature = pending.reference.featureId
+        ? s.project.features.find((f) => f.id === pending.reference!.featureId) ?? null
+        : null
+      const semanticIndices = inferSemanticIndices(
+        feature.sketch.profile,
+        refFeature?.sketch.profile ?? null,
+        anchor,
+        ref,
+        pending.anchor.snapMode,
+        pending.reference.snapMode,
+        segment,
+      )
+
       const newConstraint: LocalConstraint = {
         id: constraintId,
         type: 'fixed_distance',
         segment_ids: referenceIds,
-        value: distance,
-        anchor_point: newAnchor,
-        reference_point: ref,
+        value: storedValue,
+        anchor_point: anchor, // placeholder — updated after multi-constraint solve
+        reference_point: segment
+          ? (() => {
+              const sx = segment.b.x - segment.a.x
+              const sy = segment.b.y - segment.a.y
+              const segLen = Math.hypot(sx, sy)
+              if (segLen < 1e-12) return ref
+              const nx = -sy / segLen
+              const ny = sx / segLen
+              const signedDist = (anchor.x - segment.a.x) * nx + (anchor.y - segment.a.y) * ny
+              return { x: anchor.x - signedDist * nx, y: anchor.y - signedDist * ny }
+            })()
+          : ref,
         reference_segment: segment,
+        anchor_index: semanticIndices.anchor_index,
+        anchor_type: semanticIndices.anchor_type,
+        reference_feature_id: pending.reference.featureId ?? undefined,
+        reference_index: semanticIndices.reference_index,
+        reference_type: semanticIndices.reference_type,
+        reference_t: semanticIndices.reference_t,
       }
 
-      const nextFeatures = s.project.features.map((f) => {
-        if (f.id !== pending.featureId) {
-          return f
+      // Solve ALL constraints simultaneously (existing + new) to find the position
+      // that satisfies all of them without modifying any stored values.
+      const allConstraints = [...feature.sketch.constraints, newConstraint]
+      const featureByIdSolve = new Map(s.project.features.map((f) => [f.id, f]))
+      const solverInputs: ConstraintInput[] = []
+      for (const c of allConstraints) {
+        if (c.type !== 'fixed_distance') continue
+        const cRefId = c.reference_feature_id ?? c.segment_ids[0]
+        const cRefFeature = cRefId ? featureByIdSolve.get(cRefId) : null
+        const rederived = rederiveConstraintGeometry(
+          feature.sketch.profile,
+          cRefFeature?.sketch.profile ?? null,
+          c,
+        )
+        if (rederived && rederived.isValid) {
+          if (rederived.referenceSegment) {
+            solverInputs.push({
+              kind: 'segment',
+              anchor: rederived.anchorPoint,
+              segmentA: rederived.referenceSegment.a,
+              segmentB: rederived.referenceSegment.b,
+              signedDistance: c.value ?? 0,
+            })
+          } else if (rederived.referencePoint) {
+            solverInputs.push({
+              kind: 'point',
+              anchor: rederived.anchorPoint,
+              reference: rederived.referencePoint,
+              distance: Math.abs(c.value ?? 0),
+            })
+          }
+        } else if (c.anchor_point) {
+          if (c.reference_segment) {
+            solverInputs.push({
+              kind: 'segment',
+              anchor: c.anchor_point,
+              segmentA: c.reference_segment.a,
+              segmentB: c.reference_segment.b,
+              signedDistance: c.value ?? 0,
+            })
+          } else if (c.reference_point) {
+            solverInputs.push({
+              kind: 'point',
+              anchor: c.anchor_point,
+              reference: c.reference_point,
+              distance: Math.abs(c.value ?? 0),
+            })
+          }
         }
+      }
+      const { dx: translateDx, dy: translateDy } = solveFeatureTranslation(solverInputs)
+
+      const nextFeatures = s.project.features.map((f) => {
+        if (f.id !== pending.featureId) return f
         const nextProfile =
           Math.abs(translateDx) < 1e-9 && Math.abs(translateDy) < 1e-9
             ? f.sketch.profile
             : translateProfile(f.sketch.profile, translateDx, translateDy)
-        return {
-          ...f,
-          sketch: {
-            ...f.sketch,
-            profile: nextProfile,
-            constraints: [...f.sketch.constraints, newConstraint],
-          },
-        }
+        // Refresh all constraint caches from the solved position — values are never touched
+        const featureByIdNext = new Map([...featureByIdSolve, [f.id, { ...f, sketch: { ...f.sketch, profile: nextProfile } }]])
+        const refreshedConstraints = allConstraints.map((c) => {
+          if (c.type !== 'fixed_distance') return c
+          const cRefId = c.reference_feature_id ?? c.segment_ids[0]
+          const cRefFeature = cRefId ? featureByIdNext.get(cRefId) : null
+          const result = rederiveConstraintGeometry(nextProfile, cRefFeature?.sketch.profile ?? null, c)
+          if (!result || !result.isValid) return c
+          return {
+            ...c,
+            anchor_point: result.anchorPoint,
+            reference_point: result.referencePoint,
+            reference_segment: result.referenceSegment,
+            is_invalid: false,
+            error_message: undefined,
+          }
+        })
+        return { ...f, sketch: { ...f.sketch, profile: nextProfile, constraints: refreshedConstraints } }
       })
+      const refreshedFeatures = nextFeatures
 
       const nextProject = {
         ...s.project,
-        features: nextFeatures,
+        features: refreshedFeatures,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
 
@@ -5023,6 +5224,158 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   cancelPendingConstraint: () =>
     set((s) => (s.pendingConstraint ? { pendingConstraint: null } : {})),
+
+  deleteConstraint: (featureId, constraintId) =>
+    set((s) => {
+      const feature = s.project.features.find((f) => f.id === featureId)
+      if (!feature) return {}
+      const nextConstraints = feature.sketch.constraints.filter((c) => c.id !== constraintId)
+      if (nextConstraints.length === feature.sketch.constraints.length) return {}
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((f) =>
+          f.id === featureId
+            ? { ...f, sketch: { ...f.sketch, constraints: nextConstraints } }
+            : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  updateConstraintValue: (featureId, constraintId, newValue) =>
+    set((s) => {
+      if (!Number.isFinite(newValue)) return {}
+      const feature = s.project.features.find((f) => f.id === featureId)
+      if (!feature || feature.locked) return {}
+      const constraint = feature.sketch.constraints.find((c) => c.id === constraintId)
+      if (!constraint || constraint.type !== 'fixed_distance') return {}
+
+      const refFeatureId = constraint.reference_feature_id ?? constraint.segment_ids[0]
+      const refFeature = refFeatureId ? s.project.features.find((f) => f.id === refFeatureId) : null
+
+      // Re-derive current geometry for the edited constraint
+      const rederived = rederiveConstraintGeometry(
+        feature.sketch.profile,
+        refFeature?.sketch.profile ?? null,
+        constraint,
+      )
+
+      let translateDx = 0
+      let translateDy = 0
+      let storedValue = newValue
+
+      if (rederived && rederived.isValid) {
+        const anchor = rederived.anchorPoint
+        if (rederived.referenceSegment) {
+          const { a, b } = rederived.referenceSegment
+          const sx = b.x - a.x; const sy = b.y - a.y
+          const segLen = Math.hypot(sx, sy)
+          if (segLen > 1e-12) {
+            const nx = -sy / segLen; const ny = sx / segLen
+            const signedDist = (anchor.x - a.x) * nx + (anchor.y - a.y) * ny
+            // Preserve the current side; user types positive magnitude
+            const side = signedDist >= 0 ? 1 : -1
+            const foot = { x: anchor.x - signedDist * nx, y: anchor.y - signedDist * ny }
+            const newAnchor = { x: foot.x + side * Math.abs(newValue) * nx, y: foot.y + side * Math.abs(newValue) * ny }
+            translateDx = newAnchor.x - anchor.x; translateDy = newAnchor.y - anchor.y
+            storedValue = side * Math.abs(newValue)
+          }
+        } else if (rederived.referencePoint) {
+          const ref = rederived.referencePoint
+          const dx = anchor.x - ref.x; const dy = anchor.y - ref.y
+          const currentLen = Math.hypot(dx, dy)
+          let ux = 1, uy = 0
+          if (currentLen > 1e-9) { ux = dx / currentLen; uy = dy / currentLen }
+          const newAnchor = { x: ref.x + ux * newValue, y: ref.y + uy * newValue }
+          translateDx = newAnchor.x - anchor.x; translateDy = newAnchor.y - anchor.y
+        }
+      } else if (constraint.anchor_point) {
+        const anchor = constraint.anchor_point
+        if (constraint.reference_segment) {
+          const { a, b } = constraint.reference_segment
+          const sx = b.x - a.x; const sy = b.y - a.y
+          const segLen = Math.hypot(sx, sy)
+          if (segLen > 1e-12) {
+            const nx = -sy / segLen; const ny = sx / segLen
+            const signedDist = (anchor.x - a.x) * nx + (anchor.y - a.y) * ny
+            const side = signedDist >= 0 ? 1 : -1
+            const foot = { x: anchor.x - signedDist * nx, y: anchor.y - signedDist * ny }
+            const newAnchor = { x: foot.x + side * newValue * nx, y: foot.y + side * newValue * ny }
+            translateDx = newAnchor.x - anchor.x; translateDy = newAnchor.y - anchor.y
+          }
+        } else if (constraint.reference_point) {
+          const ref = constraint.reference_point
+          const dx = anchor.x - ref.x; const dy = anchor.y - ref.y
+          const currentLen = Math.hypot(dx, dy)
+          let ux = 1, uy = 0
+          if (currentLen > 1e-9) { ux = dx / currentLen; uy = dy / currentLen }
+          const newAnchor = { x: ref.x + ux * newValue, y: ref.y + uy * newValue }
+          translateDx = newAnchor.x - anchor.x; translateDy = newAnchor.y - anchor.y
+        }
+      }
+
+      // 1. Translate the feature and update the edited constraint's value
+      const updatedConstraint = { ...constraint, value: storedValue, is_invalid: false, error_message: undefined }
+      let nextFeatures = s.project.features.map((f) => {
+        if (f.id !== featureId) return f
+        const nextProfile = Math.abs(translateDx) < 1e-9 && Math.abs(translateDy) < 1e-9
+          ? f.sketch.profile
+          : translateProfile(f.sketch.profile, translateDx, translateDy)
+        return {
+          ...f,
+          sketch: {
+            ...f.sketch,
+            profile: nextProfile,
+            constraints: f.sketch.constraints.map((c) => c.id === constraintId ? updatedConstraint : c),
+          },
+        }
+      })
+
+      // 2. Refresh all constraint caches on the moved feature and validate other constraints
+      //    (do NOT update their values — they should be marked invalid if unsatisfied)
+      const featureById = new Map(nextFeatures.map((f) => [f.id, f]))
+      nextFeatures = nextFeatures.map((f) => {
+        if (f.id !== featureId) return f
+        return validateConstraintsOnFeature(f, featureById)
+      })
+
+      // 3. Propagate only to features that depend on the moved feature (not the moved feature itself)
+      //    Use dx:0,dy:0 seed so propagation re-derives reference geometry without treating it as a manual move
+      nextFeatures = propagateConstraintsOnTranslate(
+        nextFeatures,
+        new Map([[featureId, { dx: 0, dy: 0 }]]),
+        { transformProfile },
+      )
+
+      // 4. Validate all features that have constraints (catch any that became invalid after propagation)
+      const featureById2 = new Map(nextFeatures.map((f) => [f.id, f]))
+      nextFeatures = nextFeatures.map((f) => {
+        if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+        return validateConstraintsOnFeature(f, featureById2)
+      })
+
+      const nextProject = {
+        ...s.project,
+        features: nextFeatures,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
 
   // ── Convenience constructors ─────────────────────────────
 

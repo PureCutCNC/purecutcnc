@@ -105,6 +105,18 @@ export interface LocalConstraint {
     a: Point
     b: Point
   }
+
+  // Semantic index references (source of truth when present)
+  anchor_index?: number          // vertex index, or -1 for natural center
+  anchor_type?: 'anchor' | 'midpoint'
+  reference_feature_id?: string  // mirrors segment_ids[0]
+  reference_index?: number       // vertex/segment index, or -1 for natural center
+  reference_type?: 'anchor' | 'midpoint' | 'segment' | 'point_on_segment'
+  reference_t?: number  // fractional position [0,1] along segment for 'point_on_segment'
+
+  // Validity
+  is_invalid?: boolean
+  error_message?: string
 }
 
 export interface GlobalConstraint {
