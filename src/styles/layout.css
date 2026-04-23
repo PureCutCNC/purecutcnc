@@ -1725,7 +1725,7 @@
   position: fixed;
   z-index: 1000;
   min-width: 168px;
-  padding: 6px;
+  padding: 4px;
   border-radius: 10px;
   border: 1px solid rgba(94, 121, 142, 0.72);
   background: rgba(12, 18, 26, 0.96);
@@ -1733,17 +1733,24 @@
     0 12px 26px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   display: grid;
-  gap: 4px;
+  gap: 1px;
+}
+
+.feature-context-menu__separator {
+  height: 1px;
+  background: rgba(94, 121, 142, 0.3);
+  margin: 2px 4px;
 }
 
 .feature-context-menu__item {
-  height: 32px;
+  height: 26px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
+  font-size: 12px;
   text-align: left;
-  padding: 0 10px;
+  padding: 0 8px;
   cursor: pointer;
 }
 

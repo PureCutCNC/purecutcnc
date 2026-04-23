@@ -201,6 +201,7 @@ export function drawMoveGuide(
   fromPoint: Point,
   toPoint: Point,
   vt: ViewTransform,
+  color = 'rgba(239, 188, 122, 0.75)',
 ): void {
   const start = worldToCanvas(fromPoint, vt)
   const end = worldToCanvas(toPoint, vt)
@@ -208,7 +209,7 @@ export function drawMoveGuide(
   ctx.beginPath()
   ctx.moveTo(start.cx, start.cy)
   ctx.lineTo(end.cx, end.cy)
-  ctx.strokeStyle = 'rgba(239, 188, 122, 0.75)'
+  ctx.strokeStyle = color
   ctx.lineWidth = 1.5
   ctx.setLineDash([8, 5])
   ctx.stroke()
@@ -283,6 +284,7 @@ export function drawPendingPathLoop(
   label: string,
   units: 'mm' | 'inch',
   previewHighlighted = false,
+  strokeColor = '#efbc7a',
 ): void {
   if (points.length === 0) return
 
@@ -300,7 +302,7 @@ export function drawPendingPathLoop(
     ctx.lineTo(preview.cx, preview.cy)
   }
 
-  ctx.strokeStyle = '#efbc7a'
+  ctx.strokeStyle = strokeColor
   ctx.lineWidth = 2
   ctx.setLineDash([8, 5])
   ctx.stroke()
@@ -348,13 +350,14 @@ export function drawPendingSplineLoop(
   closePreview: boolean,
   units: 'mm' | 'inch',
   previewHighlighted = false,
+  strokeColor = '#efbc7a',
 ): void {
   if (points.length === 0) return
 
   const previewSegments = buildSplineDraftSegments(points, closePreview ? null : previewPoint)
   if (previewSegments.length > 0) {
     traceDraftSegments(ctx, points[0], previewSegments, vt)
-    ctx.strokeStyle = '#efbc7a'
+    ctx.strokeStyle = strokeColor
     ctx.lineWidth = 2
     ctx.setLineDash([8, 5])
     ctx.stroke()

@@ -30,8 +30,8 @@ const project = JSON.parse(fs.readFileSync(camjPath, 'utf-8'));
 function profileToSvgPath(profile) {
     if (!profile.segments.length) return '';
 
-    const start = profile.start;
-    let d = `M ${start.x} ${start.y}`;
+    let current = profile.start;
+    let d = `M ${current.x} ${current.y}`;
 
     for (const segment of profile.segments) {
         const to = segment.to;
@@ -43,11 +43,21 @@ function profileToSvgPath(profile) {
             const largeArc = 0; 
             const sweep = segment.clockwise ? 0 : 1;
             d += ` A ${r} ${r} 0 ${largeArc} ${sweep} ${to.x} ${to.y}`;
+        } else if (segment.type === 'circle') {
+            const center = segment.center;
+            const r = Math.hypot(to.x - center.x, to.y - center.y);
+            const sweep = segment.clockwise ? 0 : 1;
+            // Full circle using two 180-degree arcs
+            const oppX = 2 * center.x - current.x;
+            const oppY = 2 * center.y - current.y;
+            d += ` A ${r} ${r} 0 1 ${sweep} ${oppX} ${oppY}`;
+            d += ` A ${r} ${r} 0 1 ${sweep} ${to.x} ${to.y}`;
         } else if (segment.type === 'bezier') {
             const c1 = segment.control1;
             const c2 = segment.control2;
             d += ` C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`;
         }
+        current = to;
     }
 
     if (profile.closed) {

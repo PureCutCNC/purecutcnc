@@ -688,7 +688,7 @@ function FeatureEditActions({
           onClick={onOffset}
         />
         <ToolbarActionButton
-          icon="snap"
+          icon="constraint"
           label={constraintActive ? 'Cancel constraint' : 'Add constraint'}
           active={constraintActive}
           disabled={!enabled || hasLockedSelection}

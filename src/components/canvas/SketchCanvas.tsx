@@ -105,6 +105,7 @@ import {
 } from '../../types/project'
 import type { Clamp, Point, SketchFeature, Tab } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
+import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 
 const NODE_HIT_RADIUS = 9
 const HANDLE_HIT_RADIUS = 7
@@ -165,6 +166,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDraggingNodeRef = useRef(false)
+  const dragStartWorldRef = useRef<Point | null>(null)
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
@@ -314,6 +316,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   copyCountDraftRef.current = copyCountDraft
   dimensionEditRef.current = dimensionEdit
   constraintEditRef.current = constraintEdit
+
+  // Axis lock — active whenever a move, node drag, sketch-edit drag, constraint pick, or feature creation is in progress
+  const isDraggingAny = !!pendingMove || !!pendingAdd || !!pendingConstraint || isDraggingNodeRef.current || selection.sketchEditTool === 'add_point'
+  const scheduleDrawRef = useRef<() => void>(() => {})
+  const { lockModeRef, applyLock } = useAxisLock(isDraggingAny, () => scheduleDrawRef.current())
 
   function updateActiveSnap(nextSnap: ResolvedSnap | null) {
     activeSnapRef.current = nextSnap?.mode ? nextSnap : null
@@ -579,7 +586,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'add_point') {
         pendingSketchFilletRef.current = null
         if (pendingSketchExtensionRef.current) {
-          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
+          sketchEditPreviewRef.current = { point: lockedSnapped, mode: 'add_point' }
         } else {
           const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, livePoint, vt)
           if (endpoint) {
@@ -710,6 +718,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingConstraintDraw = pendingConstraintRef.current
     if (pendingConstraintDraw && pendingConstraintDraw.anchor) {
       const anchorC = worldToCanvas(pendingConstraintDraw.anchor.point, vt)
+      const constraintLineColor = lockModeGuideColor(lockModeRef.current)
       ctx.save()
       ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
@@ -719,7 +728,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ctx.stroke()
       if (pendingConstraintDraw.reference) {
         const refC = worldToCanvas(pendingConstraintDraw.reference.point, vt)
-        ctx.strokeStyle = 'rgba(247, 211, 148, 0.95)'
+        ctx.strokeStyle = constraintLineColor
         ctx.lineWidth = 1.5
         ctx.setLineDash([6, 4])
         ctx.beginPath()
@@ -732,6 +741,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.arc(refC.cx, refC.cy, 4, 0, Math.PI * 2)
         ctx.fill()
         ctx.stroke()
+      } else if (livePointerWorldRef.current) {
+        // Draw live preview line from anchor to current mouse position while picking reference
+        const livePoint = applyLock(livePointerWorldRef.current, pendingConstraintDraw.anchor.point)
+        const liveC = worldToCanvas(livePoint, vt)
+        ctx.strokeStyle = constraintLineColor
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([6, 4])
+        ctx.beginPath()
+        ctx.moveTo(liveC.cx, liveC.cy)
+        ctx.lineTo(anchorC.cx, anchorC.cy)
+        ctx.stroke()
+        ctx.setLineDash([])
       }
       ctx.restore()
     }
@@ -871,7 +892,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : false
       if (pendingAdd.points.length > 0) {
         if (pendingAdd.shape === 'spline') {
-          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, project.meta.units, isActiveSnapPoint(currentPreviewPoint))
+          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, project.meta.units, isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
         } else {
           drawPendingPathLoop(
             ctx,
@@ -883,13 +904,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             'Pending polygon',
             project.meta.units,
             isActiveSnapPoint(currentPreviewPoint),
+            lockModeGuideColor(lockModeRef.current),
           )
         }
       } else if (currentPreviewPoint) {
         drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
       }
     } else if (pendingAdd?.shape === 'composite') {
-      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, isActiveSnapPoint(currentPreviewPoint))
+      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
@@ -938,6 +960,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingMove) {
       const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+      const guideColor = lockModeGuideColor(lockModeRef.current)
 
       if (pendingMove.entityType === 'backdrop') {
         if (!project.backdrop || !backdropImage) {
@@ -945,7 +968,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         if (pendingMove.fromPoint && targetPoint) {
-          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
           drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           drawBackdropImage(
@@ -974,7 +997,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         if (pendingMove.fromPoint && targetPoint) {
-          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
           drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const feature of features) {
@@ -1012,7 +1035,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
         if (pendingMove.fromPoint && targetPoint) {
-          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
           drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const clamp of clamps) {
@@ -1060,7 +1083,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
         if (pendingMove.fromPoint && targetPoint) {
-          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt)
+          drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
           drawPendingPoint(ctx, pendingMove.fromPoint, vt)
           drawLineLengthMeasurement(ctx, pendingMove.fromPoint, targetPoint, vt, project.meta.units)
           for (const tab of tabs) {
@@ -1278,7 +1301,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (selection.mode === 'sketch_edit' && sketchEditPreviewRef.current) {
       if (pendingSketchExtensionRef.current) {
-        drawMoveGuide(ctx, pendingSketchExtensionRef.current.anchor, sketchEditPreviewRef.current.point, vt)
+        drawMoveGuide(ctx, pendingSketchExtensionRef.current.anchor, sketchEditPreviewRef.current.point, vt, lockModeGuideColor(lockModeRef.current))
         drawPendingPoint(ctx, pendingSketchExtensionRef.current.anchor, vt)
       }
       if (pendingSketchFilletRef.current && editingFeature) {
@@ -1312,6 +1335,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function scheduleDraw() {
+    scheduleDrawRef.current = scheduleDraw
     if (drawFrameRef.current !== null) {
       return
     }
@@ -1856,6 +1880,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     beginHistoryTransaction()
     setActiveControl(nextControl)
     isDraggingNodeRef.current = true
+    dragStartWorldRef.current = world
 
     if (nextControl.kind === 'segment' && selection.selectedFeatureId) {
       const resolvedSnap = resolveCurrentSketchSnap(world, vt)
@@ -1963,7 +1988,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         scheduleDraw()
         return
       }
-      setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+      // Apply axis lock to preview for polygon/spline/composite
+      let previewSnapped = snapped
+      if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
+        const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
+        if (lastPoint) previewSnapped = applyLock(snapped, lastPoint)
+      } else if (pendingAdd.shape === 'composite') {
+        const compositeOrigin = pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start
+        if (compositeOrigin) previewSnapped = applyLock(snapped, compositeOrigin)
+      }
+      setPendingPreviewPointRef({ point: previewSnapped, session: pendingAdd.session })
       return
     }
 
@@ -1988,7 +2022,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           return
         }
       }
-      setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
+      const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
+      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
       return
     }
 
@@ -2026,7 +2061,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         scheduleDraw()
         return
       }
-      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, constrainedPoint)
+      const dragOrigin = dragStartWorldRef.current ?? constrainedPoint
+      const lockedPoint = applyLock(constrainedPoint, dragOrigin)
+      // When lock is active, move the snap indicator to the locked position
+      if (lockModeRef.current !== 'none' && activeSnapRef.current) {
+        activeSnapRef.current = { ...activeSnapRef.current, point: lockedPoint }
+      }
+      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, lockedPoint)
       return
     }
 
@@ -2061,7 +2102,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'add_point') {
         pendingSketchFilletRef.current = null
         if (pendingSketchExtensionRef.current) {
-          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
+          sketchEditPreviewRef.current = { point: lockedSnapped, mode: 'add_point' }
         } else {
           const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
           if (endpoint) {
@@ -2141,6 +2183,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function stopNodeDrag() {
     if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
+    dragStartWorldRef.current = null
     setActiveControl(null)
     commitHistoryTransaction()
   }
@@ -2317,19 +2360,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (!pickedPoint) {
         return
       }
-      const targetFeatureId = findHitFeatureId(pickedPoint, project.features, vt)
+      const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
+      const targetFeatureId = findHitFeatureId(lockedPickedPoint, project.features, vt)
       const targetId =
         targetFeatureId && targetFeatureId !== pendingConstraint.featureId
           ? targetFeatureId
           : null
       setConstraintReference({
-        point: pickedPoint,
+        point: lockedPickedPoint,
         featureId: targetId,
         snapMode: resolvedSnap.mode,
         segment: resolvedSnap.mode === 'perpendicular' ? resolvedSnap.perpendicularSegment : undefined,
       })
-      const dx = pendingConstraint.anchor.point.x - pickedPoint.x
-      const dy = pendingConstraint.anchor.point.y - pickedPoint.y
+      const dx = pendingConstraint.anchor.point.x - lockedPickedPoint.x
+      const dy = pendingConstraint.anchor.point.y - lockedPickedPoint.y
       const currentDistance = Math.hypot(dx, dy)
       setConstraintDistanceInput(formatLength(currentDistance, project.meta.units))
       return
@@ -2343,9 +2387,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             if (!pickedPoint) {
               return
             }
+            const lockedPickedPoint = applyLock(pickedPoint, pendingSketchExtensionRef.current.anchor)
             insertFeaturePoint(selection.selectedFeatureId, {
               kind: pendingSketchExtensionRef.current.kind,
-              point: pickedPoint,
+              point: lockedPickedPoint,
             })
             pendingSketchExtensionRef.current = null
             sketchEditPreviewRef.current = null
@@ -2445,10 +2490,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           setPendingPreviewPointRef(null)
           return
         }
-        if (!lastPoint || lastPoint.x !== snapped.x || lastPoint.y !== snapped.y) {
-          addPendingPolygonPoint(snapped)
+        const lockedSnapped = lastPoint ? applyLock(snapped, lastPoint) : snapped
+        if (!lastPoint || lastPoint.x !== lockedSnapped.x || lastPoint.y !== lockedSnapped.y) {
+          addPendingPolygonPoint(lockedSnapped)
         }
-        setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+        setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
       } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
@@ -2472,8 +2518,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           return
         }
 
-        addPendingCompositePoint(snapped)
-        setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+        const compositeOrigin = pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start
+        const lockedCompositeSnapped = compositeOrigin ? applyLock(snapped, compositeOrigin) : snapped
+        addPendingCompositePoint(lockedCompositeSnapped)
+        setPendingPreviewPointRef({ point: lockedCompositeSnapped, session: pendingAdd.session })
       }
       return
     }
@@ -2489,11 +2537,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         setPendingMoveFrom(snapped)
         setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       } else if (!pendingMove.toPoint) {
-        setPendingMoveTo(snapped)
-        setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
+        const lockedSnapped = applyLock(snapped, pendingMove.fromPoint)
+        setPendingMoveTo(lockedSnapped)
+        setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
         setCopyCountDraft('1')
         if (pendingMove.mode === 'move') {
-          completePendingMove(snapped)
+          completePendingMove(lockedSnapped)
           setPendingMovePreviewPointRef(null)
         }
       }
