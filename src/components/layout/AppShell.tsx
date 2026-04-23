@@ -235,8 +235,8 @@ export function AppShell({
                 <button
                   className={`toolbar-orientation-btn ${toolbarOrientation === 'left' ? 'toolbar-orientation-btn--active' : ''}`}
                   type="button"
-                  title={toolbarOrientationForced ? 'Left toolbar is disabled below 1100px wide' : 'Use left toolbar'}
-                  aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 1100px wide' : 'Use left toolbar'}
+                  title={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
+                  aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
                   onClick={() => onToolbarOrientationChange('left')}
                   disabled={toolbarOrientationForced}
                 >
