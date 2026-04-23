@@ -122,6 +122,12 @@ function App() {
     deleteClamp,
     startMoveFeature,
     startCopyFeature,
+    startResizeFeature,
+    startRotateFeature,
+    startOffsetSelectedFeatures,
+    startJoinSelectedFeatures,
+    startCutSelectedFeatures,
+    beginConstraint,
     startMoveTab,
     startCopyTab,
     startMoveClamp,
@@ -613,6 +619,44 @@ function App() {
     closeTreeContextMenu()
   }
 
+  function handleResizeFeature(featureId: string) {
+    startResizeFeature(featureId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleRotateFeature(featureId: string) {
+    startRotateFeature(featureId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleOffsetFeatures() {
+    startOffsetSelectedFeatures()
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleJoinFeatures() {
+    startJoinSelectedFeatures()
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleCutFeatures() {
+    startCutSelectedFeatures()
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
+  function handleConstraint(featureId: string) {
+    selectFeature(featureId)
+    enterSketchEdit(featureId)
+    beginConstraint(featureId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
   function handleDeleteClamp(clampId: string) {
     deleteClamp(clampId)
     closeTreeContextMenu()
@@ -650,7 +694,7 @@ function App() {
   const menuPosition = treeContextMenu
     ? {
         left: Math.min(treeContextMenu.x, window.innerWidth - 188),
-        top: Math.min(treeContextMenu.y, window.innerHeight - 180),
+        top: Math.min(treeContextMenu.y, window.innerHeight - 300),
       }
     : null
 
@@ -811,6 +855,15 @@ function App() {
               >
                 Edit Sketch
               </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleConstraint(menuFeature.id)}
+                disabled={menuHasMultipleSelection || menuHasLockedSelection}
+              >
+                Add Constraint
+              </button>
+              <div className="feature-context-menu__separator" />
               <button className="feature-context-menu__item" type="button" onClick={() => handleCopyFeature(menuFeature.id)}>
                 {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
               </button>
@@ -819,10 +872,53 @@ function App() {
                 type="button"
                 onClick={() => handleMoveFeature(menuFeature.id)}
                 disabled={menuHasLockedSelection}
-                title={menuHasLockedSelection ? 'Locked features cannot be moved as part of a selection' : undefined}
+                title={menuHasLockedSelection ? 'Locked features cannot be moved' : undefined}
               >
                 {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
               </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleResizeFeature(menuFeature.id)}
+                disabled={menuHasLockedSelection}
+              >
+                Resize
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleRotateFeature(menuFeature.id)}
+                disabled={menuHasLockedSelection}
+              >
+                Rotate
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleOffsetFeatures()}
+                disabled={menuHasLockedSelection}
+              >
+                Offset
+              </button>
+              <div className="feature-context-menu__separator" />
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleJoinFeatures()}
+                disabled={!menuHasMultipleSelection || menuHasLockedSelection}
+                title={!menuHasMultipleSelection ? 'Select two or more features to join' : undefined}
+              >
+                Join
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleCutFeatures()}
+                disabled={menuHasLockedSelection}
+              >
+                Cut
+              </button>
+              <div className="feature-context-menu__separator" />
               <button
                 className="feature-context-menu__item feature-context-menu__item--danger"
                 type="button"

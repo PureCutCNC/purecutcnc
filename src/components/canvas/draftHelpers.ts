@@ -162,6 +162,7 @@ export function drawCompositeDraft(
   vt: ViewTransform,
   units: 'mm' | 'inch',
   previewHighlighted = false,
+  strokeColor = '#efbc7a',
 ): void {
   if (!pendingAdd.start) {
     if (previewPoint) {
@@ -202,7 +203,7 @@ export function drawCompositeDraft(
     )
   } else {
     traceDraftSegments(ctx, pendingAdd.start, previewSegments, vt)
-    ctx.strokeStyle = '#efbc7a'
+    ctx.strokeStyle = strokeColor
     ctx.lineWidth = 2
     ctx.setLineDash([8, 5])
     ctx.stroke()

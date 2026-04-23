@@ -1,11 +1,11 @@
 {
   "version": "1.0",
   "meta": {
-    "name": "Icons",
+    "name": "icons",
     "created": "2026-04-20T18:28:41.075Z",
-    "modified": "2026-04-20T18:28:41.075Z",
+    "modified": "2026-04-23T02:08:17.744Z",
     "units": "mm",
-    "showFeatureInfo": true,
+    "showFeatureInfo": false,
     "maxTravelZ": 50,
     "operationClearanceZ": 5,
     "clampClearanceXY": 2,
@@ -71,7 +71,7 @@
   "origin": {
     "name": "Origin",
     "x": 0,
-    "y": 0,
+    "y": 24,
     "z": 1,
     "visible": true
   },
@@ -103,8 +103,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_1",
@@ -212,11 +213,12 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_new_1",
+      "id": "f0010",
       "name": "new_shape_1",
       "kind": "composite",
       "folderId": "folder_new",
@@ -240,8 +242,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_1_1",
@@ -283,8 +286,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_2",
@@ -311,8 +315,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_2_1",
@@ -347,8 +352,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_3",
@@ -375,8 +381,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_new_3_1",
@@ -411,8 +418,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_open",
@@ -440,7 +448,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_open_1",
@@ -571,7 +580,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_import",
@@ -599,7 +609,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_import_1",
@@ -679,10 +690,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_import_1",
+      "id": "f0011",
       "name": "import_shape_1",
       "kind": "composite",
       "folderId": "folder_import",
@@ -707,7 +719,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_import_1_1",
@@ -750,7 +763,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_import_2",
@@ -778,7 +792,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_import_2_1",
@@ -814,7 +829,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_save",
@@ -842,7 +858,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_save_1",
@@ -951,10 +968,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_save_1",
+      "id": "f0012",
       "name": "save_shape_1",
       "kind": "composite",
       "folderId": "folder_save",
@@ -979,7 +997,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_save_1_1",
@@ -1029,7 +1048,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_save_2",
@@ -1057,12 +1077,13 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_save_2_1",
       "name": "save_shape_2_1",
-      "kind": "composite",
+      "kind": "polygon",
       "folderId": "folder_save",
       "sketch": {
         "profile": {
@@ -1084,6 +1105,13 @@
                 "x": 15,
                 "y": 8
               }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 3
+              }
             }
           ],
           "closed": false
@@ -1100,7 +1128,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_undo",
@@ -1128,7 +1157,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_undo_1",
@@ -1171,10 +1201,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_undo_1",
+      "id": "f0013",
       "name": "undo_shape_1",
       "kind": "composite",
       "folderId": "folder_undo",
@@ -1199,7 +1230,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_undo_1_1",
@@ -1265,7 +1297,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_redo",
@@ -1293,7 +1326,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_redo_1",
@@ -1336,10 +1370,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_redo_1",
+      "id": "f0014",
       "name": "redo_shape_1",
       "kind": "composite",
       "folderId": "folder_redo",
@@ -1364,7 +1399,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_redo_1_1",
@@ -1430,7 +1466,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit",
@@ -1458,7 +1495,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_1",
@@ -1501,10 +1539,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_fit_1",
+      "id": "f0015",
       "name": "fit_shape_1",
       "kind": "composite",
       "folderId": "folder_fit",
@@ -1529,7 +1568,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_1_1",
@@ -1572,7 +1612,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_2",
@@ -1600,7 +1641,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_2_1",
@@ -1643,7 +1685,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_3",
@@ -1671,7 +1714,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit_3_1",
@@ -1714,7 +1758,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window",
@@ -1742,7 +1787,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_1",
@@ -1785,10 +1831,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_fit-window_1",
+      "id": "f0016",
       "name": "fit-window_shape_1",
       "kind": "composite",
       "folderId": "folder_fit-window",
@@ -1813,7 +1860,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_1_1",
@@ -1856,7 +1904,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_2",
@@ -1884,7 +1933,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_2_1",
@@ -1927,7 +1977,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_3",
@@ -1955,7 +2006,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_3_1",
@@ -1998,7 +2050,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fit-window_4",
@@ -2026,151 +2079,467 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_fit-window_4_1",
-      "name": "fit-window_shape_4_1",
-      "kind": "composite",
+      "id": "f0081",
+      "name": "Circle 510 Join",
+      "kind": "polygon",
       "folderId": "folder_fit-window",
       "sketch": {
         "profile": {
           "start": {
-            "x": 7,
-            "y": 12.041666666666666
+            "x": 12.5715,
+            "y": 6.1971
           },
           "segments": [
             {
-              "type": "bezier",
-              "control1": {
-                "x": 6.999999999999998,
-                "y": 10.704533530392295
-              },
-              "control2": {
-                "x": 7.531174070175646,
-                "y": 9.422165886193326
-              },
+              "type": "line",
               "to": {
-                "x": 8.476669978184487,
-                "y": 8.476669978184486
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 9.42216588619333,
-                "y": 7.531174070175645
-              },
-              "control2": {
-                "x": 10.704533530392299,
-                "y": 6.999999999999997
-              },
-              "to": {
-                "x": 12.041666666666666,
-                "y": 6.999999999999998
+                "x": 13.1376,
+                "y": 6.2811
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 13.083333333333334,
-                "y": 7
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 15.246448603503943,
-                "y": 6.999999999999998
-              },
-              "control2": {
-                "x": 17,
-                "y": 8.753551396496057
-              },
-              "to": {
-                "x": 17,
-                "y": 10.916666666666664
+                "x": 13.6926,
+                "y": 6.4201
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 17,
-                "y": 12.833333333333334
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 17,
-                "y": 13.938402040998103
-              },
-              "control2": {
-                "x": 16.561013165144093,
-                "y": 14.998210011410473
-              },
-              "to": {
-                "x": 15.77961158827728,
-                "y": 15.779611588277284
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 14.99821001141047,
-                "y": 16.561013165144093
-              },
-              "control2": {
-                "x": 13.938402040998099,
-                "y": 17
-              },
-              "to": {
-                "x": 12.833333333333332,
-                "y": 17
+                "x": 14.2314,
+                "y": 6.6129
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 11.041666666666666,
-                "y": 17
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 9.969750020231842,
-                "y": 17
-              },
-              "control2": {
-                "x": 8.941736288931844,
-                "y": 16.574182770189772
-              },
-              "to": {
-                "x": 8.183776759371037,
-                "y": 15.816223240628965
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 7.425817229810231,
-                "y": 15.058263711068157
-              },
-              "control2": {
-                "x": 7,
-                "y": 14.030249979768158
-              },
-              "to": {
-                "x": 7,
-                "y": 12.958333333333334
+                "x": 14.7487,
+                "y": 6.8576
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 7,
-                "y": 12.041666666666666
+                "x": 15.2395,
+                "y": 7.1517
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15.6991,
+                "y": 7.4926
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16.1231,
+                "y": 7.8769
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16.5074,
+                "y": 8.3009
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16.8483,
+                "y": 8.7605
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.1424,
+                "y": 9.2513
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.3871,
+                "y": 9.7686
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.5799,
+                "y": 10.3074
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.7189,
+                "y": 10.8624
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.8029,
+                "y": 11.4285
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.831,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.8029,
+                "y": 12.5715
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.7189,
+                "y": 13.1376
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.5799,
+                "y": 13.6926
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.3871,
+                "y": 14.2314
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.1424,
+                "y": 14.7487
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16.8483,
+                "y": 15.2395
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16.6602,
+                "y": 15.4932
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18.8959,
+                "y": 17.8691
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.4394,
+                "y": 19.2397
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15.2073,
+                "y": 16.8676
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 14.7487,
+                "y": 17.1424
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 14.2314,
+                "y": 17.3871
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13.6926,
+                "y": 17.5799
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13.1376,
+                "y": 17.7189
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 12.5715,
+                "y": 17.8029
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 17.831
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 11.4285,
+                "y": 17.8029
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 10.8624,
+                "y": 17.7189
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 10.3074,
+                "y": 17.5799
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9.7686,
+                "y": 17.3871
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9.2513,
+                "y": 17.1424
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 8.7605,
+                "y": 16.8483
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 8.3009,
+                "y": 16.5074
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.8769,
+                "y": 16.1231
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.4926,
+                "y": 15.6991
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.1517,
+                "y": 15.2395
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.8576,
+                "y": 14.7487
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.6129,
+                "y": 14.2314
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.4201,
+                "y": 13.6926
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.2811,
+                "y": 13.1376
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.1971,
+                "y": 12.5715
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.169,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.1971,
+                "y": 11.4285
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.2811,
+                "y": 10.8624
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.4201,
+                "y": 10.3074
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.6129,
+                "y": 9.7686
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.8576,
+                "y": 9.2513
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.1517,
+                "y": 8.7605
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.4926,
+                "y": 8.3009
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.8769,
+                "y": 7.8769
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 8.3009,
+                "y": 7.4926
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 8.7605,
+                "y": 7.1517
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9.2513,
+                "y": 6.8576
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9.7686,
+                "y": 6.6129
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 10.3074,
+                "y": 6.4201
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 10.8624,
+                "y": 6.2811
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 11.4285,
+                "y": 6.1971
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 6.169
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 12.5715,
+                "y": 6.1971
               }
             }
           ],
@@ -2180,15 +2549,16 @@
           "x": 0,
           "y": 0
         },
-        "orientationAngle": 0,
+        "orientationAngle": 90,
         "dimensions": [],
         "constraints": []
       },
-      "operation": "add",
-      "z_top": 0,
-      "z_bottom": -1,
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_select",
@@ -2216,7 +2586,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_select_1",
@@ -2273,10 +2644,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_select_1",
+      "id": "f0017",
       "name": "select_shape_1",
       "kind": "composite",
       "folderId": "folder_select",
@@ -2301,7 +2673,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_select_1_1",
@@ -2337,7 +2710,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_rect",
@@ -2365,7 +2739,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_rect_1",
@@ -2422,7 +2797,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_circle",
@@ -2450,7 +2826,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_circle_1",
@@ -2539,7 +2916,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_polygon",
@@ -2567,7 +2945,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_polygon_1",
@@ -2631,7 +3010,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_spline",
@@ -2659,7 +3039,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_spline_1",
@@ -2718,10 +3099,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_spline_1",
+      "id": "f0018",
       "name": "spline_shape_1",
       "kind": "composite",
       "folderId": "folder_spline",
@@ -2746,7 +3128,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_spline_1_1",
@@ -2835,7 +3218,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_spline_2",
@@ -2863,7 +3247,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_spline_2_1",
@@ -2952,7 +3337,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_composite",
@@ -2980,7 +3366,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_composite_1",
@@ -3097,10 +3484,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_composite_1",
+      "id": "f0019",
       "name": "composite_shape_1",
       "kind": "composite",
       "folderId": "folder_composite",
@@ -3125,7 +3513,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_composite_1_1",
@@ -3221,7 +3610,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_text",
@@ -3249,7 +3639,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_text_1",
@@ -3285,10 +3676,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_text_1",
+      "id": "f0020",
       "name": "text_shape_1",
       "kind": "composite",
       "folderId": "folder_text",
@@ -3313,7 +3705,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_text_1_1",
@@ -3349,7 +3742,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_text_2",
@@ -3377,7 +3771,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_text_2_1",
@@ -3413,7 +3808,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket",
@@ -3441,7 +3837,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_1",
@@ -3498,10 +3895,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_pocket_1",
+      "id": "f0021",
       "name": "pocket_shape_1",
       "kind": "composite",
       "folderId": "folder_pocket",
@@ -3526,7 +3924,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_1_1",
@@ -3583,7 +3982,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_2",
@@ -3611,7 +4011,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_2_1",
@@ -3647,7 +4048,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_3",
@@ -3675,7 +4077,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pocket_3_1",
@@ -3711,7 +4114,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in",
@@ -3739,7 +4143,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_1",
@@ -3796,10 +4201,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_edge-in_1",
+      "id": "f0022",
       "name": "edge-in_shape_1",
       "kind": "composite",
       "folderId": "folder_edge-in",
@@ -3824,7 +4230,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_1_1",
@@ -3881,7 +4288,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_2",
@@ -3909,7 +4317,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_2_1",
@@ -3952,7 +4361,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_3",
@@ -3980,7 +4390,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-in_3_1",
@@ -4023,7 +4434,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out",
@@ -4051,7 +4463,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_1",
@@ -4108,10 +4521,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_edge-out_1",
+      "id": "f0023",
       "name": "edge-out_shape_1",
       "kind": "composite",
       "folderId": "folder_edge-out",
@@ -4136,7 +4550,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_1_1",
@@ -4193,7 +4608,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_2",
@@ -4221,7 +4637,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_2_1",
@@ -4264,7 +4681,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_3",
@@ -4292,7 +4710,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_edge-out_3_1",
@@ -4335,7 +4754,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_surface",
@@ -4363,7 +4783,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_surface_1",
@@ -4437,10 +4858,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_surface_1",
+      "id": "f0024",
       "name": "surface_shape_1",
       "kind": "composite",
       "folderId": "folder_surface",
@@ -4465,7 +4887,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_surface_1_1",
@@ -4539,7 +4962,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_surface_2",
@@ -4567,7 +4991,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_surface_2_1",
@@ -4641,7 +5066,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_project",
@@ -4669,7 +5095,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_project_1",
@@ -4763,10 +5190,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_project_1",
+      "id": "f0025",
       "name": "project_shape_1",
       "kind": "composite",
       "folderId": "folder_project",
@@ -4791,7 +5219,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_project_1_1",
@@ -4841,7 +5270,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid",
@@ -4869,7 +5299,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_1",
@@ -4926,10 +5357,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_grid_1",
+      "id": "f0026",
       "name": "grid_shape_1",
       "kind": "composite",
       "folderId": "folder_grid",
@@ -4954,7 +5386,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_1_1",
@@ -4990,7 +5423,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_2",
@@ -5018,7 +5452,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_2_1",
@@ -5054,7 +5489,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_3",
@@ -5082,7 +5518,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_3_1",
@@ -5118,7 +5555,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_4",
@@ -5146,7 +5584,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_grid_4_1",
@@ -5182,7 +5621,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_stock",
@@ -5210,7 +5650,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_stock_1",
@@ -5371,10 +5812,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_stock_1",
+      "id": "f0027",
       "name": "stock_shape_1",
       "kind": "composite",
       "folderId": "folder_stock",
@@ -5399,7 +5841,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_stock_1_1",
@@ -5442,7 +5885,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_stock_2",
@@ -5470,7 +5914,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_stock_2_1",
@@ -5506,7 +5951,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_folder",
@@ -5534,7 +5980,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_folder_1",
@@ -5695,7 +6142,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tab",
@@ -5723,7 +6171,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tab_1",
@@ -5810,10 +6259,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_tab_1",
+      "id": "f0028",
       "name": "tab_shape_1",
       "kind": "composite",
       "folderId": "folder_tab",
@@ -5838,7 +6288,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tab_1_1",
@@ -5888,7 +6339,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_clamp",
@@ -5916,7 +6368,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_clamp_1",
@@ -5996,10 +6449,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_clamp_1",
+      "id": "f0029",
       "name": "clamp_shape_1",
       "kind": "composite",
       "folderId": "folder_clamp",
@@ -6024,7 +6478,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_clamp_1_1",
@@ -6111,7 +6566,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_clamp_2",
@@ -6139,7 +6595,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_clamp_2_1",
@@ -6228,7 +6685,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill",
@@ -6256,7 +6714,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_1",
@@ -6313,10 +6772,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_tool-endmill_1",
+      "id": "f0030",
       "name": "tool-endmill_shape_1",
       "kind": "composite",
       "folderId": "folder_tool-endmill",
@@ -6341,7 +6801,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_1_1",
@@ -6384,7 +6845,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_2",
@@ -6412,7 +6874,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_2_1",
@@ -6448,7 +6911,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_3",
@@ -6476,7 +6940,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_3_1",
@@ -6512,7 +6977,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_4",
@@ -6540,7 +7006,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-endmill_4_1",
@@ -6576,7 +7043,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill",
@@ -6604,7 +7072,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_1",
@@ -6661,10 +7130,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_tool-ballmill_1",
+      "id": "f0031",
       "name": "tool-ballmill_shape_1",
       "kind": "composite",
       "folderId": "folder_tool-ballmill",
@@ -6689,7 +7159,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_1_1",
@@ -6748,7 +7219,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_2",
@@ -6776,7 +7248,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_2_1",
@@ -6812,7 +7285,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_3",
@@ -6840,7 +7314,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_3_1",
@@ -6876,7 +7351,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_4",
@@ -6904,7 +7380,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_tool-ballmill_4_1",
@@ -6940,7 +7417,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap",
@@ -6967,8 +7445,9 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
-      "locked": false
+      "visible": true,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap_1",
@@ -6978,110 +7457,168 @@
       "sketch": {
         "profile": {
           "start": {
-            "x": 5,
-            "y": 5
+            "x": 18,
+            "y": 3.9999999999999996
           },
           "segments": [
             {
               "type": "line",
               "to": {
-                "x": 9,
-                "y": 5
+                "x": 18,
+                "y": 8
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 9,
-                "y": 12
+                "x": 11,
+                "y": 8
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 9,
-                "y": 13.65685424949238
+                "x": 9.34314575050762,
+                "y": 8
               },
               "control2": {
-                "x": 10.34314575050762,
-                "y": 15
+                "x": 8,
+                "y": 9.34314575050762
               },
               "to": {
-                "x": 12,
-                "y": 15
+                "x": 8,
+                "y": 11
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 13.65685424949238,
-                "y": 15
+                "x": 8,
+                "y": 12.65685424949238
               },
               "control2": {
-                "x": 15,
-                "y": 13.65685424949238
+                "x": 9.34314575050762,
+                "y": 14
               },
               "to": {
-                "x": 15,
-                "y": 12
+                "x": 11,
+                "y": 14
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 15,
-                "y": 5
+                "x": 18,
+                "y": 14
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 19,
-                "y": 5
+                "x": 18,
+                "y": 18
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 19,
-                "y": 12
+                "x": 11,
+                "y": 18
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 19,
-                "y": 15.865993248815553
+                "x": 7.134006751184447,
+                "y": 18
               },
               "control2": {
-                "x": 15.865993248815553,
-                "y": 19
+                "x": 4,
+                "y": 14.865993248815553
               },
               "to": {
-                "x": 12,
-                "y": 19
+                "x": 4,
+                "y": 11
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 8.134006751184447,
-                "y": 19
+                "x": 4,
+                "y": 7.134006751184448
               },
               "control2": {
-                "x": 5.000000000000001,
-                "y": 15.865993248815553
+                "x": 7.134006751184447,
+                "y": 4.000000000000001
               },
               "to": {
-                "x": 5,
-                "y": 12
+                "x": 11,
+                "y": 4
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 5,
-                "y": 5
+                "x": 18,
+                "y": 3.9999999999999996
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 23,
+          "y": -1.0000000000000007
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": true,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0094",
+      "name": "Rect 522",
+      "kind": "rect",
+      "folderId": "folder_snap",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 13,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 4
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 8
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 8
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 4
               }
             }
           ],
@@ -7091,15 +7628,16 @@
           "x": 0,
           "y": 0
         },
-        "orientationAngle": 0,
+        "orientationAngle": 90,
         "dimensions": [],
         "constraints": []
       },
-      "operation": "add",
-      "z_top": 0,
-      "z_bottom": -1,
-      "visible": false,
-      "locked": false
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": true,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid",
@@ -7127,7 +7665,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_1",
@@ -7184,10 +7723,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-grid_1",
+      "id": "f0032",
       "name": "snap-grid_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-grid",
@@ -7212,7 +7752,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_1_1",
@@ -7269,7 +7810,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_2",
@@ -7297,7 +7839,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_2_1",
@@ -7354,7 +7897,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_3",
@@ -7382,7 +7926,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_3_1",
@@ -7439,7 +7984,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_4",
@@ -7467,7 +8013,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_4_1",
@@ -7524,7 +8071,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_5",
@@ -7552,7 +8100,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_5_1",
@@ -7609,7 +8158,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_6",
@@ -7637,7 +8187,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_6_1",
@@ -7694,7 +8245,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_7",
@@ -7722,7 +8274,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_7_1",
@@ -7779,7 +8332,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_8",
@@ -7807,7 +8361,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-grid_8_1",
@@ -7864,7 +8419,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-point",
@@ -7892,7 +8448,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-point_1",
@@ -7928,10 +8485,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-point_1",
+      "id": "f0033",
       "name": "snap-point_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-point",
@@ -7956,7 +8514,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-point_1_1",
@@ -8013,7 +8572,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-line",
@@ -8041,7 +8601,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-line_1",
@@ -8077,10 +8638,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-line_1",
+      "id": "f0034",
       "name": "snap-line_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-line",
@@ -8105,7 +8667,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-line_1_1",
@@ -8162,7 +8725,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-midpoint",
@@ -8190,7 +8754,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-midpoint_1",
@@ -8226,10 +8791,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-midpoint_1",
+      "id": "f0035",
       "name": "snap-midpoint_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-midpoint",
@@ -8254,7 +8820,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-midpoint_1_1",
@@ -8304,7 +8871,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-center",
@@ -8332,7 +8900,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-center_1",
@@ -8421,10 +8990,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-center_1",
+      "id": "f0036",
       "name": "snap-center_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-center",
@@ -8449,7 +9019,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-center_1_1",
@@ -8485,7 +9056,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-center_2",
@@ -8513,7 +9085,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-center_2_1",
@@ -8549,7 +9122,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-perpendicular",
@@ -8577,7 +9151,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-perpendicular_1",
@@ -8613,10 +9188,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-perpendicular_1",
+      "id": "f0037",
       "name": "snap-perpendicular_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-perpendicular",
@@ -8641,7 +9217,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-perpendicular_1_1",
@@ -8677,7 +9254,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-perpendicular_2",
@@ -8705,7 +9283,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-perpendicular_2_1",
@@ -8748,7 +9327,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-all",
@@ -8776,7 +9356,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-all_1",
@@ -8865,10 +9446,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-all_1",
+      "id": "f0038",
       "name": "snap-all_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-all",
@@ -8893,7 +9475,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-all_1_1",
@@ -8936,7 +9519,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-none",
@@ -8964,7 +9548,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-none_1",
@@ -9053,10 +9638,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_snap-none_1",
+      "id": "f0039",
       "name": "snap-none_shape_1",
       "kind": "composite",
       "folderId": "folder_snap-none",
@@ -9081,7 +9667,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-none_1_1",
@@ -9117,7 +9704,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-none_2",
@@ -9145,7 +9733,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_snap-none_2_1",
@@ -9181,7 +9770,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye",
@@ -9209,7 +9799,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye_1",
@@ -9298,10 +9889,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_eye_1",
+      "id": "f0040",
       "name": "eye_shape_1",
       "kind": "composite",
       "folderId": "folder_eye",
@@ -9326,7 +9918,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye_1_1",
@@ -9415,7 +10008,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off",
@@ -9443,7 +10037,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_1",
@@ -9517,10 +10112,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_eye-off_1",
+      "id": "f0041",
       "name": "eye-off_shape_1",
       "kind": "composite",
       "folderId": "folder_eye-off",
@@ -9545,7 +10141,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_1_1",
@@ -9619,7 +10216,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_2",
@@ -9647,7 +10245,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_2_1",
@@ -9721,7 +10320,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_3",
@@ -9749,7 +10349,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_eye-off_3_1",
@@ -9785,7 +10386,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_lock",
@@ -9813,7 +10415,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_lock_1",
@@ -9870,10 +10473,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_lock_1",
+      "id": "f0042",
       "name": "lock_shape_1",
       "kind": "composite",
       "folderId": "folder_lock",
@@ -9898,7 +10502,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_lock_1_1",
@@ -9971,7 +10576,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_trash",
@@ -9999,7 +10605,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_trash_1",
@@ -10042,10 +10649,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_trash_1",
+      "id": "f0043",
       "name": "trash_shape_1",
       "kind": "composite",
       "folderId": "folder_trash",
@@ -10070,7 +10678,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_trash_1_1",
@@ -10150,7 +10759,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_trash_2",
@@ -10178,7 +10788,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_trash_2_1",
@@ -10258,7 +10869,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_copy",
@@ -10286,7 +10898,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_copy_1",
@@ -10343,10 +10956,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_copy_1",
+      "id": "f0044",
       "name": "copy_shape_1",
       "kind": "composite",
       "folderId": "folder_copy",
@@ -10371,7 +10985,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_copy_1_1",
@@ -10473,7 +11088,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move",
@@ -10501,7 +11117,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_1",
@@ -10537,10 +11154,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_move_1",
+      "id": "f0045",
       "name": "move_shape_1",
       "kind": "composite",
       "folderId": "folder_move",
@@ -10565,7 +11183,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_1_1",
@@ -10601,7 +11220,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_2",
@@ -10629,7 +11249,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_2_1",
@@ -10665,7 +11286,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_3",
@@ -10693,7 +11315,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_3_1",
@@ -10729,7 +11352,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_4",
@@ -10757,7 +11381,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_4_1",
@@ -10793,7 +11418,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_5",
@@ -10821,7 +11447,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_5_1",
@@ -10857,7 +11484,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_6",
@@ -10885,7 +11513,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_6_1",
@@ -10921,7 +11550,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_7",
@@ -10949,7 +11579,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_7_1",
@@ -10985,7 +11616,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_8",
@@ -11013,7 +11645,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_8_1",
@@ -11049,7 +11682,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_9",
@@ -11077,7 +11711,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_move_9_1",
@@ -11113,7 +11748,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize",
@@ -11141,7 +11777,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_1",
@@ -11177,10 +11814,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_resize_1",
+      "id": "f0046",
       "name": "resize_shape_1",
       "kind": "composite",
       "folderId": "folder_resize",
@@ -11205,7 +11843,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_1_1",
@@ -11248,7 +11887,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_2",
@@ -11276,7 +11916,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_2_1",
@@ -11319,7 +11960,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_3",
@@ -11347,7 +11989,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_3_1",
@@ -11404,7 +12047,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_4",
@@ -11432,7 +12076,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_resize_4_1",
@@ -11489,7 +12134,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_rotate",
@@ -11517,73 +12163,74 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_rotate_1",
       "name": "rotate_shape_0_1",
-      "kind": "composite",
+      "kind": "spline",
       "folderId": "folder_rotate",
       "sketch": {
         "profile": {
           "start": {
-            "x": 12,
-            "y": 4
+            "x": 14.173842333362579,
+            "y": 19.263908769488772
           },
           "segments": [
             {
               "type": "bezier",
               "control1": {
-                "x": 16.418277998646346,
-                "y": 4
+                "x": 9.913584287088032,
+                "y": 20.434968909906566
               },
               "control2": {
-                "x": 20,
-                "y": 7.581722001353653
+                "x": 5.510630952873148,
+                "y": 17.930679204882864
               },
               "to": {
-                "x": 20,
-                "y": 12
+                "x": 4.339570812455356,
+                "y": 13.670421158608319
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 20,
-                "y": 16.418277998646346
+                "x": 3.1685106720375624,
+                "y": 9.410163112333773
               },
               "control2": {
-                "x": 16.418277998646346,
-                "y": 20
+                "x": 5.6728003770612645,
+                "y": 5.007209778118888
               },
               "to": {
-                "x": 12,
-                "y": 20
+                "x": 9.933058423335812,
+                "y": 3.836149637701096
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 7.581722001353653,
-                "y": 20
+                "x": 14.193316469610359,
+                "y": 2.6650894972833026
               },
               "control2": {
-                "x": 4.000000000000001,
-                "y": 16.41827799864635
+                "x": 18.596269803825237,
+                "y": 5.1693792023070015
               },
               "to": {
-                "x": 4,
-                "y": 12.000000000000002
+                "x": 19.767329944243034,
+                "y": 9.42963724858155
               }
             }
           ],
           "closed": false
         },
         "origin": {
-          "x": 0,
-          "y": 0
+          "x": 26.804857659710027,
+          "y": 19.94026061991562
         },
-        "orientationAngle": 0,
+        "orientationAngle": 164.630135928976,
         "dimensions": [],
         "constraints": []
       },
@@ -11591,10 +12238,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_rotate_1",
+      "id": "f0047",
       "name": "rotate_shape_1",
       "kind": "composite",
       "folderId": "folder_rotate",
@@ -11619,42 +12267,43 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_rotate_1_1",
       "name": "rotate_shape_1_1",
-      "kind": "composite",
+      "kind": "polygon",
       "folderId": "folder_rotate",
       "sketch": {
         "profile": {
           "start": {
-            "x": 1,
-            "y": 15
+            "x": 21.864887798323206,
+            "y": 5.741785428241343
           },
           "segments": [
             {
               "type": "line",
               "to": {
-                "x": 4,
-                "y": 12
+                "x": 19.767329944243034,
+                "y": 9.429637248581551
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 7,
-                "y": 15
+                "x": 16.079478123902827,
+                "y": 7.332079394501381
               }
             }
           ],
           "closed": false
         },
         "origin": {
-          "x": 0,
-          "y": 0
+          "x": 26.804857659710027,
+          "y": 19.94026061991562
         },
-        "orientationAngle": 0,
+        "orientationAngle": 164.630135928976,
         "dimensions": [],
         "constraints": []
       },
@@ -11662,7 +12311,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh",
@@ -11690,7 +12340,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_1",
@@ -11749,10 +12400,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_refresh_1",
+      "id": "f0048",
       "name": "refresh_shape_1",
       "kind": "composite",
       "folderId": "folder_refresh",
@@ -11777,7 +12429,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_1_1",
@@ -11820,7 +12473,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_2",
@@ -11848,7 +12502,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_2_1",
@@ -11907,7 +12562,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_3",
@@ -11935,7 +12591,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_refresh_3_1",
@@ -11978,7 +12635,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add",
@@ -12006,7 +12664,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_1",
@@ -12042,10 +12701,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_point-add_1",
+      "id": "f0049",
       "name": "point-add_shape_1",
       "kind": "composite",
       "folderId": "folder_point-add",
@@ -12070,7 +12730,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_1_1",
@@ -12159,7 +12820,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_2",
@@ -12187,7 +12849,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_2_1",
@@ -12223,7 +12886,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_3",
@@ -12251,7 +12915,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-add_3_1",
@@ -12287,7 +12952,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete",
@@ -12315,7 +12981,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_1",
@@ -12351,10 +13018,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_point-delete_1",
+      "id": "f0050",
       "name": "point-delete_shape_1",
       "kind": "composite",
       "folderId": "folder_point-delete",
@@ -12379,7 +13047,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_1_1",
@@ -12468,7 +13137,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_2",
@@ -12496,7 +13166,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_2_1",
@@ -12532,7 +13203,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_3",
@@ -12560,7 +13232,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_point-delete_3_1",
@@ -12596,7 +13269,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_merge",
@@ -12624,7 +13298,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_merge_1",
@@ -12681,10 +13356,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_merge_1",
+      "id": "f0051",
       "name": "merge_shape_1",
       "kind": "composite",
       "folderId": "folder_merge",
@@ -12709,7 +13385,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_merge_1_1",
@@ -12766,7 +13443,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_merge_2",
@@ -12794,7 +13472,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_merge_2_1",
@@ -12830,7 +13509,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut",
@@ -12858,7 +13538,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_1",
@@ -12954,10 +13635,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_cut_1",
+      "id": "f0052",
       "name": "cut_shape_1",
       "kind": "composite",
       "folderId": "folder_cut",
@@ -12982,7 +13664,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_1_1",
@@ -13071,7 +13754,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_2",
@@ -13099,7 +13783,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_2_1",
@@ -13135,7 +13820,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_3",
@@ -13163,7 +13849,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_cut_3_1",
@@ -13199,7 +13886,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset",
@@ -13227,7 +13915,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset_1",
@@ -13284,10 +13973,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_offset_1",
+      "id": "f0053",
       "name": "offset_shape_1",
       "kind": "composite",
       "folderId": "folder_offset",
@@ -13312,7 +14002,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset_1_1",
@@ -13323,36 +14014,36 @@
         "profile": {
           "start": {
             "x": 9,
-            "y": 19
+            "y": 18.375796178343947
           },
           "segments": [
             {
               "type": "line",
               "to": {
                 "x": 17,
-                "y": 19
+                "y": 18.375796178343947
               }
             },
             {
               "type": "bezier",
               "control1": {
                 "x": 18.104569499661586,
-                "y": 19
+                "y": 18.375796178343947
               },
               "control2": {
                 "x": 19,
-                "y": 18.104569499661586
+                "y": 17.480365678005533
               },
               "to": {
                 "x": 19,
-                "y": 17
+                "y": 16.375796178343947
               }
             },
             {
               "type": "line",
               "to": {
                 "x": 19,
-                "y": 9
+                "y": 8.375796178343949
               }
             }
           ],
@@ -13370,7 +14061,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset_2",
@@ -13398,7 +14090,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset_2_1",
@@ -13408,37 +14101,37 @@
       "sketch": {
         "profile": {
           "start": {
-            "x": 17,
-            "y": 5
+            "x": 15,
+            "y": 1.9426751592356686
           },
           "segments": [
             {
               "type": "line",
               "to": {
-                "x": 19,
-                "y": 5
+                "x": 17,
+                "y": 1.9426751592356686
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 20.104569499661586,
-                "y": 5
+                "x": 18.104569499661586,
+                "y": 1.9426751592356686
               },
               "control2": {
-                "x": 21,
-                "y": 5.8954305003384135
+                "x": 19,
+                "y": 2.838105659574082
               },
               "to": {
-                "x": 21,
-                "y": 7
+                "x": 19,
+                "y": 3.9426751592356686
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 21,
-                "y": 9
+                "x": 19,
+                "y": 5.942675159235669
               }
             }
           ],
@@ -13456,7 +14149,45 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0093",
+      "name": "Polyline 521",
+      "kind": "polygon",
+      "folderId": "folder_offset",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 19,
+            "y": 5.942675159235669
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 8.375796178343949
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in",
@@ -13484,7 +14215,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_1",
@@ -13541,10 +14273,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_offset-in_1",
+      "id": "f0054",
       "name": "offset-in_shape_1",
       "kind": "composite",
       "folderId": "folder_offset-in",
@@ -13569,7 +14302,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_1_1",
@@ -13626,7 +14360,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_2",
@@ -13654,7 +14389,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_2_1",
@@ -13690,7 +14426,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_3",
@@ -13718,7 +14455,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_3_1",
@@ -13754,7 +14492,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_4",
@@ -13782,7 +14521,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_4_1",
@@ -13818,7 +14558,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_5",
@@ -13846,7 +14587,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-in_5_1",
@@ -13882,7 +14624,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out",
@@ -13910,7 +14653,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_1",
@@ -13967,10 +14711,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_offset-out_1",
+      "id": "f0055",
       "name": "offset-out_shape_1",
       "kind": "composite",
       "folderId": "folder_offset-out",
@@ -13995,7 +14740,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_1_1",
@@ -14052,7 +14798,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_2",
@@ -14080,7 +14827,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_2_1",
@@ -14116,7 +14864,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_3",
@@ -14144,7 +14893,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_3_1",
@@ -14180,7 +14930,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_4",
@@ -14208,7 +14959,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_4_1",
@@ -14244,7 +14996,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_5",
@@ -14272,7 +15025,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_offset-out_5_1",
@@ -14308,7 +15062,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fillet",
@@ -14336,7 +15091,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fillet_1",
@@ -14372,10 +15128,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_fillet_1",
+      "id": "f0056",
       "name": "fillet_shape_1",
       "kind": "composite",
       "folderId": "folder_fillet",
@@ -14400,7 +15157,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fillet_1_1",
@@ -14444,7 +15202,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fillet_2",
@@ -14472,7 +15231,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_fillet_2_1",
@@ -14508,7 +15268,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_chevron-down",
@@ -14536,7 +15297,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_chevron-down_1",
@@ -14579,7 +15341,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_plus",
@@ -14607,7 +15370,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_plus_1",
@@ -14643,10 +15407,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_plus_1",
+      "id": "f0057",
       "name": "plus_shape_1",
       "kind": "composite",
       "folderId": "folder_plus",
@@ -14671,7 +15436,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_plus_1_1",
@@ -14707,7 +15473,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_minus",
@@ -14735,7 +15502,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_minus_1",
@@ -14771,7 +15539,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-iso",
@@ -14799,7 +15568,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-iso_1",
@@ -14856,10 +15626,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-iso_1",
+      "id": "f0058",
       "name": "view-iso_shape_1",
       "kind": "composite",
       "folderId": "folder_view-iso",
@@ -14884,7 +15655,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-iso_1_1",
@@ -14941,7 +15713,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-iso_2",
@@ -14969,7 +15742,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-iso_2_1",
@@ -15005,7 +15779,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-top",
@@ -15033,7 +15808,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-top_1",
@@ -15090,10 +15866,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-top_1",
+      "id": "f0059",
       "name": "view-top_shape_1",
       "kind": "composite",
       "folderId": "folder_view-top",
@@ -15118,7 +15895,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-top_1_1",
@@ -15154,7 +15932,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-top_2",
@@ -15182,7 +15961,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-top_2_1",
@@ -15218,7 +15998,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-bottom",
@@ -15246,7 +16027,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-bottom_1",
@@ -15303,10 +16085,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-bottom_1",
+      "id": "f0060",
       "name": "view-bottom_shape_1",
       "kind": "composite",
       "folderId": "folder_view-bottom",
@@ -15331,7 +16114,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-bottom_1_1",
@@ -15367,7 +16151,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-bottom_2",
@@ -15395,7 +16180,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-bottom_2_1",
@@ -15438,7 +16224,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-front",
@@ -15466,7 +16253,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-front_1",
@@ -15523,10 +16311,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-front_1",
+      "id": "f0061",
       "name": "view-front_shape_1",
       "kind": "composite",
       "folderId": "folder_view-front",
@@ -15551,7 +16340,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-front_1_1",
@@ -15608,7 +16398,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-back",
@@ -15636,7 +16427,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-back_1",
@@ -15693,10 +16485,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-back_1",
+      "id": "f0062",
       "name": "view-back_shape_1",
       "kind": "composite",
       "folderId": "folder_view-back",
@@ -15721,7 +16514,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-back_1_1",
@@ -15757,7 +16551,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-back_2",
@@ -15785,7 +16580,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-back_2_1",
@@ -15821,7 +16617,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-right",
@@ -15849,7 +16646,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-right_1",
@@ -15906,10 +16704,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-right_1",
+      "id": "f0063",
       "name": "view-right_shape_1",
       "kind": "composite",
       "folderId": "folder_view-right",
@@ -15934,7 +16733,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-right_1_1",
@@ -15970,7 +16770,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-right_2",
@@ -15998,7 +16799,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-right_2_1",
@@ -16041,7 +16843,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-left",
@@ -16069,7 +16872,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-left_1",
@@ -16126,10 +16930,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_view-left_1",
+      "id": "f0064",
       "name": "view-left_shape_1",
       "kind": "composite",
       "folderId": "folder_view-left",
@@ -16154,7 +16959,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-left_1_1",
@@ -16190,7 +16996,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-left_2",
@@ -16218,7 +17025,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_view-left_2_1",
@@ -16261,7 +17069,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_play",
@@ -16289,7 +17098,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_play_1",
@@ -16339,7 +17149,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pause",
@@ -16367,7 +17178,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pause_1",
@@ -16424,10 +17236,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_pause_1",
+      "id": "f0065",
       "name": "pause_shape_1",
       "kind": "composite",
       "folderId": "folder_pause",
@@ -16452,7 +17265,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_pause_1_1",
@@ -16509,7 +17323,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_export",
@@ -16537,7 +17352,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_export_1",
@@ -16617,10 +17433,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_export_1",
+      "id": "f0066",
       "name": "export_shape_1",
       "kind": "composite",
       "folderId": "folder_export",
@@ -16645,7 +17462,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_export_1_1",
@@ -16688,7 +17506,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_export_2",
@@ -16716,7 +17535,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_export_2_1",
@@ -16752,7 +17572,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align",
@@ -16780,7 +17601,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_1",
@@ -16816,10 +17638,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align_1",
+      "id": "f0067",
       "name": "align_shape_1",
       "kind": "composite",
       "folderId": "folder_align",
@@ -16844,7 +17667,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_1_1",
@@ -16880,7 +17704,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_2",
@@ -16908,7 +17733,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_2_1",
@@ -16944,7 +17770,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_3",
@@ -16972,7 +17799,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align_3_1",
@@ -17008,7 +17836,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-left",
@@ -17036,7 +17865,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-left_1",
@@ -17072,10 +17902,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-left_1",
+      "id": "f0068",
       "name": "align-left_shape_1",
       "kind": "composite",
       "folderId": "folder_align-left",
@@ -17100,7 +17931,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-left_1_1",
@@ -17150,7 +17982,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-left_2",
@@ -17178,7 +18011,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-left_2_1",
@@ -17228,7 +18062,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-horizontal",
@@ -17256,7 +18091,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-horizontal_1",
@@ -17292,10 +18128,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-center-horizontal_1",
+      "id": "f0069",
       "name": "align-center-horizontal_shape_1",
       "kind": "composite",
       "folderId": "folder_align-center-horizontal",
@@ -17320,7 +18157,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-horizontal_1_1",
@@ -17377,7 +18215,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-horizontal_2",
@@ -17405,7 +18244,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-horizontal_2_1",
@@ -17462,7 +18302,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-right",
@@ -17490,7 +18331,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-right_1",
@@ -17526,10 +18368,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-right_1",
+      "id": "f0070",
       "name": "align-right_shape_1",
       "kind": "composite",
       "folderId": "folder_align-right",
@@ -17554,7 +18397,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-right_1_1",
@@ -17604,7 +18448,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-right_2",
@@ -17632,7 +18477,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-right_2_1",
@@ -17682,7 +18528,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-top",
@@ -17710,7 +18557,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-top_1",
@@ -17746,10 +18594,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-top_1",
+      "id": "f0071",
       "name": "align-top_shape_1",
       "kind": "composite",
       "folderId": "folder_align-top",
@@ -17774,7 +18623,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-top_1_1",
@@ -17824,7 +18674,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-top_2",
@@ -17852,7 +18703,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-top_2_1",
@@ -17902,7 +18754,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-vertical",
@@ -17930,7 +18783,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-vertical_1",
@@ -17966,10 +18820,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-center-vertical_1",
+      "id": "f0072",
       "name": "align-center-vertical_shape_1",
       "kind": "composite",
       "folderId": "folder_align-center-vertical",
@@ -17994,7 +18849,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-vertical_1_1",
@@ -18051,7 +18907,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-vertical_2",
@@ -18079,7 +18936,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-center-vertical_2_1",
@@ -18136,7 +18994,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-bottom",
@@ -18164,7 +19023,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-bottom_1",
@@ -18200,10 +19060,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_align-bottom_1",
+      "id": "f0073",
       "name": "align-bottom_shape_1",
       "kind": "composite",
       "folderId": "folder_align-bottom",
@@ -18228,7 +19089,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-bottom_1_1",
@@ -18278,7 +19140,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-bottom_2",
@@ -18306,7 +19169,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_align-bottom_2_1",
@@ -18356,7 +19220,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute",
@@ -18384,7 +19249,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_1",
@@ -18420,10 +19286,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_distribute_1",
+      "id": "f0074",
       "name": "distribute_shape_1",
       "kind": "composite",
       "folderId": "folder_distribute",
@@ -18448,7 +19315,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_1_1",
@@ -18484,7 +19352,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_2",
@@ -18512,7 +19381,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_2_1",
@@ -18548,7 +19418,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_3",
@@ -18576,7 +19447,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_3_1",
@@ -18612,7 +19484,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_4",
@@ -18640,7 +19513,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute_4_1",
@@ -18676,7 +19550,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps",
@@ -18704,7 +19579,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_1",
@@ -18761,10 +19637,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_distribute-horizontal-gaps_1",
+      "id": "f0075",
       "name": "distribute-horizontal-gaps_shape_1",
       "kind": "composite",
       "folderId": "folder_distribute-horizontal-gaps",
@@ -18789,7 +19666,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_1_1",
@@ -18846,7 +19724,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_2",
@@ -18874,7 +19753,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_2_1",
@@ -18931,7 +19811,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_3",
@@ -18959,7 +19840,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_3_1",
@@ -18995,7 +19877,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_4",
@@ -19023,7 +19906,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-gaps_4_1",
@@ -19059,7 +19943,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers",
@@ -19087,7 +19972,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_1",
@@ -19144,10 +20030,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_distribute-horizontal-centers_1",
+      "id": "f0076",
       "name": "distribute-horizontal-centers_shape_1",
       "kind": "composite",
       "folderId": "folder_distribute-horizontal-centers",
@@ -19172,7 +20059,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_1_1",
@@ -19229,7 +20117,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_2",
@@ -19257,7 +20146,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_2_1",
@@ -19314,7 +20204,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_3",
@@ -19342,7 +20233,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_3_1",
@@ -19378,7 +20270,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_4",
@@ -19406,7 +20299,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_4_1",
@@ -19442,7 +20336,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_5",
@@ -19470,7 +20365,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_5_1",
@@ -19506,7 +20402,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_6",
@@ -19534,7 +20431,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_6_1",
@@ -19570,7 +20468,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_7",
@@ -19598,7 +20497,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-horizontal-centers_7_1",
@@ -19634,7 +20534,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps",
@@ -19662,7 +20563,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_1",
@@ -19719,10 +20621,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_distribute-vertical-gaps_1",
+      "id": "f0077",
       "name": "distribute-vertical-gaps_shape_1",
       "kind": "composite",
       "folderId": "folder_distribute-vertical-gaps",
@@ -19747,7 +20650,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_1_1",
@@ -19804,7 +20708,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_2",
@@ -19832,7 +20737,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_2_1",
@@ -19889,7 +20795,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_3",
@@ -19917,7 +20824,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_3_1",
@@ -19953,7 +20861,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_4",
@@ -19981,7 +20890,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-gaps_4_1",
@@ -20017,7 +20927,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers",
@@ -20045,7 +20956,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_1",
@@ -20102,10 +21014,11 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
-      "id": "icon_distribute-vertical-centers_1",
+      "id": "f0078",
       "name": "distribute-vertical-centers_shape_1",
       "kind": "composite",
       "folderId": "folder_distribute-vertical-centers",
@@ -20130,7 +21043,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_1_1",
@@ -20187,7 +21101,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_2",
@@ -20215,7 +21130,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_2_1",
@@ -20272,7 +21188,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_3",
@@ -20300,7 +21217,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_3_1",
@@ -20336,7 +21254,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_4",
@@ -20364,7 +21283,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_4_1",
@@ -20400,7 +21320,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_5",
@@ -20428,7 +21349,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_5_1",
@@ -20464,7 +21386,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_6",
@@ -20492,7 +21415,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_6_1",
@@ -20528,7 +21452,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_7",
@@ -20556,7 +21481,8 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
     },
     {
       "id": "icon_distribute-vertical-centers_7_1",
@@ -20592,14 +21518,455 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
-      "locked": false
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0083",
+      "name": "Polyline 511",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 2
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 2
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0084",
+      "name": "Circle 512",
+      "kind": "circle",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 16,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 9,
+                "y": 12
+              },
+              "to": {
+                "x": 16,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0085",
+      "name": "Polyline 513",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 10,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0086",
+      "name": "Polyline 513 Copy 1",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 13,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0087",
+      "name": "Polyline 513 Copy 2",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 16,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0088",
+      "name": "Polyline 513 Copy 3",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 19,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0089",
+      "name": "Polyline 513 Copy 1 Copy",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 6
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 21,
+          "y": 2.999999999999999
+        },
+        "orientationAngle": 180,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0090",
+      "name": "Polyline 513 Copy 2 Copy",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 7
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 9
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 21,
+          "y": 2.999999999999999
+        },
+        "orientationAngle": 180,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0091",
+      "name": "Polyline 513 Copy 3 Copy",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 21,
+          "y": 2.999999999999999
+        },
+        "orientationAngle": 180,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0092",
+      "name": "Polyline 513 Copy",
+      "kind": "polygon",
+      "folderId": "fd0082",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 2.0277876989464443
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 3
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 21,
+          "y": 2.9999999999999987
+        },
+        "orientationAngle": 180,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0095",
+      "name": "Rect 522 Copy",
+      "kind": "rect",
+      "folderId": "folder_snap",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 13,
+            "y": 14
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 14
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 14
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": true,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
     {
       "id": "folder_new",
       "name": "new",
-      "collapsed": false
+      "collapsed": true
     },
     {
       "id": "folder_open",
@@ -20734,7 +22101,7 @@
     {
       "id": "folder_snap",
       "name": "snap",
-      "collapsed": true
+      "collapsed": false
     },
     {
       "id": "folder_snap-grid",
@@ -20985,6 +22352,11 @@
       "id": "folder_distribute-vertical-centers",
       "name": "distribute-vertical-centers",
       "collapsed": true
+    },
+    {
+      "id": "fd0082",
+      "name": "constraint",
+      "collapsed": false
     }
   ],
   "featureTree": [
@@ -21299,6 +22671,14 @@
     {
       "type": "folder",
       "folderId": "folder_distribute-vertical-centers"
+    },
+    {
+      "type": "folder",
+      "folderId": "fd0082"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0095"
     }
   ],
   "global_constraints": [],
