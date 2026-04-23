@@ -46,7 +46,7 @@ type ToolbarOrientation = 'top' | 'left'
 
 const TOOLBAR_ORIENTATION_STORAGE_KEY = 'camcam.toolbarOrientation'
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
-const TOOLBAR_LEFT_BREAKPOINT = 1100
+const TOOLBAR_LEFT_BREAKPOINT = 920
 
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
