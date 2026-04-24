@@ -1014,12 +1014,37 @@
   color: #f7b86a;
 }
 
-.sketch-edit-banner kbd {
+.sketch-edit-banner kbd,
+.sketch-place-banner kbd {
   border: 1px solid var(--line-strong);
   border-bottom-width: 2px;
   border-radius: 4px;
   padding: 1px 4px;
   background: #0f161f;
+}
+
+.sketch-kbd-btn {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sketch-kbd-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+@media (pointer: coarse) {
+  .sketch-kbd-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+    padding: 0 10px;
+    font-size: 13px;
+    border-radius: 6px;
+    vertical-align: middle;
+  }
 }
 
 .sketch-place-banner {
@@ -1053,14 +1078,6 @@
   margin: 0;
   position: relative;
   top: 1px;
-}
-
-.sketch-place-banner kbd {
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 4px;
-  background: #0f161f;
 }
 
 .sketch-place-count {

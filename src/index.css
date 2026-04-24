@@ -16,6 +16,7 @@
 
 @import './styles/layout.css';
 @import './styles/dialog.css';
+@import './styles/tablet.css';
 
 :root {
   --bg: #0a1016;
