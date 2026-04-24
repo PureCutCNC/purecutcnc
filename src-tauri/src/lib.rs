@@ -1,6 +1,27 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Default)]
+struct ExitCoordinator {
+  exit_confirmed: AtomicBool,
+  exit_request_pending: AtomicBool,
+}
+
+#[tauri::command]
+fn request_app_exit(app: tauri::AppHandle, exit_coordinator: tauri::State<ExitCoordinator>) {
+  exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
+  exit_coordinator.exit_confirmed.store(true, Ordering::SeqCst);
+  app.exit(0);
+}
+
+#[tauri::command]
+fn cancel_app_exit_request(exit_coordinator: tauri::State<ExitCoordinator>) {
+  exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
+    .manage(ExitCoordinator::default())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -22,6 +43,7 @@ pub fn run() {
       let export_i     = MenuItem::with_id(app, "export_gcode","Export G-code\u{2026}", true, Some("CmdOrCtrl+E"))?;
       let undo_i       = MenuItem::with_id(app, "undo",        "Undo",             true, Some("CmdOrCtrl+Z"))?;
       let redo_i       = MenuItem::with_id(app, "redo",        "Redo",             true, Some("CmdOrCtrl+Shift+Z"))?;
+      let quit_i       = MenuItem::with_id(app, "quit",        "Quit PureCutCNC",  true, Some("CmdOrCtrl+Q"))?;
 
       // macOS app menu — must be the FIRST submenu; macOS replaces its label
       // with the running app name automatically.
@@ -34,7 +56,7 @@ pub fn run() {
         &PredefinedMenuItem::hide_others(app, None)?,
         &PredefinedMenuItem::show_all(app, None)?,
         &PredefinedMenuItem::separator(app)?,
-        &PredefinedMenuItem::quit(app, None)?,
+        &quit_i,
       ])?;
 
       let file_menu = Submenu::with_id_and_items(app, "file", "File", true, &[
@@ -71,8 +93,34 @@ pub fn run() {
         let _ = window.emit("menu", event.id().0.as_str().to_string());
       }
     })
+    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  app.run(|app_handle, event| {
+    if let tauri::RunEvent::ExitRequested { api, .. } = event {
+      use tauri::{Emitter, Manager};
+
+      let exit_coordinator = app_handle.state::<ExitCoordinator>();
+      if exit_coordinator.exit_confirmed.swap(false, Ordering::SeqCst) {
+        exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
+        return;
+      }
+
+      let Some(window) = app_handle.get_webview_window("main") else {
+        exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
+        return;
+      };
+
+      api.prevent_exit();
+
+      if exit_coordinator.exit_request_pending.swap(true, Ordering::SeqCst) {
+        return;
+      }
+
+      let _ = window.emit("app-exit-requested", ());
+    }
+  });
 }

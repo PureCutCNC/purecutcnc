@@ -93,29 +93,58 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
     const cleanups: (() => void)[] = []
 
     async function setup() {
-      const [{ getCurrentWindow }, { listen }, { readTextFile }] = await Promise.all([
+      const [{ getCurrentWindow }, { listen }, { readTextFile }, { invoke }] = await Promise.all([
         import('@tauri-apps/api/window'),
         import('@tauri-apps/api/event'),
         import('@tauri-apps/plugin-fs'),
+        import('@tauri-apps/api/core'),
       ])
       if (isCancelled) return
 
       const win = getCurrentWindow()
+      let exitFlowActive = false
+
+      async function handleAppExitRequest() {
+        if (exitFlowActive) {
+          return
+        }
+
+        exitFlowActive = true
+        try {
+          const { dirty: currentDirty } = useProjectStore.getState()
+          const ok = !currentDirty || await platform.confirmDiscardChanges()
+
+          if (!ok) {
+            await invoke('cancel_app_exit_request').catch(() => {})
+            return
+          }
+
+          await invoke('request_app_exit')
+        } catch (error) {
+          await invoke('cancel_app_exit_request').catch(() => {})
+          alert(error instanceof Error ? error.message : 'Failed to close the application.')
+        } finally {
+          exitFlowActive = false
+        }
+      }
 
       // -- Window close prompt -----------------------------------------------
-      // Always preventDefault so we control the close flow explicitly.
+      // Route window-close through the same app-exit path as Quit / Cmd+Q.
       const unlistenClose = await win.onCloseRequested(async (event) => {
         event.preventDefault()
-        const { dirty: currentDirty } = useProjectStore.getState()
-        if (currentDirty) {
-          const ok = await platform.confirmDiscardChanges()
-          if (ok) await win.destroy()
-        } else {
-          await win.destroy()
-        }
+        await handleAppExitRequest()
       })
       if (isCancelled) { unlistenClose(); return }
       cleanups.push(unlistenClose)
+
+      // -- App exit requests -------------------------------------------------
+      // Quit / Cmd+Q can bypass window-close semantics, so intercept the app
+      // exit request emitted by the Rust shell and re-use the same dirty check.
+      const unlistenAppExit = await listen('app-exit-requested', async () => {
+        await handleAppExitRequest()
+      })
+      if (isCancelled) { unlistenAppExit(); return }
+      cleanups.push(unlistenAppExit)
 
       // -- Native menu events ------------------------------------------------
       const unlistenMenu = await listen<string>('menu', async (event) => {
@@ -166,6 +195,9 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
           }
           case 'export_gcode':
             onExportGcodeRef.current()
+            break
+          case 'quit':
+            await handleAppExitRequest()
             break
           case 'select_all': {
             const visibleIds = store.project.features
