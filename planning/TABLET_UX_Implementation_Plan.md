@@ -195,3 +195,107 @@ Status bar, legends, and split handles are tuned for desktop density. The split 
 - All changes should be additive under the tablet breakpoint; desktop behavior must not regress.
 - Live device testing on an actual tablet should follow each item before it is marked done.
 - Pen input (Apple Pencil / stylus) should be validated separately from finger touch.
+
+---
+
+## Phase 2 Prioritization (tracks issue #56)
+
+Phase 1 (PR #53) landed Items 1, 3, and the banner-kbd subset of Item 4. Issue #56 reports
+that core interactions — particularly tab-into-distance-editing — are still unreachable on
+tablet. Remaining work is re-ordered by user impact and split into five PRs. Each PR is
+tablet-tested on device before the next begins.
+
+Note: paths in Items 2–7 predate the feature-tree / canvas / viewport folder refactor. The
+Phase 2 sub-items below use current paths.
+
+### Phase 2A — Editing reachability *(addresses #56 directly)*
+
+**Status:** `[ ] todo`
+
+**Goal:** Every edit entry point that today depends on Tab, double-click, or right-click has
+a visible, tappable equivalent.
+
+**Work:**
+- Sketch dimension labels: make the rendered dimension text tappable; tap calls
+  `triggerDimensionEdit()` with that dimension as context. Same code path the banner kbd
+  chips already use.
+  - [SketchCanvas.tsx:2871](src/components/canvas/SketchCanvas.tsx:2871) — existing `triggerDimensionEdit()`
+  - Dimension label rendering in the same file (drawn inside the main canvas render path;
+    currently no `onClick` / `pointerdown` on the text shapes)
+- Transform gizmo readouts (distance / angle / scale during move/rotate/resize): same
+  tap-to-edit treatment.
+- Feature tree row: explicit **Edit** button (pencil icon) on each row under
+  `pointer: coarse`, replacing the double-click entry into `FEATURE_EDIT`.
+  - [FeatureTree.tsx](src/components/feature-tree/FeatureTree.tsx) — add button alongside
+    existing visible/operation toggles
+- Feature tree row: **More (…)** button that opens the same menu today's `onContextMenu`
+  triggers, so right-click-only actions become tap-reachable.
+  - [FeatureTree.tsx:168](src/components/feature-tree/FeatureTree.tsx:168) — existing
+    `onContextMenu` handler; wire the same `onFeatureContextMenu` callback to a button.
+
+**Acceptance:**
+- On tablet, a user can enter a distance value for any pending add/move/transform without a
+  keyboard.
+- On tablet, every feature-tree row action available via right-click on desktop is reachable
+  via tap.
+
+### Phase 2B — Pointer events in sketch canvas
+
+**Status:** `[ ] todo`
+
+**Work:**
+- Migrate `onMouseDown` / `onMouseUp` / `onDoubleClick` / `onContextMenu` on the sketch
+  canvas to pointer events; keep mouse-button semantics (button 0 = select, button 2 =
+  context) inside the handler.
+- Long-press (configurable duration, ~500 ms) as the touch equivalent of right-click for any
+  context-menu surface that remains after 2A.
+- **Select multiple** mode toggle in the sketch toolbar so multi-select does not require
+  Shift/Ctrl. Toggle is sticky until explicitly turned off.
+
+**References:** [SketchCanvas.tsx](src/components/canvas/SketchCanvas.tsx) (look for all
+`onMouse*` / `onContextMenu` / `onDoubleClick` props on the root canvas element)
+
+### Phase 2C — 3D and simulation touch gestures
+
+**Status:** `[ ] todo`
+
+**Work:**
+- Pinch-to-zoom, two-finger pan, one-finger orbit in
+  [Viewport3D.tsx](src/components/viewport3d/Viewport3D.tsx) and
+  [SimulationViewport.tsx](src/components/simulation/SimulationViewport.tsx), using
+  `pointermove` with active-pointer tracking.
+- Pen input (pointerType === 'pen') is treated as a precise pointer — no orbit on contact,
+  same semantics as mouse hover + click.
+- Remove the unconditional `touchAction = 'none'` once real touch handlers exist; keep it
+  only on the gesture region.
+
+### Phase 2D — Reorder controls
+
+**Status:** `[ ] todo`
+
+**Work:**
+- Move up / Move down buttons on feature-tree rows and CAM operation rows, visible under
+  `pointer: coarse`, secondary on desktop.
+- Keep existing HTML drag-and-drop as a desktop enhancement.
+- References: [FeatureTree.tsx](src/components/feature-tree/FeatureTree.tsx),
+  [CAMPanel.tsx](src/components/CAMPanel.tsx)
+
+### Phase 2E — Toolbar split + chrome cleanup
+
+**Status:** `[ ] todo`
+
+**Work:**
+- Split [Toolbar.tsx](src/components/Toolbar.tsx) into a persistent top bar (file / view /
+  global) and a contextual rail / bottom sheet (creation / edit / alignment) that appears
+  when a sketch is active.
+- Backdrop and snap controls move into a collapsible overflow menu.
+- Status bar collapsible or auto-hide on tablet.
+- Verify sketch-canvas legend toggles hit 44 px on device.
+
+### Suggested PR order
+
+1. Phase 2A — unblocks issue #56
+2. Phase 2B — prerequisite for reliable gestures in 2C
+3. Phase 2C
+4. Phase 2D
+5. Phase 2E

@@ -22,9 +22,12 @@ interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
   onTabContextMenu?: (tabId: string, x: number, y: number) => void
   onClampContextMenu?: (clampId: string, x: number, y: number) => void
+  onEditFeature?: (featureId: string) => void
+  onEditTab?: (tabId: string) => void
+  onEditClamp?: (clampId: string) => void
 }
 
-export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampContextMenu }: FeatureTreeProps) {
+export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampContextMenu, onEditFeature, onEditTab, onEditClamp }: FeatureTreeProps) {
   const {
     project,
     selection,
@@ -172,6 +175,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           }
           onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
         }}
+        onEditEntry={onEditFeature ? () => onEditFeature(feature.id) : undefined}
+        onMoreMenu={onFeatureContextMenu ? (x, y) => {
+          if (!selection.selectedFeatureIds.includes(feature.id)) {
+            selectFeature(feature.id)
+          }
+          onFeatureContextMenu(feature.id, x, y)
+        } : undefined}
         draggable
         onDragStart={() => handleFeatureDragStart(feature.id)}
         onDragEnd={() => setDragItem(null)}
@@ -358,6 +368,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   selectTab(tab.id)
                   onTabContextMenu?.(tab.id, event.clientX, event.clientY)
                 }}
+                onEditEntry={onEditTab ? () => onEditTab(tab.id) : undefined}
+                onMoreMenu={onTabContextMenu ? (x, y) => {
+                  selectTab(tab.id)
+                  onTabContextMenu(tab.id, x, y)
+                } : undefined}
               />
             ))}
           </div>
@@ -399,6 +414,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   selectClamp(clamp.id)
                   onClampContextMenu?.(clamp.id, event.clientX, event.clientY)
                 }}
+                onEditEntry={onEditClamp ? () => onEditClamp(clamp.id) : undefined}
+                onMoreMenu={onClampContextMenu ? (x, y) => {
+                  selectClamp(clamp.id)
+                  onClampContextMenu(clamp.id, x, y)
+                } : undefined}
               />
             ))}
           </div>
@@ -431,6 +451,8 @@ interface TreeRowProps {
   onShowAll?: () => void
   onHideAll?: () => void
   onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
+  onEditEntry?: () => void
+  onMoreMenu?: (x: number, y: number) => void
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
@@ -461,6 +483,8 @@ function TreeRow({
   onShowAll,
   onHideAll,
   onContextMenu,
+  onEditEntry,
+  onMoreMenu,
   draggable,
   onDragStart,
   onDragEnd,
@@ -654,6 +678,37 @@ function TreeRow({
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
             </svg>
+          </button>
+        ) : null}
+        {onEditEntry ? (
+          <button
+            type="button"
+            className="tree-action-btn tree-action-btn--edit"
+            onClick={(event) => {
+              event.stopPropagation()
+              onEditEntry()
+            }}
+            title="Edit sketch"
+            aria-label="Edit sketch"
+          >
+            <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+              <path fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" d="M1.5 12.5h2.5l7-7-2.5-2.5-7 7v2.5Zm7.5-9.5 2-2 2.5 2.5-2 2" />
+            </svg>
+          </button>
+        ) : null}
+        {onMoreMenu ? (
+          <button
+            type="button"
+            className="tree-action-btn tree-action-btn--more"
+            onClick={(event) => {
+              event.stopPropagation()
+              const rect = event.currentTarget.getBoundingClientRect()
+              onMoreMenu(rect.left, rect.bottom)
+            }}
+            title="More actions"
+            aria-label="More actions"
+          >
+            ⋯
           </button>
         ) : null}
         {onToggleVisible ? (

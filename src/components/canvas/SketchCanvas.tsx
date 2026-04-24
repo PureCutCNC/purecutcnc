@@ -4286,6 +4286,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           : pendingAdd.currentMode === 'spline'
                             ? 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'
                             : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
+            {(() => {
+              const canType =
+                ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !!pendingAdd.anchor)
+                || ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 1)
+                || (pendingAdd.shape === 'composite' && !!pendingAdd.start && !pendingAdd.closed)
+              return canType ? (
+                <> Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Type exact value" onClick={triggerDimensionEdit} onKeyDown={(e) => { if (e.key === 'Enter') triggerDimensionEdit() }}>Tab</kbd> to type exact value.</>
+              ) : null
+            })()}
             {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingAdd} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingAdd() }}>Esc</kbd> to cancel.
           </div>
           {pendingDraftHasSelfIntersection ? (
