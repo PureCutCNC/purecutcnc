@@ -18,6 +18,7 @@ import ClipperLib from 'clipper-lib'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import { applyContourDirection, checkMaxCutDepthWarning, getOperationSafeZ, normalizeToolForProject } from './geometry'
+import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildContourLoops, buildInsetRegions, contourStartPoint, pushRapidAndPlunge, retractToSafe, toClosedCutMoves, updateBounds } from './pocket'
 import { resolvePocketRegions } from './resolver'
 
@@ -40,6 +41,16 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     }
   }
 
+  if (isFeatureFirst(operation)) {
+    const parts = perFeatureOperations(operation).map((subOp) =>
+      generateVCarveToolpathSingle(project, subOp),
+    )
+    return mergeToolpathResults(operation.id, parts)
+  }
+  return generateVCarveToolpathSingle(project, operation)
+}
+
+function generateVCarveToolpathSingle(project: Project, operation: Operation): ToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null

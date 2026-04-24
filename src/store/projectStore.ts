@@ -1608,6 +1608,7 @@ function defaultOperationForTarget(
     carveDepth: convertLength(1, 'mm', project.meta.units),
     maxCarveDepth: convertLength(1, 'mm', project.meta.units),
     cutDirection: 'conventional',
+    machiningOrder: 'feature_first',
     ...(kind === 'drilling' ? {
       drillType: 'simple' as const,
       peckDepth: convertLength(2, 'mm', project.meta.units),
@@ -1942,6 +1943,7 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
   const normalized = {
     ...defaults,
     ...operation,
+    machiningOrder: operation.machiningOrder ?? 'level_first',
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {
