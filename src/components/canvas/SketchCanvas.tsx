@@ -2866,6 +2866,112 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef.current?.focus({ preventScroll: true })
   }
 
+  // Called by the "Type" button in banners — opens dimension input without
+  // the Tab toggle-close behaviour. Keyboard Tab keeps its existing logic.
+  function triggerDimensionEdit() {
+    const project = projectRef.current
+    const pendingAdd = pendingAddRef.current
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
+    const selection = selectionRef.current
+    const units = project.meta.units
+
+    if (pendingAdd) {
+      if (
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        && pendingAdd.anchor
+      ) {
+        const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+        if (pendingAdd.shape === 'circle') {
+          const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+          setDimensionEdit({ shape: 'circle', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
+        } else {
+          const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
+          const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
+          setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
+        }
+        return
+      }
+      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 1) {
+        const fromPoint = pendingAdd.points[pendingAdd.points.length - 1]
+        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
+        const dx = previewPoint.x - fromPoint.x
+        const dy = previewPoint.y - fromPoint.y
+        setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
+        return
+      }
+      if (pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed) {
+        const fromPoint = pendingAdd.lastPoint ?? pendingAdd.start
+        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
+        const dx = previewPoint.x - fromPoint.x
+        const dy = previewPoint.y - fromPoint.y
+        setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
+        return
+      }
+    }
+
+    if (pendingMove?.fromPoint && !pendingMove.toPoint) {
+      const previewPoint = pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
+      const dx = previewPoint.x - pendingMove.fromPoint.x
+      const dy = previewPoint.y - pendingMove.fromPoint.y
+      setOperationDimEdit({ kind: pendingMove.mode, distance: formatLength(Math.hypot(dx, dy), units) })
+      return
+    }
+
+    if (pendingTransform?.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+      let factor = '1'
+      const previewPoint = pendingTransformPreviewPointRef.current?.point
+      if (previewPoint) factor = computeScaleFactorFromPreview(pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+      setOperationDimEdit({ kind: 'scale', factor })
+      return
+    }
+
+    if (pendingTransform?.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
+      let angle = '0'
+      const previewPoint = pendingTransformPreviewPointRef.current?.point
+      if (previewPoint) angle = computeRotateDegreesFromPreview(pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+      setOperationDimEdit({ kind: 'rotate', angle })
+      return
+    }
+
+    if (pendingOffset) {
+      let distance = '0'
+      const rawOffsetPoint = pendingOffsetRawPreviewPointRef.current?.point
+      const snappedOffsetPoint = pendingOffsetPreviewPointRef.current?.point
+      if (rawOffsetPoint && snappedOffsetPoint) {
+        const canvas = canvasRef.current
+        if (canvas) {
+          const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+          const sourceFeatures = pendingOffset.entityIds
+            .map((id) => project.features.find((f) => f.id === id) ?? null)
+            .filter((f): f is SketchFeature => f !== null)
+            .filter((f) => f.sketch.profile.closed)
+          const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
+          if (previewInput) distance = formatLength(previewInput.signedDistance, units)
+        }
+      }
+      setOperationDimEdit({ kind: 'offset', distance })
+      return
+    }
+
+    if (selection.mode === 'sketch_edit' && !pendingAdd && pendingSketchFilletRef.current && sketchEditPreviewRef.current) {
+      const featureId = selection.selectedFeatureId
+      const feature = featureId ? project.features.find((f) => f.id === featureId) ?? null : null
+      if (!feature) return
+      const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+      setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
+      return
+    }
+
+    if (selection.mode === 'sketch_edit' && !pendingAdd && !filletDimensionEditRef.current) {
+      const currentEdit = dimensionEditRef.current
+      if (!currentEdit && dimensionEditControlRef.current) {
+        advanceTabInEditMode()
+      }
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     const project = projectRef.current
     const selection = selectionRef.current
@@ -4093,7 +4199,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     ? 'Fillet active. Click a second point to define the corner round, or press Tab to type the radius. Press '
                     : 'Fillet active. Click a line-line corner to start. Press '
                   : 'Drag nodes or straight segments to reshape. Hover a node and press Tab to type length/angle. Press '}
-            <kbd>Enter</kbd> to apply or <kbd>Esc</kbd> to cancel.
+            <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Apply" onClick={() => { stopNodeDrag(); applySketchEdit() }} onKeyDown={(e) => { if (e.key === 'Enter') { stopNodeDrag(); applySketchEdit() } }}>Enter</kbd> to apply or <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={() => { stopNodeDrag(); cancelSketchEdit() }} onKeyDown={(e) => { if (e.key === 'Enter') { stopNodeDrag(); cancelSketchEdit() } }}>Esc</kbd> to cancel.
           </div>
           {editingFeatureHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
@@ -4105,7 +4211,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       )}
       {pendingOffset && (
         <div className="sketch-place-banner">
-          <>Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Press <kbd>Tab</kbd> to type exact distance, click to commit, or press <kbd>Esc</kbd> to cancel.</>
+          <>Move the mouse to preview the offset. Inside creates an inward offset, outside creates an outward offset. Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Type exact distance" onClick={triggerDimensionEdit} onKeyDown={(e) => { if (e.key === 'Enter') triggerDimensionEdit() }}>Tab</kbd> to type exact distance, click to commit, or press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingOffset} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingOffset() }}>Esc</kbd> to cancel.</>
         </div>
       )}
       {pendingShapeAction && (
@@ -4139,7 +4245,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             />
             <span>Keep originals</span>
           </label>
-          <span>Press <kbd>Enter</kbd> to confirm or <kbd>Esc</kbd> to cancel.</span>
+          <span>Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm" onClick={completePendingShapeAction} onKeyDown={(e) => { if (e.key === 'Enter') completePendingShapeAction() }}>Enter</kbd> to confirm or <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingShapeAction} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingShapeAction() }}>Esc</kbd> to cancel.</span>
         </div>
       )}
       {pendingAdd && (
@@ -4180,7 +4286,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           : pendingAdd.currentMode === 'spline'
                             ? 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'
                             : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
-            {' '}Press <kbd>Esc</kbd> to cancel.
+            {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingAdd} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingAdd() }}>Esc</kbd> to cancel.
           </div>
           {pendingDraftHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>
@@ -4199,7 +4305,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               : !pendingConstraint.reference
                 ? 'Click a snap point on another feature to set the reference.'
                 : 'Type the distance and press Enter.'}
-            {' '}Press <kbd>Esc</kbd> to cancel.
+            {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingConstraint} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingConstraint() }}>Esc</kbd> to cancel.
           </div>
         </div>
       )}
@@ -4232,32 +4338,42 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 }}
                 autoFocus
               />
-              <span>Press <kbd>Enter</kbd> to confirm, <kbd>Esc</kbd> to cancel.</span>
+              <span>Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm" onClick={() => { const n = Math.max(1, Math.floor(Number(copyCountDraft) || 1)); completePendingMove(pendingMove.toPoint!, n); setPendingMovePreviewPointRef(null); setCopyCountDraft('1') }} onKeyDown={(e) => { if (e.key === 'Enter') { const n = Math.max(1, Math.floor(Number(copyCountDraft) || 1)); completePendingMove(pendingMove.toPoint!, n); setPendingMovePreviewPointRef(null); setCopyCountDraft('1') } }}>Enter</kbd> to confirm, <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={() => { cancelPendingMove(); setPendingMovePreviewPointRef(null); setCopyCountDraft('1') }} onKeyDown={(e) => { if (e.key === 'Enter') { cancelPendingMove(); setPendingMovePreviewPointRef(null); setCopyCountDraft('1') } }}>Esc</kbd> to cancel.</span>
             </>
           ) : (
-            pendingMove.fromPoint
-              ? pendingMove.mode === 'copy'
-                ? 'Click the copy to point, then enter the copy count. Press Tab to type exact distance. Press Esc to cancel.'
-                : 'Click the destination point to complete the move. Press Tab to type exact distance. Press Esc to cancel.'
-              : pendingMove.mode === 'copy'
-                ? 'Click the copy from point, then click the copy to point. Press Esc to cancel.'
-                : 'Click the move from point, then click the move to point. Press Esc to cancel.'
+            <>
+              <span>{pendingMove.fromPoint
+                ? pendingMove.mode === 'copy'
+                  ? 'Click the copy to point, then enter the copy count.'
+                  : 'Click the destination point to complete the move.'
+                : pendingMove.mode === 'copy'
+                  ? 'Click the copy from point, then click the copy to point.'
+                  : 'Click the move from point, then click the move to point.'}</span>
+              {pendingMove.fromPoint && !pendingMove.toPoint && (
+                <> Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Type exact distance" onClick={triggerDimensionEdit} onKeyDown={(e) => { if (e.key === 'Enter') triggerDimensionEdit() }}>Tab</kbd> to type exact distance.</>)}
+              {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingMove} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingMove() }}>Esc</kbd> to cancel.
+            </>
           )}
         </div>
       )}
       {pendingTransform && (
         <div className="sketch-place-banner">
-          {pendingTransform.mode === 'resize'
+          <span>{pendingTransform.mode === 'resize'
             ? !pendingTransform.referenceStart
-              ? 'Click the first resize reference point. Press Esc to cancel.'
+              ? 'Click the first resize reference point.'
               : !pendingTransform.referenceEnd
-                ? 'Click the second resize reference point. Press Esc to cancel.'
-                : 'Move along the reference line to preview the resized feature, then click to commit. Press Tab to type scale factor. Press Esc to cancel.'
+                ? 'Click the second resize reference point.'
+                : 'Move along the reference line to preview the resized feature, then click to commit.'
             : !pendingTransform.referenceStart
-              ? 'Click the rotation origin. Press Esc to cancel.'
+              ? 'Click the rotation origin.'
               : !pendingTransform.referenceEnd
-                ? 'Click the reference direction point. Press Esc to cancel.'
-                : 'Move to preview the rotated feature, then click to commit. Press Tab to type exact angle. Press Esc to cancel.'}
+                ? 'Click the reference direction point.'
+                : 'Move to preview the rotated feature, then click to commit.'}</span>
+          {((pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
+            || (pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)) && (
+            <> Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title={pendingTransform.mode === 'resize' ? 'Type scale factor' : 'Type exact angle'} onClick={triggerDimensionEdit} onKeyDown={(e) => { if (e.key === 'Enter') triggerDimensionEdit() }}>Tab</kbd> to type {pendingTransform.mode === 'resize' ? 'scale factor' : 'exact angle'}.</>
+          )}
+          {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingTransform} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingTransform() }}>Esc</kbd> to cancel.
         </div>
       )}
     </div>

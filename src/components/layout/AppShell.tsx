@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -70,6 +70,7 @@ export function AppShell({
   onRightTabChange,
   statusBarExtras,
 }: AppShellProps) {
+  const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const { project } = useProjectStore()
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
@@ -84,10 +85,27 @@ export function AppShell({
   ] as const
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-right-open={rightDrawerOpen ? 'true' : undefined}>
+      {rightDrawerOpen && (
+        <div
+          className="tablet-drawer-scrim"
+          aria-hidden="true"
+          onClick={() => setRightDrawerOpen(false)}
+        />
+      )}
       {/* ── Top toolbar ── */}
       <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
         {toolbarOrientation === 'left' ? globalToolbar : toolbar}
+        <button
+          className="tablet-drawer-toggle toolbar-btn"
+          type="button"
+          title="Open operations panel"
+          aria-label="Open operations panel"
+          aria-expanded={rightDrawerOpen}
+          onClick={() => setRightDrawerOpen(true)}
+        >
+          CAM
+        </button>
       </header>
 
       {/* Main work area */}
@@ -279,9 +297,17 @@ export function AppShell({
           </div>
         </main>
 
-        <aside className="panel-right">
+        <aside className="panel-right" aria-label="CAM panel">
           <section className="panel panel-tabs">
             <div className="panel-tabs-header" role="tablist" aria-label="Right Sidebar">
+              <button
+                className="tablet-drawer-close"
+                type="button"
+                aria-label="Close operations panel"
+                onClick={() => setRightDrawerOpen(false)}
+              >
+                ✕
+              </button>
               <button
                 id="sidebar-tab-operations"
                 className={`panel-tab ${rightTab === 'operations' ? 'panel-tab--active' : ''}`}
