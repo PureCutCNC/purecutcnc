@@ -8,12 +8,13 @@
  */
 
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
 import { generateEdgeRouteToolpath } from './edge'
 import { generateVCarveToolpath } from './vcarve'
+import { generateSurfaceCleanToolpath } from './surface'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -416,6 +417,88 @@ function testVCarveFeatureFirstProducesSameMoveCount() {
 }
 
 // ---------------------------------------------------------------------------
+// Surface clean: multi-target with stepped heights protects taller targets
+// ---------------------------------------------------------------------------
+
+function makeCircleBoss(id: string, cx: number, cy: number, r: number, zTop: number, zBottom: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: circleProfile(cx, cy, r),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
+function testSurfaceCleanMultiTargetProtectsTallerTarget() {
+  console.log('Testing surface_clean multi-target protects taller target (issue #54)...')
+
+  // Repro distilled from issue #54: two adjacent boss circles cleaned in one op
+  // at stepped heights. Without the fix, the deeper band's expanded subject
+  // sweeps over the still-tall neighbour because the neighbour is filtered out
+  // of the protected set just for being a target.
+  const baseTool = defaultTool('inch', 1)
+  const tool: Tool = {
+    ...baseTool,
+    id: 't1',
+    name: '1/4 endmill',
+    diameter: 0.25,
+    defaultStepdown: 0.125,
+    defaultStepover: 0.32,
+  }
+
+  const circA = makeCircleBoss('a', 0, 0, 0.5, 0.5, 0)
+  const circB = makeCircleBoss('b', 1, 0, 0.5, 0.4, 0)
+
+  const project: Project = {
+    ...newProject('surface-test', 'inch'),
+    tools: [tool],
+    features: [circA, circB],
+  }
+  project.stock = { ...project.stock, thickness: 0.75 }
+
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['a', 'b'] },
+    toolRef: 't1',
+    stepdown: 0.05,
+    stepover: 0.1,
+  })
+
+  const result = generateSurfaceCleanToolpath(project, op)
+  assert(result.moves.length > 0, 'moves generated')
+
+  // Any cut move below z=0.5 (i.e., in the deeper band) whose XY lies inside
+  // circA's footprint means the tool is plowing through the taller boss.
+  const tallerRadius = 0.5
+  const violations = cutMoves(result.moves).filter((m) => {
+    if (m.to.z >= 0.5 - 1e-6) return false
+    const dx = m.to.x
+    const dy = m.to.y
+    return Math.hypot(dx, dy) < tallerRadius - 1e-3
+  })
+
+  assert(
+    violations.length === 0,
+    `expected no cut moves below z=0.5 inside the taller boss; got ${violations.length}`
+      + (violations[0] ? ` (e.g. ${JSON.stringify(violations[0])})` : ''),
+  )
+
+  console.log('surface_clean multi-target protects taller target: PASSED')
+}
+
+// ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
 
@@ -427,6 +510,7 @@ try {
   testPocketSingleFeatureParity()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testVCarveFeatureFirstProducesSameMoveCount()
+  testSurfaceCleanMultiTargetProtectsTallerTarget()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
   console.error(e)
