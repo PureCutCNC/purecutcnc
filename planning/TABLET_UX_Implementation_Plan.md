@@ -210,34 +210,34 @@ Phase 2 sub-items below use current paths.
 
 ### Phase 2A — Editing reachability *(addresses #56 directly)*
 
-**Status:** `[ ] todo`
+**Status:** `[~] partial` — landed in `distracted-panini-131628`, awaiting on-device tablet test.
 
 **Goal:** Every edit entry point that today depends on Tab, double-click, or right-click has
 a visible, tappable equivalent.
 
-**Work:**
-- Sketch dimension labels: make the rendered dimension text tappable; tap calls
-  `triggerDimensionEdit()` with that dimension as context. Same code path the banner kbd
-  chips already use.
-  - [SketchCanvas.tsx:2871](src/components/canvas/SketchCanvas.tsx:2871) — existing `triggerDimensionEdit()`
-  - Dimension label rendering in the same file (drawn inside the main canvas render path;
-    currently no `onClick` / `pointerdown` on the text shapes)
-- Transform gizmo readouts (distance / angle / scale during move/rotate/resize): same
-  tap-to-edit treatment.
-- Feature tree row: explicit **Edit** button (pencil icon) on each row under
-  `pointer: coarse`, replacing the double-click entry into `FEATURE_EDIT`.
-  - [FeatureTree.tsx](src/components/feature-tree/FeatureTree.tsx) — add button alongside
-    existing visible/operation toggles
-- Feature tree row: **More (…)** button that opens the same menu today's `onContextMenu`
-  triggers, so right-click-only actions become tap-reachable.
-  - [FeatureTree.tsx:168](src/components/feature-tree/FeatureTree.tsx:168) — existing
-    `onContextMenu` handler; wire the same `onFeatureContextMenu` callback to a button.
+**Done:**
+- `pendingAdd` banner gained a clickable **Tab** kbd chip (shown when
+  `triggerDimensionEdit()` has something to act on: rect/circle/tab/clamp with anchor,
+  polygon/spline with ≥1 point, composite with start set).
+- Feature / tab / clamp tree rows gained a pencil **Edit** button that routes through the
+  existing `handleEditSketch` / `handleEditTab` / `handleEditClamp` handlers, matching the
+  "Edit Sketch" context-menu item.
+- Feature / tab / clamp tree rows gained a **⋯ More** button that opens the same context
+  menu right-click opens, anchored at the button's bottom-left rect.
+
+**Remaining (follow-up):**
+- Sketch-edit mode says "Hover a node and press Tab to type length/angle." — hover has no
+  touch equivalent. Needs a tap-a-node-to-arm design so the banner can then show a clickable
+  Tab chip for the armed node.
+- Sketch dimension labels drawn on the canvas (as opposed to banner chips) still aren't
+  tap-targets; the banner path is sufficient for pending operations but dimension-label
+  taps would be a nicer future improvement.
 
 **Acceptance:**
 - On tablet, a user can enter a distance value for any pending add/move/transform without a
-  keyboard.
+  keyboard. ✓ (pending device test)
 - On tablet, every feature-tree row action available via right-click on desktop is reachable
-  via tap.
+  via tap. ✓ (pending device test)
 
 ### Phase 2B — Pointer events in sketch canvas
 
@@ -292,10 +292,40 @@ a visible, tappable equivalent.
 - Status bar collapsible or auto-hide on tablet.
 - Verify sketch-canvas legend toggles hit 44 px on device.
 
+### Phase 2F — Graceful failure on unsupported devices
+
+**Status:** `[x] done` — landed in `distracted-panini-131628`.
+
+Out-of-band item: the tablet discussion surfaced that older desktops and tablets were
+hitting a blank screen instead of an error (typically when WebGL context creation fails in
+`Viewport3D` / `SimulationViewport` on mount). Rather than commit to a support baseline, we
+now capture the failure and show a friendly screen.
+
+**Done:**
+- [src/components/errorFormat.ts](src/components/errorFormat.ts) — shared `formatError` +
+  `renderErrorHTML` helpers (error message, first 3 stack frames, `navigator.userAgent`,
+  timestamp).
+- [src/components/ErrorScreen.tsx](src/components/ErrorScreen.tsx) — React component:
+  apology, collapsible technical details, Reload / Downloads / Website actions.
+- [src/components/AppErrorBoundary.tsx](src/components/AppErrorBoundary.tsx) — classic error
+  boundary wrapping `<App />`, catches anything thrown during render / mount.
+- [src/main.tsx](src/main.tsx) — `window.error` + `unhandledrejection` listeners installed
+  before React mounts. A `reactMounted` flag gates them so they only inject static HTML into
+  `#root` when React isn't alive yet; once mounted, the error boundary takes over.
+- [src/index.css](src/index.css) — `.app-error-*` styles (red-tinted eyebrow, collapsible
+  `<pre>` for tech details, wrap-friendly action row).
+
+**Coverage:**
+- WebGL context creation failure in viewport mount → error boundary.
+- Missing Web API at init → global listener (pre-mount) or error boundary (post-mount).
+- Unhandled promise rejection during startup → `unhandledrejection` listener.
+- Late runtime error after app is running → error boundary.
+
 ### Suggested PR order
 
 1. Phase 2A — unblocks issue #56
-2. Phase 2B — prerequisite for reliable gestures in 2C
-3. Phase 2C
-4. Phase 2D
-5. Phase 2E
+2. Phase 2F — bundled with 2A (one PR)
+3. Phase 2B — prerequisite for reliable gestures in 2C
+4. Phase 2C
+5. Phase 2D
+6. Phase 2E

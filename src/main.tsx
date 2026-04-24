@@ -17,10 +17,31 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
+import { renderErrorHTML } from './components/errorFormat'
 import { IconGalleryRoute } from './components/IconGallery'
 import { isDesktop } from './platform'
 import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
+
+// Swap #root for a static error card if something throws before React mounts.
+// Once React is alive, AppErrorBoundary takes over — this flag prevents the
+// global listeners from clobbering a React-rendered tree.
+let reactMounted = false
+
+function showFatalErrorHTML(error: unknown, info?: string) {
+  if (reactMounted) return
+  const root = document.getElementById('root')
+  if (!root) return
+  root.innerHTML = renderErrorHTML(error, info)
+}
+
+window.addEventListener('error', (event) => {
+  showFatalErrorHTML(event.error ?? event.message, 'window error')
+})
+window.addEventListener('unhandledrejection', (event) => {
+  showFatalErrorHTML(event.reason, 'unhandled promise rejection')
+})
 
 // In the desktop app, the window title is managed by useDesktopIntegration
 // (showing filename + dirty flag). Only apply the version title in browser.
@@ -66,7 +87,12 @@ const isIconGalleryRoute =
 function rootElement() {
   if (isPhoneSizedTouchDevice()) return <UnsupportedMobileScreen />
   if (isIconGalleryRoute) return <IconGalleryRoute />
-  return <App />
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  )
 }
 
 createRoot(document.getElementById('root')!).render(rootElement())
+reactMounted = true
