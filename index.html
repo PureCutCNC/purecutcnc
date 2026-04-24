@@ -26,6 +26,32 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Boot watchdog: if the ES module bundle fails to parse or execute on
+      // older browsers (e.g. iPad 4 / iOS 10), main.tsx never runs and the
+      // React error boundary never mounts — #root stays empty. This inline
+      // ES5 script detects that case and shows a static fallback card.
+      // Cleared by main.tsx once React renders successfully.
+      (function () {
+        var TIMEOUT_MS = 3000
+        window.__pcBootWatchdog = window.setTimeout(function () {
+          var root = document.getElementById('root')
+          if (!root || root.firstChild) return
+          root.innerHTML =
+            '<main style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:#0a1016;color:#d8e4ef;font-family:\'Segoe UI\',sans-serif;">' +
+              '<div style="width:min(100%,32rem);padding:1.75rem;border:1px solid #2a3a49;border-radius:1rem;background:#101821;box-shadow:0 24px 60px rgba(0,0,0,0.35);">' +
+                '<div style="margin-bottom:0.85rem;color:#d48484;font-size:0.74rem;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;">Unsupported Browser</div>' +
+                '<h1 style="margin:0 0 0.85rem;font-size:1.6rem;line-height:1.2;">Sorry &mdash; PureCut CNC could not start on this device.</h1>' +
+                '<p style="margin:0 0 1rem;color:#94aabc;font-size:1rem;line-height:1.6;">Your browser or operating system is too old to run this app. Try a current version of Chrome, Edge, or Firefox on a recent desktop or tablet, or use one of our desktop builds.</p>' +
+                '<div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:1rem;">' +
+                  '<a href="https://purecutcnc.github.io/downloads.html" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0.7rem 1rem;border-radius:0.7rem;background:#5a8fcc;color:#071019;font-weight:700;text-decoration:none;">Desktop Downloads</a>' +
+                  '<a href="https://purecutcnc.github.io/" style="display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:0.7rem 1rem;border-radius:0.7rem;background:transparent;color:#d8e4ef;border:1px solid #2a3a49;font-weight:700;text-decoration:none;">Project Website</a>' +
+                '</div>' +
+              '</div>' +
+            '</main>'
+        }, TIMEOUT_MS)
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

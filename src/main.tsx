@@ -96,3 +96,14 @@ function rootElement() {
 
 createRoot(document.getElementById('root')!).render(rootElement())
 reactMounted = true
+
+// Clear the index.html boot watchdog: React is alive, no fallback needed.
+declare global {
+  interface Window {
+    __pcBootWatchdog?: number
+  }
+}
+if (typeof window !== 'undefined' && window.__pcBootWatchdog !== undefined) {
+  window.clearTimeout(window.__pcBootWatchdog)
+  window.__pcBootWatchdog = undefined
+}

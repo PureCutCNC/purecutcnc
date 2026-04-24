@@ -321,6 +321,27 @@ now capture the failure and show a friendly screen.
 - Unhandled promise rejection during startup → `unhandledrejection` listener.
 - Late runtime error after app is running → error boundary.
 
+### Phase 2G — Boot watchdog for module parse failures
+
+**Status:** `[x] done` — landed in `worktree-boot-watchdog`.
+
+Out-of-band follow-up to 2F: an old iPad (4th gen, iOS 10) still showed a blank page after
+PR #57 merged. Cause: iOS 10 Safari can parse `<script type="module">` but chokes on modern
+JS syntax Vite emits (optional chaining, nullish coalescing, BigInt, private class fields).
+When the module bundle fails to parse, `main.tsx` never runs, the `error` listener and the
+`reactMounted` flag never install, and `#root` stays empty.
+
+**Done:**
+- [index.html](index.html) — inline (non-module, ES5) watchdog script runs before the
+  module tag, sets a 3 s timeout. If `#root` is still empty when the timeout fires, it
+  injects a static fallback card with inline styles (external CSS may also fail to load).
+- [src/main.tsx](src/main.tsx) — clears `window.__pcBootWatchdog` after `createRoot().render()`
+  so the fallback never fires on healthy boots.
+
+This catches module parse errors, network errors, and any other failure where JS can't
+reach the `reactMounted = true` line. Only a browser that can't run *any* JavaScript at all
+would still see a blank page — at which point there's nothing more we can do.
+
 ### Suggested PR order
 
 1. Phase 2A — unblocks issue #56
