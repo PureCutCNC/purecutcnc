@@ -36,6 +36,7 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { resolvePocketRegions } from './resolver'
 
 interface PolyTreeNode {
@@ -1025,6 +1026,16 @@ function generateFinishBandMoves(
 }
 
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
+  if (isFeatureFirst(operation)) {
+    const parts = perFeatureOperations(operation).map((subOp) =>
+      generatePocketToolpathSingle(project, subOp),
+    )
+    return mergePocketToolpathResults(operation.id, parts)
+  }
+  return generatePocketToolpathSingle(project, operation)
+}
+
+function generatePocketToolpathSingle(project: Project, operation: Operation): PocketToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null

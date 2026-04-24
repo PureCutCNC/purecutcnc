@@ -22,6 +22,7 @@ import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary
 import type {
   CutDirection,
   DrillType,
+  MachiningOrder,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -1164,6 +1165,22 @@ export function CAMPanel({
                       >
                         <option value="conventional">Conventional</option>
                         <option value="climb">Climb</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket'
+                    || selectedOperation.kind === 'v_carve'
+                    || selectedOperation.kind === 'v_carve_recursive'
+                    || selectedOperation.kind === 'edge_route_inside'
+                    || selectedOperation.kind === 'edge_route_outside') ? (
+                    <label className="properties-field">
+                      <span>Machining Order</span>
+                      <select
+                        value={selectedOperation.machiningOrder ?? 'level_first'}
+                        onChange={(event) => updateOperation(selectedOperation.id, { machiningOrder: event.target.value as MachiningOrder })}
+                      >
+                        <option value="feature_first">Feature first</option>
+                        <option value="level_first">Level first</option>
                       </select>
                     </label>
                   ) : null}

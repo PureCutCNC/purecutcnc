@@ -280,6 +280,7 @@ export type OperationPass = 'rough' | 'finish'
 export type PocketPattern = 'offset' | 'parallel'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking'
+export type MachiningOrder = 'level_first' | 'feature_first'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -309,6 +310,7 @@ export interface Operation {
   carveDepth: number
   maxCarveDepth: number
   cutDirection?: CutDirection
+  machiningOrder?: MachiningOrder
   drillType?: DrillType
   peckDepth?: number
   dwellTime?: number

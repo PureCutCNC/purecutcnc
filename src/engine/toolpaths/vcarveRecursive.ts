@@ -42,6 +42,7 @@ import type {
   ToolpathResult,
 } from './types'
 import { checkMaxCutDepthWarning, getOperationSafeZ, normalizeToolForProject } from './geometry'
+import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import {
   buildInsetRegions,
   pushRapidAndPlunge,
@@ -436,6 +437,16 @@ export function generateVCarveRecursiveToolpath(project: Project, operation: Ope
     }
   }
 
+  if (isFeatureFirst(operation)) {
+    const parts = perFeatureOperations(operation).map((subOp) =>
+      generateVCarveRecursiveToolpathSingle(project, subOp),
+    )
+    return mergeToolpathResults(operation.id, parts)
+  }
+  return generateVCarveRecursiveToolpathSingle(project, operation)
+}
+
+function generateVCarveRecursiveToolpathSingle(project: Project, operation: Operation): ToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null

@@ -30,6 +30,7 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
 import { resolveInsideEdgeRegions } from './resolver'
 
@@ -281,6 +282,25 @@ function appendContoursAtLevels(
 }
 
 export function generateEdgeRouteToolpath(project: Project, operation: Operation): ToolpathResult {
+  if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: ['Only edge-route operations can be resolved by the edge-route generator'],
+      bounds: null,
+    }
+  }
+
+  if (isFeatureFirst(operation)) {
+    const parts = perFeatureOperations(operation).map((subOp) =>
+      generateEdgeRouteToolpathSingle(project, subOp),
+    )
+    return mergeToolpathResults(operation.id, parts)
+  }
+  return generateEdgeRouteToolpathSingle(project, operation)
+}
+
+function generateEdgeRouteToolpathSingle(project: Project, operation: Operation): ToolpathResult {
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
       operationId: operation.id,
