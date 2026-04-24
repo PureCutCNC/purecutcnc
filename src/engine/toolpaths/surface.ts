@@ -211,7 +211,6 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
   const depthLevels = [...new Set([project.stock.thickness, ...closedTargetFeatures.map(({ top }) => top)])]
     .sort((a, b) => b - a)
   const bands: SurfaceCleanBand[] = []
-  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
 
   for (let index = 0; index < depthLevels.length - 1; index += 1) {
     const topZ = depthLevels[index]
@@ -226,7 +225,11 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     }
 
     const subjectPaths = activeTargets.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
-    const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !targetIdSet.has(feature.id))
+    // Protect any add feature whose top is above this band's floor — including
+    // target features at higher levels that haven't been reached yet. Otherwise
+    // the expanded subject of a lower target can sweep through a taller target.
+    const activeTargetIdSet = new Set(activeTargets.map(({ feature }) => feature.id))
+    const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
     const protectedPaths = protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
     const polyTree = executeClip(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
     const regions = polyTreeToRegions(
