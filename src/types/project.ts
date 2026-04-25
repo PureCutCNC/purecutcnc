@@ -315,6 +315,7 @@ export interface Operation {
   peckDepth?: number
   dwellTime?: number
   retractHeight?: number
+  debugShowRejectedCorners?: boolean
 }
 
 // ============================================================

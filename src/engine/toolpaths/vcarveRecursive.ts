@@ -64,6 +64,7 @@ const BOOTSTRAP_MAX_RESCUE_STEPS = 48
 const MIN_INTERIOR_CORNER_BRIDGE_STEPS = 2
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
+const ENABLE_SPLIT_CONNECTIONS = false
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1388,33 +1389,53 @@ function traceRegion(
 
   // ---- SPLIT ----
   if (nextRegions.length > 1) {
-    const { cuts, childArms, rejected } = bridgeSplitArms(activeArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
-    paths.push(...cuts)
+    if (ENABLE_SPLIT_CONNECTIONS) {
+      const { cuts, childArms, rejected } = bridgeSplitArms(activeArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
+      paths.push(...cuts)
 
-    if (debugShowRejected && rejected.length > 0) {
-      for (const r of rejected) {
-        paths.push(...buildXMarker(r.corner, currentZ, stepSize))
+      if (debugShowRejected && rejected.length > 0) {
+        for (const r of rejected) {
+          paths.push(...buildXMarker(r.corner, currentZ, stepSize))
+        }
       }
+
+      // Split-to-child linking is being deferred while we stabilize the
+      // recursive flow within a single inner shape. When re-enabled, parent
+      // arms are explicitly bridged into child contours here.
+      for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
+        const nextRegion = nextRegions[childIndex]
+        const bridgedArms = childArms[childIndex]
+        const { cuts: bootstrapCuts, seededNextArms: seededChildArms } = buildFreshSeedBootstrapCuts(
+          region.outer,
+          nextRegion.outer,
+          activeArms,
+          bridgedArms,
+          currentZ,
+          nextZ,
+          stepSize,
+          slope,
+          topZ - maxDepth,
+        )
+        paths.push(...bootstrapCuts)
+        traceRegion(
+          nextRegion,
+          topZ,
+          slope,
+          maxDepth,
+          stepSize,
+          nextOffset,
+          depth + 1,
+          paths,
+          debugShowRejected,
+          seededChildArms.length > 0 ? seededChildArms : undefined,
+        )
+      }
+      return
     }
 
-    // Each child is a new shape with its own corners. Prefer any corners that
-    // were explicitly bridged into that child, but also seed any fresh corners
-    // that appear on the child contour so missed chains can restart cleanly.
-    for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
-      const nextRegion = nextRegions[childIndex]
-      const bridgedArms = childArms[childIndex]
-      const { cuts: bootstrapCuts, seededNextArms: seededChildArms } = buildFreshSeedBootstrapCuts(
-        region.outer,
-        nextRegion.outer,
-        activeArms,
-        bridgedArms,
-        currentZ,
-        nextZ,
-        stepSize,
-        slope,
-        topZ - maxDepth,
-      )
-      paths.push(...bootstrapCuts)
+    // For now, once an inset splits we restart recursion independently inside
+    // each child and intentionally do not connect the parent to those children.
+    for (const nextRegion of nextRegions) {
       traceRegion(
         nextRegion,
         topZ,
@@ -1425,7 +1446,6 @@ function traceRegion(
         depth + 1,
         paths,
         debugShowRejected,
-        seededChildArms.length > 0 ? seededChildArms : undefined,
       )
     }
     return
