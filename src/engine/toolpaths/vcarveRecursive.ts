@@ -58,6 +58,8 @@ import { resolvePocketRegions } from './resolver'
 const MAX_RECURSION_DEPTH = 200
 const CORNER_ANGLE_THRESHOLD_RAD = (15 * Math.PI) / 180
 const MICRO_FRACTION = 0.1  // fraction of stepSize used for collapse micro-offset
+const CORNER_SMOOTHING_FRACTION = 0.25
+const MIN_CORNER_SMOOTHING_DISTANCE = 1e-4
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,17 +87,185 @@ function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
   return bounds
 }
 
-
-/**
- * Build a closed 3D loop from a 2D contour at a given Z depth.
- * The first vertex is appended again at the end to close the loop.
- */
 function contourToPath3D(contour: Point[], z: number): Path3D {
   if (contour.length === 0) return []
   const pts: Point3D[] = contour.map((p) => ({ x: p.x, y: p.y, z }))
-  pts.push({ ...pts[0] }) // close the loop
+  pts.push({ ...pts[0] })
   return pts
 }
+
+function findNearestPoint(point: Point, targets: Point[]): { target: Point | null, dist: number } {
+  let bestTarget: Point | null = null
+  let bestDist = Infinity
+  for (const target of targets) {
+    const dist = Math.hypot(target.x - point.x, target.y - point.y)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestTarget = target
+    }
+  }
+  return { target: bestTarget, dist: bestDist }
+}
+
+function findNearestContourVertexIndex(contour: Point[], point: Point): number {
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < contour.length; i += 1) {
+    const dist = Math.hypot(contour[i].x - point.x, contour[i].y - point.y)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestIdx = i
+    }
+  }
+  return bestIdx
+}
+
+function cornerTurnAngle(contour: Point[], index: number): number | null {
+  const n = contour.length
+  if (n < 3) return null
+
+  const prev = contour[(index - 1 + n) % n]
+  const curr = contour[index]
+  const next = contour[(index + 1) % n]
+  const v1 = { x: prev.x - curr.x, y: prev.y - curr.y }
+  const v2 = { x: next.x - curr.x, y: next.y - curr.y }
+  const len1 = Math.hypot(v1.x, v1.y)
+  const len2 = Math.hypot(v2.x, v2.y)
+  if (len1 < 1e-9 || len2 < 1e-9) return null
+
+  const cos = (v1.x * v2.x + v1.y * v2.y) / (len1 * len2)
+  return Math.acos(Math.max(-1, Math.min(1, cos)))
+}
+
+function maxCornerJumpDistance(currentContour: Point[], corner: Point, stepSize: number): number {
+  const minCornerJumpDist = stepSize * 3
+  const maxCornerJumpDist = stepSize * 10
+  const cornerIndex = findNearestContourVertexIndex(currentContour, corner)
+  const angle = cornerTurnAngle(currentContour, cornerIndex)
+  if (!angle) {
+    return minCornerJumpDist
+  }
+
+  const sinHalf = Math.sin(angle / 2)
+  if (!(sinHalf > 1e-6)) {
+    return maxCornerJumpDist
+  }
+
+  // Offsetting a convex corner moves it along the angle bisector by d/sin(a/2).
+  // Acute tips legitimately travel much farther than 3× stepSize, so scale the
+  // guard from that geometric expectation but keep a hard cap for safety.
+  return Math.max(minCornerJumpDist, Math.min(maxCornerJumpDist, (stepSize / sinHalf) * 1.25))
+}
+
+function cornerSmoothingDistance(stepSize: number): number {
+  return Math.max(MIN_CORNER_SMOOTHING_DISTANCE, stepSize * CORNER_SMOOTHING_FRACTION)
+}
+
+function simplifyOpenPolyline(points: Point[], distanceTolerance: number): Point[] {
+  if (points.length <= 2) {
+    return points.slice()
+  }
+
+  const start = points[0]
+  const end = points[points.length - 1]
+  const span = Math.hypot(end.x - start.x, end.y - start.y)
+  let farthestIndex = -1
+  let farthestDistance = -1
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const point = points[i]
+    const area2 = Math.abs((end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x))
+    const distance = span > 1e-9 ? area2 / span : Math.hypot(point.x - start.x, point.y - start.y)
+    if (distance > farthestDistance) {
+      farthestDistance = distance
+      farthestIndex = i
+    }
+  }
+
+  if (farthestDistance <= distanceTolerance || farthestIndex < 0) {
+    return [start, end]
+  }
+
+  const left = simplifyOpenPolyline(points.slice(0, farthestIndex + 1), distanceTolerance)
+  const right = simplifyOpenPolyline(points.slice(farthestIndex), distanceTolerance)
+  return [...left.slice(0, -1), ...right]
+}
+
+function sliceWrapped(points: Point[], startIndex: number, endIndex: number): Point[] {
+  const out: Point[] = [points[startIndex]]
+  for (let index = startIndex; index !== endIndex;) {
+    index = (index + 1) % points.length
+    out.push(points[index])
+  }
+  return out
+}
+
+function simplifyClosedContour(points: Point[], distanceTolerance: number): Point[] {
+  if (points.length < 4) {
+    return points.slice()
+  }
+
+  let startIndex = 0
+  let endIndex = 1
+  let bestDistance = -1
+  for (let i = 0; i < points.length; i += 1) {
+    for (let j = i + 1; j < points.length; j += 1) {
+      const distance = Math.hypot(points[j].x - points[i].x, points[j].y - points[i].y)
+      if (distance > bestDistance) {
+        bestDistance = distance
+        startIndex = i
+        endIndex = j
+      }
+    }
+  }
+
+  const forward = simplifyOpenPolyline(sliceWrapped(points, startIndex, endIndex), distanceTolerance)
+  const backward = simplifyOpenPolyline(sliceWrapped(points, endIndex, startIndex), distanceTolerance)
+  const simplified = [...forward.slice(0, -1), ...backward.slice(0, -1)]
+  return simplified.length >= 3 ? simplified : points.slice()
+}
+
+function simplifyContourForCornerDetection(contour: Point[], distanceTolerance: number): Point[] {
+  if (contour.length < 4 || !(distanceTolerance > 0)) {
+    return contour
+  }
+
+  let simplified = simplifyClosedContour(contour, distanceTolerance)
+  for (;;) {
+    if (simplified.length <= 3) {
+      return simplified
+    }
+
+    let changed = false
+    const next: Point[] = []
+    for (let i = 0; i < simplified.length; i += 1) {
+      const prev = simplified[(i - 1 + simplified.length) % simplified.length]
+      const curr = simplified[i]
+      const after = simplified[(i + 1) % simplified.length]
+      const lenPrev = Math.hypot(curr.x - prev.x, curr.y - prev.y)
+      const lenNext = Math.hypot(after.x - curr.x, after.y - curr.y)
+      const span = Math.hypot(after.x - prev.x, after.y - prev.y)
+      const area2 = Math.abs((after.x - prev.x) * (curr.y - prev.y) - (after.y - prev.y) * (curr.x - prev.x))
+      const deviation = span > 1e-9 ? area2 / span : 0
+
+      const hasShortEdge = lenPrev <= distanceTolerance || lenNext <= distanceTolerance
+      const isTinyKink = deviation <= distanceTolerance * 0.35 && Math.min(lenPrev, lenNext) <= distanceTolerance * 4
+      const isNeedle = span <= distanceTolerance && Math.max(lenPrev, lenNext) <= distanceTolerance * 2
+
+      if (simplified.length > 3 && (hasShortEdge || isTinyKink || isNeedle)) {
+        changed = true
+        continue
+      }
+
+      next.push(curr)
+    }
+
+    if (!changed || next.length < 3) {
+      return simplified
+    }
+    simplified = next
+  }
+}
+
 
 /**
  * Extract CONVEX corner points from a contour.
@@ -106,24 +276,25 @@ function contourToPath3D(contour: Point[], z: number): Path3D {
  * (the bit plunges there). The opposite sign is a concave / armpit corner —
  * those are skipped so no spurious skeleton arms are emitted.
  */
-function detectCorners(contour: Point[]): Point[] {
-  const n = contour.length
+export function detectCorners(contour: Point[], smoothingDistance = 0): Point[] {
+  const prepared = smoothingDistance > 0 ? simplifyContourForCornerDetection(contour, smoothingDistance) : contour
+  const n = prepared.length
   if (n < 3) return []
 
   // Shoelace signed area — sign encodes winding direction.
   let area = 0
   for (let i = 0; i < n; i++) {
-    const a = contour[i]
-    const b = contour[(i + 1) % n]
+    const a = prepared[i]
+    const b = prepared[(i + 1) % n]
     area += a.x * b.y - b.x * a.y
   }
   if (Math.abs(area) < 1e-12) return []
 
   const corners: Point[] = []
   for (let i = 0; i < n; i++) {
-    const prev = contour[(i - 1 + n) % n]
-    const curr = contour[i]
-    const next = contour[(i + 1) % n]
+    const prev = prepared[(i - 1 + n) % n]
+    const curr = prepared[i]
+    const next = prepared[(i + 1) % n]
     const dx1 = curr.x - prev.x
     const dy1 = curr.y - prev.y
     const dx2 = next.x - curr.x
@@ -142,43 +313,102 @@ function detectCorners(contour: Point[]): Point[] {
       corners.push({ ...curr })
     }
   }
-  return corners
+  return smoothingDistance > 0 ? mergeCorners(corners, smoothingDistance * 0.75) : corners
 }
 
 /**
  * Emit one diagonal skeleton-arm cut per active corner and advance corner
  * positions to the next offset level (chain tracking).
  *
- * Each `corner` is already a vertex of `currentContour` (guaranteed by chain
- * tracking — at depth 0 corners are detected from the original contour; at
- * depth N they are the `inNext` positions returned by the previous call).
- * We therefore use `corner` directly as the "from" point and only need one
- * nearest-vertex lookup (into `nextContour`) per corner.
+ * Primary: connect each active corner to the nearest *actual corner* in
+ * nextContour (via detectCorners). This prevents spurious cuts to smooth
+ * curve vertices (the fan-of-connections bug) — only genuine skeleton arms
+ * at sharp corners get emitted.
  *
- * This produces cuts that are consistently ~stepSize long, forming a connected
- * chain from the surface down to the collapse point — no long diagonal cuts.
+ * Fallback: when the local corner has been rounded away by jtRound, fall back
+ * to the nearest vertex with a tighter distance guard (1.5× stepSize). This
+ * happens per active corner, even if other corners still exist elsewhere on
+ * the same contour, and keeps the chain alive through rounded-offset levels
+ * until collapse.
+ *
+ * A distance guard prevents the chain from jumping to an unrelated corner
+ * across the shape when the tracked corner has actually collapsed.
  */
-function stepCorners(
+export interface RejectedCorner {
+  corner: Point
+  bestTarget: Point | null
+  bestDist: number
+  maxJumpDist: number
+  hadCornerCandidates: boolean
+}
+
+interface SplitCornerTarget {
+  childIndex: number
+  point: Point
+}
+
+export function stepCorners(
   activeCorners: Point[],
+  currentContour: Point[],
   nextContour: Point[],
   currentZ: number,
   nextZ: number,
   stepSize: number,
-): { cuts: Path3D[], nextCorners: Point[] } {
+): { cuts: Path3D[], nextCorners: Point[], rejected: RejectedCorner[] } {
   if (activeCorners.length === 0 || nextContour.length === 0) {
-    return { cuts: [], nextCorners: [] }
+    return { cuts: [], nextCorners: [], rejected: [] }
   }
+
+  const candidateCorners = detectCorners(nextContour, cornerSmoothingDistance(stepSize))
+  // Tighter guard for the fallback (smooth-vertex) case — a round-offset
+  // step moves the tracking point by ~stepSize, so 1.5× is generous without
+  // allowing cross-shape jumps.
+  const vertexMaxJumpDist = stepSize * 1.5
+
   const cuts: Path3D[] = []
   const nextCorners: Point[] = []
+  const rejected: RejectedCorner[] = []
 
   for (const corner of activeCorners) {
-    let bestIdx = 0
-    let bestDist = Infinity
-    for (let i = 0; i < nextContour.length; i++) {
-      const d = Math.hypot(nextContour[i].x - corner.x, nextContour[i].y - corner.y)
-      if (d < bestDist) { bestDist = d; bestIdx = i }
+    const cornerMaxJumpDist = maxCornerJumpDistance(currentContour, corner, stepSize)
+    let inNext: Point | null = null
+    let rejectTarget: Point | null = null
+    let rejectDist = Infinity
+    let rejectMaxJumpDist = vertexMaxJumpDist
+
+    if (candidateCorners.length > 0) {
+      const nearestCorner = findNearestPoint(corner, candidateCorners)
+      if (nearestCorner.target && nearestCorner.dist <= cornerMaxJumpDist) {
+        inNext = nearestCorner.target
+      } else if (nearestCorner.target) {
+        rejectTarget = nearestCorner.target
+        rejectDist = nearestCorner.dist
+        rejectMaxJumpDist = cornerMaxJumpDist
+      }
     }
-    const inNext = nextContour[bestIdx]
+
+    if (!inNext) {
+      const nearestVertex = findNearestPoint(corner, nextContour)
+      if (nearestVertex.target && nearestVertex.dist <= vertexMaxJumpDist) {
+        inNext = nearestVertex.target
+      } else if (nearestVertex.target && nearestVertex.dist < rejectDist) {
+        rejectTarget = nearestVertex.target
+        rejectDist = nearestVertex.dist
+        rejectMaxJumpDist = vertexMaxJumpDist
+      }
+    }
+
+    if (!inNext) {
+      rejected.push({
+        corner: { ...corner },
+        bestTarget: rejectTarget ? { ...rejectTarget } : null,
+        bestDist: rejectDist,
+        maxJumpDist: rejectMaxJumpDist,
+        hadCornerCandidates: candidateCorners.length > 0,
+      })
+      continue
+    }
+
     cuts.push([
       { x: corner.x, y: corner.y, z: currentZ },
       { x: inNext.x, y: inNext.y, z: nextZ },
@@ -186,12 +416,95 @@ function stepCorners(
     nextCorners.push({ ...inNext })
   }
 
-  // Position-based merge: if two nextCorners have converged within half a
-  // stepSize of each other they represent the same skeleton arm. Keep only
-  // one so subsequent levels don't emit a fan of near-identical overlapping
-  // cuts. This is safer than index-based dedup, which was dropping corners
-  // belonging to different walls that happened to map to the same vertex.
-  return { cuts, nextCorners: mergeCorners(nextCorners, stepSize * 0.5) }
+  // Dedup only truly coincident points (two arms converging to the same
+  // corner). The old stepSize*0.5 threshold was too aggressive and dropped
+  // valid nearby-but-distinct corner chains.
+  return { cuts, nextCorners: mergeCorners(nextCorners, 1e-9), rejected }
+}
+
+function bridgeSplitCorners(
+  activeCorners: Point[],
+  currentContour: Point[],
+  nextRegions: ResolvedPocketRegion[],
+  currentZ: number,
+  nextZ: number,
+  stepSize: number,
+): { cuts: Path3D[], childCorners: Point[][], rejected: RejectedCorner[] } {
+  const childCorners = nextRegions.map((): Point[] => [])
+  if (activeCorners.length === 0 || nextRegions.length === 0) {
+    return { cuts: [], childCorners, rejected: [] }
+  }
+
+  const smoothingDistance = cornerSmoothingDistance(stepSize)
+  const targets: SplitCornerTarget[] = nextRegions.flatMap((nextRegion, childIndex) =>
+    detectCorners(nextRegion.outer, smoothingDistance).map((point) => ({ childIndex, point })),
+  )
+
+  if (targets.length === 0) {
+    return {
+      cuts: [],
+      childCorners,
+      rejected: activeCorners.map((corner) => ({
+        corner: { ...corner },
+        bestTarget: null,
+        bestDist: Infinity,
+        maxJumpDist: maxCornerJumpDistance(currentContour, corner, stepSize),
+        hadCornerCandidates: false,
+      })),
+    }
+  }
+
+  const cuts: Path3D[] = []
+  const rejected: RejectedCorner[] = []
+  for (const corner of activeCorners) {
+    const maxJumpDist = maxCornerJumpDistance(currentContour, corner, stepSize)
+    let bestTarget: SplitCornerTarget | null = null
+    let bestDist = Infinity
+    for (const target of targets) {
+      const dist = Math.hypot(target.point.x - corner.x, target.point.y - corner.y)
+      if (dist < bestDist) {
+        bestDist = dist
+        bestTarget = target
+      }
+    }
+
+    if (!bestTarget || bestDist > maxJumpDist) {
+      rejected.push({
+        corner: { ...corner },
+        bestTarget: bestTarget ? { ...bestTarget.point } : null,
+        bestDist,
+        maxJumpDist,
+        hadCornerCandidates: targets.length > 0,
+      })
+      continue
+    }
+
+    cuts.push([
+      { x: corner.x, y: corner.y, z: currentZ },
+      { x: bestTarget.point.x, y: bestTarget.point.y, z: nextZ },
+    ])
+    childCorners[bestTarget.childIndex].push({ ...bestTarget.point })
+  }
+
+  return { cuts, childCorners: childCorners.map((corners) => mergeCorners(corners, 1e-9)), rejected }
+}
+
+/**
+ * Build a small X-shaped pair of cut segments at point (x, y) on plane z.
+ * Used as a debug marker to visualize where stepCorners rejected a chain link.
+ */
+function buildXMarker(p: Point, z: number, size: number): Path3D[] {
+  const h = size / 2
+  return [
+    [
+      { x: p.x - h, y: p.y - h, z },
+      { x: p.x + h, y: p.y + h, z },
+    ],
+    [
+      { x: p.x - h, y: p.y + h, z },
+      { x: p.x + h, y: p.y - h, z },
+    ],
+  ]
 }
 
 /**
@@ -219,26 +532,38 @@ function mergeCorners(corners: Point[], threshold: number): Point[] {
  */
 function emitCollapseGeometry(
   region: ResolvedPocketRegion,
+  activeCorners: Point[],
   topZ: number,
   slope: number,
   maxDepth: number,
   totalOffset: number,
   stepSize: number,
   paths: Path3D[],
+  debugShowRejected: boolean,
 ): void {
   const microStep = stepSize * MICRO_FRACTION
+  const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
   const microRegions = buildInsetRegions(region, microStep, ClipperLib.JoinType.jtRound)
   const microZ = topZ - Math.min(maxDepth, (totalOffset + microStep) / slope)
 
   if (microRegions.length > 0) {
+    if (microRegions.length === 1 && activeCorners.length > 0) {
+      const { cuts, rejected } = stepCorners(activeCorners, region.outer, microRegions[0].outer, currentZ, microZ, microStep)
+      paths.push(...cuts)
+
+      if (debugShowRejected && rejected.length > 0) {
+        for (const rejectedCorner of rejected) {
+          paths.push(...buildXMarker(rejectedCorner.corner, currentZ, stepSize))
+        }
+      }
+    }
+
     for (const r of microRegions) {
       if (r.outer.length >= 2) {
         paths.push(contourToPath3D(r.outer, microZ))
       }
     }
   } else {
-    // Nothing survived the micro-inset — emit current contour at deepest Z.
-    const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
     if (region.outer.length >= 2) {
       paths.push(contourToPath3D(region.outer, currentZ))
     }
@@ -258,6 +583,7 @@ function traceRegion(
   totalOffset: number,
   depth: number,
   paths: Path3D[],
+  debugShowRejected: boolean,
   corners?: Point[],  // at depth 0: detected from original shape; thereafter: chain-tracked inNext positions
 ): void {
   if (depth > MAX_RECURSION_DEPTH) return
@@ -265,7 +591,7 @@ function traceRegion(
   // At depth 0, detect corners from the original contour.
   // At depth N, corners are the inNext positions from the previous level —
   // they are already vertices of region.outer (guaranteed by chain tracking).
-  const activeCorners = corners ?? detectCorners(region.outer)
+  const activeCorners = corners ?? detectCorners(region.outer, cornerSmoothingDistance(stepSize))
 
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
   const nextOffset = totalOffset + stepSize
@@ -275,20 +601,39 @@ function traceRegion(
 
   // ---- COLLAPSE ----
   if (nextRegions.length === 0) {
-    emitCollapseGeometry(region, topZ, slope, maxDepth, totalOffset, stepSize, paths)
+    emitCollapseGeometry(region, activeCorners, topZ, slope, maxDepth, totalOffset, stepSize, paths, debugShowRejected)
     return
   }
 
   // ---- SPLIT ----
   if (nextRegions.length > 1) {
-    // Emit the pre-split contour as a horizontal bridge at the junction depth.
-    if (region.outer.length >= 2) {
-      paths.push(contourToPath3D(region.outer, currentZ))
+    const { cuts, childCorners, rejected } = bridgeSplitCorners(activeCorners, region.outer, nextRegions, currentZ, nextZ, stepSize)
+    paths.push(...cuts)
+
+    if (debugShowRejected && rejected.length > 0) {
+      for (const r of rejected) {
+        paths.push(...buildXMarker(r.corner, currentZ, stepSize))
+      }
     }
-    // Each child is a new shape with its own corners — detect fresh from the
+
+    // Each child is a new shape with its own corners. Prefer any corners that
+    // were explicitly bridged into that child; otherwise detect fresh from the
     // child's boundary so pointed tips introduced by the split are captured.
-    for (const nextRegion of nextRegions) {
-      traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, detectCorners(nextRegion.outer))
+    for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
+      const nextRegion = nextRegions[childIndex]
+      const bridgedCorners = childCorners[childIndex]
+      traceRegion(
+        nextRegion,
+        topZ,
+        slope,
+        maxDepth,
+        stepSize,
+        nextOffset,
+        depth + 1,
+        paths,
+        debugShowRejected,
+        bridgedCorners.length > 0 ? bridgedCorners : detectCorners(nextRegion.outer, cornerSmoothingDistance(stepSize)),
+      )
     }
     return
   }
@@ -296,13 +641,19 @@ function traceRegion(
   // ---- CONTINUE ----
   const nextRegion = nextRegions[0]
 
-  const { cuts, nextCorners } = stepCorners(activeCorners, nextRegion.outer, currentZ, nextZ, stepSize)
+  const { cuts, nextCorners, rejected } = stepCorners(activeCorners, region.outer, nextRegion.outer, currentZ, nextZ, stepSize)
   paths.push(...cuts)
 
-  // Pass nextCorners forward to continue chain tracking. If they're empty
-  // (shouldn't happen without dedup, but defensive), pass undefined so the
-  // next level re-detects corners fresh from its own contour.
-  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths,
+  if (debugShowRejected && rejected.length > 0) {
+    for (const r of rejected) {
+      paths.push(...buildXMarker(r.corner, currentZ, stepSize))
+    }
+  }
+
+  // Pass nextCorners forward to continue chain tracking. If empty (all arms
+  // collapsed or jumped too far), pass undefined so the next level re-detects
+  // corners fresh from its own contour.
+  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, debugShowRejected,
     nextCorners.length > 0 ? nextCorners : undefined)
 }
 
@@ -383,7 +734,6 @@ function pathsToMoves(
   safeZ: number,
   moves: ToolpathMove[],
   startPosition: ToolpathPoint | null,
-  maxLinkDist: number,
 ): ToolpathPoint | null {
   let pos = startPosition
   const chained = chainPaths(paths)
@@ -394,20 +744,8 @@ function pathsToMoves(
 
     const entry: ToolpathPoint = path[0]
 
-    if (pos !== null) {
-      const xyDist = Math.hypot(entry.x - pos.x, entry.y - pos.y)
-      if (xyDist <= maxLinkDist) {
-        // Direct link: skip the full retract-rapid-plunge cycle.
-        // V-carve arm chains end deep and start near the surface, so the
-        // direct move is almost always going shallower (withdrawing). Use a
-        // rapid when rising, cut-feed when descending into material.
-        const kind: ToolpathMove['kind'] = entry.z >= pos.z ? 'rapid' : 'cut'
-        moves.push({ kind, from: pos, to: entry })
-        pos = entry
-      } else {
-        pos = retractToSafe(moves, pos, safeZ)
-        pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
-      }
+    if (pos !== null && pos.x === entry.x && pos.y === entry.y && pos.z === entry.z) {
+      pos = entry
     } else {
       pos = retractToSafe(moves, pos, safeZ)
       pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
@@ -528,11 +866,8 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
 
     for (const region of band.regions) {
       const paths: Path3D[] = []
-      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths)
-      // Link paths within 10× stepSize without a full retract.
-      // Most adjacent arm starts on a letter are within this range; anything
-      // farther apart warrants a proper retract-rapid-plunge.
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize * 10)
+      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths, operation.debugShowRejectedCorners === true)
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
     }
   }
 
