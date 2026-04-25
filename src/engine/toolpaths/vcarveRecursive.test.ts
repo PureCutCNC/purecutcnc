@@ -5,7 +5,7 @@
 
 import type { Operation, Point, Project, SketchFeature, Tool } from '../../types/project'
 import { defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
-import { detectCorners, stepCorners } from './vcarveRecursive'
+import { buildInteriorCornerBridge, detectCorners, stepCorners } from './vcarveRecursive'
 import { generateVCarveRecursiveToolpath } from './vcarveRecursive'
 import type { ToolpathMove } from './types'
 
@@ -243,6 +243,33 @@ function testStepCornersAcceptsAcuteTipJump(): void {
   console.log('stepCorners acute tip jump: PASSED')
 }
 
+function testStepCornersPrefersProjectedCornerOverCloserSideCorner(): void {
+  console.log('Testing stepCorners prefers the inward centreline hit over closer side corners...')
+
+  const currentContour: Point[] = [
+    { x: 0, y: 0 },
+    { x: 6, y: 0 },
+    { x: 6, y: 6 },
+    { x: 0, y: 6 },
+  ]
+  const activeCorners: Point[] = [{ x: 6, y: 6 }]
+  const nextContour: Point[] = [
+    { x: 4.6, y: 5.7 },
+    { x: 2.0, y: 2.0 },
+    { x: 5.7, y: 4.6 },
+  ]
+
+  const stepSize = 1
+  const { cuts, nextCorners, rejected } = stepCorners(activeCorners, currentContour, nextContour, 0, -1, stepSize)
+
+  assert(cuts.length === 1, `expected 1 projected cut, got ${cuts.length}`)
+  assert(nextCorners.length === 1, `expected 1 projected next corner, got ${nextCorners.length}`)
+  assert(rejected.length === 0, `expected 0 rejected projected corners, got ${rejected.length}`)
+  assert(approx(nextCorners[0].x, 5.15) && approx(nextCorners[0].y, 5.15), `expected centreline hit near (5.15, 5.15), got (${nextCorners[0].x}, ${nextCorners[0].y})`)
+
+  console.log('stepCorners centreline hit preference: PASSED')
+}
+
 function testStepCornersDistanceGuardPreventsJump(): void {
   console.log('Testing stepCorners distance guard blocks far jumps...')
 
@@ -261,30 +288,73 @@ function testStepCornersDistanceGuardPreventsJump(): void {
 function testStepCornersDeduplicatesConvergingChains(): void {
   console.log('Testing stepCorners deduplicates chains that converge to same corner...')
 
-  // Diamond CCW: corners at (0,5), (-5,0), (0,-5), (5,0).
-  const diamond: Point[] = [
-    { x: 0, y: 5 },
+  const outer: Point[] = [
     { x: -5, y: 0 },
-    { x: 0, y: -5 },
     { x: 5, y: 0 },
+    { x: 0, y: 5 },
   ]
-  const diamondCorners = detectCorners(diamond)
-  assert(diamondCorners.length === 4, `diamond has 4 corners, got ${diamondCorners.length}`)
+  const inner: Point[] = [
+    { x: -1.5, y: 1 },
+    { x: 1.5, y: 1 },
+    { x: 0, y: 3 },
+  ]
+  const outerCorners = detectCorners(outer)
+  assert(outerCorners.length === 3, `triangle has 3 corners, got ${outerCorners.length}`)
 
-  // Two active corners very close together, both mapping to (5, 0).
-  const activeCorners: Point[] = [{ x: 4.9, y: 0 }, { x: 5.1, y: 0 }]
-  const currentContour = diamond
-  const stepSize = 1   // maxJump = 3; both corners are 0.1 from (5,0) ✓
+  // Two identical active corners should produce duplicate cuts but still
+  // deduplicate down to one tracked next corner.
+  const activeCorners: Point[] = [{ x: 0, y: 5 }, { x: 0, y: 5 }]
+  const currentContour = outer
+  const stepSize = 1
 
-  const { cuts, nextCorners } = stepCorners(activeCorners, currentContour, diamond, 0, -1, stepSize)
+  const { cuts, nextCorners } = stepCorners(activeCorners, currentContour, inner, 0, -1, stepSize)
 
-  // Two cuts emitted (from different starting points) but both target (5, 0).
   assert(cuts.length === 2, `expected 2 cuts, got ${cuts.length}`)
-  // After dedup with 1e-9 threshold, identical destinations collapse to 1.
   assert(nextCorners.length === 1, `expected 1 deduped nextCorner, got ${nextCorners.length}`)
-  assert(approx(nextCorners[0].x, 5) && approx(nextCorners[0].y, 0), 'deduped target should be (5, 0)')
+  assert(approx(nextCorners[0].x, 0) && approx(nextCorners[0].y, 3), 'deduped target should be the inner apex (0, 3)')
 
   console.log('stepCorners convergence dedup: PASSED')
+}
+
+function testBuildInteriorCornerBridgeConnectsNarrowCap(): void {
+  console.log('Testing interior corner bridge connects narrow end-cap corners...')
+
+  const contour: Point[] = [
+    { x: -8, y: -2 },
+    { x: -8, y: 2 },
+    { x: -2, y: 2 },
+    { x: 0, y: 6 },
+    { x: 2, y: 2 },
+    { x: 8, y: 2 },
+    { x: 8, y: -2 },
+  ]
+  const corners: Point[] = [
+    { x: -2, y: 2 },
+    { x: 2, y: 2 },
+  ]
+
+  const bridges = buildInteriorCornerBridge(contour, corners, -1, 1)
+  assert(bridges.length === 1, `expected 1 interior bridge, got ${bridges.length}`)
+  assert(bridges[0].length === 2, `expected a 2-point bridge segment, got ${bridges[0].length}`)
+  assert(approx(bridges[0][0].x, -2) && approx(bridges[0][1].x, 2), 'expected bridge between the two inner cap corners')
+  assert(approx(bridges[0][0].z, -1) && approx(bridges[0][1].z, -1), 'expected same-Z interior bridge')
+
+  console.log('interior corner bridge narrow cap: PASSED')
+}
+
+function testBuildInteriorCornerBridgeRejectsSquareDiagonal(): void {
+  console.log('Testing interior corner bridge rejects square-like diagonal shortcuts...')
+
+  const contour = squareCCW(0, 0, 5)
+  const corners: Point[] = [
+    { x: -5, y: -5 },
+    { x: 5, y: 5 },
+  ]
+
+  const bridges = buildInteriorCornerBridge(contour, corners, -1, 1)
+  assert(bridges.length === 0, `expected 0 bridges across square diagonal, got ${bridges.length}`)
+
+  console.log('interior corner bridge square guard: PASSED')
 }
 
 // ---------------------------------------------------------------------------
@@ -500,8 +570,11 @@ try {
   testStepCornersFallsBackForSmoothContour()
   testStepCornersFallsBackWhenLocalCornerDisappears()
   testStepCornersAcceptsAcuteTipJump()
+  testStepCornersPrefersProjectedCornerOverCloserSideCorner()
   testStepCornersDistanceGuardPreventsJump()
   testStepCornersDeduplicatesConvergingChains()
+  testBuildInteriorCornerBridgeConnectsNarrowCap()
+  testBuildInteriorCornerBridgeRejectsSquareDiagonal()
   testVCarveRecursiveProducesCutsForSquare()
   testVCarveRecursiveCutsStayInsideShape()
   testVCarveRecursiveDeepNarrowChannelReachesInnerOffsets()

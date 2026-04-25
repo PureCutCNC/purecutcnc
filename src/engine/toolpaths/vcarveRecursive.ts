@@ -60,6 +60,10 @@ const CORNER_ANGLE_THRESHOLD_RAD = (15 * Math.PI) / 180
 const MICRO_FRACTION = 0.1  // fraction of stepSize used for collapse micro-offset
 const CORNER_SMOOTHING_FRACTION = 0.25
 const MIN_CORNER_SMOOTHING_DISTANCE = 1e-4
+const BOOTSTRAP_MAX_RESCUE_STEPS = 48
+const MIN_INTERIOR_CORNER_BRIDGE_STEPS = 2
+const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
+const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,6 +98,19 @@ function contourToPath3D(contour: Point[], z: number): Path3D {
   return pts
 }
 
+function contourLengthXY(contour: Point[]): number {
+  if (contour.length < 2) {
+    return 0
+  }
+
+  let length = 0
+  for (let i = 0; i < contour.length; i += 1) {
+    const next = contour[(i + 1) % contour.length]
+    length += Math.hypot(next.x - contour[i].x, next.y - contour[i].y)
+  }
+  return length
+}
+
 function findNearestPoint(point: Point, targets: Point[]): { target: Point | null, dist: number } {
   let bestTarget: Point | null = null
   let bestDist = Infinity
@@ -120,41 +137,41 @@ function findNearestContourVertexIndex(contour: Point[], point: Point): number {
   return bestIdx
 }
 
-function cornerTurnAngle(contour: Point[], index: number): number | null {
+function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const pi = polygon[i]
+    const pj = polygon[j]
+    const intersects = ((pi.y > y) !== (pj.y > y))
+      && (x < (((pj.x - pi.x) * (y - pi.y)) / ((pj.y - pi.y) || 1e-12)) + pi.x)
+    if (intersects) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+function cornerBisector(contour: Point[], index: number): { x: number, y: number } | null {
   const n = contour.length
   if (n < 3) return null
 
   const prev = contour[(index - 1 + n) % n]
   const curr = contour[index]
   const next = contour[(index + 1) % n]
-  const v1 = { x: prev.x - curr.x, y: prev.y - curr.y }
-  const v2 = { x: next.x - curr.x, y: next.y - curr.y }
-  const len1 = Math.hypot(v1.x, v1.y)
-  const len2 = Math.hypot(v2.x, v2.y)
-  if (len1 < 1e-9 || len2 < 1e-9) return null
+  const toPrev = { x: prev.x - curr.x, y: prev.y - curr.y }
+  const toNext = { x: next.x - curr.x, y: next.y - curr.y }
+  const lenPrev = Math.hypot(toPrev.x, toPrev.y)
+  const lenNext = Math.hypot(toNext.x, toNext.y)
+  if (lenPrev < 1e-9 || lenNext < 1e-9) return null
 
-  const cos = (v1.x * v2.x + v1.y * v2.y) / (len1 * len2)
-  return Math.acos(Math.max(-1, Math.min(1, cos)))
-}
-
-function maxCornerJumpDistance(currentContour: Point[], corner: Point, stepSize: number): number {
-  const minCornerJumpDist = stepSize * 3
-  const maxCornerJumpDist = stepSize * 10
-  const cornerIndex = findNearestContourVertexIndex(currentContour, corner)
-  const angle = cornerTurnAngle(currentContour, cornerIndex)
-  if (!angle) {
-    return minCornerJumpDist
+  const sum = {
+    x: (toPrev.x / lenPrev) + (toNext.x / lenNext),
+    y: (toPrev.y / lenPrev) + (toNext.y / lenNext),
   }
+  const sumLen = Math.hypot(sum.x, sum.y)
+  if (sumLen < 1e-9) return null
 
-  const sinHalf = Math.sin(angle / 2)
-  if (!(sinHalf > 1e-6)) {
-    return maxCornerJumpDist
-  }
-
-  // Offsetting a convex corner moves it along the angle bisector by d/sin(a/2).
-  // Acute tips legitimately travel much farther than 3× stepSize, so scale the
-  // guard from that geometric expectation but keep a hard cap for safety.
-  return Math.max(minCornerJumpDist, Math.min(maxCornerJumpDist, (stepSize / sinHalf) * 1.25))
+  return { x: sum.x / sumLen, y: sum.y / sumLen }
 }
 
 function cornerSmoothingDistance(stepSize: number): number {
@@ -316,6 +333,10 @@ export function detectCorners(contour: Point[], smoothingDistance = 0): Point[] 
   return smoothingDistance > 0 ? mergeCorners(corners, smoothingDistance * 0.75) : corners
 }
 
+function detectRecursiveCorners(contour: Point[], stepSize: number): Point[] {
+  return detectCorners(contour, cornerSmoothingDistance(stepSize))
+}
+
 /**
  * Emit one diagonal skeleton-arm cut per active corner and advance corner
  * positions to the next offset level (chain tracking).
@@ -345,6 +366,475 @@ export interface RejectedCorner {
 interface SplitCornerTarget {
   childIndex: number
   point: Point
+  contour: Point[]
+}
+
+interface TrackedArm {
+  point: Point
+  guide: { x: number, y: number }
+  z?: number
+}
+
+interface ProjectionTarget {
+  point: Point
+  contour: Point[]
+}
+
+interface ProjectedTargetMatch<T extends ProjectionTarget> {
+  target: T
+  dist: number
+  progress: number
+  deviationRatio: number
+  directionMismatch: number
+}
+
+interface ContourRayHit {
+  point: Point
+  contour: Point[]
+  progress: number
+  dist: number
+}
+
+function normalizeDirection(x: number, y: number): { x: number, y: number } | null {
+  const length = Math.hypot(x, y)
+  if (length < 1e-9) {
+    return null
+  }
+  return { x: x / length, y: y / length }
+}
+
+function inwardDirectionForPoint(contour: Point[], point: Point): { x: number, y: number } | null {
+  return cornerBisector(contour, findNearestContourVertexIndex(contour, point))
+}
+
+function inwardNormalForSegment(a: Point, b: Point): { x: number, y: number } | null {
+  return normalizeDirection(-(b.y - a.y), b.x - a.x)
+}
+
+function inwardDirectionAtContourPoint(contour: Point[], point: Point): { x: number, y: number } | null {
+  const vertexIndex = contour.findIndex((candidate) => Math.hypot(candidate.x - point.x, candidate.y - point.y) < 1e-6)
+  if (vertexIndex >= 0) {
+    return cornerBisector(contour, vertexIndex)
+  }
+
+  let bestIndex = -1
+  let bestDistance = Infinity
+  for (let i = 0; i < contour.length; i += 1) {
+    const a = contour[i]
+    const b = contour[(i + 1) % contour.length]
+    const abx = b.x - a.x
+    const aby = b.y - a.y
+    const lengthSquared = (abx * abx) + (aby * aby)
+    if (lengthSquared < 1e-12) {
+      continue
+    }
+
+    const t = Math.max(0, Math.min(1, (((point.x - a.x) * abx) + ((point.y - a.y) * aby)) / lengthSquared))
+    const closestX = a.x + (abx * t)
+    const closestY = a.y + (aby * t)
+    const distance = Math.hypot(point.x - closestX, point.y - closestY)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = i
+    }
+  }
+
+  if (bestIndex < 0) {
+    return inwardDirectionForPoint(contour, point)
+  }
+
+  return inwardNormalForSegment(contour[bestIndex], contour[(bestIndex + 1) % contour.length])
+}
+
+function blendDirections(
+  primary: { x: number, y: number } | null,
+  secondary: { x: number, y: number } | null,
+  primaryWeight = 0.7,
+): { x: number, y: number } | null {
+  if (primary && secondary) {
+    return normalizeDirection(
+      (primary.x * primaryWeight) + (secondary.x * (1 - primaryWeight)),
+      (primary.y * primaryWeight) + (secondary.y * (1 - primaryWeight)),
+    )
+  }
+  return primary ?? secondary
+}
+
+function directionMismatch(a: { x: number, y: number } | null, b: { x: number, y: number } | null): number {
+  if (!a || !b) {
+    return 0
+  }
+  const dot = (a.x * b.x) + (a.y * b.y)
+  return 1 - Math.max(-1, Math.min(1, dot))
+}
+
+function compareProjectedMatches<T extends ProjectionTarget>(
+  left: ProjectedTargetMatch<T>,
+  right: ProjectedTargetMatch<T>,
+): number {
+  if (Math.abs(left.deviationRatio - right.deviationRatio) > 1e-9) {
+    return left.deviationRatio - right.deviationRatio
+  }
+  if (Math.abs(left.directionMismatch - right.directionMismatch) > 1e-9) {
+    return left.directionMismatch - right.directionMismatch
+  }
+  if (Math.abs(left.progress - right.progress) > 1e-9) {
+    return left.progress - right.progress
+  }
+  return left.dist - right.dist
+}
+
+function findProjectedTarget<T extends ProjectionTarget>(
+  origin: Point,
+  guide: { x: number, y: number } | null,
+  currentContour: Point[],
+  targets: T[],
+): ProjectedTargetMatch<T> | null {
+  if (targets.length === 0) {
+    return null
+  }
+
+  let best: ProjectedTargetMatch<T> | null = null
+
+  for (const target of targets) {
+    const dx = target.point.x - origin.x
+    const dy = target.point.y - origin.y
+    const dist = Math.hypot(dx, dy)
+
+    if (dist > 1e-9 && !segmentSamplesStayInsideContour(origin, target.point, currentContour)) {
+      continue
+    }
+
+    let progress = dist
+    let deviationRatio = 0
+    if (guide) {
+      progress = (dx * guide.x) + (dy * guide.y)
+      if (progress <= 1e-9) {
+        continue
+      }
+
+      const lateral = Math.abs((dx * guide.y) - (dy * guide.x))
+      deviationRatio = lateral / progress
+    }
+
+    const match: ProjectedTargetMatch<T> = {
+      target,
+      dist,
+      progress,
+      deviationRatio,
+      directionMismatch: directionMismatch(guide, inwardDirectionAtContourPoint(target.contour, target.point)),
+    }
+
+    if (!best || compareProjectedMatches(match, best) < 0) {
+      best = match
+    }
+  }
+
+  return best
+}
+
+function findNearestInsideTarget<T extends ProjectionTarget>(
+  origin: Point,
+  currentContour: Point[],
+  targets: T[],
+): ProjectedTargetMatch<T> | null {
+  let best: ProjectedTargetMatch<T> | null = null
+
+  for (const target of targets) {
+    const dx = target.point.x - origin.x
+    const dy = target.point.y - origin.y
+    const dist = Math.hypot(dx, dy)
+    if (dist > 1e-9 && !segmentSamplesStayInsideContour(origin, target.point, currentContour)) {
+      continue
+    }
+
+    const match: ProjectedTargetMatch<T> = {
+      target,
+      dist,
+      progress: dist,
+      deviationRatio: Infinity,
+      directionMismatch: 0,
+    }
+
+    if (!best || match.dist < best.dist) {
+      best = match
+    }
+  }
+
+  return best
+}
+
+function raySegmentIntersection(
+  origin: Point,
+  guide: { x: number, y: number },
+  a: Point,
+  b: Point,
+): { point: Point, progress: number } | null {
+  const sx = b.x - a.x
+  const sy = b.y - a.y
+  const denom = (guide.x * sy) - (guide.y * sx)
+  const qpx = a.x - origin.x
+  const qpy = a.y - origin.y
+
+  if (Math.abs(denom) < 1e-9) {
+    return null
+  }
+
+  const progress = ((qpx * sy) - (qpy * sx)) / denom
+  const segmentT = ((qpx * guide.y) - (qpy * guide.x)) / denom
+  if (progress <= 1e-9 || segmentT < -1e-9 || segmentT > 1 + 1e-9) {
+    return null
+  }
+
+  return {
+    point: {
+      x: origin.x + (guide.x * progress),
+      y: origin.y + (guide.y * progress),
+    },
+    progress,
+  }
+}
+
+function findContourRayHit(
+  origin: Point,
+  guide: { x: number, y: number },
+  currentContour: Point[],
+  targetContour: Point[],
+): ContourRayHit | null {
+  let best: ContourRayHit | null = null
+
+  for (let i = 0; i < targetContour.length; i += 1) {
+    const hit = raySegmentIntersection(origin, guide, targetContour[i], targetContour[(i + 1) % targetContour.length])
+    if (!hit) {
+      continue
+    }
+    if (!segmentSamplesStayInsideContour(origin, hit.point, currentContour)) {
+      continue
+    }
+
+    const candidate: ContourRayHit = {
+      point: hit.point,
+      contour: targetContour,
+      progress: hit.progress,
+      dist: hit.progress,
+    }
+    if (!best || candidate.progress < best.progress) {
+      best = candidate
+    }
+  }
+
+  return best
+}
+
+function snapRayHitToCorner(
+  origin: Point,
+  guide: { x: number, y: number },
+  currentContour: Point[],
+  hit: ContourRayHit,
+  candidateCorners: Point[],
+  stepSize: number,
+): Point {
+  if (candidateCorners.length === 0) {
+    return hit.point
+  }
+
+  const cornerTargets = candidateCorners.map((point) => ({ point, contour: hit.contour }))
+  const bestCorner = findProjectedTarget(origin, guide, currentContour, cornerTargets)
+  if (!bestCorner) {
+    return hit.point
+  }
+
+  const snapDistance = Math.hypot(bestCorner.target.point.x - hit.point.x, bestCorner.target.point.y - hit.point.y)
+  const maxSnapDistance = Math.max(stepSize * 0.75, hit.progress * 0.15)
+  return snapDistance <= maxSnapDistance ? bestCorner.target.point : hit.point
+}
+
+function createTrackedArm(
+  contour: Point[],
+  point: Point,
+  previousGuide?: { x: number, y: number } | null,
+  z?: number,
+): TrackedArm | null {
+  const localGuide = inwardDirectionAtContourPoint(contour, point)
+  const guide = localGuide ?? previousGuide ?? null
+  if (!guide) {
+    return null
+  }
+  return {
+    point: { ...point },
+    guide,
+    z,
+  }
+}
+
+function mergeTrackedArms(arms: TrackedArm[], threshold: number): TrackedArm[] {
+  const result: TrackedArm[] = []
+  for (const arm of arms) {
+    const existing = result.find((candidate) => Math.hypot(candidate.point.x - arm.point.x, candidate.point.y - arm.point.y) < threshold)
+    if (existing) {
+      existing.guide = blendDirections(existing.guide, arm.guide, 0.5) ?? existing.guide
+      if (arm.z !== undefined) {
+        existing.z = existing.z === undefined ? arm.z : Math.min(existing.z, arm.z)
+      }
+      continue
+    }
+    result.push({
+      point: { ...arm.point },
+      guide: { ...arm.guide },
+      z: arm.z,
+    })
+  }
+  return result
+}
+
+function createTrackedArms(contour: Point[], points: Point[], dedupe = true, z?: number): TrackedArm[] {
+  const arms = points
+    .map((point) => createTrackedArm(contour, point, undefined, z))
+    .filter((arm): arm is TrackedArm => arm !== null)
+  return dedupe ? mergeTrackedArms(arms, 1e-9) : arms
+}
+
+function seedTrackedArms(
+  contour: Point[],
+  stepSize: number,
+  carriedArms: TrackedArm[] = [],
+  z?: number,
+): TrackedArm[] {
+  const freshArms = createTrackedArms(contour, detectRecursiveCorners(contour, stepSize), false, z)
+  return mergeTrackedArms([...carriedArms, ...freshArms], 1e-9)
+}
+
+function findArmTarget(
+  arm: TrackedArm,
+  currentContour: Point[],
+  nextContour: Point[],
+  stepSize: number,
+  allowSmoothTargets: boolean,
+): { point: Point, dist: number } | null {
+  const candidateCorners = detectCorners(nextContour, cornerSmoothingDistance(stepSize))
+  const rayHit = findContourRayHit(arm.point, arm.guide, currentContour, nextContour)
+  if (rayHit) {
+    const snappedPoint = snapRayHitToCorner(arm.point, arm.guide, currentContour, rayHit, candidateCorners, stepSize)
+    const snappedIsCorner = candidateCorners.some((corner) => Math.hypot(corner.x - snappedPoint.x, corner.y - snappedPoint.y) < 1e-6)
+    if (snappedIsCorner || allowSmoothTargets) {
+      return {
+        point: snappedPoint,
+        dist: Math.hypot(snappedPoint.x - arm.point.x, snappedPoint.y - arm.point.y),
+      }
+    }
+  }
+
+  const cornerTargets: ProjectionTarget[] = candidateCorners.map((point) => ({ point, contour: nextContour }))
+  const projectedCorner = cornerTargets.length > 0
+    ? findProjectedTarget(arm.point, arm.guide, currentContour, cornerTargets)
+      ?? findNearestInsideTarget(arm.point, currentContour, cornerTargets)
+    : null
+  if (projectedCorner) {
+    return {
+      point: projectedCorner.target.point,
+      dist: projectedCorner.dist,
+    }
+  }
+
+  if (!allowSmoothTargets) {
+    return null
+  }
+
+  const vertexTargets: ProjectionTarget[] = nextContour.map((point) => ({ point, contour: nextContour }))
+  const projectedVertex = findProjectedTarget(arm.point, arm.guide, currentContour, vertexTargets)
+    ?? findNearestInsideTarget(arm.point, currentContour, vertexTargets)
+  if (projectedVertex) {
+    return {
+      point: projectedVertex.target.point,
+      dist: projectedVertex.dist,
+    }
+  }
+
+  return null
+}
+
+function stepArms(
+  activeArms: TrackedArm[],
+  currentContour: Point[],
+  nextContour: Point[],
+  currentZ: number,
+  nextZ: number,
+  stepSize: number,
+  slope: number,
+  minZ: number,
+  allowSmoothTargets = false,
+): { cuts: Path3D[], nextArms: TrackedArm[], rejected: RejectedCorner[] } {
+  if (activeArms.length === 0 || nextContour.length === 0) {
+    return { cuts: [], nextArms: [], rejected: [] }
+  }
+
+  const cuts: Path3D[] = []
+  const nextArms: TrackedArm[] = []
+  const rejected: RejectedCorner[] = []
+  const candidateCorners = allowSmoothTargets
+    ? detectCorners(nextContour, cornerSmoothingDistance(stepSize))
+    : detectRecursiveCorners(nextContour, stepSize)
+
+  for (const arm of activeArms) {
+    const armZ = arm.z ?? currentZ
+
+    if (!allowSmoothTargets) {
+      if (candidateCorners.length > 0) {
+        const rescue = buildCenterlineRescuePath(currentContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ)
+        if (rescue && rescue.path.length >= 2) {
+          cuts.push(rescue.path)
+          const priorPoint = rescue.path[rescue.path.length - 2]
+          const endGuide = normalizeDirection(
+            rescue.endPoint.x - priorPoint.x,
+            rescue.endPoint.y - priorPoint.y,
+          )
+          const nextArm = createTrackedArm(nextContour, rescue.endPoint, endGuide ?? arm.guide, rescue.endZ)
+          if (nextArm) {
+            nextArms.push(nextArm)
+          }
+          continue
+        }
+      }
+
+      const nearestCorner = candidateCorners.length > 0 ? findNearestPoint(arm.point, candidateCorners) : { target: null, dist: Infinity }
+      rejected.push({
+        corner: { ...arm.point },
+        bestTarget: nearestCorner.target ? { ...nearestCorner.target } : null,
+        bestDist: nearestCorner.dist,
+        maxJumpDist: Infinity,
+        hadCornerCandidates: candidateCorners.length > 0,
+      })
+      continue
+    }
+
+    const target = findArmTarget(arm, currentContour, nextContour, stepSize, allowSmoothTargets)
+
+    if (!target) {
+      const nearestCorner = candidateCorners.length > 0 ? findNearestPoint(arm.point, candidateCorners) : { target: null, dist: Infinity }
+      const nearestVertex = findNearestPoint(arm.point, nextContour)
+      const rejectTarget = nearestCorner.dist <= nearestVertex.dist ? nearestCorner.target : nearestVertex.target
+      const rejectDist = Math.min(nearestCorner.dist, nearestVertex.dist)
+      rejected.push({
+        corner: { ...arm.point },
+        bestTarget: rejectTarget ? { ...rejectTarget } : null,
+        bestDist: rejectDist,
+        maxJumpDist: Infinity,
+        hadCornerCandidates: candidateCorners.length > 0,
+      })
+      continue
+    }
+
+    cuts.push([
+      { x: arm.point.x, y: arm.point.y, z: armZ },
+      { x: target.point.x, y: target.point.y, z: nextZ },
+    ])
+    const nextArm = createTrackedArm(nextContour, target.point, arm.guide, nextZ)
+    if (nextArm) {
+      nextArms.push(nextArm)
+    }
+  }
+
+  return { cuts, nextArms: mergeTrackedArms(nextArms, 1e-9), rejected }
 }
 
 export function stepCorners(
@@ -355,100 +845,53 @@ export function stepCorners(
   nextZ: number,
   stepSize: number,
 ): { cuts: Path3D[], nextCorners: Point[], rejected: RejectedCorner[] } {
-  if (activeCorners.length === 0 || nextContour.length === 0) {
-    return { cuts: [], nextCorners: [], rejected: [] }
+  const activeArms = createTrackedArms(currentContour, activeCorners, false)
+  const slope = Math.abs(currentZ - nextZ) > 1e-9 ? stepSize / Math.abs(currentZ - nextZ) : Number.POSITIVE_INFINITY
+  const { cuts, nextArms, rejected } = stepArms(
+    activeArms,
+    currentContour,
+    nextContour,
+    currentZ,
+    nextZ,
+    stepSize,
+    slope,
+    Number.NEGATIVE_INFINITY,
+    true,
+  )
+  return {
+    cuts,
+    nextCorners: nextArms.map((arm) => ({ ...arm.point })),
+    rejected,
   }
-
-  const candidateCorners = detectCorners(nextContour, cornerSmoothingDistance(stepSize))
-  // Tighter guard for the fallback (smooth-vertex) case — a round-offset
-  // step moves the tracking point by ~stepSize, so 1.5× is generous without
-  // allowing cross-shape jumps.
-  const vertexMaxJumpDist = stepSize * 1.5
-
-  const cuts: Path3D[] = []
-  const nextCorners: Point[] = []
-  const rejected: RejectedCorner[] = []
-
-  for (const corner of activeCorners) {
-    const cornerMaxJumpDist = maxCornerJumpDistance(currentContour, corner, stepSize)
-    let inNext: Point | null = null
-    let rejectTarget: Point | null = null
-    let rejectDist = Infinity
-    let rejectMaxJumpDist = vertexMaxJumpDist
-
-    if (candidateCorners.length > 0) {
-      const nearestCorner = findNearestPoint(corner, candidateCorners)
-      if (nearestCorner.target && nearestCorner.dist <= cornerMaxJumpDist) {
-        inNext = nearestCorner.target
-      } else if (nearestCorner.target) {
-        rejectTarget = nearestCorner.target
-        rejectDist = nearestCorner.dist
-        rejectMaxJumpDist = cornerMaxJumpDist
-      }
-    }
-
-    if (!inNext) {
-      const nearestVertex = findNearestPoint(corner, nextContour)
-      if (nearestVertex.target && nearestVertex.dist <= vertexMaxJumpDist) {
-        inNext = nearestVertex.target
-      } else if (nearestVertex.target && nearestVertex.dist < rejectDist) {
-        rejectTarget = nearestVertex.target
-        rejectDist = nearestVertex.dist
-        rejectMaxJumpDist = vertexMaxJumpDist
-      }
-    }
-
-    if (!inNext) {
-      rejected.push({
-        corner: { ...corner },
-        bestTarget: rejectTarget ? { ...rejectTarget } : null,
-        bestDist: rejectDist,
-        maxJumpDist: rejectMaxJumpDist,
-        hadCornerCandidates: candidateCorners.length > 0,
-      })
-      continue
-    }
-
-    cuts.push([
-      { x: corner.x, y: corner.y, z: currentZ },
-      { x: inNext.x, y: inNext.y, z: nextZ },
-    ])
-    nextCorners.push({ ...inNext })
-  }
-
-  // Dedup only truly coincident points (two arms converging to the same
-  // corner). The old stepSize*0.5 threshold was too aggressive and dropped
-  // valid nearby-but-distinct corner chains.
-  return { cuts, nextCorners: mergeCorners(nextCorners, 1e-9), rejected }
 }
 
-function bridgeSplitCorners(
-  activeCorners: Point[],
+function bridgeSplitArms(
+  activeArms: TrackedArm[],
   currentContour: Point[],
   nextRegions: ResolvedPocketRegion[],
   currentZ: number,
   nextZ: number,
   stepSize: number,
-): { cuts: Path3D[], childCorners: Point[][], rejected: RejectedCorner[] } {
-  const childCorners = nextRegions.map((): Point[] => [])
-  if (activeCorners.length === 0 || nextRegions.length === 0) {
-    return { cuts: [], childCorners, rejected: [] }
+): { cuts: Path3D[], childArms: TrackedArm[][], rejected: RejectedCorner[] } {
+  const childArms = nextRegions.map((): TrackedArm[] => [])
+  if (activeArms.length === 0 || nextRegions.length === 0) {
+    return { cuts: [], childArms, rejected: [] }
   }
 
   const smoothingDistance = cornerSmoothingDistance(stepSize)
   const targets: SplitCornerTarget[] = nextRegions.flatMap((nextRegion, childIndex) =>
-    detectCorners(nextRegion.outer, smoothingDistance).map((point) => ({ childIndex, point })),
+    detectCorners(nextRegion.outer, smoothingDistance).map((point) => ({ childIndex, point, contour: nextRegion.outer })),
   )
 
   if (targets.length === 0) {
     return {
       cuts: [],
-      childCorners,
-      rejected: activeCorners.map((corner) => ({
-        corner: { ...corner },
+      childArms,
+      rejected: activeArms.map((arm) => ({
+        corner: { ...arm.point },
         bestTarget: null,
         bestDist: Infinity,
-        maxJumpDist: maxCornerJumpDistance(currentContour, corner, stepSize),
+        maxJumpDist: Infinity,
         hadCornerCandidates: false,
       })),
     }
@@ -456,37 +899,60 @@ function bridgeSplitCorners(
 
   const cuts: Path3D[] = []
   const rejected: RejectedCorner[] = []
-  for (const corner of activeCorners) {
-    const maxJumpDist = maxCornerJumpDistance(currentContour, corner, stepSize)
-    let bestTarget: SplitCornerTarget | null = null
-    let bestDist = Infinity
-    for (const target of targets) {
-      const dist = Math.hypot(target.point.x - corner.x, target.point.y - corner.y)
-      if (dist < bestDist) {
-        bestDist = dist
-        bestTarget = target
-      }
+  for (const arm of activeArms) {
+    let bestTarget = findProjectedTarget(arm.point, arm.guide, currentContour, targets)
+      ?? findNearestInsideTarget(arm.point, currentContour, targets)
+    if (!bestTarget) {
+      const rayChildHits = nextRegions
+        .map((nextRegion, childIndex) => {
+          const hit = findContourRayHit(arm.point, arm.guide, currentContour, nextRegion.outer)
+          return hit
+            ? {
+              target: {
+                childIndex,
+                point: hit.point,
+                contour: nextRegion.outer,
+              },
+              dist: hit.dist,
+              progress: hit.progress,
+              deviationRatio: 0,
+              directionMismatch: directionMismatch(arm.guide, inwardDirectionAtContourPoint(nextRegion.outer, hit.point)),
+            }
+            : null
+        })
+        .filter((hit): hit is ProjectedTargetMatch<SplitCornerTarget> => hit !== null)
+      bestTarget = rayChildHits.sort(compareProjectedMatches)[0] ?? null
     }
-
-    if (!bestTarget || bestDist > maxJumpDist) {
+    if (!bestTarget) {
+      const nearestTarget = targets.reduce<SplitCornerTarget | null>((best, candidate) => {
+        if (!best) {
+          return candidate
+        }
+        const bestDist = Math.hypot(best.point.x - arm.point.x, best.point.y - arm.point.y)
+        const candidateDist = Math.hypot(candidate.point.x - arm.point.x, candidate.point.y - arm.point.y)
+        return candidateDist < bestDist ? candidate : best
+      }, null)
       rejected.push({
-        corner: { ...corner },
-        bestTarget: bestTarget ? { ...bestTarget.point } : null,
-        bestDist,
-        maxJumpDist,
+        corner: { ...arm.point },
+        bestTarget: nearestTarget ? { ...nearestTarget.point } : null,
+        bestDist: nearestTarget ? Math.hypot(nearestTarget.point.x - arm.point.x, nearestTarget.point.y - arm.point.y) : Infinity,
+        maxJumpDist: Infinity,
         hadCornerCandidates: targets.length > 0,
       })
       continue
     }
 
     cuts.push([
-      { x: corner.x, y: corner.y, z: currentZ },
-      { x: bestTarget.point.x, y: bestTarget.point.y, z: nextZ },
+      { x: arm.point.x, y: arm.point.y, z: currentZ },
+      { x: bestTarget.target.point.x, y: bestTarget.target.point.y, z: nextZ },
     ])
-    childCorners[bestTarget.childIndex].push({ ...bestTarget.point })
+    const nextArm = createTrackedArm(bestTarget.target.contour, bestTarget.target.point, arm.guide)
+    if (nextArm) {
+      childArms[bestTarget.target.childIndex].push(nextArm)
+    }
   }
 
-  return { cuts, childCorners: childCorners.map((corners) => mergeCorners(corners, 1e-9)), rejected }
+  return { cuts, childArms: childArms.map((arms) => mergeTrackedArms(arms, 1e-9)), rejected }
 }
 
 /**
@@ -521,6 +987,315 @@ function mergeCorners(corners: Point[], threshold: number): Point[] {
   return result
 }
 
+function contourArcLength(contour: Point[], fromIndex: number, toIndex: number): number {
+  if (contour.length < 2) {
+    return 0
+  }
+
+  let length = 0
+  for (let index = fromIndex; index !== toIndex;) {
+    const nextIndex = (index + 1) % contour.length
+    length += Math.hypot(
+      contour[nextIndex].x - contour[index].x,
+      contour[nextIndex].y - contour[index].y,
+    )
+    index = nextIndex
+  }
+  return length
+}
+
+function isIndexOnForwardArc(index: number, fromIndex: number, toIndex: number, contourLength: number): boolean {
+  for (let cursor = (fromIndex + 1) % contourLength; cursor !== toIndex; cursor = (cursor + 1) % contourLength) {
+    if (cursor === index) {
+      return true
+    }
+  }
+  return false
+}
+
+function segmentSamplesStayInsideContour(a: Point, b: Point, contour: Point[]): boolean {
+  for (const t of [0.25, 0.5, 0.75]) {
+    const sampleX = a.x + ((b.x - a.x) * t)
+    const sampleY = a.y + ((b.y - a.y) * t)
+    if (!pointInPolygon(sampleX, sampleY, contour)) {
+      return false
+    }
+  }
+  return true
+}
+
+function lineSegmentSignedIntersection(
+  origin: Point,
+  direction: { x: number, y: number },
+  a: Point,
+  b: Point,
+): number | null {
+  const sx = b.x - a.x
+  const sy = b.y - a.y
+  const denom = (direction.x * sy) - (direction.y * sx)
+  if (Math.abs(denom) < 1e-9) {
+    return null
+  }
+
+  const qpx = a.x - origin.x
+  const qpy = a.y - origin.y
+  const lineT = ((qpx * sy) - (qpy * sx)) / denom
+  const segmentT = ((qpx * direction.y) - (qpy * direction.x)) / denom
+  if (segmentT < -1e-9 || segmentT > 1 + 1e-9) {
+    return null
+  }
+
+  return lineT
+}
+
+function findPerpendicularChannelMidpoint(
+  contour: Point[],
+  probe: Point,
+  guide: { x: number, y: number },
+): { point: Point, radius: number } | null {
+  const normal = normalizeDirection(-guide.y, guide.x)
+  if (!normal) {
+    return null
+  }
+
+  const intersections: number[] = []
+  for (let i = 0; i < contour.length; i += 1) {
+    const t = lineSegmentSignedIntersection(probe, normal, contour[i], contour[(i + 1) % contour.length])
+    if (t === null) {
+      continue
+    }
+    if (!intersections.some((existing) => Math.abs(existing - t) < 1e-6)) {
+      intersections.push(t)
+    }
+  }
+
+  if (intersections.length < 2) {
+    return null
+  }
+
+  intersections.sort((a, b) => a - b)
+  for (let i = 0; i < intersections.length - 1; i += 1) {
+    const left = intersections[i]
+    const right = intersections[i + 1]
+    if (left < -1e-6 && right > 1e-6) {
+      const midpointT = (left + right) / 2
+      return {
+        point: {
+          x: probe.x + (normal.x * midpointT),
+          y: probe.y + (normal.y * midpointT),
+        },
+        radius: (right - left) / 2,
+      }
+    }
+  }
+
+  return null
+}
+
+function buildCenterlineRescuePath(
+  currentContour: Point[],
+  nextCorners: Point[],
+  arm: TrackedArm,
+  currentZ: number,
+  nextZ: number,
+  stepSize: number,
+  slope: number,
+  minZ: number,
+  maxIterationsOverride?: number,
+): { path: Path3D, endPoint: Point, endZ: number, reachedCorner: boolean } | null {
+  if (!(slope > 1e-9) || nextCorners.length === 0) {
+    return null
+  }
+
+  const startZ = arm.z ?? currentZ
+  const path: Path3D = [{ x: arm.point.x, y: arm.point.y, z: startZ }]
+  let currentPoint = { ...arm.point }
+  let currentGuide = inwardDirectionAtContourPoint(currentContour, arm.point) ?? { ...arm.guide }
+  let lastZ = startZ
+  const maxIterations = maxIterationsOverride
+    ?? Math.max(
+      48,
+      Math.min(
+        2048,
+        Math.ceil(contourLengthXY(currentContour) / Math.max(stepSize, 1e-9)),
+      ),
+    )
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    const probe = {
+      x: currentPoint.x + (currentGuide.x * stepSize),
+      y: currentPoint.y + (currentGuide.y * stepSize),
+    }
+    const channel = findPerpendicularChannelMidpoint(currentContour, probe, currentGuide)
+    if (!channel) {
+      return null
+    }
+    const forwardProgress = ((channel.point.x - currentPoint.x) * currentGuide.x)
+      + ((channel.point.y - currentPoint.y) * currentGuide.y)
+    if (forwardProgress <= stepSize * 0.2) {
+      return null
+    }
+    if (!segmentSamplesStayInsideContour(currentPoint, channel.point, currentContour)) {
+      return null
+    }
+
+    const targetMidpointZ = currentZ - (channel.radius / slope)
+    const midpointZ = Math.max(minZ, Math.min(lastZ, targetMidpointZ))
+    if (Math.hypot(channel.point.x - currentPoint.x, channel.point.y - currentPoint.y) < 1e-6) {
+      return null
+    }
+    path.push({ x: channel.point.x, y: channel.point.y, z: midpointZ })
+
+    const nearestReachableCorner = nextCorners
+      .map((corner) => ({
+        point: corner,
+        dist: Math.hypot(corner.x - channel.point.x, corner.y - channel.point.y),
+      }))
+      .filter((candidate) => candidate.dist <= stepSize + 1e-6)
+      .sort((left, right) => left.dist - right.dist)[0]
+
+    if (nearestReachableCorner) {
+      path.push({ x: nearestReachableCorner.point.x, y: nearestReachableCorner.point.y, z: nextZ })
+      return {
+        path,
+        endPoint: nearestReachableCorner.point,
+        endZ: nextZ,
+        reachedCorner: true,
+      }
+    }
+
+    const nextGuide = normalizeDirection(
+      channel.point.x - currentPoint.x,
+      channel.point.y - currentPoint.y,
+    )
+    if (!nextGuide) {
+      return null
+    }
+
+    currentPoint = channel.point
+    currentGuide = nextGuide
+    lastZ = midpointZ
+  }
+
+  return null
+}
+
+function buildFreshSeedBootstrapCuts(
+  currentContour: Point[],
+  nextContour: Point[],
+  currentArms: TrackedArm[],
+  connectedNextArms: TrackedArm[],
+  currentZ: number,
+  nextZ: number,
+  stepSize: number,
+  slope: number,
+  minZ: number,
+): { cuts: Path3D[], seededNextArms: TrackedArm[] } {
+  const seededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
+  const freshSeedArms = seededNextArms.filter((seededArm) =>
+    !connectedNextArms.some((connectedArm) => Math.hypot(connectedArm.point.x - seededArm.point.x, connectedArm.point.y - seededArm.point.y) < 1e-9),
+  )
+  if (freshSeedArms.length === 0) {
+    return { cuts: [], seededNextArms }
+  }
+
+  const candidateSourceArms = mergeTrackedArms(currentArms, 1e-9)
+  if (candidateSourceArms.length === 0) {
+    return { cuts: [], seededNextArms }
+  }
+
+  const cuts: Path3D[] = []
+  for (const freshSeedArm of freshSeedArms) {
+    const orderedSourceArms = candidateSourceArms
+      .filter((sourceArm) => Math.hypot(sourceArm.point.x - freshSeedArm.point.x, sourceArm.point.y - freshSeedArm.point.y) >= 1e-9)
+      .sort((left, right) =>
+        Math.hypot(left.point.x - freshSeedArm.point.x, left.point.y - freshSeedArm.point.y)
+        - Math.hypot(right.point.x - freshSeedArm.point.x, right.point.y - freshSeedArm.point.y),
+      )
+
+    for (const sourceArm of orderedSourceArms) {
+      const rescue = buildCenterlineRescuePath(
+        currentContour,
+        [freshSeedArm.point],
+        sourceArm,
+        currentZ,
+        nextZ,
+        stepSize,
+        slope,
+        minZ,
+        BOOTSTRAP_MAX_RESCUE_STEPS,
+      )
+      if (!rescue?.reachedCorner || rescue.path.length < 2) {
+        continue
+      }
+
+      cuts.push(rescue.path)
+      break
+    }
+  }
+
+  return { cuts, seededNextArms }
+}
+
+export function buildInteriorCornerBridge(
+  contour: Point[],
+  corners: Point[],
+  z: number,
+  stepSize: number,
+): Path3D[] {
+  if (contour.length < 3 || corners.length !== 2) {
+    return []
+  }
+
+  const [start, end] = corners
+  const chordLength = Math.hypot(end.x - start.x, end.y - start.y)
+  if (chordLength < stepSize * MIN_INTERIOR_CORNER_BRIDGE_STEPS) {
+    return []
+  }
+
+  const startIndex = findNearestContourVertexIndex(contour, start)
+  const endIndex = findNearestContourVertexIndex(contour, end)
+  if (startIndex === endIndex) {
+    return []
+  }
+
+  const forwardArcLength = contourArcLength(contour, startIndex, endIndex)
+  const backwardArcLength = contourArcLength(contour, endIndex, startIndex)
+  const shortArcLength = Math.min(forwardArcLength, backwardArcLength)
+  const shortArcIsForward = forwardArcLength <= backwardArcLength
+  if (shortArcLength <= chordLength + (stepSize * MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS)) {
+    return []
+  }
+
+  if ((shortArcLength / chordLength) < MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO) {
+    return []
+  }
+
+  const contourCornerIndices = mergeCorners(detectCorners(contour, cornerSmoothingDistance(stepSize)), 1e-6)
+    .map((corner) => findNearestContourVertexIndex(contour, corner))
+    .filter((index, position, indices) => indices.indexOf(index) === position)
+  const shortArcInteriorCornerCount = contourCornerIndices.filter((index) => {
+    if (index === startIndex || index === endIndex) {
+      return false
+    }
+    return shortArcIsForward
+      ? isIndexOnForwardArc(index, startIndex, endIndex, contour.length)
+      : isIndexOnForwardArc(index, endIndex, startIndex, contour.length)
+  }).length
+  if (shortArcInteriorCornerCount !== 1) {
+    return []
+  }
+
+  if (!segmentSamplesStayInsideContour(start, end, contour)) {
+    return []
+  }
+
+  return [[
+    { x: start.x, y: start.y, z },
+    { x: end.x, y: end.y, z },
+  ]]
+}
+
 
 // ---------------------------------------------------------------------------
 // Collapse handler
@@ -532,7 +1307,7 @@ function mergeCorners(corners: Point[], threshold: number): Point[] {
  */
 function emitCollapseGeometry(
   region: ResolvedPocketRegion,
-  activeCorners: Point[],
+  activeArms: TrackedArm[],
   topZ: number,
   slope: number,
   maxDepth: number,
@@ -547,8 +1322,17 @@ function emitCollapseGeometry(
   const microZ = topZ - Math.min(maxDepth, (totalOffset + microStep) / slope)
 
   if (microRegions.length > 0) {
-    if (microRegions.length === 1 && activeCorners.length > 0) {
-      const { cuts, rejected } = stepCorners(activeCorners, region.outer, microRegions[0].outer, currentZ, microZ, microStep)
+    if (microRegions.length === 1 && activeArms.length > 0) {
+      const { cuts, rejected } = stepArms(
+        activeArms,
+        region.outer,
+        microRegions[0].outer,
+        currentZ,
+        microZ,
+        microStep,
+        slope,
+        topZ - maxDepth,
+      )
       paths.push(...cuts)
 
       if (debugShowRejected && rejected.length > 0) {
@@ -584,14 +1368,11 @@ function traceRegion(
   depth: number,
   paths: Path3D[],
   debugShowRejected: boolean,
-  corners?: Point[],  // at depth 0: detected from original shape; thereafter: chain-tracked inNext positions
+  arms?: TrackedArm[],  // at depth 0: detected from original shape; thereafter: chain-tracked projected hits
 ): void {
   if (depth > MAX_RECURSION_DEPTH) return
 
-  // At depth 0, detect corners from the original contour.
-  // At depth N, corners are the inNext positions from the previous level —
-  // they are already vertices of region.outer (guaranteed by chain tracking).
-  const activeCorners = corners ?? detectCorners(region.outer, cornerSmoothingDistance(stepSize))
+  const activeArms = arms ?? seedTrackedArms(region.outer, stepSize)
 
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
   const nextOffset = totalOffset + stepSize
@@ -601,13 +1382,13 @@ function traceRegion(
 
   // ---- COLLAPSE ----
   if (nextRegions.length === 0) {
-    emitCollapseGeometry(region, activeCorners, topZ, slope, maxDepth, totalOffset, stepSize, paths, debugShowRejected)
+    emitCollapseGeometry(region, activeArms, topZ, slope, maxDepth, totalOffset, stepSize, paths, debugShowRejected)
     return
   }
 
   // ---- SPLIT ----
   if (nextRegions.length > 1) {
-    const { cuts, childCorners, rejected } = bridgeSplitCorners(activeCorners, region.outer, nextRegions, currentZ, nextZ, stepSize)
+    const { cuts, childArms, rejected } = bridgeSplitArms(activeArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
     paths.push(...cuts)
 
     if (debugShowRejected && rejected.length > 0) {
@@ -617,11 +1398,23 @@ function traceRegion(
     }
 
     // Each child is a new shape with its own corners. Prefer any corners that
-    // were explicitly bridged into that child; otherwise detect fresh from the
-    // child's boundary so pointed tips introduced by the split are captured.
+    // were explicitly bridged into that child, but also seed any fresh corners
+    // that appear on the child contour so missed chains can restart cleanly.
     for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
       const nextRegion = nextRegions[childIndex]
-      const bridgedCorners = childCorners[childIndex]
+      const bridgedArms = childArms[childIndex]
+      const { cuts: bootstrapCuts, seededNextArms: seededChildArms } = buildFreshSeedBootstrapCuts(
+        region.outer,
+        nextRegion.outer,
+        activeArms,
+        bridgedArms,
+        currentZ,
+        nextZ,
+        stepSize,
+        slope,
+        topZ - maxDepth,
+      )
+      paths.push(...bootstrapCuts)
       traceRegion(
         nextRegion,
         topZ,
@@ -632,7 +1425,7 @@ function traceRegion(
         depth + 1,
         paths,
         debugShowRejected,
-        bridgedCorners.length > 0 ? bridgedCorners : detectCorners(nextRegion.outer, cornerSmoothingDistance(stepSize)),
+        seededChildArms.length > 0 ? seededChildArms : undefined,
       )
     }
     return
@@ -641,8 +1434,30 @@ function traceRegion(
   // ---- CONTINUE ----
   const nextRegion = nextRegions[0]
 
-  const { cuts, nextCorners, rejected } = stepCorners(activeCorners, region.outer, nextRegion.outer, currentZ, nextZ, stepSize)
+  const { cuts, nextArms, rejected } = stepArms(
+    activeArms,
+    region.outer,
+    nextRegion.outer,
+    currentZ,
+    nextZ,
+    stepSize,
+    slope,
+    topZ - maxDepth,
+  )
   paths.push(...cuts)
+  const { cuts: bootstrapCuts, seededNextArms } = buildFreshSeedBootstrapCuts(
+    region.outer,
+    nextRegion.outer,
+    activeArms,
+    nextArms,
+    currentZ,
+    nextZ,
+    stepSize,
+    slope,
+    topZ - maxDepth,
+  )
+  paths.push(...bootstrapCuts)
+  paths.push(...buildInteriorCornerBridge(nextRegion.outer, nextArms.map((arm) => arm.point), nextZ, stepSize))
 
   if (debugShowRejected && rejected.length > 0) {
     for (const r of rejected) {
@@ -650,11 +1465,10 @@ function traceRegion(
     }
   }
 
-  // Pass nextCorners forward to continue chain tracking. If empty (all arms
-  // collapsed or jumped too far), pass undefined so the next level re-detects
-  // corners fresh from its own contour.
+  // Continue guide-driven tracking, but also re-seed any fresh corners that
+  // appear on the new contour so a missed lane can restart at the next level.
   traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, debugShowRejected,
-    nextCorners.length > 0 ? nextCorners : undefined)
+    seededNextArms.length > 0 ? seededNextArms : undefined)
 }
 
 // ---------------------------------------------------------------------------
