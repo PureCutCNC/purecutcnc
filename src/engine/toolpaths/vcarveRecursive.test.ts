@@ -521,9 +521,9 @@ function testVCarveRecursiveSplitDefersChildConnections(): void {
   console.log('Testing split defers parent-to-child connections and restarts inside each child...')
 
   // Two lobes connected by a very thin waist. The first inset splits the
-  // parent region into two children. For now, split-to-child bridges are
-  // intentionally out of scope, so recursion should restart inside each child
-  // without emitting parent-to-child links at the split depth.
+  // parent region into two children. Split-to-child bridges are intentionally
+  // deferred, so recursion should restart inside each child without emitting
+  // parent-to-child links at the split depth.
   const splitShape: Point[] = [
     { x: -6, y: -4 },
     { x: -2, y: -4 },

@@ -112,6 +112,28 @@ function contourLengthXY(contour: Point[]): number {
   return length
 }
 
+function contourMaxSpanXY(contour: Point[]): number {
+  if (contour.length === 0) {
+    return 0
+  }
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const point of contour) {
+    if (point.x < minX) minX = point.x
+    if (point.x > maxX) maxX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.y > maxY) maxY = point.y
+  }
+  return Math.max(maxX - minX, maxY - minY)
+}
+
+function isTinyRemnantContour(contour: Point[], stepSize: number): boolean {
+  return contourMaxSpanXY(contour) <= stepSize * 2.5
+}
+
 function findNearestPoint(point: Point, targets: Point[]): { target: Point | null, dist: number } {
   let bestTarget: Point | null = null
   let bestDist = Infinity
@@ -136,6 +158,29 @@ function findNearestContourVertexIndex(contour: Point[], point: Point): number {
     }
   }
   return bestIdx
+}
+
+function closestPointOnContour(contour: Point[], target: Point): Point | null {
+  if (contour.length < 2) return null
+  let bestPt: Point | null = null
+  let bestDistSq = Infinity
+  for (let i = 0; i < contour.length; i += 1) {
+    const a = contour[i]
+    const b = contour[(i + 1) % contour.length]
+    const abx = b.x - a.x
+    const aby = b.y - a.y
+    const lenSq = abx * abx + aby * aby
+    if (lenSq < 1e-18) continue
+    const t = Math.max(0, Math.min(1, ((target.x - a.x) * abx + (target.y - a.y) * aby) / lenSq))
+    const px = a.x + abx * t
+    const py = a.y + aby * t
+    const distSq = (px - target.x) ** 2 + (py - target.y) ** 2
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq
+      bestPt = { x: px, y: py }
+    }
+  }
+  return bestPt
 }
 
 function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
@@ -177,6 +222,34 @@ function cornerBisector(contour: Point[], index: number): { x: number, y: number
 
 function cornerSmoothingDistance(stepSize: number): number {
   return Math.max(MIN_CORNER_SMOOTHING_DISTANCE, stepSize * CORNER_SMOOTHING_FRACTION)
+}
+
+function recursiveLogicContour(contour: Point[], stepSize: number): Point[] {
+  return simplifyContourForCornerDetection(contour, cornerSmoothingDistance(stepSize))
+}
+
+/**
+ * Drop intermediate points that are within `tolerance` of the line connecting
+ * their neighbours (XY plane only — Z is preserved on retained points).
+ * Removes the small kinks in multi-step rescue paths where the channel midpoint
+ * jitters perpendicular to the walking direction between iterations.
+ */
+function simplifyPath3DCollinear(points: Point3D[], tolerance: number): Point3D[] {
+  if (points.length <= 2 || tolerance <= 0) return points.slice()
+  const out: Point3D[] = [points[0]]
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const prev = out[out.length - 1]
+    const curr = points[i]
+    const next = points[i + 1]
+    const span = Math.hypot(next.x - prev.x, next.y - prev.y)
+    const area2 = Math.abs((next.x - prev.x) * (curr.y - prev.y) - (next.y - prev.y) * (curr.x - prev.x))
+    const deviation = span > 1e-9 ? area2 / span : Math.hypot(curr.x - prev.x, curr.y - prev.y)
+    if (deviation > tolerance) {
+      out.push(curr)
+    }
+  }
+  out.push(points[points.length - 1])
+  return out
 }
 
 function simplifyOpenPolyline(points: Point[], distanceTolerance: number): Point[] {
@@ -655,8 +728,9 @@ function createTrackedArm(
   point: Point,
   previousGuide?: { x: number, y: number } | null,
   z?: number,
+  guideContour?: Point[],
 ): TrackedArm | null {
-  const localGuide = inwardDirectionAtContourPoint(contour, point)
+  const localGuide = inwardDirectionAtContourPoint(guideContour ?? contour, point)
   const guide = localGuide ?? previousGuide ?? null
   if (!guide) {
     return null
@@ -688,9 +762,9 @@ function mergeTrackedArms(arms: TrackedArm[], threshold: number): TrackedArm[] {
   return result
 }
 
-function createTrackedArms(contour: Point[], points: Point[], dedupe = true, z?: number): TrackedArm[] {
+function createTrackedArms(contour: Point[], points: Point[], dedupe = true, z?: number, guideContour?: Point[]): TrackedArm[] {
   const arms = points
-    .map((point) => createTrackedArm(contour, point, undefined, z))
+    .map((point) => createTrackedArm(contour, point, undefined, z, guideContour))
     .filter((arm): arm is TrackedArm => arm !== null)
   return dedupe ? mergeTrackedArms(arms, 1e-9) : arms
 }
@@ -701,8 +775,38 @@ function seedTrackedArms(
   carriedArms: TrackedArm[] = [],
   z?: number,
 ): TrackedArm[] {
-  const freshArms = createTrackedArms(contour, detectRecursiveCorners(contour, stepSize), false, z)
+  const logicContour = recursiveLogicContour(contour, stepSize)
+  const freshArms = createTrackedArms(contour, detectRecursiveCorners(contour, stepSize), false, z, logicContour)
   return mergeTrackedArms([...carriedArms, ...freshArms], 1e-9)
+}
+
+function splitSourceArms(
+  contour: Point[],
+  stepSize: number,
+  fallbackArms: TrackedArm[],
+  z?: number,
+): TrackedArm[] {
+  const logicContour = recursiveLogicContour(contour, stepSize)
+  const cornerPoints = detectRecursiveCorners(contour, stepSize)
+  if (cornerPoints.length === 0) {
+    return fallbackArms
+  }
+
+  const snappedArms = fallbackArms
+    .map((arm) => {
+      const nearestCorner = findNearestPoint(arm.point, cornerPoints).target
+      if (!nearestCorner) {
+        return null
+      }
+      return createTrackedArm(contour, nearestCorner, arm.guide, arm.z ?? z, logicContour)
+    })
+    .filter((arm): arm is TrackedArm => arm !== null)
+
+  if (snappedArms.length > 0) {
+    return mergeTrackedArms(snappedArms, 1e-9)
+  }
+
+  return createTrackedArms(contour, cornerPoints, true, z, logicContour)
 }
 
 function findArmTarget(
@@ -769,6 +873,8 @@ function stepArms(
     return { cuts: [], nextArms: [], rejected: [] }
   }
 
+  const currentLogicContour = !allowSmoothTargets ? recursiveLogicContour(currentContour, stepSize) : currentContour
+  const nextLogicContour = !allowSmoothTargets ? recursiveLogicContour(nextContour, stepSize) : nextContour
   const cuts: Path3D[] = []
   const nextArms: TrackedArm[] = []
   const rejected: RejectedCorner[] = []
@@ -781,7 +887,7 @@ function stepArms(
 
     if (!allowSmoothTargets) {
       if (candidateCorners.length > 0) {
-        const rescue = buildCenterlineRescuePath(currentContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ)
+        const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ)
         if (rescue && rescue.path.length >= 2) {
           cuts.push(rescue.path)
           const priorPoint = rescue.path[rescue.path.length - 2]
@@ -789,12 +895,85 @@ function stepArms(
             rescue.endPoint.x - priorPoint.x,
             rescue.endPoint.y - priorPoint.y,
           )
-          const nextArm = createTrackedArm(nextContour, rescue.endPoint, endGuide ?? arm.guide, rescue.endZ)
+          const nextArm = createTrackedArm(nextContour, rescue.endPoint, endGuide ?? arm.guide, rescue.endZ, nextLogicContour)
           if (nextArm) {
             nextArms.push(nextArm)
           }
           continue
         }
+
+        // Rescue bailed (probe outside contour, segment-outside, etc.) — this
+        // typically means the contour is collapsing near `arm.point` and there
+        // is no centerline left to walk. If a next-offset corner is reachable
+        // by a direct inside-segment within ~4× stepSize, snap to it. Matches
+        // the spec's "within step size from the trace point → direct connect"
+        // generalized to the case where the trace can't step forward.
+        const directBudget = stepSize * 4
+        const directCandidates = candidateCorners
+          .map((corner) => ({
+            point: corner,
+            dist: Math.hypot(corner.x - arm.point.x, corner.y - arm.point.y),
+          }))
+          .filter((c) => c.dist > 1e-9 && c.dist <= directBudget)
+          .filter((c) => segmentSamplesStayInsideContour(arm.point, c.point, currentLogicContour))
+          .sort((a, b) => a.dist - b.dist)
+        const directTarget = directCandidates[0]
+        if (directTarget) {
+          rescueTracer?.({ kind: 'fallback:hit', arm: arm.point, target: directTarget.point, dist: directTarget.dist })
+          cuts.push([
+            { x: arm.point.x, y: arm.point.y, z: armZ },
+            { x: directTarget.point.x, y: directTarget.point.y, z: nextZ },
+          ])
+          const nextArm = createTrackedArm(nextContour, directTarget.point, arm.guide, nextZ, nextLogicContour)
+          if (nextArm) {
+            nextArms.push(nextArm)
+          }
+          continue
+        }
+
+        // Wall-anchor fallback: when no next-offset corner is reachable, the
+        // contour is collapsing toward this arm. Connect to the closest point
+        // on the next contour itself — a tiny ~stepSize cut from the depth-N
+        // corner straight into the depth-(N+1) wall. Mirrors the wall-anchor
+        // used during fresh-seed bootstrap, applied to stuck arms here.
+        const wallAnchor = closestPointOnContour(nextLogicContour, arm.point)
+        if (wallAnchor) {
+          const wallDist = Math.hypot(wallAnchor.x - arm.point.x, wallAnchor.y - arm.point.y)
+          if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(arm.point, wallAnchor, currentLogicContour)) {
+            rescueTracer?.({ kind: 'fallback:wall-hit', arm: arm.point, target: wallAnchor, dist: wallDist })
+            cuts.push([
+              { x: arm.point.x, y: arm.point.y, z: armZ },
+              { x: wallAnchor.x, y: wallAnchor.y, z: nextZ },
+            ])
+            const nextArm = createTrackedArm(nextContour, wallAnchor, arm.guide, nextZ, nextLogicContour)
+            if (nextArm) {
+              nextArms.push(nextArm)
+            }
+            continue
+          }
+        }
+
+        // A post-split child can immediately collapse into a tiny 1->1
+        // remnant whose nearest corner is much farther than the normal local
+        // fallback budgets. In that case the correct continuation is still the
+        // direct bridge into that remnant, as long as the segment stays inside
+        // the current contour.
+        if (isTinyRemnantContour(nextContour, stepSize) && candidateCorners.length > 0) {
+          const nearestTinyCorner = findNearestPoint(arm.point, candidateCorners)
+          if (nearestTinyCorner.target && segmentSamplesStayInsideContour(arm.point, nearestTinyCorner.target, currentLogicContour)) {
+            rescueTracer?.({ kind: 'fallback:micro-hit', arm: arm.point, target: nearestTinyCorner.target, dist: nearestTinyCorner.dist })
+            cuts.push([
+              { x: arm.point.x, y: arm.point.y, z: armZ },
+              { x: nearestTinyCorner.target.x, y: nearestTinyCorner.target.y, z: nextZ },
+            ])
+            const nextArm = createTrackedArm(nextContour, nearestTinyCorner.target, arm.guide, nextZ, nextLogicContour)
+            if (nextArm) {
+              nextArms.push(nextArm)
+            }
+            continue
+          }
+        }
+        rescueTracer?.({ kind: 'fallback:miss', arm: arm.point, candidateCornerCount: candidateCorners.length, nearestDist: candidateCorners.length > 0 ? findNearestPoint(arm.point, candidateCorners).dist : Infinity })
       }
 
       const nearestCorner = candidateCorners.length > 0 ? findNearestPoint(arm.point, candidateCorners) : { target: null, dist: Infinity }
@@ -879,9 +1058,14 @@ function bridgeSplitArms(
     return { cuts: [], childArms, rejected: [] }
   }
 
-  const smoothingDistance = cornerSmoothingDistance(stepSize)
-  const targets: SplitCornerTarget[] = nextRegions.flatMap((nextRegion, childIndex) =>
-    detectCorners(nextRegion.outer, smoothingDistance).map((point) => ({ childIndex, point, contour: nextRegion.outer })),
+  const logicCurrentContour = recursiveLogicContour(currentContour, stepSize)
+  const logicChildContours = nextRegions.map((nextRegion) => recursiveLogicContour(nextRegion.outer, stepSize))
+  const targets: SplitCornerTarget[] = nextRegions.flatMap((_nextRegion, childIndex) =>
+    detectCorners(logicChildContours[childIndex]).map((point) => ({
+      childIndex,
+      point,
+      contour: logicChildContours[childIndex],
+    })),
   )
 
   if (targets.length === 0) {
@@ -901,23 +1085,23 @@ function bridgeSplitArms(
   const cuts: Path3D[] = []
   const rejected: RejectedCorner[] = []
   for (const arm of activeArms) {
-    let bestTarget = findProjectedTarget(arm.point, arm.guide, currentContour, targets)
-      ?? findNearestInsideTarget(arm.point, currentContour, targets)
+    let bestTarget = findProjectedTarget(arm.point, arm.guide, logicCurrentContour, targets)
+      ?? findNearestInsideTarget(arm.point, logicCurrentContour, targets)
     if (!bestTarget) {
       const rayChildHits = nextRegions
-        .map((nextRegion, childIndex) => {
-          const hit = findContourRayHit(arm.point, arm.guide, currentContour, nextRegion.outer)
+        .map((_nextRegion, childIndex) => {
+          const hit = findContourRayHit(arm.point, arm.guide, logicCurrentContour, logicChildContours[childIndex])
           return hit
             ? {
               target: {
                 childIndex,
                 point: hit.point,
-                contour: nextRegion.outer,
+                contour: logicChildContours[childIndex],
               },
               dist: hit.dist,
               progress: hit.progress,
               deviationRatio: 0,
-              directionMismatch: directionMismatch(arm.guide, inwardDirectionAtContourPoint(nextRegion.outer, hit.point)),
+              directionMismatch: directionMismatch(arm.guide, inwardDirectionAtContourPoint(logicChildContours[childIndex], hit.point)),
             }
             : null
         })
@@ -947,7 +1131,7 @@ function bridgeSplitArms(
       { x: arm.point.x, y: arm.point.y, z: currentZ },
       { x: bestTarget.target.point.x, y: bestTarget.target.point.y, z: nextZ },
     ])
-    const nextArm = createTrackedArm(bestTarget.target.contour, bestTarget.target.point, arm.guide)
+    const nextArm = createTrackedArm(nextRegions[bestTarget.target.childIndex].outer, bestTarget.target.point, arm.guide, undefined, bestTarget.target.contour)
     if (nextArm) {
       childArms[bestTarget.target.childIndex].push(nextArm)
     }
@@ -1093,6 +1277,11 @@ function findPerpendicularChannelMidpoint(
   return null
 }
 
+let rescueTracer: ((event: Record<string, unknown>) => void) | null = null
+export function setRescueTracer(fn: ((event: Record<string, unknown>) => void) | null): void {
+  rescueTracer = fn
+}
+
 function buildCenterlineRescuePath(
   currentContour: Point[],
   nextCorners: Point[],
@@ -1122,23 +1311,78 @@ function buildCenterlineRescuePath(
       ),
     )
 
+  rescueTracer?.({ kind: 'rescue:start', armPoint: arm.point, guide: currentGuide, currentZ, nextZ, stepSize, nextCornerCount: nextCorners.length })
+
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-    const probe = {
-      x: currentPoint.x + (currentGuide.x * stepSize),
-      y: currentPoint.y + (currentGuide.y * stepSize),
+    // Try the full step first; if probe lands outside contour or the channel
+    // midpoint isn't reachable in a straight line, halve the step and retry.
+    // Handles thin protrusions where stepSize would overshoot the wall.
+    let effStep = stepSize
+    let probe: Point | null = null
+    let probeInside = false
+    let channel: { point: Point, radius: number } | null = null
+    let foundStep = false
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const candidate = {
+        x: currentPoint.x + (currentGuide.x * effStep),
+        y: currentPoint.y + (currentGuide.y * effStep),
+      }
+      const candidateInside = pointInPolygon(candidate.x, candidate.y, currentContour)
+      if (!candidateInside) {
+        effStep *= 0.5
+        continue
+      }
+      const candidateChannel = findPerpendicularChannelMidpoint(currentContour, candidate, currentGuide)
+      if (!candidateChannel) {
+        effStep *= 0.5
+        continue
+      }
+      const candidateForward = ((candidateChannel.point.x - currentPoint.x) * currentGuide.x)
+        + ((candidateChannel.point.y - currentPoint.y) * currentGuide.y)
+      if (candidateForward <= effStep * 0.2) {
+        effStep *= 0.5
+        continue
+      }
+      if (!segmentSamplesStayInsideContour(currentPoint, candidateChannel.point, currentContour)) {
+        effStep *= 0.5
+        continue
+      }
+      probe = candidate
+      probeInside = candidateInside
+      channel = candidateChannel
+      foundStep = true
+      break
     }
-    const channel = findPerpendicularChannelMidpoint(currentContour, probe, currentGuide)
-    if (!channel) {
+
+    if (!foundStep || !probe || !channel) {
+      rescueTracer?.({ kind: 'rescue:bail', reason: 'no-step', iteration, currentPoint })
+      // Salvage: if we already walked some midpoints, try to snap the last
+      // midpoint to a nearby next-offset corner instead of throwing the whole
+      // partial trace away. Budget is generous (3× stepSize) since the medial
+      // axis already brought us close to the next contour.
+      if (path.length >= 2) {
+        const lastPt = path[path.length - 1]
+        const salvage = nextCorners
+          .map((c) => ({ point: c, dist: Math.hypot(c.x - lastPt.x, c.y - lastPt.y) }))
+          .filter((c) => c.dist <= stepSize * 3)
+          .filter((c) => segmentSamplesStayInsideContour(lastPt, c.point, currentContour))
+          .sort((a, b) => a.dist - b.dist)[0]
+        if (salvage) {
+          path.push({ x: salvage.point.x, y: salvage.point.y, z: nextZ })
+          rescueTracer?.({ kind: 'rescue:salvage', iteration, lastPt, snapTo: salvage.point, snapDist: salvage.dist })
+          return {
+            path: simplifyPath3DCollinear(path, stepSize * 0.05),
+            endPoint: salvage.point,
+            endZ: nextZ,
+            reachedCorner: true,
+          }
+        }
+      }
       return null
     }
     const forwardProgress = ((channel.point.x - currentPoint.x) * currentGuide.x)
       + ((channel.point.y - currentPoint.y) * currentGuide.y)
-    if (forwardProgress <= stepSize * 0.2) {
-      return null
-    }
-    if (!segmentSamplesStayInsideContour(currentPoint, channel.point, currentContour)) {
-      return null
-    }
+    rescueTracer?.({ kind: 'rescue:step', iteration, probe, probeInside, channel: channel.point, radius: channel.radius, forwardProgress, effStep })
 
     const targetMidpointZ = currentZ - (channel.radius / slope)
     const midpointZ = Math.max(minZ, Math.min(lastZ, targetMidpointZ))
@@ -1157,8 +1401,9 @@ function buildCenterlineRescuePath(
 
     if (nearestReachableCorner) {
       path.push({ x: nearestReachableCorner.point.x, y: nearestReachableCorner.point.y, z: nextZ })
+      rescueTracer?.({ kind: 'rescue:snap', iteration, channel: channel.point, snapTo: nearestReachableCorner.point, snapDist: nearestReachableCorner.dist })
       return {
-        path,
+        path: simplifyPath3DCollinear(path, stepSize * 0.05),
         endPoint: nearestReachableCorner.point,
         endZ: nextZ,
         reachedCorner: true,
@@ -1191,22 +1436,26 @@ function buildFreshSeedBootstrapCuts(
   stepSize: number,
   slope: number,
   minZ: number,
-): { cuts: Path3D[], seededNextArms: TrackedArm[] } {
+  allowWallAnchorFallback = true,
+): { cuts: Path3D[], seededNextArms: TrackedArm[], connectedSeededArms: TrackedArm[] } {
+  const currentLogicContour = recursiveLogicContour(currentContour, stepSize)
   const seededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
   const freshSeedArms = seededNextArms.filter((seededArm) =>
     !connectedNextArms.some((connectedArm) => Math.hypot(connectedArm.point.x - seededArm.point.x, connectedArm.point.y - seededArm.point.y) < 1e-9),
   )
   if (freshSeedArms.length === 0) {
-    return { cuts: [], seededNextArms }
+    return { cuts: [], seededNextArms, connectedSeededArms: mergeTrackedArms(connectedNextArms, 1e-9) }
   }
 
   const candidateSourceArms = mergeTrackedArms(currentArms, 1e-9)
   if (candidateSourceArms.length === 0) {
-    return { cuts: [], seededNextArms }
+    return { cuts: [], seededNextArms, connectedSeededArms: mergeTrackedArms(connectedNextArms, 1e-9) }
   }
 
   const cuts: Path3D[] = []
+  const connectedSeededArms = mergeTrackedArms(connectedNextArms, 1e-9)
   for (const freshSeedArm of freshSeedArms) {
+    rescueTracer?.({ kind: 'bootstrap:start', freshSeed: freshSeedArm.point, sourceArmCount: candidateSourceArms.length })
     const orderedSourceArms = candidateSourceArms
       .filter((sourceArm) => Math.hypot(sourceArm.point.x - freshSeedArm.point.x, sourceArm.point.y - freshSeedArm.point.y) >= 1e-9)
       .sort((left, right) =>
@@ -1214,9 +1463,10 @@ function buildFreshSeedBootstrapCuts(
         - Math.hypot(right.point.x - freshSeedArm.point.x, right.point.y - freshSeedArm.point.y),
       )
 
+    let connected = false
     for (const sourceArm of orderedSourceArms) {
       const rescue = buildCenterlineRescuePath(
-        currentContour,
+        currentLogicContour,
         [freshSeedArm.point],
         sourceArm,
         currentZ,
@@ -1231,11 +1481,69 @@ function buildFreshSeedBootstrapCuts(
       }
 
       cuts.push(rescue.path)
+      connectedSeededArms.push(freshSeedArm)
+      connected = true
       break
+    }
+
+    // Direct-connect fallback: when no source arm can rescue-walk to this fresh
+    // seed corner, connect from the geometrically nearest arm if a straight
+    // segment stays inside the parent contour. Distance budget is 4× stepSize
+    // — fresh seeds typically appear within 1–3 steps of an existing arm.
+    if (!connected) {
+      const directBudget = stepSize * 4
+      let directRejectReason = 'no-source'
+      for (const sourceArm of orderedSourceArms) {
+        const dist = Math.hypot(sourceArm.point.x - freshSeedArm.point.x, sourceArm.point.y - freshSeedArm.point.y)
+        if (dist > directBudget) { directRejectReason = `over-budget(closest=${dist.toFixed(4)})`; break }
+        if (!segmentSamplesStayInsideContour(sourceArm.point, freshSeedArm.point, currentLogicContour)) {
+          directRejectReason = 'segment-outside'
+          continue
+        }
+        cuts.push([
+          { x: sourceArm.point.x, y: sourceArm.point.y, z: sourceArm.z ?? currentZ },
+          { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
+        ])
+        connectedSeededArms.push(freshSeedArm)
+        connected = true
+        rescueTracer?.({ kind: 'bootstrap:direct-hit', freshSeed: freshSeedArm.point, source: sourceArm.point, dist })
+        break
+      }
+
+      // Wall-anchor fallback: when no existing arm is close, the fresh seed
+      // corner emerged on a smooth stretch of the parent contour with no
+      // detected corner nearby. Anchor it to the closest point on the parent
+      // contour itself — a tiny ~stepSize cut from outer wall into the new
+      // corner. This is the V-carve behaviour for any newly-emerged corner.
+      if (!connected && allowWallAnchorFallback) {
+        const wallAnchor = closestPointOnContour(currentLogicContour, freshSeedArm.point)
+        if (wallAnchor) {
+          const wallDist = Math.hypot(wallAnchor.x - freshSeedArm.point.x, wallAnchor.y - freshSeedArm.point.y)
+          if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(wallAnchor, freshSeedArm.point, currentLogicContour)) {
+            cuts.push([
+              { x: wallAnchor.x, y: wallAnchor.y, z: currentZ },
+              { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
+            ])
+            connectedSeededArms.push(freshSeedArm)
+            connected = true
+            rescueTracer?.({ kind: 'bootstrap:wall-hit', freshSeed: freshSeedArm.point, anchor: wallAnchor, dist: wallDist })
+          } else {
+            directRejectReason = `wall-${wallDist > stepSize * 2 ? 'too-far' : 'segment-outside'}(${wallDist.toFixed(4)})`
+          }
+        }
+      }
+
+      if (!connected) {
+        rescueTracer?.({ kind: 'bootstrap:miss', freshSeed: freshSeedArm.point, reason: directRejectReason, sourceArmCount: orderedSourceArms.length })
+      }
     }
   }
 
-  return { cuts, seededNextArms }
+  return {
+    cuts,
+    seededNextArms,
+    connectedSeededArms: mergeTrackedArms(connectedSeededArms, 1e-9),
+  }
 }
 
 export function buildInteriorCornerBridge(
@@ -1370,10 +1678,12 @@ function traceRegion(
   paths: Path3D[],
   debugShowRejected: boolean,
   arms?: TrackedArm[],  // at depth 0: detected from original shape; thereafter: chain-tracked projected hits
+  allowFreshSeedRestart = true,
 ): void {
   if (depth > MAX_RECURSION_DEPTH) return
 
-  const activeArms = arms ?? seedTrackedArms(region.outer, stepSize)
+  const activeArms = arms ?? (allowFreshSeedRestart ? seedTrackedArms(region.outer, stepSize) : [])
+  if (!allowFreshSeedRestart && activeArms.length === 0) return
 
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
   const nextOffset = totalOffset + stepSize
@@ -1390,7 +1700,8 @@ function traceRegion(
   // ---- SPLIT ----
   if (nextRegions.length > 1) {
     if (ENABLE_SPLIT_CONNECTIONS) {
-      const { cuts, childArms, rejected } = bridgeSplitArms(activeArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
+      const parentSplitArms = splitSourceArms(region.outer, stepSize, activeArms, currentZ)
+      const { cuts, childArms, rejected } = bridgeSplitArms(parentSplitArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
       paths.push(...cuts)
 
       if (debugShowRejected && rejected.length > 0) {
@@ -1399,24 +1710,29 @@ function traceRegion(
         }
       }
 
-      // Split-to-child linking is being deferred while we stabilize the
-      // recursive flow within a single inner shape. When re-enabled, parent
-      // arms are explicitly bridged into child contours here.
+      // Recurse inside each split child only from arms that actually received
+      // a split-time incoming path. Do not allow fresh corner restarts inside
+      // those child subtrees yet; that prevents unrelated child-offset links
+      // while still letting the connected arms flow inward recursively.
       for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
         const nextRegion = nextRegions[childIndex]
         const bridgedArms = childArms[childIndex]
-        const { cuts: bootstrapCuts, seededNextArms: seededChildArms } = buildFreshSeedBootstrapCuts(
+        const { cuts: bootstrapCuts, connectedSeededArms } = buildFreshSeedBootstrapCuts(
           region.outer,
           nextRegion.outer,
-          activeArms,
+          parentSplitArms,
           bridgedArms,
           currentZ,
           nextZ,
-          stepSize,
-          slope,
-          topZ - maxDepth,
-        )
-        paths.push(...bootstrapCuts)
+        stepSize,
+        slope,
+        topZ - maxDepth,
+        false,
+      )
+      paths.push(...bootstrapCuts)
+        if (connectedSeededArms.length === 0) {
+          continue
+        }
         traceRegion(
           nextRegion,
           topZ,
@@ -1427,7 +1743,8 @@ function traceRegion(
           depth + 1,
           paths,
           debugShowRejected,
-          seededChildArms.length > 0 ? seededChildArms : undefined,
+          connectedSeededArms,
+          false,
         )
       }
       return
@@ -1446,6 +1763,8 @@ function traceRegion(
         depth + 1,
         paths,
         debugShowRejected,
+        undefined,
+        allowFreshSeedRestart,
       )
     }
     return
@@ -1465,18 +1784,22 @@ function traceRegion(
     topZ - maxDepth,
   )
   paths.push(...cuts)
-  const { cuts: bootstrapCuts, seededNextArms } = buildFreshSeedBootstrapCuts(
-    region.outer,
-    nextRegion.outer,
-    activeArms,
-    nextArms,
-    currentZ,
-    nextZ,
-    stepSize,
-    slope,
-    topZ - maxDepth,
-  )
-  paths.push(...bootstrapCuts)
+  let seededNextArms = nextArms
+  if (allowFreshSeedRestart) {
+    const bootstrap = buildFreshSeedBootstrapCuts(
+      region.outer,
+      nextRegion.outer,
+      activeArms,
+      nextArms,
+      currentZ,
+      nextZ,
+      stepSize,
+      slope,
+      topZ - maxDepth,
+    )
+    paths.push(...bootstrap.cuts)
+    seededNextArms = bootstrap.seededNextArms
+  }
   paths.push(...buildInteriorCornerBridge(nextRegion.outer, nextArms.map((arm) => arm.point), nextZ, stepSize))
 
   if (debugShowRejected && rejected.length > 0) {
@@ -1488,7 +1811,8 @@ function traceRegion(
   // Continue guide-driven tracking, but also re-seed any fresh corners that
   // appear on the new contour so a missed lane can restart at the next level.
   traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, debugShowRejected,
-    seededNextArms.length > 0 ? seededNextArms : undefined)
+    seededNextArms.length > 0 ? seededNextArms : undefined,
+    allowFreshSeedRestart)
 }
 
 // ---------------------------------------------------------------------------
