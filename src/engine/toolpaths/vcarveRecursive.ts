@@ -61,11 +61,17 @@ const MICRO_FRACTION = 0.1  // fraction of stepSize used for collapse micro-offs
 const CORNER_SMOOTHING_FRACTION = 0.25
 const MIN_CORNER_SMOOTHING_DISTANCE = 1e-4
 // Bootstrap rescues bridge fresh-seed corners that emerge at deeper offsets to
-// existing parent arms via medial-axis walks. The cap must accommodate long
-// walks around band-shaped contours (e.g. the half-perimeter of a letter "e"
-// is ~150 stepSizes). 48 was a conservative early value that orphaned legit
-// corners across mid-letter merges.
-const BOOTSTRAP_MAX_RESCUE_STEPS = 400
+// existing parent arms via medial-axis walks. Capped tightly: long walks
+// produce visually-winding paths that effectively cross between children of a
+// recent split — better to leave such corners as orphan chain heads (their
+// own outgoing chain still gets emitted by the standard fresh-seed flow) and
+// revisit them when child-to-child split connections are implemented.
+const BOOTSTRAP_MAX_RESCUE_STEPS = 48
+// Tighter cap for the parent-to-child split bridge: 8 stepSizes of medial
+// walk, just past the 4× direct-connect budget so rescue can find paths
+// around small obstacles but cannot snake across a band-shaped parent contour
+// to a far-away child's corner.
+const SPLIT_BRIDGE_MAX_RESCUE_STEPS = 8
 const MIN_INTERIOR_CORNER_BRIDGE_STEPS = 2
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
@@ -1176,43 +1182,12 @@ function bridgeSplitArms(
   for (const arm of activeArms) {
     const armZ = arm.z ?? currentZ
 
-    // Primary: medial-axis rescue walk through the parent contour, snapping
-    // to any pooled child corner within stepSize of the channel midpoint.
-    const rescue = buildCenterlineRescuePath(
-      logicCurrentContour,
-      pooledCornerPoints,
-      arm,
-      currentZ,
-      nextZ,
-      stepSize,
-      slope,
-      minZ,
-    )
-    if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
-      const childIndex = cornerToChild.get(cornerKey(rescue.endPoint))
-      if (childIndex !== undefined) {
-        cuts.push(rescue.path)
-        const priorPoint = rescue.path[rescue.path.length - 2]
-        const endGuide = normalizeDirection(
-          rescue.endPoint.x - priorPoint.x,
-          rescue.endPoint.y - priorPoint.y,
-        )
-        const nextArm = createTrackedArm(
-          nextRegions[childIndex].outer,
-          rescue.endPoint,
-          endGuide ?? arm.guide,
-          rescue.endZ,
-          logicChildContours[childIndex],
-        )
-        if (nextArm) {
-          childArms[childIndex].push(nextArm)
-        }
-        continue
-      }
-    }
-
-    // Direct-connect fallback: corner-to-corner, inside parent contour, within
-    // 4 × stepSize. Mirrors the budget used in stepArms for 1 → 1 transitions.
+    // Primary: direct-connect to the nearest pooled child corner within
+    // 4 × stepSize, segment must stay inside the parent contour. This is
+    // scale-correct: child corners that descend from a parent are always
+    // ~1 stepSize inward, so 4× is generous regardless of letter size, and
+    // the SHORT, geometrically natural neighbour wins. Same units as the
+    // 1 → 1 stepArms direct-connect budget.
     const directBudget = stepSize * 4
     const directCandidates = pooledCornerPoints
       .map((point) => ({ point, dist: Math.hypot(point.x - arm.point.x, point.y - arm.point.y) }))
@@ -1232,6 +1207,48 @@ function bridgeSplitArms(
           direct.point,
           arm.guide,
           nextZ,
+          logicChildContours[childIndex],
+        )
+        if (nextArm) {
+          childArms[childIndex].push(nextArm)
+        }
+        continue
+      }
+    }
+
+    // Fallback: medial-axis rescue walk through the parent contour for cases
+    // where the natural neighbour is just past the direct-connect budget OR
+    // a small obstacle (e.g. a Clipper-jitter notch) forces a detour. Capped
+    // by SPLIT_BRIDGE_MAX_RESCUE_STEPS so it cannot snake across a band to
+    // a far-away child — those connections are deferred to the planned
+    // child-to-child step. The cap is in stepSize units, so it scales with
+    // the user's chosen resolution: `8 × stepSize` is the same fraction of
+    // any letter, large or small.
+    const rescue = buildCenterlineRescuePath(
+      logicCurrentContour,
+      pooledCornerPoints,
+      arm,
+      currentZ,
+      nextZ,
+      stepSize,
+      slope,
+      minZ,
+      SPLIT_BRIDGE_MAX_RESCUE_STEPS,
+    )
+    if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
+      const childIndex = cornerToChild.get(cornerKey(rescue.endPoint))
+      if (childIndex !== undefined) {
+        cuts.push(rescue.path)
+        const priorPoint = rescue.path[rescue.path.length - 2]
+        const endGuide = normalizeDirection(
+          rescue.endPoint.x - priorPoint.x,
+          rescue.endPoint.y - priorPoint.y,
+        )
+        const nextArm = createTrackedArm(
+          nextRegions[childIndex].outer,
+          rescue.endPoint,
+          endGuide ?? arm.guide,
+          rescue.endZ,
           logicChildContours[childIndex],
         )
         if (nextArm) {
@@ -1589,50 +1606,58 @@ function buildFreshSeedBootstrapCuts(
         - Math.hypot(right.point.x - freshSeedArm.point.x, right.point.y - freshSeedArm.point.y),
       )
 
+    // Order: direct-connect first (geometrically natural), rescue as fallback.
+    // After-split contours have child corners ~1 stepSize from their parent
+    // counterparts, so the natural neighbour is always within direct budget.
+    // Walking the medial axis only matters when the natural neighbour sits
+    // just past direct budget OR a small obstacle blocks the straight line.
     let connected = false
+    let directRejectReason = 'no-source'
+    const directBudget = stepSize * 4
     for (const sourceArm of orderedSourceArms) {
-      const rescue = buildCenterlineRescuePath(
-        currentLogicContour,
-        [freshSeedArm.point],
-        sourceArm,
-        currentZ,
-        nextZ,
-        stepSize,
-        slope,
-        minZ,
-        BOOTSTRAP_MAX_RESCUE_STEPS,
-      )
-      if (!rescue?.reachedCorner || rescue.path.length < 2) {
+      const dist = Math.hypot(sourceArm.point.x - freshSeedArm.point.x, sourceArm.point.y - freshSeedArm.point.y)
+      if (dist > directBudget) { directRejectReason = `over-budget(closest=${dist.toFixed(4)})`; break }
+      if (!segmentSamplesStayInsideContour(sourceArm.point, freshSeedArm.point, currentLogicContour)) {
+        directRejectReason = 'segment-outside'
         continue
       }
-
-      cuts.push(rescue.path)
+      cuts.push([
+        { x: sourceArm.point.x, y: sourceArm.point.y, z: sourceArm.z ?? currentZ },
+        { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
+      ])
       connectedSeededArms.push(freshSeedArm)
       connected = true
+      rescueTracer?.({ kind: 'bootstrap:direct-hit', freshSeed: freshSeedArm.point, source: sourceArm.point, dist })
       break
     }
 
-    // Direct-connect fallback: when no source arm can rescue-walk to this fresh
-    // seed corner, connect from the geometrically nearest arm if a straight
-    // segment stays inside the parent contour. Distance budget is 4× stepSize
-    // — fresh seeds typically appear within 1–3 steps of an existing arm.
+    // Rescue fallback. In split-context calls (allowWallAnchorFallback=false)
+    // the parent contour is the band shape that just split — a 48-step medial
+    // walk can still snake from one child's territory to another's, producing
+    // visually cross-child bridges. Tighten to SPLIT_BRIDGE_MAX_RESCUE_STEPS
+    // so split bootstrap matches the bridgeSplitArms cap. Both caps are in
+    // stepSize units, so they scale automatically with the user's resolution.
     if (!connected) {
-      const directBudget = stepSize * 4
-      let directRejectReason = 'no-source'
+      const rescueCap = allowWallAnchorFallback ? BOOTSTRAP_MAX_RESCUE_STEPS : SPLIT_BRIDGE_MAX_RESCUE_STEPS
       for (const sourceArm of orderedSourceArms) {
-        const dist = Math.hypot(sourceArm.point.x - freshSeedArm.point.x, sourceArm.point.y - freshSeedArm.point.y)
-        if (dist > directBudget) { directRejectReason = `over-budget(closest=${dist.toFixed(4)})`; break }
-        if (!segmentSamplesStayInsideContour(sourceArm.point, freshSeedArm.point, currentLogicContour)) {
-          directRejectReason = 'segment-outside'
+        const rescue = buildCenterlineRescuePath(
+          currentLogicContour,
+          [freshSeedArm.point],
+          sourceArm,
+          currentZ,
+          nextZ,
+          stepSize,
+          slope,
+          minZ,
+          rescueCap,
+        )
+        if (!rescue?.reachedCorner || rescue.path.length < 2) {
           continue
         }
-        cuts.push([
-          { x: sourceArm.point.x, y: sourceArm.point.y, z: sourceArm.z ?? currentZ },
-          { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
-        ])
+
+        cuts.push(rescue.path)
         connectedSeededArms.push(freshSeedArm)
         connected = true
-        rescueTracer?.({ kind: 'bootstrap:direct-hit', freshSeed: freshSeedArm.point, source: sourceArm.point, dist })
         break
       }
 
