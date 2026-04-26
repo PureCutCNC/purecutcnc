@@ -160,6 +160,20 @@ function findNearestContourVertexIndex(contour: Point[], point: Point): number {
   return bestIdx
 }
 
+/**
+ * True when `contour` has at least one detectCorners-recognised corner within
+ * `radius` of `target`. Used to gate wall-anchor fallbacks so they only fire
+ * near real sharp features of the parent contour and not on smooth curves
+ * where Clipper jtRound creates spurious vertices at deep insets.
+ */
+function hasNearbyContourCorner(contour: Point[], target: Point, radius: number, stepSizeForSmoothing: number): boolean {
+  const corners = detectCorners(contour, Math.max(MIN_CORNER_SMOOTHING_DISTANCE, stepSizeForSmoothing * CORNER_SMOOTHING_FRACTION))
+  for (const c of corners) {
+    if (Math.hypot(c.x - target.x, c.y - target.y) <= radius) return true
+  }
+  return false
+}
+
 function closestPointOnContour(contour: Point[], target: Point): Point | null {
   if (contour.length < 2) return null
   let bestPt: Point | null = null
@@ -359,6 +373,38 @@ function simplifyContourForCornerDetection(contour: Point[], distanceTolerance: 
 
 
 /**
+ * Turn angle (in radians) at the vertex of `contour` closest to `target`. Used
+ * to validate detectCorners candidates against the raw, unsimplified contour:
+ * Clipper polygons approximating smooth curves have many small (3–10°) turns
+ * that — when collapsed by simplification — masquerade as one big corner.
+ * Reading the raw angle disambiguates real corners from this jitter.
+ */
+function rawCornerTurnRadians(contour: Point[], target: Point): number {
+  const n = contour.length
+  if (n < 3) return 0
+  let bestIdx = 0
+  let bestDistSq = Infinity
+  for (let i = 0; i < n; i += 1) {
+    const dx = contour[i].x - target.x
+    const dy = contour[i].y - target.y
+    const distSq = dx * dx + dy * dy
+    if (distSq < bestDistSq) { bestDistSq = distSq; bestIdx = i }
+  }
+  const prev = contour[(bestIdx - 1 + n) % n]
+  const curr = contour[bestIdx]
+  const next = contour[(bestIdx + 1) % n]
+  const dx1 = curr.x - prev.x
+  const dy1 = curr.y - prev.y
+  const dx2 = next.x - curr.x
+  const dy2 = next.y - curr.y
+  const len1 = Math.hypot(dx1, dy1)
+  const len2 = Math.hypot(dx2, dy2)
+  if (len1 < 1e-12 || len2 < 1e-12) return 0
+  const cos = (dx1 * dx2 + dy1 * dy2) / (len1 * len2)
+  return Math.acos(Math.max(-1, Math.min(1, cos)))
+}
+
+/**
  * Extract CONVEX corner points from a contour.
  *
  * Convexity is determined by comparing the cross-product sign at each vertex
@@ -381,6 +427,12 @@ export function detectCorners(contour: Point[], smoothingDistance = 0): Point[] 
   }
   if (Math.abs(area) < 1e-12) return []
 
+  // Aggressive simplification can collapse 6–10 small turns on a smooth curve
+  // (e.g. Clipper's polygon approximation of a circle) into one big "fake"
+  // corner. The simplified angle is therefore unreliable; we cross-check each
+  // candidate against the corresponding raw turn on the original contour.
+  // Real corners (sharp shape features) have raw angles ≥ the threshold; jitter
+  // on smooth curves has 3–10° regardless of how big the simplified angle is.
   const corners: Point[] = []
   for (let i = 0; i < n; i++) {
     const prev = prepared[(i - 1 + n) % n]
@@ -400,9 +452,14 @@ export function detectCorners(contour: Point[], smoothingDistance = 0): Point[] 
 
     const cos = (dx1 * dx2 + dy1 * dy2) / (len1 * len2)
     const angle = Math.acos(Math.max(-1, Math.min(1, cos)))
-    if (angle > CORNER_ANGLE_THRESHOLD_RAD) {
-      corners.push({ ...curr })
-    }
+    if (angle <= CORNER_ANGLE_THRESHOLD_RAD) continue
+
+    // Validate against raw contour: if the local turn on the original (unsimplified)
+    // contour at the closest vertex is below the threshold, this is a smooth
+    // curve being misread as a corner by the simplification step.
+    if (smoothingDistance > 0 && rawCornerTurnRadians(contour, curr) <= CORNER_ANGLE_THRESHOLD_RAD) continue
+
+    corners.push({ ...curr })
   }
   return smoothingDistance > 0 ? mergeCorners(corners, smoothingDistance * 0.75) : corners
 }
@@ -936,8 +993,14 @@ function stepArms(
         // on the next contour itself — a tiny ~stepSize cut from the depth-N
         // corner straight into the depth-(N+1) wall. Mirrors the wall-anchor
         // used during fresh-seed bootstrap, applied to stuck arms here.
+        //
+        // GUARD: only fire when `arm.point` is near a real corner of the
+        // current contour. On smooth offset rings (e.g. circle, the apex of
+        // a curved letter) jtRound creates spurious "corners" at deep insets;
+        // those have no parent-corner nearby and would otherwise emit dangling
+        // ~stepSize cuts perpendicular to the smooth wall.
         const wallAnchor = closestPointOnContour(nextLogicContour, arm.point)
-        if (wallAnchor) {
+        if (wallAnchor && hasNearbyContourCorner(currentLogicContour, arm.point, stepSize * 2, stepSize)) {
           const wallDist = Math.hypot(wallAnchor.x - arm.point.x, wallAnchor.y - arm.point.y)
           if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(arm.point, wallAnchor, currentLogicContour)) {
             rescueTracer?.({ kind: 'fallback:wall-hit', arm: arm.point, target: wallAnchor, dist: wallDist })
@@ -1439,10 +1502,32 @@ function buildFreshSeedBootstrapCuts(
   allowWallAnchorFallback = true,
 ): { cuts: Path3D[], seededNextArms: TrackedArm[], connectedSeededArms: TrackedArm[] } {
   const currentLogicContour = recursiveLogicContour(currentContour, stepSize)
-  const seededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
-  const freshSeedArms = seededNextArms.filter((seededArm) =>
+  const allSeededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
+  const freshSeedArmsAll = allSeededNextArms.filter((seededArm) =>
     !connectedNextArms.some((connectedArm) => Math.hypot(connectedArm.point.x - seededArm.point.x, connectedArm.point.y - seededArm.point.y) < 1e-9),
   )
+
+  // Filter out spurious fresh seeds: corners that emerge from Clipper jtRound
+  // discretization on smooth offset rings (circles, gentle arches). A real new
+  // corner descends from a sharp parent-contour feature, so it must have a
+  // detectable corner on currentContour within ~stepSize×3. Without this
+  // guard, smooth curves at deep insets (e.g. ≥ 9 levels into a circle) sprout
+  // false-positive corners that produce dangling stepSize-length cuts.
+  const freshSeedArms: TrackedArm[] = []
+  const rejectedSpuriousArms: TrackedArm[] = []
+  for (const arm of freshSeedArmsAll) {
+    if (hasNearbyContourCorner(currentLogicContour, arm.point, stepSize * 3, stepSize)) {
+      freshSeedArms.push(arm)
+    } else {
+      rejectedSpuriousArms.push(arm)
+    }
+  }
+  // seededNextArms returned to caller excludes spurious fresh seeds so they
+  // are not promoted to activeArms in the next recursion level.
+  const seededNextArms = allSeededNextArms.filter((arm) =>
+    !rejectedSpuriousArms.some((spurious) => Math.hypot(spurious.point.x - arm.point.x, spurious.point.y - arm.point.y) < 1e-9),
+  )
+
   if (freshSeedArms.length === 0) {
     return { cuts: [], seededNextArms, connectedSeededArms: mergeTrackedArms(connectedNextArms, 1e-9) }
   }
@@ -1515,7 +1600,14 @@ function buildFreshSeedBootstrapCuts(
       // detected corner nearby. Anchor it to the closest point on the parent
       // contour itself — a tiny ~stepSize cut from outer wall into the new
       // corner. This is the V-carve behaviour for any newly-emerged corner.
-      if (!connected && allowWallAnchorFallback) {
+      //
+      // GUARD: only fire when the fresh seed sits near a real corner on the
+      // CURRENT contour (i.e. it descends from a real sharp feature of the
+      // parent). On smooth offset rings (circles, gentle arches) jtRound
+      // discretization creates spurious vertices that pass detectCorners; we
+      // refuse to emit perpendicular-to-smooth-wall cuts for those.
+      if (!connected && allowWallAnchorFallback
+        && hasNearbyContourCorner(currentLogicContour, freshSeedArm.point, stepSize * 2.5, stepSize)) {
         const wallAnchor = closestPointOnContour(currentLogicContour, freshSeedArm.point)
         if (wallAnchor) {
           const wallDist = Math.hypot(wallAnchor.x - freshSeedArm.point.x, wallAnchor.y - freshSeedArm.point.y)
