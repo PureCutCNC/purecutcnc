@@ -60,7 +60,12 @@ const CORNER_ANGLE_THRESHOLD_RAD = (15 * Math.PI) / 180
 const MICRO_FRACTION = 0.1  // fraction of stepSize used for collapse micro-offset
 const CORNER_SMOOTHING_FRACTION = 0.25
 const MIN_CORNER_SMOOTHING_DISTANCE = 1e-4
-const BOOTSTRAP_MAX_RESCUE_STEPS = 48
+// Bootstrap rescues bridge fresh-seed corners that emerge at deeper offsets to
+// existing parent arms via medial-axis walks. The cap must accommodate long
+// walks around band-shaped contours (e.g. the half-perimeter of a letter "e"
+// is ~150 stepSizes). 48 was a conservative early value that orphaned legit
+// corners across mid-letter merges.
+const BOOTSTRAP_MAX_RESCUE_STEPS = 400
 const MIN_INTERIOR_CORNER_BRIDGE_STEPS = 2
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
@@ -1810,7 +1815,15 @@ function traceRegion(
 ): void {
   if (depth > MAX_RECURSION_DEPTH) return
 
-  const activeArms = arms ?? (allowFreshSeedRestart ? seedTrackedArms(region.outer, stepSize) : [])
+  // When fresh-seed restart is enabled, ALSO merge fresh-detected corners on
+  // top of any incoming arms. Previously `arms ?? seed(...)` short-circuited
+  // when `arms` was non-undefined, which meant a bridged child entering at
+  // depth N+1 missed corners that emerged on its own outer contour. Notably,
+  // the e's bowl-meets-outer corners on the side that hadn't yet merged at
+  // the split moment.
+  const activeArms = allowFreshSeedRestart
+    ? seedTrackedArms(region.outer, stepSize, arms ?? [])
+    : (arms ?? [])
   if (!allowFreshSeedRestart && activeArms.length === 0) return
 
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
