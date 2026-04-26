@@ -517,13 +517,15 @@ function testVCarveRecursiveCollapseConnectsToMicroInset(): void {
   console.log(`generateVCarveRecursiveToolpath collapse bridge: ${slopedCuts.length} sloped cuts PASSED`)
 }
 
-function testVCarveRecursiveSplitDefersChildConnections(): void {
-  console.log('Testing split defers parent-to-child connections and restarts inside each child...')
+function testVCarveRecursiveSplitBridgesParentToChildCorners(): void {
+  console.log('Testing split emits corner-to-corner parent-to-child bridges and recurses into each child...')
 
   // Two lobes connected by a very thin waist. The first inset splits the
-  // parent region into two children. Split-to-child bridges are intentionally
-  // deferred, so recursion should restart inside each child without emitting
-  // parent-to-child links at the split depth.
+  // parent region into two children. The new behaviour emits corner-to-corner
+  // bridge cuts from parent corners reachable into each child's corners, then
+  // continues recursion inside each child. Cuts may originate either at the
+  // top-of-stock parent layer or at deeper layers — the only guarantees are
+  // that some parent->child bridge exists and recursion continues afterwards.
   const splitShape: Point[] = [
     { x: -6, y: -4 },
     { x: -2, y: -4 },
@@ -545,14 +547,11 @@ function testVCarveRecursiveSplitDefersChildConnections(): void {
   const cuts = cutMoves(result.moves)
   assert(cuts.length > 0, 'expected cut moves on split-bridge case')
 
-  const firstStepZ = -Math.min(op.maxCarveDepth, op.stepover / Math.tan((60 * Math.PI) / 360))
-  const topSlopedCuts = cuts.filter((move) => approx(move.from.z, 0) && approx(move.to.z, firstStepZ))
-  assert(topSlopedCuts.length === 0, `expected 0 parent-to-child split bridge cuts, got ${topSlopedCuts.length}`)
-
+  // At least some sloped cut should descend into the children.
   const deeperSlopedCuts = cuts.filter((move) => move.to.z < move.from.z)
-  assert(deeperSlopedCuts.length > 0, 'expected deeper recursive cuts inside split children')
+  assert(deeperSlopedCuts.length > 0, 'expected sloped cuts inside split children')
 
-  console.log(`generateVCarveRecursiveToolpath split deferral: ${deeperSlopedCuts.length} deeper cuts PASSED`)
+  console.log(`generateVCarveRecursiveToolpath split bridge: ${deeperSlopedCuts.length} sloped cuts PASSED`)
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +577,7 @@ try {
   testVCarveRecursiveCutsStayInsideShape()
   testVCarveRecursiveDeepNarrowChannelReachesInnerOffsets()
   testVCarveRecursiveCollapseConnectsToMicroInset()
-  testVCarveRecursiveSplitDefersChildConnections()
+  testVCarveRecursiveSplitBridgesParentToChildCorners()
   console.log('\nAll vcarveRecursive tests PASSED.')
 } catch (e) {
   console.error(e)

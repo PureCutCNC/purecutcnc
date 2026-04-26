@@ -64,7 +64,7 @@ const BOOTSTRAP_MAX_RESCUE_STEPS = 48
 const MIN_INTERIOR_CORNER_BRIDGE_STEPS = 2
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
-const ENABLE_SPLIT_CONNECTIONS = false
+const ENABLE_SPLIT_CONNECTIONS = true
 
 // ---------------------------------------------------------------------------
 // Types
@@ -492,12 +492,6 @@ export interface RejectedCorner {
   bestDist: number
   maxJumpDist: number
   hadCornerCandidates: boolean
-}
-
-interface SplitCornerTarget {
-  childIndex: number
-  point: Point
-  contour: Point[]
 }
 
 interface TrackedArm {
@@ -1108,6 +1102,24 @@ export function stepCorners(
   }
 }
 
+/**
+ * Bridge parent corners across a 1 → N split into child corners, applying the
+ * same rules as the 1 → 1 recursive path:
+ *
+ *  - corner-to-corner only (no smooth-target snapping, no wall-anchors)
+ *  - centerline rescue trace through the parent contour, with the snap pool
+ *    drawn from corners on ALL child contours (the medial walk picks whichever
+ *    child it happens to lead to)
+ *  - direct-connect fallback to nearest reachable child corner within
+ *    `4 × stepSize`, segment must stay inside the parent contour
+ *  - parent arms that fail both attempts are rejected (no link emitted) —
+ *    the user's explicit rule is "not every child corner connects to parent".
+ *
+ * Children whose corners are not picked up here are still seeded fresh inside
+ * their child subtree by buildFreshSeedBootstrapCuts (called per-child in the
+ * caller). That keeps the recursion alive inside each child even when the
+ * parent had nothing to bridge with.
+ */
 function bridgeSplitArms(
   activeArms: TrackedArm[],
   currentContour: Point[],
@@ -1115,6 +1127,8 @@ function bridgeSplitArms(
   currentZ: number,
   nextZ: number,
   stepSize: number,
+  slope: number,
+  minZ: number,
 ): { cuts: Path3D[], childArms: TrackedArm[][], rejected: RejectedCorner[] } {
   const childArms = nextRegions.map((): TrackedArm[] => [])
   if (activeArms.length === 0 || nextRegions.length === 0) {
@@ -1123,15 +1137,21 @@ function bridgeSplitArms(
 
   const logicCurrentContour = recursiveLogicContour(currentContour, stepSize)
   const logicChildContours = nextRegions.map((nextRegion) => recursiveLogicContour(nextRegion.outer, stepSize))
-  const targets: SplitCornerTarget[] = nextRegions.flatMap((_nextRegion, childIndex) =>
-    detectCorners(logicChildContours[childIndex]).map((point) => ({
-      childIndex,
-      point,
-      contour: logicChildContours[childIndex],
-    })),
-  )
 
-  if (targets.length === 0) {
+  // Pool every child corner with its child-index tag. detectRecursiveCorners
+  // already filters jitter (raw-angle validation in detectCorners).
+  const pooledCornerPoints: Point[] = []
+  const cornerToChild = new Map<string, number>()
+  const cornerKey = (p: Point): string => `${p.x.toFixed(8)},${p.y.toFixed(8)}`
+  nextRegions.forEach((_nextRegion, childIndex) => {
+    const corners = detectRecursiveCorners(logicChildContours[childIndex], stepSize)
+    for (const c of corners) {
+      pooledCornerPoints.push(c)
+      cornerToChild.set(cornerKey(c), childIndex)
+    }
+  })
+
+  if (pooledCornerPoints.length === 0) {
     return {
       cuts: [],
       childArms,
@@ -1147,57 +1167,88 @@ function bridgeSplitArms(
 
   const cuts: Path3D[] = []
   const rejected: RejectedCorner[] = []
+
   for (const arm of activeArms) {
-    let bestTarget = findProjectedTarget(arm.point, arm.guide, logicCurrentContour, targets)
-      ?? findNearestInsideTarget(arm.point, logicCurrentContour, targets)
-    if (!bestTarget) {
-      const rayChildHits = nextRegions
-        .map((_nextRegion, childIndex) => {
-          const hit = findContourRayHit(arm.point, arm.guide, logicCurrentContour, logicChildContours[childIndex])
-          return hit
-            ? {
-              target: {
-                childIndex,
-                point: hit.point,
-                contour: logicChildContours[childIndex],
-              },
-              dist: hit.dist,
-              progress: hit.progress,
-              deviationRatio: 0,
-              directionMismatch: directionMismatch(arm.guide, inwardDirectionAtContourPoint(logicChildContours[childIndex], hit.point)),
-            }
-            : null
-        })
-        .filter((hit): hit is ProjectedTargetMatch<SplitCornerTarget> => hit !== null)
-      bestTarget = rayChildHits.sort(compareProjectedMatches)[0] ?? null
-    }
-    if (!bestTarget) {
-      const nearestTarget = targets.reduce<SplitCornerTarget | null>((best, candidate) => {
-        if (!best) {
-          return candidate
+    const armZ = arm.z ?? currentZ
+
+    // Primary: medial-axis rescue walk through the parent contour, snapping
+    // to any pooled child corner within stepSize of the channel midpoint.
+    const rescue = buildCenterlineRescuePath(
+      logicCurrentContour,
+      pooledCornerPoints,
+      arm,
+      currentZ,
+      nextZ,
+      stepSize,
+      slope,
+      minZ,
+    )
+    if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
+      const childIndex = cornerToChild.get(cornerKey(rescue.endPoint))
+      if (childIndex !== undefined) {
+        cuts.push(rescue.path)
+        const priorPoint = rescue.path[rescue.path.length - 2]
+        const endGuide = normalizeDirection(
+          rescue.endPoint.x - priorPoint.x,
+          rescue.endPoint.y - priorPoint.y,
+        )
+        const nextArm = createTrackedArm(
+          nextRegions[childIndex].outer,
+          rescue.endPoint,
+          endGuide ?? arm.guide,
+          rescue.endZ,
+          logicChildContours[childIndex],
+        )
+        if (nextArm) {
+          childArms[childIndex].push(nextArm)
         }
-        const bestDist = Math.hypot(best.point.x - arm.point.x, best.point.y - arm.point.y)
-        const candidateDist = Math.hypot(candidate.point.x - arm.point.x, candidate.point.y - arm.point.y)
-        return candidateDist < bestDist ? candidate : best
-      }, null)
-      rejected.push({
-        corner: { ...arm.point },
-        bestTarget: nearestTarget ? { ...nearestTarget.point } : null,
-        bestDist: nearestTarget ? Math.hypot(nearestTarget.point.x - arm.point.x, nearestTarget.point.y - arm.point.y) : Infinity,
-        maxJumpDist: Infinity,
-        hadCornerCandidates: targets.length > 0,
-      })
-      continue
+        continue
+      }
     }
 
-    cuts.push([
-      { x: arm.point.x, y: arm.point.y, z: currentZ },
-      { x: bestTarget.target.point.x, y: bestTarget.target.point.y, z: nextZ },
-    ])
-    const nextArm = createTrackedArm(nextRegions[bestTarget.target.childIndex].outer, bestTarget.target.point, arm.guide, undefined, bestTarget.target.contour)
-    if (nextArm) {
-      childArms[bestTarget.target.childIndex].push(nextArm)
+    // Direct-connect fallback: corner-to-corner, inside parent contour, within
+    // 4 × stepSize. Mirrors the budget used in stepArms for 1 → 1 transitions.
+    const directBudget = stepSize * 4
+    const directCandidates = pooledCornerPoints
+      .map((point) => ({ point, dist: Math.hypot(point.x - arm.point.x, point.y - arm.point.y) }))
+      .filter((c) => c.dist > 1e-9 && c.dist <= directBudget)
+      .filter((c) => segmentSamplesStayInsideContour(arm.point, c.point, logicCurrentContour))
+      .sort((a, b) => a.dist - b.dist)
+    const direct = directCandidates[0]
+    if (direct) {
+      const childIndex = cornerToChild.get(cornerKey(direct.point))
+      if (childIndex !== undefined) {
+        cuts.push([
+          { x: arm.point.x, y: arm.point.y, z: armZ },
+          { x: direct.point.x, y: direct.point.y, z: nextZ },
+        ])
+        const nextArm = createTrackedArm(
+          nextRegions[childIndex].outer,
+          direct.point,
+          arm.guide,
+          nextZ,
+          logicChildContours[childIndex],
+        )
+        if (nextArm) {
+          childArms[childIndex].push(nextArm)
+        }
+        continue
+      }
     }
+
+    // Reject — parent arm has no good child counterpart. No wall-anchor; the
+    // child still gets seeded inside its own subtree by the caller.
+    const nearest = pooledCornerPoints.reduce<{ pt: Point | null, dist: number }>((acc, p) => {
+      const d = Math.hypot(p.x - arm.point.x, p.y - arm.point.y)
+      return d < acc.dist ? { pt: p, dist: d } : acc
+    }, { pt: null, dist: Infinity })
+    rejected.push({
+      corner: { ...arm.point },
+      bestTarget: nearest.pt ? { ...nearest.pt } : null,
+      bestDist: nearest.dist,
+      maxJumpDist: Infinity,
+      hadCornerCandidates: pooledCornerPoints.length > 0,
+    })
   }
 
   return { cuts, childArms: childArms.map((arms) => mergeTrackedArms(arms, 1e-9)), rejected }
@@ -1502,30 +1553,15 @@ function buildFreshSeedBootstrapCuts(
   allowWallAnchorFallback = true,
 ): { cuts: Path3D[], seededNextArms: TrackedArm[], connectedSeededArms: TrackedArm[] } {
   const currentLogicContour = recursiveLogicContour(currentContour, stepSize)
-  const allSeededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
-  const freshSeedArmsAll = allSeededNextArms.filter((seededArm) =>
+  const seededNextArms = seedTrackedArms(nextContour, stepSize, connectedNextArms, nextZ)
+  // detectCorners now validates each candidate against the raw (unsimplified)
+  // contour's turn angle, so spurious "corners" produced by Clipper jtRound
+  // discretization on smooth curves are already filtered at the source. We
+  // accept every detected fresh corner here — including ones that emerge from
+  // legitimate topology merges (e.g. the bowl of an "e" merging with the outer
+  // rim) where no parent-contour corner sits nearby.
+  const freshSeedArms = seededNextArms.filter((seededArm) =>
     !connectedNextArms.some((connectedArm) => Math.hypot(connectedArm.point.x - seededArm.point.x, connectedArm.point.y - seededArm.point.y) < 1e-9),
-  )
-
-  // Filter out spurious fresh seeds: corners that emerge from Clipper jtRound
-  // discretization on smooth offset rings (circles, gentle arches). A real new
-  // corner descends from a sharp parent-contour feature, so it must have a
-  // detectable corner on currentContour within ~stepSize×3. Without this
-  // guard, smooth curves at deep insets (e.g. ≥ 9 levels into a circle) sprout
-  // false-positive corners that produce dangling stepSize-length cuts.
-  const freshSeedArms: TrackedArm[] = []
-  const rejectedSpuriousArms: TrackedArm[] = []
-  for (const arm of freshSeedArmsAll) {
-    if (hasNearbyContourCorner(currentLogicContour, arm.point, stepSize * 3, stepSize)) {
-      freshSeedArms.push(arm)
-    } else {
-      rejectedSpuriousArms.push(arm)
-    }
-  }
-  // seededNextArms returned to caller excludes spurious fresh seeds so they
-  // are not promoted to activeArms in the next recursion level.
-  const seededNextArms = allSeededNextArms.filter((arm) =>
-    !rejectedSpuriousArms.some((spurious) => Math.hypot(spurious.point.x - arm.point.x, spurious.point.y - arm.point.y) < 1e-9),
   )
 
   if (freshSeedArms.length === 0) {
@@ -1793,7 +1829,16 @@ function traceRegion(
   if (nextRegions.length > 1) {
     if (ENABLE_SPLIT_CONNECTIONS) {
       const parentSplitArms = splitSourceArms(region.outer, stepSize, activeArms, currentZ)
-      const { cuts, childArms, rejected } = bridgeSplitArms(parentSplitArms, region.outer, nextRegions, currentZ, nextZ, stepSize)
+      const { cuts, childArms, rejected } = bridgeSplitArms(
+        parentSplitArms,
+        region.outer,
+        nextRegions,
+        currentZ,
+        nextZ,
+        stepSize,
+        slope,
+        topZ - maxDepth,
+      )
       paths.push(...cuts)
 
       if (debugShowRejected && rejected.length > 0) {
@@ -1802,10 +1847,13 @@ function traceRegion(
         }
       }
 
-      // Recurse inside each split child only from arms that actually received
-      // a split-time incoming path. Do not allow fresh corner restarts inside
-      // those child subtrees yet; that prevents unrelated child-offset links
-      // while still letting the connected arms flow inward recursively.
+      // Recurse inside each split child. Fresh-seed restart is enabled in
+      // BOTH cases (with-bridge and without): the raw-angle corner filter
+      // already rejects polygon-discretization jitter on smooth curves, so
+      // fresh seeds inside children only fire on real shape corners. Without
+      // this, children whose contour acquires new corners at deeper offsets
+      // (e.g. the stem of T narrowing past the cross-arm split) lose those
+      // corners and the chain dies after a few levels.
       for (let childIndex = 0; childIndex < nextRegions.length; childIndex += 1) {
         const nextRegion = nextRegions[childIndex]
         const bridgedArms = childArms[childIndex]
@@ -1816,15 +1864,13 @@ function traceRegion(
           bridgedArms,
           currentZ,
           nextZ,
-        stepSize,
-        slope,
-        topZ - maxDepth,
-        false,
-      )
-      paths.push(...bootstrapCuts)
-        if (connectedSeededArms.length === 0) {
-          continue
-        }
+          stepSize,
+          slope,
+          topZ - maxDepth,
+          false,
+        )
+        paths.push(...bootstrapCuts)
+        const childArmsForRecursion = connectedSeededArms.length > 0 ? connectedSeededArms : undefined
         traceRegion(
           nextRegion,
           topZ,
@@ -1835,8 +1881,8 @@ function traceRegion(
           depth + 1,
           paths,
           debugShowRejected,
-          connectedSeededArms,
-          false,
+          childArmsForRecursion,
+          true,
         )
       }
       return
