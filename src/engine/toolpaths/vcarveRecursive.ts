@@ -2192,7 +2192,82 @@ function chainPaths(paths: Path3D[]): Path3D[] {
 }
 
 // ---------------------------------------------------------------------------
-// Paths → ToolpathMoves conversion
+// Path ordering — nearest-neighbour sort to minimise rapid travel
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-order paths so that each path starts as close as possible (in XY) to
+ * the end of the previous one.  This is a greedy nearest-neighbour heuristic
+ * and runs in O(n²) — acceptable because n is the number of *chained* paths
+ * (not individual 2-point segments), which is typically tens to low hundreds
+ * per region.
+ *
+ * For open paths (arm chains) both orientations are considered: we pick the
+ * endpoint (start or end) that is closest to the current position and reverse
+ * the path when that saves travel.  Closed contours (collapse outlines, split
+ * bridges) are left in their original orientation — reversing a closed loop
+ * has no meaningful effect on air travel but could confuse downstream code
+ * that expects a specific winding.
+ *
+ * Only XY distance is used for cost: all rapids happen at safeZ so the Z
+ * component of path endpoints does not contribute to air-travel time.
+ */
+function sortPathsNearestNeighbor(
+  paths: Path3D[],
+  startXY: { x: number; y: number } | null,
+): Path3D[] {
+  if (paths.length === 0) return []
+
+  /** True when the path's first and last XY points are within 1 nm — i.e. it
+   *  is a closed loop and reversing would be pointless. */
+  function isClosed(path: Path3D): boolean {
+    const first = path[0]
+    const last  = path[path.length - 1]
+    return Math.hypot(last.x - first.x, last.y - first.y) < 1e-6
+  }
+
+  const remaining = paths.slice()
+  const ordered: Path3D[] = []
+  let curX = startXY?.x ?? 0
+  let curY = startXY?.y ?? 0
+
+  while (remaining.length > 0) {
+    let bestIdx     = 0
+    let bestDist    = Infinity
+    let bestReverse = false
+
+    for (let i = 0; i < remaining.length; i++) {
+      const path  = remaining[i]
+      const first = path[0]
+      const last  = path[path.length - 1]
+
+      const distToStart = Math.hypot(first.x - curX, first.y - curY)
+      const distToEnd   = isClosed(path)
+        ? Infinity  // closed — only consider forward entry
+        : Math.hypot(last.x - curX, last.y - curY)
+
+      const d   = Math.min(distToStart, distToEnd)
+      const rev = distToEnd < distToStart
+
+      if (d < bestDist) {
+        bestDist    = d
+        bestIdx     = i
+        bestReverse = rev
+      }
+    }
+
+    const chosen  = remaining.splice(bestIdx, 1)[0]
+    const emitted = bestReverse ? [...chosen].reverse() : chosen
+    ordered.push(emitted)
+
+    const tail = emitted[emitted.length - 1]
+    curX = tail.x
+    curY = tail.y
+  }
+
+  return ordered
+}
+
 // ---------------------------------------------------------------------------
 
 function pathsToMoves(
@@ -2202,7 +2277,10 @@ function pathsToMoves(
   startPosition: ToolpathPoint | null,
 ): ToolpathPoint | null {
   let pos = startPosition
-  const chained = chainPaths(paths)
+  const chained = sortPathsNearestNeighbor(
+    chainPaths(paths),
+    startPosition ? { x: startPosition.x, y: startPosition.y } : null,
+  )
 
   for (let pi = 0; pi < chained.length; pi++) {
     const path = chained[pi]
