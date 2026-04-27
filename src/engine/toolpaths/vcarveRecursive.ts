@@ -929,6 +929,7 @@ function stepArms(
   stepSize: number,
   slope: number,
   minZ: number,
+  topZ: number,
   allowSmoothTargets = false,
 ): { cuts: Path3D[], nextArms: TrackedArm[], rejected: RejectedCorner[] } {
   if (activeArms.length === 0 || nextContour.length === 0) {
@@ -949,7 +950,7 @@ function stepArms(
 
     if (!allowSmoothTargets) {
       if (candidateCorners.length > 0) {
-        const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ)
+        const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ, topZ)
         if (rescue && rescue.path.length >= 2) {
           cuts.push(rescue.path)
           const priorPoint = rescue.path[rescue.path.length - 2]
@@ -1104,6 +1105,7 @@ export function stepCorners(
     stepSize,
     slope,
     Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
     true,
   )
   return {
@@ -1140,6 +1142,7 @@ function bridgeSplitArms(
   stepSize: number,
   slope: number,
   minZ: number,
+  topZ: number,
 ): { cuts: Path3D[], childArms: TrackedArm[][], rejected: RejectedCorner[] } {
   const childArms = nextRegions.map((): TrackedArm[] => [])
   if (activeArms.length === 0 || nextRegions.length === 0) {
@@ -1233,6 +1236,7 @@ function bridgeSplitArms(
       stepSize,
       slope,
       minZ,
+      topZ,
       SPLIT_BRIDGE_MAX_RESCUE_STEPS,
     )
     if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
@@ -1304,6 +1308,7 @@ function bridgeSiblingChildren(
   stepSize: number,
   slope: number,
   minZ: number,
+  topZ: number,
   debugShowPartial: boolean,
 ): Path3D[] {
   if (nextRegions.length < 2) return []
@@ -1349,8 +1354,13 @@ function bridgeSiblingChildren(
       const channel = findPerpendicularChannelMidpoint(allParentContours, probe, currentGuide)
       if (!channel) break
 
-      // Step 7: Z at this midpoint is based on the channel radius and tool angle.
-      const targetZ = currentZ - channel.radius / slope
+      // Step 7: Z at this midpoint is based on the true distance to the nearest
+      // parent wall — the inscribed circle radius at this XY point. This is the
+      // correct V-carve depth formula: topZ - distToWall / slope.
+      // Using channel.radius (perpendicular half-width) and currentZ (edge Z)
+      // both produce wrong results for wide shapes like the legs of letter A.
+      const distToWall = minDistToContourWalls(channel.point, allParentContours)
+      const targetZ = topZ - distToWall / slope
       const pointZ = Math.max(minZ, Math.min(lastZ, targetZ))
 
       // Step 8: check if any corner from a different child is within stepSize.
@@ -1535,6 +1545,24 @@ export function setRescueTracer(fn: ((event: Record<string, unknown>) => void) |
   rescueTracer = fn
 }
 
+function minDistToContourWalls(point: Point, contours: Point[][]): number {
+  let best = Infinity
+  for (const contour of contours) {
+    for (let i = 0; i < contour.length; i++) {
+      const a = contour[i]
+      const b = contour[(i + 1) % contour.length]
+      const abx = b.x - a.x
+      const aby = b.y - a.y
+      const lenSq = abx * abx + aby * aby
+      if (lenSq < 1e-18) continue
+      const t = Math.max(0, Math.min(1, ((point.x - a.x) * abx + (point.y - a.y) * aby) / lenSq))
+      const d = Math.hypot(point.x - (a.x + abx * t), point.y - (a.y + aby * t))
+      if (d < best) best = d
+    }
+  }
+  return best
+}
+
 function buildCenterlineRescuePath(
   currentContour: Point[],
   nextCorners: Point[],
@@ -1544,6 +1572,7 @@ function buildCenterlineRescuePath(
   stepSize: number,
   slope: number,
   minZ: number,
+  topZ: number,
   maxIterationsOverride?: number,
 ): { path: Path3D, endPoint: Point, endZ: number, reachedCorner: boolean } | null {
   if (!(slope > 1e-9) || nextCorners.length === 0) {
@@ -1637,7 +1666,8 @@ function buildCenterlineRescuePath(
       + ((channel.point.y - currentPoint.y) * currentGuide.y)
     rescueTracer?.({ kind: 'rescue:step', iteration, probe, probeInside, channel: channel.point, radius: channel.radius, forwardProgress, effStep })
 
-    const targetMidpointZ = currentZ - (channel.radius / slope)
+    const distToWall = minDistToContourWalls(channel.point, [currentContour])
+    const targetMidpointZ = topZ - distToWall / slope
     const midpointZ = Math.max(minZ, Math.min(lastZ, targetMidpointZ))
     if (Math.hypot(channel.point.x - currentPoint.x, channel.point.y - currentPoint.y) < 1e-6) {
       return null
@@ -1689,6 +1719,7 @@ function buildFreshSeedBootstrapCuts(
   stepSize: number,
   slope: number,
   minZ: number,
+  topZ: number,
   allowWallAnchorFallback = true,
 ): { cuts: Path3D[], seededNextArms: TrackedArm[], connectedSeededArms: TrackedArm[] } {
   const currentLogicContour = recursiveLogicContour(currentContour, stepSize)
@@ -1766,6 +1797,7 @@ function buildFreshSeedBootstrapCuts(
           stepSize,
           slope,
           minZ,
+          topZ,
           rescueCap,
         )
         if (!rescue?.reachedCorner || rescue.path.length < 2) {
@@ -1916,6 +1948,7 @@ function emitCollapseGeometry(
         microStep,
         slope,
         topZ - maxDepth,
+        topZ,
       )
       paths.push(...cuts)
 
@@ -1993,6 +2026,7 @@ function traceRegion(
         stepSize,
         slope,
         topZ - maxDepth,
+        topZ,
       )
       paths.push(...cuts)
 
@@ -2008,6 +2042,7 @@ function traceRegion(
         stepSize,
         slope,
         topZ - maxDepth,
+        topZ,
         debugShowRejected,
       ))
 
@@ -2037,6 +2072,7 @@ function traceRegion(
           stepSize,
           slope,
           topZ - maxDepth,
+          topZ,
           false,
         )
         paths.push(...bootstrapCuts)
@@ -2090,6 +2126,7 @@ function traceRegion(
     stepSize,
     slope,
     topZ - maxDepth,
+    topZ,
   )
   paths.push(...cuts)
   let seededNextArms = nextArms
@@ -2104,6 +2141,7 @@ function traceRegion(
       stepSize,
       slope,
       topZ - maxDepth,
+      topZ,
     )
     paths.push(...bootstrap.cuts)
     seededNextArms = bootstrap.seededNextArms
