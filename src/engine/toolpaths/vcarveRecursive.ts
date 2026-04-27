@@ -2270,11 +2270,53 @@ function sortPathsNearestNeighbor(
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Attempt a direct link from `pos` to `entry` without a full retract cycle.
+ *
+ * Rules:
+ *  - If entry.z >= pos.z the move is rising or lateral — always safe as a
+ *    rapid (we are leaving material, not plunging into it).
+ *  - If entry.z < pos.z (descending) we allow a direct plunge only when the
+ *    XY distance is within `maxDirectPlungeXY`.  Beyond that budget the tool
+ *    would travel sideways while descending into material, which risks a
+ *    collision with uncut stock between the two points.
+ *
+ * Returns true and appends the move when a direct link is possible.
+ */
+function tryDirectLink(
+  moves: ToolpathMove[],
+  pos: ToolpathPoint,
+  entry: ToolpathPoint,
+  safeZ: number,
+): boolean {
+  if (pos.x === entry.x && pos.y === entry.y && pos.z === entry.z) return true
+
+  const xyDist = Math.hypot(entry.x - pos.x, entry.y - pos.y)
+
+  if (entry.z >= pos.z) {
+    // Rising or lateral — safe rapid regardless of XY distance.
+    moves.push({ kind: 'rapid', from: pos, to: entry })
+    return true
+  }
+
+  // Descending move: safe to link directly when the XY gap is within the
+  // depth-below-safeZ at the shallower endpoint.  That distance bounds the
+  // radius of the already-carved V-cone, so the tool cannot gouge uncut stock.
+  const depthBudget = safeZ - Math.min(pos.z, entry.z)
+  if (xyDist <= depthBudget) {
+    moves.push({ kind: 'cut', from: pos, to: entry })
+    return true
+  }
+
+  return false
+}
+
 function pathsToMoves(
   paths: Path3D[],
   safeZ: number,
   moves: ToolpathMove[],
   startPosition: ToolpathPoint | null,
+  stepSize: number,
 ): ToolpathPoint | null {
   let pos = startPosition
   const chained = sortPathsNearestNeighbor(
@@ -2288,12 +2330,13 @@ function pathsToMoves(
 
     const entry: ToolpathPoint = path[0]
 
-    if (pos !== null && pos.x === entry.x && pos.y === entry.y && pos.z === entry.z) {
-      pos = entry
-    } else {
+    if (pos === null) {
+      pos = pushRapidAndPlunge(moves, null, entry, safeZ)
+    } else if (!tryDirectLink(moves, pos, entry, safeZ)) {
       pos = retractToSafe(moves, pos, safeZ)
       pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
     }
+    pos = entry
 
     for (let i = 1; i < path.length; i++) {
       moves.push({ kind: 'cut', from: path[i - 1], to: path[i] })
@@ -2411,7 +2454,7 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
     for (const region of band.regions) {
       const paths: Path3D[] = []
       traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths, operation.debugToolpath === true)
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize)
     }
   }
 
