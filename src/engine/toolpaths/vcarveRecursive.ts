@@ -1277,6 +1277,118 @@ function bridgeSplitArms(
 }
 
 /**
+ * After a 1 → N split, connect corners on sibling children through the parent
+ * contour by walking outward from each child corner along its bisected angle.
+ *
+ * Algorithm (per corner on each child):
+ *  1. Start at a corner on child i; compute the outward bisector (away from
+ *     the child's interior — negated inward bisector).
+ *  2. Step `stepSize` along that ray to a probe point.
+ *  3. Cast a perpendicular line through the probe; intersect it with the
+ *     parent contour to find the channel midpoint (medial axis point).
+ *  4. If the probe is outside the parent contour, stop — this corner cannot
+ *     connect through the parent.
+ *  5. If any corner from a DIFFERENT child is within `stepSize` of the
+ *     channel midpoint, emit the accumulated path and snap to that corner.
+ *  6. Otherwise advance to the channel midpoint and repeat from step 2.
+ *
+ * Each corner on each child is tried independently. Duplicate A→B / B→A
+ * paths are expected and will be deduplicated later.
+ */
+function bridgeSiblingChildren(
+  parentContour: Point[],
+  parentIslands: Point[][],
+  nextRegions: ResolvedPocketRegion[],
+  currentZ: number,
+  nextZ: number,
+  stepSize: number,
+  slope: number,
+  minZ: number,
+  debugShowPartial: boolean,
+): Path3D[] {
+  if (nextRegions.length < 2) return []
+
+  const logicParent = recursiveLogicContour(parentContour, stepSize)
+  const logicIslands = parentIslands.map((isl) => recursiveLogicContour(isl, stepSize))
+  const allParentContours = [logicParent, ...logicIslands]
+  // All corners from all children, tagged with their child index.
+  const allChildCorners: { point: Point, childIdx: number }[] = []
+  for (let ci = 0; ci < nextRegions.length; ci += 1) {
+    for (const c of detectRecursiveCorners(nextRegions[ci].outer, stepSize)) {
+      allChildCorners.push({ point: c, childIdx: ci })
+    }
+  }
+
+  const cuts: Path3D[] = []
+  const MAX_WALK_STEPS = 256
+
+  for (const { point: startCorner, childIdx: startChildIdx } of allChildCorners) {
+    // Step 2: outward bisector = negated inward bisector from the child contour.
+    const inward = inwardDirectionAtContourPoint(nextRegions[startChildIdx].outer, startCorner)
+    if (!inward) continue
+    const outward = { x: -inward.x, y: -inward.y }
+
+    const path: Point3D[] = [{ x: startCorner.x, y: startCorner.y, z: nextZ }]
+    let currentPoint = { ...startCorner }
+    let currentGuide = { ...outward }
+    let lastZ = nextZ
+    let connected = false
+
+    for (let step = 0; step < MAX_WALK_STEPS; step += 1) {
+      // Step 3: probe point at stepSize along the current ray.
+      const probe = {
+        x: currentPoint.x + currentGuide.x * stepSize,
+        y: currentPoint.y + currentGuide.y * stepSize,
+      }
+
+      // Step 4: if probe is outside the parent, this corner cannot connect further.
+      if (!pointInPolygon(probe.x, probe.y, logicParent)) break
+
+      // Steps 5-6: perpendicular through probe, intersect all parent walls
+      // (outer + islands), find the narrowest bracketing channel midpoint.
+      const channel = findPerpendicularChannelMidpoint(allParentContours, probe, currentGuide)
+      if (!channel) break
+
+      // Step 7: Z at this midpoint is based on the channel radius and tool angle.
+      const targetZ = currentZ - channel.radius / slope
+      const pointZ = Math.max(minZ, Math.min(lastZ, targetZ))
+
+      // Step 8: check if any corner from a different child is within stepSize.
+      const snapTarget = allChildCorners.find(
+        (c) => c.childIdx !== startChildIdx
+          && Math.hypot(c.point.x - channel.point.x, c.point.y - channel.point.y) <= stepSize,
+      )
+
+      if (snapTarget) {
+        path.push({ x: channel.point.x, y: channel.point.y, z: pointZ })
+        path.push({ x: snapTarget.point.x, y: snapTarget.point.y, z: nextZ })
+        connected = true
+        break
+      }
+
+      // Step 9: advance currentPoint to channel midpoint. Keep guide fixed —
+      // the outward bisector direction is constant for this walk; updating it
+      // from channel-to-currentPoint causes the probe to exit the thin parent
+      // band on the next step.
+      path.push({ x: channel.point.x, y: channel.point.y, z: pointZ })
+      currentPoint = channel.point
+      lastZ = pointZ
+    }
+
+    // Emit the path whether or not we found a target child corner.
+    if (path.length >= 2) {
+      if (connected) {
+        cuts.push(simplifyPath3DCollinear(path, stepSize * 0.05))
+      } else if (debugShowPartial) {
+        cuts.push(path)
+      }
+    }
+  }
+
+  return cuts
+}
+
+/**
  * Build a small X-shaped pair of cut segments at point (x, y) on plane z.
  * Used as a debug marker to visualize where stepCorners rejected a chain link.
  */
@@ -1370,7 +1482,7 @@ function lineSegmentSignedIntersection(
 }
 
 function findPerpendicularChannelMidpoint(
-  contour: Point[],
+  contours: Point[][],
   probe: Point,
   guide: { x: number, y: number },
 ): { point: Point, radius: number } | null {
@@ -1380,13 +1492,15 @@ function findPerpendicularChannelMidpoint(
   }
 
   const intersections: number[] = []
-  for (let i = 0; i < contour.length; i += 1) {
-    const t = lineSegmentSignedIntersection(probe, normal, contour[i], contour[(i + 1) % contour.length])
-    if (t === null) {
-      continue
-    }
-    if (!intersections.some((existing) => Math.abs(existing - t) < 1e-6)) {
-      intersections.push(t)
+  for (const contour of contours) {
+    for (let i = 0; i < contour.length; i += 1) {
+      const t = lineSegmentSignedIntersection(probe, normal, contour[i], contour[(i + 1) % contour.length])
+      if (t === null) {
+        continue
+      }
+      if (!intersections.some((existing) => Math.abs(existing - t) < 1e-6)) {
+        intersections.push(t)
+      }
     }
   }
 
@@ -1394,23 +1508,26 @@ function findPerpendicularChannelMidpoint(
     return null
   }
 
-  intersections.sort((a, b) => a - b)
-  for (let i = 0; i < intersections.length - 1; i += 1) {
-    const left = intersections[i]
-    const right = intersections[i + 1]
-    if (left < -1e-6 && right > 1e-6) {
-      const midpointT = (left + right) / 2
-      return {
-        point: {
-          x: probe.x + (normal.x * midpointT),
-          y: probe.y + (normal.y * midpointT),
-        },
-        radius: (right - left) / 2,
-      }
-    }
+  // Find the narrowest bracketing pair: closest negative t and closest positive t.
+  // This gives the local channel walls immediately around the probe, ignoring
+  // far walls of the shape (e.g. the opposite side of an O band).
+  const negatives = intersections.filter((t) => t < -1e-6).sort((a, b) => b - a) // closest to 0 first
+  const positives = intersections.filter((t) => t > 1e-6).sort((a, b) => a - b)  // closest to 0 first
+
+  if (negatives.length === 0 || positives.length === 0) {
+    return null
   }
 
-  return null
+  const left = negatives[0]
+  const right = positives[0]
+  const midpointT = (left + right) / 2
+  return {
+    point: {
+      x: probe.x + (normal.x * midpointT),
+      y: probe.y + (normal.y * midpointT),
+    },
+    radius: (right - left) / 2,
+  }
 }
 
 let rescueTracer: ((event: Record<string, unknown>) => void) | null = null
@@ -1468,7 +1585,7 @@ function buildCenterlineRescuePath(
         effStep *= 0.5
         continue
       }
-      const candidateChannel = findPerpendicularChannelMidpoint(currentContour, candidate, currentGuide)
+      const candidateChannel = findPerpendicularChannelMidpoint([currentContour], candidate, currentGuide)
       if (!candidateChannel) {
         effStep *= 0.5
         continue
@@ -1879,6 +1996,21 @@ function traceRegion(
       )
       paths.push(...cuts)
 
+      // Sibling bridges: connect children to each other through their shared
+      // pinch points on the parent contour. Emitted as 3-point inverted-V
+      // paths (corner → medial midpoint → corner) at appropriate V-bit Zs.
+      paths.push(...bridgeSiblingChildren(
+        region.outer,
+        region.islands ?? [],
+        nextRegions,
+        currentZ,
+        nextZ,
+        stepSize,
+        slope,
+        topZ - maxDepth,
+        debugShowRejected,
+      ))
+
       if (debugShowRejected && rejected.length > 0) {
         for (const r of rejected) {
           paths.push(...buildXMarker(r.corner, currentZ, stepSize))
@@ -2200,7 +2332,7 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
 
     for (const region of band.regions) {
       const paths: Path3D[] = []
-      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths, operation.debugShowRejectedCorners === true)
+      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths, operation.debugToolpath === true)
       currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
     }
   }
