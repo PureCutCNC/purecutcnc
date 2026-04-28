@@ -934,6 +934,9 @@ function findArmTarget(
 
 let DIAG_PATH_ID = 0
 function diagTag(source: string, path: Path3D): void {
+  // Store source tag on the path array so pathsToMoves can annotate moves.
+  // Carried forward through chainPaths when arm segments are concatenated.
+  ;(path as unknown as Record<string, unknown>).__diagSource = source
   if (path.length >= 2) {
     const f = path[0], l = path[path.length - 1]
     const xy = Math.hypot(l.x - f.x, l.y - f.y)
@@ -1340,13 +1343,12 @@ function bridgeSiblingChildren(
   parentContour: Point[],
   parentIslands: Point[][],
   nextRegions: ResolvedPocketRegion[],
-  currentZ: number,
+  _currentZ: number,
   nextZ: number,
   stepSize: number,
   slope: number,
   minZ: number,
   topZ: number,
-  debugShowPartial: boolean,
 ): Path3D[] {
   if (nextRegions.length < 2) return []
 
@@ -1437,37 +1439,14 @@ function bridgeSiblingChildren(
     }
 
     // Emit the path whether or not we found a target child corner.
-    if (path.length >= 2) {
-      if (connected) {
-        const simplified = simplifyPath3DCollinear(path, stepSize * 0.05)
-        diagTag('bridgeSiblingChildren', simplified)
-        cuts.push(simplified)
-      } else if (debugShowPartial) {
-        diagTag('bridgeSiblingChildren(partial)', path)
-        cuts.push(path)
-      }
+    if (path.length >= 2 && connected) {
+      const simplified = simplifyPath3DCollinear(path, stepSize * 0.05)
+      diagTag('bridgeSiblingChildren', simplified)
+      cuts.push(simplified)
     }
   }
 
   return cuts
-}
-
-/**
- * Build a small X-shaped pair of cut segments at point (x, y) on plane z.
- * Used as a debug marker to visualize where stepCorners rejected a chain link.
- */
-function buildXMarker(p: Point, z: number, size: number): Path3D[] {
-  const h = size / 2
-  return [
-    [
-      { x: p.x - h, y: p.y - h, z },
-      { x: p.x + h, y: p.y + h, z },
-    ],
-    [
-      { x: p.x - h, y: p.y + h, z },
-      { x: p.x + h, y: p.y - h, z },
-    ],
-  ]
 }
 
 /**
@@ -1991,7 +1970,6 @@ function emitCollapseGeometry(
   totalOffset: number,
   stepSize: number,
   paths: Path3D[],
-  debugShowRejected: boolean,
 ): void {
   const microStep = stepSize * MICRO_FRACTION
   const currentZ = topZ - Math.min(maxDepth, totalOffset / slope)
@@ -2040,7 +2018,7 @@ function emitCollapseGeometry(
       // children to each other, then emit each micro contour — mirroring
       // the normal SPLIT handling but without recursion.
       const parentSplitArms = splitSourceArms(region.outer, stepSize, activeArms, currentZ)
-      const { cuts, rejected } = bridgeSplitArms(
+      const { cuts } = bridgeSplitArms(
         parentSplitArms,
         region.outer,
         microRegions,
@@ -2054,12 +2032,6 @@ function emitCollapseGeometry(
       for (const c of cuts) diagTag('emitCollapse-1toN-bridgeSplitArms', c)
       paths.push(...cuts)
 
-      if (debugShowRejected && rejected.length > 0) {
-        for (const r of rejected) {
-          paths.push(...buildXMarker(r.corner, currentZ, stepSize))
-        }
-      }
-
       const siblingBridges = bridgeSiblingChildren(
         region.outer,
         region.islands ?? [],
@@ -2070,7 +2042,6 @@ function emitCollapseGeometry(
         slope,
         topZ - maxDepth,
         topZ,
-        debugShowRejected,
       )
       for (const c of siblingBridges) diagTag('emitCollapse-1toN-siblingBridge', c)
       paths.push(...siblingBridges)
@@ -2115,7 +2086,6 @@ function traceRegion(
   totalOffset: number,
   depth: number,
   paths: Path3D[],
-  debugShowRejected: boolean,
   arms?: TrackedArm[],  // at depth 0: detected from original shape; thereafter: chain-tracked projected hits
   allowFreshSeedRestart = true,
 ): void {
@@ -2140,7 +2110,7 @@ function traceRegion(
 
   // ---- COLLAPSE ----
   if (nextRegions.length === 0) {
-    emitCollapseGeometry(region, activeArms, topZ, slope, maxDepth, totalOffset, stepSize, paths, debugShowRejected)
+    emitCollapseGeometry(region, activeArms, topZ, slope, maxDepth, totalOffset, stepSize, paths)
     return
   }
 
@@ -2148,7 +2118,7 @@ function traceRegion(
   if (nextRegions.length > 1) {
     if (ENABLE_SPLIT_CONNECTIONS) {
       const parentSplitArms = splitSourceArms(region.outer, stepSize, activeArms, currentZ)
-      const { cuts, childArms, rejected } = bridgeSplitArms(
+      const { cuts, childArms } = bridgeSplitArms(
         parentSplitArms,
         region.outer,
         nextRegions,
@@ -2174,16 +2144,9 @@ function traceRegion(
         slope,
         topZ - maxDepth,
         topZ,
-        debugShowRejected,
       )
       for (const c of siblingCuts) diagTag('traceRegion-SPLIT-siblingBridge', c)
       paths.push(...siblingCuts)
-
-      if (debugShowRejected && rejected.length > 0) {
-        for (const r of rejected) {
-          paths.push(...buildXMarker(r.corner, currentZ, stepSize))
-        }
-      }
 
       // Recurse inside each split child. Fresh-seed restart is enabled in
       // BOTH cases (with-bridge and without): the raw-angle corner filter
@@ -2220,7 +2183,6 @@ function traceRegion(
           nextOffset,
           depth + 1,
           paths,
-          debugShowRejected,
           childArmsForRecursion,
           true,
         )
@@ -2240,7 +2202,6 @@ function traceRegion(
         nextOffset,
         depth + 1,
         paths,
-        debugShowRejected,
         undefined,
         allowFreshSeedRestart,
       )
@@ -2251,7 +2212,7 @@ function traceRegion(
   // ---- CONTINUE ----
   const nextRegion = nextRegions[0]
 
-  const { cuts, nextArms, rejected } = stepArms(
+  const { cuts, nextArms } = stepArms(
     activeArms,
     region.outer,
     nextRegion.outer,
@@ -2286,15 +2247,9 @@ function traceRegion(
   for (const ib of intBridges) diagTag('traceRegion-CONTINUE-intCornerBridge', ib)
   paths.push(...intBridges)
 
-  if (debugShowRejected && rejected.length > 0) {
-    for (const r of rejected) {
-      paths.push(...buildXMarker(r.corner, currentZ, stepSize))
-    }
-  }
-
   // Continue guide-driven tracking, but also re-seed any fresh corners that
   // appear on the new contour so a missed lane can restart at the next level.
-  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths, debugShowRejected,
+  traceRegion(nextRegion, topZ, slope, maxDepth, stepSize, nextOffset, depth + 1, paths,
     seededNextArms.length > 0 ? seededNextArms : undefined,
     allowFreshSeedRestart)
 }
@@ -2351,7 +2306,13 @@ function chainPaths(paths: Path3D[]): Path3D[] {
     }
 
     // Build chain forward from head.
-    const pts: Array<{ x: number; y: number; z: number }> = [...arms[head]]
+    const pts: Path3D = [...arms[head]]
+    // Carry forward the DIAG source tag from the head arm so debug markers
+    // can identify the origin of this chained path.
+    const headSource = (arms[head] as unknown as Record<string, unknown>).__diagSource
+    if (typeof headSource === 'string') {
+      ;(pts as unknown as Record<string, unknown>).__diagSource = headSource
+    }
     used.add(head)
 
     for (;;) {
@@ -2434,6 +2395,14 @@ function sortPathsNearestNeighbor(
 
     const chosen  = remaining.splice(bestIdx, 1)[0]
     const emitted = bestReverse ? [...chosen].reverse() : chosen
+    // Carry forward the DIAG source tag through reversal (which creates a new
+    // array) so debug markers work on reversed paths.
+    if (bestReverse) {
+      const src = (chosen as unknown as Record<string, unknown>).__diagSource
+      if (typeof src === 'string') {
+        ;(emitted as unknown as Record<string, unknown>).__diagSource = src
+      }
+    }
     ordered.push(emitted)
 
     const tail = emitted[emitted.length - 1]
@@ -2444,56 +2413,11 @@ function sortPathsNearestNeighbor(
   return ordered
 }
 
-// ---------------------------------------------------------------------------
-
-/**
- * Attempt a direct link from `pos` to `entry` without a full retract cycle.
- *
- * Rules:
- *  - If entry.z >= pos.z the move is rising or lateral — always safe as a
- *    rapid (we are leaving material, not plunging into it).
- *  - If entry.z < pos.z (descending) we allow a direct plunge only when the
- *    XY distance is within the V-cone at the shallower depth (the depth
- *    budget = safeZ - shallower Z).  Beyond that budget the tool would travel
- *    sideways while descending into material, which risks a collision with
- *    uncut stock between the two points.
- *
- * Returns true and appends the move when a direct link is possible.
- */
-function tryDirectLink(
-  moves: ToolpathMove[],
-  pos: ToolpathPoint,
-  entry: ToolpathPoint,
-  safeZ: number,
-): boolean {
-  if (pos.x === entry.x && pos.y === entry.y && pos.z === entry.z) return true
-
-  const xyDist = Math.hypot(entry.x - pos.x, entry.y - pos.y)
-
-  if (entry.z >= pos.z) {
-    // Rising or lateral — safe rapid regardless of XY distance.
-    moves.push({ kind: 'rapid', from: pos, to: entry })
-    return true
-  }
-
-  // Descending move: safe to link directly when the XY gap is within the
-  // depth-below-safeZ at the shallower endpoint.  That distance bounds the
-  // radius of the already-carved V-cone, so the tool cannot gouge uncut stock.
-  const depthBudget = safeZ - Math.min(pos.z, entry.z)
-  if (xyDist <= depthBudget) {
-    moves.push({ kind: 'cut', from: pos, to: entry })
-    return true
-  }
-
-  return false
-}
-
 function pathsToMoves(
   paths: Path3D[],
   safeZ: number,
   moves: ToolpathMove[],
   startPosition: ToolpathPoint | null,
-  stepSize: number,
 ): ToolpathPoint | null {
   let pos = startPosition
   const chainedPaths = chainPaths(paths)
@@ -2506,18 +2430,25 @@ function pathsToMoves(
     const path = chained[pi]
     if (path.length < 2) continue
 
+    // Read the DIAG source tag stored by diagTag (carried through chainPaths)
+    const source = (path as unknown as Record<string, unknown>).__diagSource as string | undefined
+
     const entry: ToolpathPoint = path[0]
 
     if (pos === null) {
       pos = pushRapidAndPlunge(moves, null, entry, safeZ)
-    } else if (!tryDirectLink(moves, pos, entry, safeZ)) {
+    } else {
+      // Always retract to safe Z and plunge — never cut directly between
+      // the end of one path and the start of the next. Direct-link cuts
+      // (tryDirectLink) were shown to produce spurious diagonal gouges
+      // across the interior of the letter A (move [29]).
       pos = retractToSafe(moves, pos, safeZ)
       pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
     }
     pos = entry
 
     for (let i = 1; i < path.length; i++) {
-      moves.push({ kind: 'cut', from: path[i - 1], to: path[i] })
+      moves.push({ kind: 'cut', from: path[i - 1], to: path[i], source })
       pos = path[i]
     }
   }
@@ -2631,8 +2562,8 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
 
     for (const region of band.regions) {
       const paths: Path3D[] = []
-      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths, operation.debugToolpath === true)
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize)
+      traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths)
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
     }
   }
 
@@ -2645,5 +2576,6 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
     moves,
     warnings,
     bounds: computeBounds(moves),
+    debugToolpath: operation.debugToolpath === true,
   }
 }

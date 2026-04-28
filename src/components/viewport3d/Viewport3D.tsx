@@ -278,6 +278,11 @@ function buildToolpathDirectionMarkers(toolpath: ToolpathResult, emphasized: boo
   return objects
 }
 
+// ---------------------------------------------------------------------------
+// Debug marker symbols — drawn as canvas sprites keyed to DIAG source tags.
+// Only rendered when operation.debugToolpath is enabled.
+// ---------------------------------------------------------------------------
+
 function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
@@ -778,6 +783,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       if (object instanceof THREE.LineSegments) {
         object.geometry.dispose()
         disposeObjectMaterial(object.material)
+      } else if (object instanceof THREE.Mesh) {
+        // Mesh geometries are shared/cached so only dispose material.
+        disposeObjectMaterial(object.material)
+      } else if (object instanceof THREE.Sprite) {
+        object.material.dispose()
       }
     }
     toolpathObjectsRef.current = []

@@ -29,6 +29,10 @@ export interface ToolpathMove {
   kind: ToolpathMoveKind
   from: ToolpathPoint
   to: ToolpathPoint
+  /** DIAG source tag identifying which part of the algorithm created this move.
+   *  Populated when operation.debugToolpath is active. Used in the 3D viewport
+   *  to render shape markers that help visualise toolpath provenance. */
+  source?: string
 }
 
 export interface ToolpathBounds {
@@ -46,6 +50,9 @@ export interface ToolpathResult {
   warnings: string[]
   bounds: ToolpathBounds | null
   collidingClampIds?: string[]
+  /** True when the source operation has debugToolpath enabled. The 3D viewport
+   *  renders extra diagnostic markers (source-tag symbols) when this is set. */
+  debugToolpath?: boolean
 }
 
 export interface PocketToolpathResult extends ToolpathResult {
