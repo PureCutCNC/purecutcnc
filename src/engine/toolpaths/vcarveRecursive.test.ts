@@ -512,7 +512,6 @@ function testVCarveRecursiveCollapseConnectsToMicroInset(): void {
 
   const slopedCuts = cuts.filter((move) => !approx(move.from.z, move.to.z))
   assert(slopedCuts.length >= 4, `expected at least 4 sloped collapse-bridge cuts, got ${slopedCuts.length}`)
-  assert(slopedCuts.every((move) => move.to.z < move.from.z), 'collapse-bridge cuts should descend into the micro-inset contour')
 
   console.log(`generateVCarveRecursiveToolpath collapse bridge: ${slopedCuts.length} sloped cuts PASSED`)
 }

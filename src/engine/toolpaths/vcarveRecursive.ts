@@ -110,6 +110,18 @@ function contourToPath3D(contour: Point[], z: number): Path3D {
   return pts
 }
 
+/**
+ * Rotate a closed contour so it starts at `startIndex`.  The order and shape
+ * are preserved — only the starting vertex changes.  This is used to align a
+ * micro-offset contour's start vertex with an arm-chain endpoint so the gap
+ * between them is zero, avoiding a spurious cut from tryDirectLink.
+ */
+function rotateContour(contour: Point[], startIndex: number): Point[] {
+  const n = contour.length
+  if (n <= 1 || startIndex === 0) return contour
+  return Array.from({ length: n }, (_, i) => contour[(startIndex + i) % n])
+}
+
 function contourLengthXY(contour: Point[]): number {
   if (contour.length < 2) {
     return 0
@@ -920,6 +932,18 @@ function findArmTarget(
   return null
 }
 
+let DIAG_PATH_ID = 0
+function diagTag(source: string, path: Path3D): void {
+  if (path.length >= 2) {
+    const f = path[0], l = path[path.length - 1]
+    const xy = Math.hypot(l.x - f.x, l.y - f.y)
+    if (xy > 0.05 || Math.abs(f.z - 0.5595) < 0.002) {
+      const detail = path.map((p, i) => `[${i}](${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)})`).join(' ')
+      console.log(`DIAG[${DIAG_PATH_ID++}] source=${source} len=${xy.toFixed(4)} z=${f.z.toFixed(4)} pts=${path.length} detail=${detail}`)
+    }
+  }
+}
+
 function stepArms(
   activeArms: TrackedArm[],
   currentContour: Point[],
@@ -952,6 +976,7 @@ function stepArms(
       if (candidateCorners.length > 0) {
         const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ, topZ)
         if (rescue && rescue.path.length >= 2) {
+          diagTag('stepArms-rescue', rescue.path)
           cuts.push(rescue.path)
           const priorPoint = rescue.path[rescue.path.length - 2]
           const endGuide = normalizeDirection(
@@ -983,10 +1008,12 @@ function stepArms(
         const directTarget = directCandidates[0]
         if (directTarget) {
           rescueTracer?.({ kind: 'fallback:hit', arm: arm.point, target: directTarget.point, dist: directTarget.dist })
-          cuts.push([
+          const cut: Path3D = [
             { x: arm.point.x, y: arm.point.y, z: armZ },
             { x: directTarget.point.x, y: directTarget.point.y, z: nextZ },
-          ])
+          ]
+          diagTag('stepArms-direct', cut)
+          cuts.push(cut)
           const nextArm = createTrackedArm(nextContour, directTarget.point, arm.guide, nextZ, nextLogicContour)
           if (nextArm) {
             nextArms.push(nextArm)
@@ -1010,10 +1037,12 @@ function stepArms(
           const wallDist = Math.hypot(wallAnchor.x - arm.point.x, wallAnchor.y - arm.point.y)
           if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(arm.point, wallAnchor, currentLogicContour)) {
             rescueTracer?.({ kind: 'fallback:wall-hit', arm: arm.point, target: wallAnchor, dist: wallDist })
-            cuts.push([
+            const cut: Path3D = [
               { x: arm.point.x, y: arm.point.y, z: armZ },
               { x: wallAnchor.x, y: wallAnchor.y, z: nextZ },
-            ])
+            ]
+            diagTag('stepArms-wallAnchor', cut)
+            cuts.push(cut)
             const nextArm = createTrackedArm(nextContour, wallAnchor, arm.guide, nextZ, nextLogicContour)
             if (nextArm) {
               nextArms.push(nextArm)
@@ -1031,10 +1060,12 @@ function stepArms(
           const nearestTinyCorner = findNearestPoint(arm.point, candidateCorners)
           if (nearestTinyCorner.target && segmentSamplesStayInsideContour(arm.point, nearestTinyCorner.target, currentLogicContour)) {
             rescueTracer?.({ kind: 'fallback:micro-hit', arm: arm.point, target: nearestTinyCorner.target, dist: nearestTinyCorner.dist })
-            cuts.push([
+            const cut: Path3D = [
               { x: arm.point.x, y: arm.point.y, z: armZ },
               { x: nearestTinyCorner.target.x, y: nearestTinyCorner.target.y, z: nextZ },
-            ])
+            ]
+            diagTag('stepArms-tinyRemnant', cut)
+            cuts.push(cut)
             const nextArm = createTrackedArm(nextContour, nearestTinyCorner.target, arm.guide, nextZ, nextLogicContour)
             if (nextArm) {
               nextArms.push(nextArm)
@@ -1073,10 +1104,12 @@ function stepArms(
       continue
     }
 
-    cuts.push([
+    const mainCut: Path3D = [
       { x: arm.point.x, y: arm.point.y, z: armZ },
       { x: target.point.x, y: target.point.y, z: nextZ },
-    ])
+    ]
+    diagTag('stepArms-main', mainCut)
+    cuts.push(mainCut)
     const nextArm = createTrackedArm(nextContour, target.point, arm.guide, nextZ)
     if (nextArm) {
       nextArms.push(nextArm)
@@ -1201,10 +1234,12 @@ function bridgeSplitArms(
     if (direct) {
       const childIndex = cornerToChild.get(cornerKey(direct.point))
       if (childIndex !== undefined) {
-        cuts.push([
+        const cut: Path3D = [
           { x: arm.point.x, y: arm.point.y, z: armZ },
           { x: direct.point.x, y: direct.point.y, z: nextZ },
-        ])
+        ]
+        diagTag('bridgeSplitArms-direct', cut)
+        cuts.push(cut)
         const nextArm = createTrackedArm(
           nextRegions[childIndex].outer,
           direct.point,
@@ -1242,6 +1277,7 @@ function bridgeSplitArms(
     if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
       const childIndex = cornerToChild.get(cornerKey(rescue.endPoint))
       if (childIndex !== undefined) {
+        diagTag('bridgeSplitArms-rescue', rescue.path)
         cuts.push(rescue.path)
         const priorPoint = rescue.path[rescue.path.length - 2]
         const endGuide = normalizeDirection(
@@ -1296,8 +1332,9 @@ function bridgeSplitArms(
  *     channel midpoint, emit the accumulated path and snap to that corner.
  *  6. Otherwise advance to the channel midpoint and repeat from step 2.
  *
- * Each corner on each child is tried independently. Duplicate A→B / B→A
- * paths are expected and will be deduplicated later.
+ * Each corner on each child is tried independently. When corner A's walk
+ * snaps to corner B, we mark B as "already connected" so its own walk later
+ * in the loop is skipped — avoiding the duplicate B→A path.
  */
 function bridgeSiblingChildren(
   parentContour: Point[],
@@ -1327,7 +1364,17 @@ function bridgeSiblingChildren(
   const cuts: Path3D[] = []
   const MAX_WALK_STEPS = 256
 
-  for (const { point: startCorner, childIdx: startChildIdx } of allChildCorners) {
+  // Cache of corner indices (in allChildCorners) that have already been
+  // connected to by another corner. When corner A walks and connects to
+  // corner B, we record B's index. When B's turn comes later in the
+  // loop, we skip it — avoiding the duplicate back-and-forth A→B, B→A.
+  const connectedCornerIndices = new Set<number>()
+
+  for (let ci = 0; ci < allChildCorners.length; ci += 1) {
+    const { point: startCorner, childIdx: startChildIdx } = allChildCorners[ci]
+    // If this corner was already the target of a previous sibling's walk,
+    // skip it. The connection from its side is already covered.
+    if (connectedCornerIndices.has(ci)) continue
     // Step 2: outward bisector = negated inward bisector from the child contour.
     const inward = inwardDirectionAtContourPoint(nextRegions[startChildIdx].outer, startCorner)
     if (!inward) continue
@@ -1364,12 +1411,16 @@ function bridgeSiblingChildren(
       const pointZ = Math.max(minZ, Math.min(lastZ, targetZ))
 
       // Step 8: check if any corner from a different child is within stepSize.
-      const snapTarget = allChildCorners.find(
+      const snapTargetIdx = allChildCorners.findIndex(
         (c) => c.childIdx !== startChildIdx
           && Math.hypot(c.point.x - channel.point.x, c.point.y - channel.point.y) <= stepSize,
       )
 
-      if (snapTarget) {
+      if (snapTargetIdx !== -1) {
+        const snapTarget = allChildCorners[snapTargetIdx]
+        // Mark the target corner as already connected so it won't walk and
+        // create a duplicate back-and-forth path when its turn comes.
+        connectedCornerIndices.add(snapTargetIdx)
         path.push({ x: channel.point.x, y: channel.point.y, z: pointZ })
         path.push({ x: snapTarget.point.x, y: snapTarget.point.y, z: nextZ })
         connected = true
@@ -1388,8 +1439,11 @@ function bridgeSiblingChildren(
     // Emit the path whether or not we found a target child corner.
     if (path.length >= 2) {
       if (connected) {
-        cuts.push(simplifyPath3DCollinear(path, stepSize * 0.05))
+        const simplified = simplifyPath3DCollinear(path, stepSize * 0.05)
+        diagTag('bridgeSiblingChildren', simplified)
+        cuts.push(simplified)
       } else if (debugShowPartial) {
+        diagTag('bridgeSiblingChildren(partial)', path)
         cuts.push(path)
       }
     }
@@ -1769,10 +1823,12 @@ function buildFreshSeedBootstrapCuts(
         directRejectReason = 'segment-outside'
         continue
       }
-      cuts.push([
+      const cut: Path3D = [
         { x: sourceArm.point.x, y: sourceArm.point.y, z: sourceArm.z ?? currentZ },
         { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
-      ])
+      ]
+      diagTag('buildFreshSeed-direct', cut)
+      cuts.push(cut)
       connectedSeededArms.push(freshSeedArm)
       connected = true
       rescueTracer?.({ kind: 'bootstrap:direct-hit', freshSeed: freshSeedArm.point, source: sourceArm.point, dist })
@@ -1804,6 +1860,7 @@ function buildFreshSeedBootstrapCuts(
           continue
         }
 
+        diagTag('buildFreshSeed-rescue', rescue.path)
         cuts.push(rescue.path)
         connectedSeededArms.push(freshSeedArm)
         connected = true
@@ -1827,10 +1884,12 @@ function buildFreshSeedBootstrapCuts(
         if (wallAnchor) {
           const wallDist = Math.hypot(wallAnchor.x - freshSeedArm.point.x, wallAnchor.y - freshSeedArm.point.y)
           if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(wallAnchor, freshSeedArm.point, currentLogicContour)) {
-            cuts.push([
+            const cut: Path3D = [
               { x: wallAnchor.x, y: wallAnchor.y, z: currentZ },
               { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
-            ])
+            ]
+            diagTag('buildFreshSeed-wallAnchor', cut)
+            cuts.push(cut)
             connectedSeededArms.push(freshSeedArm)
             connected = true
             rescueTracer?.({ kind: 'bootstrap:wall-hit', freshSeed: freshSeedArm.point, anchor: wallAnchor, dist: wallDist })
@@ -1906,10 +1965,12 @@ export function buildInteriorCornerBridge(
     return []
   }
 
-  return [[
+  const intCut: Path3D = [
     { x: start.x, y: start.y, z },
     { x: end.x, y: end.y, z },
-  ]]
+  ]
+  diagTag('buildInteriorCornerBridge', intCut)
+  return [intCut]
 }
 
 
@@ -1939,34 +2000,104 @@ function emitCollapseGeometry(
 
   if (microRegions.length > 0) {
     if (microRegions.length === 1 && activeArms.length > 0) {
-      const { cuts, rejected } = stepArms(
+      // ---- 1→1: Single micro region — normal CONTINUE analogue ----
+      // stepArms creates sloped bridge cuts from the active arm corners
+      // to the micro contour, just like any other offset step.  When
+      // totalOffset === 0 (first-step collapse) these are the only bridge
+      // cuts; when totalOffset > 0 they supplement the preceding CONTINUE
+      // level's arm cuts.
+      const contour = microRegions[0].outer
+      const { cuts } = stepArms(
         activeArms,
         region.outer,
-        microRegions[0].outer,
+        contour,
         currentZ,
         microZ,
-        microStep,
+        stepSize,
         slope,
         topZ - maxDepth,
         topZ,
       )
+      for (const c of cuts) diagTag('emitCollapse-1to1-stepArms', c)
+      paths.push(...cuts)
+
+      // Rotate the micro contour so its first vertex sits at (or very near)
+      // the last active arm's point on region.outer.  This eliminates the
+      // large XY gap that sortPathsNearestNeighbor would otherwise create
+      // between the preceding arm chain and the standalone contour,
+      // preventing spurious deep cuts through the material.
+      if (contour.length >= 2) {
+        const lastArm = activeArms[activeArms.length - 1]
+        const contourStartIdx = findNearestContourVertexIndex(contour, { x: lastArm.point.x, y: lastArm.point.y })
+        const rotated = contourToPath3D(rotateContour(contour, contourStartIdx), microZ)
+        diagTag('emitCollapse-1to1-contour', rotated)
+        paths.push(rotated)
+      }
+    } else if (microRegions.length > 1 && activeArms.length > 0) {
+      // ---- 1→N: Micro split — normal SPLIT analogue ----
+      // The micro offset itself splits into multiple child regions.
+      // Bridge active arms into each micro child, connect sibling micro
+      // children to each other, then emit each micro contour — mirroring
+      // the normal SPLIT handling but without recursion.
+      const parentSplitArms = splitSourceArms(region.outer, stepSize, activeArms, currentZ)
+      const { cuts, rejected } = bridgeSplitArms(
+        parentSplitArms,
+        region.outer,
+        microRegions,
+        currentZ,
+        microZ,
+        stepSize,
+        slope,
+        topZ - maxDepth,
+        topZ,
+      )
+      for (const c of cuts) diagTag('emitCollapse-1toN-bridgeSplitArms', c)
       paths.push(...cuts)
 
       if (debugShowRejected && rejected.length > 0) {
-        for (const rejectedCorner of rejected) {
-          paths.push(...buildXMarker(rejectedCorner.corner, currentZ, stepSize))
+        for (const r of rejected) {
+          paths.push(...buildXMarker(r.corner, currentZ, stepSize))
         }
       }
-    }
 
-    for (const r of microRegions) {
-      if (r.outer.length >= 2) {
-        paths.push(contourToPath3D(r.outer, microZ))
+      const siblingBridges = bridgeSiblingChildren(
+        region.outer,
+        region.islands ?? [],
+        microRegions,
+        currentZ,
+        microZ,
+        stepSize,
+        slope,
+        topZ - maxDepth,
+        topZ,
+        debugShowRejected,
+      )
+      for (const c of siblingBridges) diagTag('emitCollapse-1toN-siblingBridge', c)
+      paths.push(...siblingBridges)
+
+      for (const r of microRegions) {
+        if (r.outer.length >= 2) {
+          const cp = contourToPath3D(r.outer, microZ)
+          diagTag('emitCollapse-1toN-microContour', cp)
+          paths.push(cp)
+        }
+      }
+    } else {
+      // No active arms, or unexpected case — push each micro contour
+      // standalone without bridge cuts.
+      for (const r of microRegions) {
+        if (r.outer.length >= 2) {
+          const cp = contourToPath3D(r.outer, microZ)
+          diagTag('emitCollapse-standalone-microContour', cp)
+          paths.push(cp)
+        }
       }
     }
   } else {
     if (region.outer.length >= 2) {
-      paths.push(contourToPath3D(region.outer, currentZ))
+      const cp = contourToPath3D(region.outer, currentZ)
+      diagTag('emitCollapse-noMicro-regionContour', cp)
+      paths.push(cp)
     }
   }
 }
@@ -2028,12 +2159,12 @@ function traceRegion(
         topZ - maxDepth,
         topZ,
       )
+      for (const c of cuts) diagTag('traceRegion-SPLIT-bridgeSplitArms', c)
       paths.push(...cuts)
 
-      // Sibling bridges: connect children to each other through their shared
-      // pinch points on the parent contour. Emitted as 3-point inverted-V
-      // paths (corner → medial midpoint → corner) at appropriate V-bit Zs.
-      paths.push(...bridgeSiblingChildren(
+      // Sibling bridges (cross-child): connect children to each other through
+      // their shared pinch points on the parent contour.
+      const siblingCuts = bridgeSiblingChildren(
         region.outer,
         region.islands ?? [],
         nextRegions,
@@ -2044,7 +2175,9 @@ function traceRegion(
         topZ - maxDepth,
         topZ,
         debugShowRejected,
-      ))
+      )
+      for (const c of siblingCuts) diagTag('traceRegion-SPLIT-siblingBridge', c)
+      paths.push(...siblingCuts)
 
       if (debugShowRejected && rejected.length > 0) {
         for (const r of rejected) {
@@ -2075,6 +2208,7 @@ function traceRegion(
           topZ,
           false,
         )
+        for (const bc of bootstrapCuts) diagTag('traceRegion-SPLIT-bootstrap', bc)
         paths.push(...bootstrapCuts)
         const childArmsForRecursion = connectedSeededArms.length > 0 ? connectedSeededArms : undefined
         traceRegion(
@@ -2128,6 +2262,7 @@ function traceRegion(
     topZ - maxDepth,
     topZ,
   )
+  for (const c of cuts) diagTag('traceRegion-CONTINUE-stepArms', c)
   paths.push(...cuts)
   let seededNextArms = nextArms
   if (allowFreshSeedRestart) {
@@ -2143,10 +2278,13 @@ function traceRegion(
       topZ - maxDepth,
       topZ,
     )
+    for (const bc of bootstrap.cuts) diagTag('traceRegion-CONTINUE-bootstrap', bc)
     paths.push(...bootstrap.cuts)
     seededNextArms = bootstrap.seededNextArms
   }
-  paths.push(...buildInteriorCornerBridge(nextRegion.outer, nextArms.map((arm) => arm.point), nextZ, stepSize))
+  const intBridges = buildInteriorCornerBridge(nextRegion.outer, nextArms.map((arm) => arm.point), nextZ, stepSize)
+  for (const ib of intBridges) diagTag('traceRegion-CONTINUE-intCornerBridge', ib)
+  paths.push(...intBridges)
 
   if (debugShowRejected && rejected.length > 0) {
     for (const r of rejected) {
@@ -2315,9 +2453,10 @@ function sortPathsNearestNeighbor(
  *  - If entry.z >= pos.z the move is rising or lateral — always safe as a
  *    rapid (we are leaving material, not plunging into it).
  *  - If entry.z < pos.z (descending) we allow a direct plunge only when the
- *    XY distance is within `maxDirectPlungeXY`.  Beyond that budget the tool
- *    would travel sideways while descending into material, which risks a
- *    collision with uncut stock between the two points.
+ *    XY distance is within the V-cone at the shallower depth (the depth
+ *    budget = safeZ - shallower Z).  Beyond that budget the tool would travel
+ *    sideways while descending into material, which risks a collision with
+ *    uncut stock between the two points.
  *
  * Returns true and appends the move when a direct link is possible.
  */
@@ -2357,8 +2496,9 @@ function pathsToMoves(
   stepSize: number,
 ): ToolpathPoint | null {
   let pos = startPosition
+  const chainedPaths = chainPaths(paths)
   const chained = sortPathsNearestNeighbor(
-    chainPaths(paths),
+    chainedPaths,
     startPosition ? { x: startPosition.x, y: startPosition.y } : null,
   )
 
