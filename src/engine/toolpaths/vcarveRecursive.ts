@@ -870,6 +870,10 @@ function splitSourceArms(
     return fallbackArms
   }
 
+  console.log(`[DBG-splitSourceArms] ${cornerPoints.length} corners, ${fallbackArms.length} fallback arms`)
+  cornerPoints.forEach((cp, i) => console.log(`[DBG-splitSourceArms] corner[${i}]=(${cp.x.toFixed(4)},${cp.y.toFixed(4)})`))
+  fallbackArms.forEach((fa, i) => console.log(`[DBG-splitSourceArms] fallback[${i}]=(${fa.point.x.toFixed(4)},${fa.point.y.toFixed(4)})`))
+
   const snappedArms = fallbackArms
     .map((arm) => {
       const nearestCorner = findNearestPoint(arm.point, cornerPoints).target
@@ -880,11 +884,14 @@ function splitSourceArms(
     })
     .filter((arm): arm is TrackedArm => arm !== null)
 
-  if (snappedArms.length > 0) {
-    return mergeTrackedArms(snappedArms, 1e-9)
-  }
+  const result = snappedArms.length > 0
+    ? mergeTrackedArms(snappedArms, 1e-9)
+    : createTrackedArms(contour, cornerPoints, true, z, logicContour)
 
-  return createTrackedArms(contour, cornerPoints, true, z, logicContour)
+  console.log(`[DBG-splitSourceArms] result: ${result.length} arms`)
+  result.forEach((ra, i) => console.log(`[DBG-splitSourceArms] result[${i}]=(${ra.point.x.toFixed(4)},${ra.point.y.toFixed(4)})`))
+
+  return result
 }
 
 function findArmTarget(
@@ -1202,7 +1209,7 @@ function bridgeSplitArms(
   const cornerToChild = new Map<string, number>()
   const cornerKey = (p: Point): string => `${p.x.toFixed(8)},${p.y.toFixed(8)}`
   nextRegions.forEach((_nextRegion, childIndex) => {
-    const corners = detectRecursiveCorners(logicChildContours[childIndex], stepSize)
+    const corners = detectRecursiveCorners(nextRegions[childIndex].outer, stepSize)
     for (const c of corners) {
       pooledCornerPoints.push(c)
       cornerToChild.set(cornerKey(c), childIndex)
@@ -1300,6 +1307,50 @@ function bridgeSplitArms(
           rescue.endPoint,
           endGuide ?? arm.guide,
           rescue.endZ,
+          logicChildContours[childIndex],
+        )
+        if (nextArm) {
+          childArms[childIndex].push(nextArm)
+        }
+        continue
+      }
+    }
+
+    // Desperation fallback: when both direct-connect and regular rescue fail,
+    // retry the rescue (medial-axis) walk with an extended step budget. This
+    // follows the parent contour's channel centerline — the same approach used
+    // by the same-child bridge algorithm — producing a multi-point path that
+    // naturally follows the passage curve instead of a straight line that could
+    // cut across the boundary. Budget is 24× stepSize (3× the normal 8-step
+    // rescue cap), covering ~0.24" which is plenty for nearly-collinear parent
+    // corners whose child counterpart drifted far during the Clipper offset.
+    const desperationRescue = buildCenterlineRescuePath(
+      logicCurrentContour,
+      pooledCornerPoints,
+      arm,
+      currentZ,
+      nextZ,
+      stepSize,
+      slope,
+      minZ,
+      topZ,
+      24,
+    )
+    if (desperationRescue && desperationRescue.reachedCorner && desperationRescue.path.length >= 2) {
+      const childIndex = cornerToChild.get(cornerKey(desperationRescue.endPoint))
+      if (childIndex !== undefined) {
+        diagTag('bridgeSplitArms-desperation', desperationRescue.path)
+        cuts.push(desperationRescue.path)
+        const priorPoint = desperationRescue.path[desperationRescue.path.length - 2]
+        const endGuide = normalizeDirection(
+          desperationRescue.endPoint.x - priorPoint.x,
+          desperationRescue.endPoint.y - priorPoint.y,
+        )
+        const nextArm = createTrackedArm(
+          nextRegions[childIndex].outer,
+          desperationRescue.endPoint,
+          endGuide ?? arm.guide,
+          desperationRescue.endZ,
           logicChildContours[childIndex],
         )
         if (nextArm) {
