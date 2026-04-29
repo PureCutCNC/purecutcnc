@@ -77,6 +77,10 @@ const MIN_INTERIOR_CORNER_BRIDGE_ARC_RATIO = 1.6
 const MIN_INTERIOR_CORNER_BRIDGE_ARC_EXTRA_STEPS = 1.5
 const ENABLE_SPLIT_CONNECTIONS = true
 
+// Set at the start of generateVCarveRecursiveToolpathSingle to gate DIAG
+// console output behind the operation's debugToolpath checkbox.
+let debugToolpathEnabled = false
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -934,13 +938,17 @@ function findArmTarget(
 
 let DIAG_PATH_ID = 0
 function diagTag(source: string, path: Path3D): void {
-  // Store source tag on the path array so pathsToMoves can annotate moves.
-  // Carried forward through chainPaths when arm segments are concatenated.
+  // Always store source tag on the path array so pathsToMoves can annotate
+  // moves regardless of debug state. Carried forward through chainPaths
+  // when arm segments are concatenated.
   ;(path as unknown as Record<string, unknown>).__diagSource = source
+  // Only emit DIAG console output when the operation's debug checkbox is
+  // enabled (gated via the module-level debugToolpathEnabled flag).
+  if (!debugToolpathEnabled) return
   if (path.length >= 2) {
     const f = path[0], l = path[path.length - 1]
     const xy = Math.hypot(l.x - f.x, l.y - f.y)
-    if (xy > 0.05 || Math.abs(f.z - 0.5595) < 0.002) {
+    if (xy > 0.05) {
       const detail = path.map((p, i) => `[${i}](${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)})`).join(' ')
       console.log(`DIAG[${DIAG_PATH_ID++}] source=${source} len=${xy.toFixed(4)} z=${f.z.toFixed(4)} pts=${path.length} detail=${detail}`)
     }
@@ -2520,6 +2528,7 @@ export function generateVCarveRecursiveToolpath(project: Project, operation: Ope
 }
 
 function generateVCarveRecursiveToolpathSingle(project: Project, operation: Operation): ToolpathResult {
+  debugToolpathEnabled = operation.debugToolpath === true
   const resolved = resolvePocketRegions(project, operation)
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null

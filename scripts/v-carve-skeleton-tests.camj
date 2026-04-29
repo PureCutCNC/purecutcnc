@@ -3,7 +3,7 @@
   "meta": {
     "name": "v-carve-skeleton-tests",
     "created": "2026-04-18T17:32:10.384Z",
-    "modified": "2026-04-28T22:56:02.566Z",
+    "modified": "2026-04-29T02:45:12.911Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -808,19 +808,19 @@
       "sketch": {
         "profile": {
           "start": {
-            "x": 2.7947612414402077,
-            "y": 1.1981256691554563
+            "x": 2.623441601516314,
+            "y": 1.5191311650140378
           },
           "segments": [
             {
               "type": "circle",
               "center": {
-                "x": 2.7799460509985154,
-                "y": 1.1981256691554563
+                "x": 2.6086264110746216,
+                "y": 1.5191311650140378
               },
               "to": {
-                "x": 2.7947612414402077,
-                "y": 1.1981256691554563
+                "x": 2.623441601516314,
+                "y": 1.5191311650140378
               },
               "clockwise": true
             }
@@ -1239,19 +1239,19 @@
       "sketch": {
         "profile": {
           "start": {
-            "x": 2.7067932977898543,
-            "y": 1.293678497077044
+            "x": 2.596768718092405,
+            "y": 1.6129722388147099
           },
           "segments": [
             {
               "type": "circle",
               "center": {
-                "x": 2.692129716470091,
-                "y": 1.293678497077044
+                "x": 2.5821051367726415,
+                "y": 1.6129722388147099
               },
               "to": {
-                "x": 2.7067932977898543,
-                "y": 1.293678497077044
+                "x": 2.596768718092405,
+                "y": 1.6129722388147099
               },
               "clockwise": true
             }
@@ -2840,7 +2840,7 @@
       "pass": "rough",
       "enabled": true,
       "showToolpath": true,
-      "debugToolpath": false,
+      "debugToolpath": true,
       "target": {
         "source": "features",
         "featureIds": [
@@ -2872,7 +2872,7 @@
       "pass": "rough",
       "enabled": true,
       "showToolpath": true,
-      "debugToolpath": false,
+      "debugToolpath": true,
       "target": {
         "source": "features",
         "featureIds": [
