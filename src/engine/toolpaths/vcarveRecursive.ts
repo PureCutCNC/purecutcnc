@@ -962,6 +962,34 @@ function diagTag(source: string, path: Path3D): void {
   }
 }
 
+/**
+ * Insert intermediate points along a straight 2-point segment, linearly
+ * interpolating Z from `from.z` to `to.z`. When the XY distance is at or
+ * below `stepSize` the original 2-point path is returned unchanged. This
+ * prevents the "horizontal + vertical drop" artifact on long direct-connect
+ * cuts where Z jumps from armZ to nextZ at a single point.
+ */
+function interpolateStraightSegment(
+  from: Point3D,
+  to: Point3D,
+  stepSize: number,
+): Path3D {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dz = to.z - from.z
+  const dist = Math.hypot(dx, dy)
+  const steps = Math.round(dist / Math.max(stepSize, 1e-9))
+  if (steps <= 1) return [{ ...from }, { ...to }]
+
+  const path: Path3D = [{ ...from }]
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps
+    path.push({ x: from.x + dx * t, y: from.y + dy * t, z: from.z + dz * t })
+  }
+  path.push({ ...to })
+  return path
+}
+
 function stepArms(
   activeArms: TrackedArm[],
   currentContour: Point[],
@@ -971,7 +999,6 @@ function stepArms(
   stepSize: number,
   slope: number,
   minZ: number,
-  topZ: number,
   allowSmoothTargets = false,
 ): { cuts: Path3D[], nextArms: TrackedArm[], rejected: RejectedCorner[] } {
   if (activeArms.length === 0 || nextContour.length === 0) {
@@ -992,7 +1019,7 @@ function stepArms(
 
     if (!allowSmoothTargets) {
       if (candidateCorners.length > 0) {
-        const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ, topZ)
+        const rescue = buildCenterlineRescuePath(currentLogicContour, candidateCorners, arm, currentZ, nextZ, stepSize, slope, minZ)
         if (rescue && rescue.path.length >= 2) {
           diagTag('stepArms-rescue', rescue.path)
           cuts.push(rescue.path)
@@ -1026,10 +1053,11 @@ function stepArms(
         const directTarget = directCandidates[0]
         if (directTarget) {
           rescueTracer?.({ kind: 'fallback:hit', arm: arm.point, target: directTarget.point, dist: directTarget.dist })
-          const cut: Path3D = [
+          const cut = interpolateStraightSegment(
             { x: arm.point.x, y: arm.point.y, z: armZ },
             { x: directTarget.point.x, y: directTarget.point.y, z: nextZ },
-          ]
+            stepSize,
+          )
           diagTag('stepArms-direct', cut)
           cuts.push(cut)
           const nextArm = createTrackedArm(nextContour, directTarget.point, arm.guide, nextZ, nextLogicContour)
@@ -1055,10 +1083,11 @@ function stepArms(
           const wallDist = Math.hypot(wallAnchor.x - arm.point.x, wallAnchor.y - arm.point.y)
           if (wallDist <= stepSize * 2 && segmentSamplesStayInsideContour(arm.point, wallAnchor, currentLogicContour)) {
             rescueTracer?.({ kind: 'fallback:wall-hit', arm: arm.point, target: wallAnchor, dist: wallDist })
-            const cut: Path3D = [
+            const cut = interpolateStraightSegment(
               { x: arm.point.x, y: arm.point.y, z: armZ },
               { x: wallAnchor.x, y: wallAnchor.y, z: nextZ },
-            ]
+              stepSize,
+            )
             diagTag('stepArms-wallAnchor', cut)
             cuts.push(cut)
             const nextArm = createTrackedArm(nextContour, wallAnchor, arm.guide, nextZ, nextLogicContour)
@@ -1078,10 +1107,11 @@ function stepArms(
           const nearestTinyCorner = findNearestPoint(arm.point, candidateCorners)
           if (nearestTinyCorner.target && segmentSamplesStayInsideContour(arm.point, nearestTinyCorner.target, currentLogicContour)) {
             rescueTracer?.({ kind: 'fallback:micro-hit', arm: arm.point, target: nearestTinyCorner.target, dist: nearestTinyCorner.dist })
-            const cut: Path3D = [
+            const cut = interpolateStraightSegment(
               { x: arm.point.x, y: arm.point.y, z: armZ },
               { x: nearestTinyCorner.target.x, y: nearestTinyCorner.target.y, z: nextZ },
-            ]
+              stepSize,
+            )
             diagTag('stepArms-tinyRemnant', cut)
             cuts.push(cut)
             const nextArm = createTrackedArm(nextContour, nearestTinyCorner.target, arm.guide, nextZ, nextLogicContour)
@@ -1156,7 +1186,6 @@ export function stepCorners(
     stepSize,
     slope,
     Number.NEGATIVE_INFINITY,
-    Number.POSITIVE_INFINITY,
     true,
   )
   return {
@@ -1193,7 +1222,6 @@ function bridgeSplitArms(
   stepSize: number,
   slope: number,
   minZ: number,
-  topZ: number,
 ): { cuts: Path3D[], childArms: TrackedArm[][], rejected: RejectedCorner[] } {
   const childArms = nextRegions.map((): TrackedArm[] => [])
   if (activeArms.length === 0 || nextRegions.length === 0) {
@@ -1252,10 +1280,11 @@ function bridgeSplitArms(
     if (direct) {
       const childIndex = cornerToChild.get(cornerKey(direct.point))
       if (childIndex !== undefined) {
-        const cut: Path3D = [
+        const cut = interpolateStraightSegment(
           { x: arm.point.x, y: arm.point.y, z: armZ },
           { x: direct.point.x, y: direct.point.y, z: nextZ },
-        ]
+          stepSize,
+        )
         diagTag('bridgeSplitArms-direct', cut)
         cuts.push(cut)
         const nextArm = createTrackedArm(
@@ -1289,7 +1318,6 @@ function bridgeSplitArms(
       stepSize,
       slope,
       minZ,
-      topZ,
       SPLIT_BRIDGE_MAX_RESCUE_STEPS,
     )
     if (rescue && rescue.reachedCorner && rescue.path.length >= 2) {
@@ -1333,7 +1361,6 @@ function bridgeSplitArms(
       stepSize,
       slope,
       minZ,
-      topZ,
       24,
     )
     if (desperationRescue && desperationRescue.reachedCorner && desperationRescue.path.length >= 2) {
@@ -1489,6 +1516,11 @@ function bridgeSiblingChildren(
         // create a duplicate back-and-forth path when its turn comes.
         connectedCornerIndices.add(snapTargetIdx)
         path.push({ x: channel.point.x, y: channel.point.y, z: pointZ })
+        // Snap at nextZ to match the destination child corner's Z level.
+        // The bridge starts and ends at nextZ (both child corners are on the
+        // next offset contour). The inscribed-circle Z at midpoints correctly
+        // deepens in narrow passages, but the connection points at both ends
+        // must be at nextZ to match the surrounding arm chains.
         path.push({ x: snapTarget.point.x, y: snapTarget.point.y, z: nextZ })
         connected = true
         break
@@ -1682,7 +1714,6 @@ function buildCenterlineRescuePath(
   stepSize: number,
   slope: number,
   minZ: number,
-  topZ: number,
   maxIterationsOverride?: number,
 ): { path: Path3D, endPoint: Point, endZ: number, reachedCorner: boolean } | null {
   if (!(slope > 1e-9) || nextCorners.length === 0) {
@@ -1702,6 +1733,16 @@ function buildCenterlineRescuePath(
         Math.ceil(contourLengthXY(currentContour) / Math.max(stepSize, 1e-9)),
       ),
     )
+
+  // Estimate total walk distance as the straight-line distance from the arm's
+  // start point to the nearest corner on the next contour. This is used to
+  // linearly interpolate Z from startZ to nextZ across the walk, creating a
+  // smooth ramp that reaches the destination at the snap point (R1 fix).
+  const estimatedTotalDist = nextCorners.reduce(
+    (min, c) => Math.min(min, Math.hypot(c.x - arm.point.x, c.y - arm.point.y)),
+    Infinity,
+  )
+  let cumulativeDist = 0
 
   rescueTracer?.({ kind: 'rescue:start', armPoint: arm.point, guide: currentGuide, currentZ, nextZ, stepSize, nextCornerCount: nextCorners.length })
 
@@ -1760,12 +1801,20 @@ function buildCenterlineRescuePath(
           .filter((c) => segmentSamplesStayInsideContour(lastPt, c.point, currentContour))
           .sort((a, b) => a.dist - b.dist)[0]
         if (salvage) {
-          path.push({ x: salvage.point.x, y: salvage.point.y, z: nextZ })
+          // Interpolate salvage Z from the linear ramp (startZ → nextZ),
+          // consistent with the walk's midpoint Zs. The inscribed-circle cap is
+          // omitted for the same reason as the midpoint Z — it measures local
+          // wall distance which is shallow near the parent contour, creating
+          // step artifacts (see midpoint Z comment above).
+          const salvageProgress = Math.min(1, (cumulativeDist + salvage.dist) / Math.max(1e-9, estimatedTotalDist))
+          const salvageLinearZ = startZ + (nextZ - startZ) * salvageProgress
+          const salvageZ = Math.max(minZ, Math.min(lastZ, salvageLinearZ))
+          path.push({ x: salvage.point.x, y: salvage.point.y, z: salvageZ })
           rescueTracer?.({ kind: 'rescue:salvage', iteration, lastPt, snapTo: salvage.point, snapDist: salvage.dist })
           return {
             path: simplifyPath3DCollinear(path, stepSize * 0.05),
             endPoint: salvage.point,
-            endZ: nextZ,
+            endZ: salvageZ,
             reachedCorner: true,
           }
         }
@@ -1776,13 +1825,29 @@ function buildCenterlineRescuePath(
       + ((channel.point.y - currentPoint.y) * currentGuide.y)
     rescueTracer?.({ kind: 'rescue:step', iteration, probe, probeInside, channel: channel.point, radius: channel.radius, forwardProgress, effStep })
 
-    const distToWall = minDistToContourWalls(channel.point, [currentContour])
-    const targetMidpointZ = topZ - distToWall / slope
-    const midpointZ = Math.max(minZ, Math.min(lastZ, targetMidpointZ))
+    // Compute Z from the linear ramp (startZ → nextZ). The rescue path walks
+    // along the channel CENTERLINE between the parent and child contours; the
+    // correct Z at each point is the global interpolation between currentZ and
+    // nextZ based on progress along the walk. The inscribed-circle safety cap
+    // (topZ - distToWall/slope) is deliberately NOT used here — it measures
+    // distance to the nearest parent-contour wall (local geometry) which at the
+    // start of a narrow channel is very shallow, keeping Z flat and creating
+    // step artifacts. If the channel is too narrow the walk already bails via
+    // the step-halving mechanism, falling through to interpolateStraightSegment
+    // fallbacks.
+    cumulativeDist += Math.max(effStep, 1e-9)
+    const remainingDist = nextCorners.reduce(
+      (min, c) => Math.min(min, Math.hypot(c.x - channel.point.x, c.y - channel.point.y)),
+      Infinity,
+    )
+    const progress = Math.min(1, cumulativeDist / Math.max(1e-9, cumulativeDist + remainingDist))
+    const linearZ = startZ + (nextZ - startZ) * progress
+    const midpointZ = Math.max(minZ, Math.min(lastZ, linearZ))
     if (Math.hypot(channel.point.x - currentPoint.x, channel.point.y - currentPoint.y) < 1e-6) {
       return null
     }
     path.push({ x: channel.point.x, y: channel.point.y, z: midpointZ })
+    lastZ = midpointZ
 
     const nearestReachableCorner = nextCorners
       .map((corner) => ({
@@ -1793,12 +1858,21 @@ function buildCenterlineRescuePath(
       .sort((left, right) => left.dist - right.dist)[0]
 
     if (nearestReachableCorner) {
-      path.push({ x: nearestReachableCorner.point.x, y: nearestReachableCorner.point.y, z: nextZ })
+      // The walk has ramped to nextZ via linear interpolation. Snap at nextZ
+      // (the destination offset Z) with monotonic clamp — if lastZ is already
+      // deeper than nextZ (from inscribed-circle forcing), stay at lastZ;
+      // otherwise descend to nextZ. This creates a smooth ramp to the
+      // destination, and the arm created at the snap point will inherit this Z.
+      // The inscribed-circle check is omitted for the snap point since the
+      // corner is on the next offset contour — the next pass will compute Z
+      // against its own contour walls.
+      const snapZ = Math.max(minZ, Math.min(lastZ, nextZ))
+      path.push({ x: nearestReachableCorner.point.x, y: nearestReachableCorner.point.y, z: snapZ })
       rescueTracer?.({ kind: 'rescue:snap', iteration, channel: channel.point, snapTo: nearestReachableCorner.point, snapDist: nearestReachableCorner.dist })
       return {
         path: simplifyPath3DCollinear(path, stepSize * 0.05),
         endPoint: nearestReachableCorner.point,
-        endZ: nextZ,
+        endZ: snapZ,
         reachedCorner: true,
       }
     }
@@ -1829,7 +1903,6 @@ function buildFreshSeedBootstrapCuts(
   stepSize: number,
   slope: number,
   minZ: number,
-  topZ: number,
   allowWallAnchorFallback = true,
 ): { cuts: Path3D[], seededNextArms: TrackedArm[], connectedSeededArms: TrackedArm[] } {
   const currentLogicContour = recursiveLogicContour(currentContour, stepSize)
@@ -1879,10 +1952,11 @@ function buildFreshSeedBootstrapCuts(
         directRejectReason = 'segment-outside'
         continue
       }
-      const cut: Path3D = [
+      const cut = interpolateStraightSegment(
         { x: sourceArm.point.x, y: sourceArm.point.y, z: sourceArm.z ?? currentZ },
         { x: freshSeedArm.point.x, y: freshSeedArm.point.y, z: nextZ },
-      ]
+        stepSize,
+      )
       diagTag('buildFreshSeed-direct', cut)
       cuts.push(cut)
       connectedSeededArms.push(freshSeedArm)
@@ -1909,7 +1983,6 @@ function buildFreshSeedBootstrapCuts(
           stepSize,
           slope,
           minZ,
-          topZ,
           rescueCap,
         )
         if (!rescue?.reachedCorner || rescue.path.length < 2) {
@@ -2071,7 +2144,6 @@ function emitCollapseGeometry(
         stepSize,
         slope,
         topZ - maxDepth,
-        topZ,
       )
       for (const c of cuts) diagTag('emitCollapse-1to1-stepArms', c)
       paths.push(...cuts)
@@ -2104,7 +2176,6 @@ function emitCollapseGeometry(
         stepSize,
         slope,
         topZ - maxDepth,
-        topZ,
       )
       for (const c of cuts) diagTag('emitCollapse-1toN-bridgeSplitArms', c)
       paths.push(...cuts)
@@ -2204,7 +2275,6 @@ function traceRegion(
         stepSize,
         slope,
         topZ - maxDepth,
-        topZ,
       )
       for (const c of cuts) diagTag('traceRegion-SPLIT-bridgeSplitArms', c)
       paths.push(...cuts)
@@ -2247,7 +2317,6 @@ function traceRegion(
           stepSize,
           slope,
           topZ - maxDepth,
-          topZ,
           false,
         )
         for (const bc of bootstrapCuts) diagTag('traceRegion-SPLIT-bootstrap', bc)
@@ -2300,7 +2369,6 @@ function traceRegion(
     stepSize,
     slope,
     topZ - maxDepth,
-    topZ,
   )
   for (const c of cuts) diagTag('traceRegion-CONTINUE-stepArms', c)
   paths.push(...cuts)
@@ -2316,7 +2384,6 @@ function traceRegion(
       stepSize,
       slope,
       topZ - maxDepth,
-      topZ,
     )
     for (const bc of bootstrap.cuts) diagTag('traceRegion-CONTINUE-bootstrap', bc)
     paths.push(...bootstrap.cuts)
