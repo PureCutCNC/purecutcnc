@@ -17,6 +17,7 @@ coverage
 *.tsbuildinfo
 *.local
 work/
+temp/
 
 # Env files
 .env
@@ -34,3 +35,5 @@ work/
 *.sln
 *.sw?
 .claude/worktrees/
+
+

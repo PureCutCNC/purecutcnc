@@ -20,10 +20,12 @@ import generic from './generic.json'
 import grbl from './grbl.json'
 import mach3 from './mach3.json'
 import linuxcnc from './linuxcnc.json'
+import grblhal from './grblhal.json'
 
 export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   generic as unknown as MachineDefinition,
   grbl as unknown as MachineDefinition,
+  grblhal as unknown as MachineDefinition,
   mach3 as unknown as MachineDefinition,
   linuxcnc as unknown as MachineDefinition,
 ]
