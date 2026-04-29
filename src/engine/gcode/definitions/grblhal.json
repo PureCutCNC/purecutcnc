@@ -2,7 +2,7 @@
   "id": "grblhal",
   "name": "grblHAL",
   "description": "grblHAL — Enhanced 32-bit port of GRBL with WCS support",
-  "builtin": false,
+  "builtin": true,
   "fileExtension": "nc",
   "coordinateSystem": {
     "xAxis": "X",
