@@ -397,6 +397,103 @@ export function drawPendingSplineLoop(
   }
 }
 
+/** Map a DIAG source tag to a fill colour. */
+function sourceMarkerColor(source: string): string {
+  if (source.includes('tryDirectLink'))   return '#ff6b35'   // orange
+  if (source.includes('bridgeSplitArms'))  return '#ff6b6b'  // red
+  if (source.includes('siblingBridge'))   return '#ffd93d'   // yellow
+  if (source.includes('sameChildBridge')) return '#00f2ff'   // cyan
+  if (source.includes('bootstrap'))       return '#6bcb77'   // green
+  if (source.includes('stepArms'))        return '#4d96ff'   // blue
+  if (source.includes('intCornerBridge')) return '#ff8fab'   // pink
+  if (source.includes('contour'))         return '#c084fc'   // purple
+  if (source.includes('microContour'))    return '#a8a8a8'   // gray
+  return '#ffffff'  // white (fallback)
+}
+
+/**
+ * Draw a small shape at (cx,cy) on the 2D canvas context.
+ */
+function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number, shape: string, color: string, r: number): void {
+  ctx.save()
+  ctx.fillStyle = color
+  ctx.strokeStyle = color
+  ctx.lineWidth = Math.max(1.5, r * 0.2)
+  ctx.beginPath()
+
+  switch (shape) {
+    case 'circle':
+      ctx.arc(cx, cy, r, 0, Math.PI * 2)
+      ctx.fill()
+      break
+    case 'diamond':
+      ctx.moveTo(cx, cy - r)
+      ctx.lineTo(cx + r, cy)
+      ctx.lineTo(cx, cy + r)
+      ctx.lineTo(cx - r, cy)
+      ctx.closePath()
+      ctx.fill()
+      break
+    case 'triangle-up':
+      ctx.moveTo(cx, cy - r)
+      ctx.lineTo(cx + r * 0.866, cy + r * 0.5)
+      ctx.lineTo(cx - r * 0.866, cy + r * 0.5)
+      ctx.closePath()
+      ctx.fill()
+      break
+    case 'triangle-down':
+      ctx.moveTo(cx, cy + r)
+      ctx.lineTo(cx + r * 0.866, cy - r * 0.5)
+      ctx.lineTo(cx - r * 0.866, cy - r * 0.5)
+      ctx.closePath()
+      ctx.fill()
+      break
+    case 'square':
+      ctx.rect(cx - r, cy - r, r * 2, r * 2)
+      ctx.fill()
+      break
+    case 'pentagon':
+      for (let i = 0; i < 5; i++) {
+        const a = (i * 2 * Math.PI) / 5 - Math.PI / 2
+        const px = cx + r * Math.cos(a)
+        const py = cy + r * Math.sin(a)
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+      }
+      ctx.closePath()
+      ctx.fill()
+      break
+    case 'x':
+      ctx.moveTo(cx - r, cy - r)
+      ctx.lineTo(cx + r, cy + r)
+      ctx.moveTo(cx + r, cy - r)
+      ctx.lineTo(cx - r, cy + r)
+      ctx.stroke()
+      break
+    case 'star': {
+      for (let i = 0; i < 10; i++) {
+        const a = (i * Math.PI) / 5 - Math.PI / 2
+        const radius = i % 2 === 0 ? r : r * 0.45
+        const px = cx + radius * Math.cos(a)
+        const py = cy + radius * Math.sin(a)
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+      }
+      ctx.closePath()
+      ctx.fill()
+      break
+    }
+    case 'circle-outline':
+      ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2)
+      ctx.stroke()
+      break
+    default: // dot
+      ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2)
+      ctx.fill()
+      break
+  }
+
+  ctx.restore()
+}
+
 export function drawToolpath(
   ctx: CanvasRenderingContext2D,
   toolpath: ToolpathResult,
@@ -561,6 +658,29 @@ export function drawToolpath(
       move.kind === 'rapid' ? 'rgba(124, 184, 222, 0.95)' : 'rgba(255, 115, 92, 0.98)',
     )
     distanceSinceLastArrowByKind[move.kind] = 0
+  }
+
+  // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
+  if (toolpath.debugToolpath) {
+    const markerR = Math.max(3.5, Math.min(9, span * vt.scale * 0.025))
+    for (const move of toolpath.moves) {
+      if (move.kind !== 'cut' || !move.source) continue
+      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
+      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
+      const mx = (from.cx + to.cx) / 2
+      const my = (from.cy + to.cy) / 2
+      let shape = 'dot'
+      if (move.source.includes('bridgeSplitArms'))   shape = 'circle'
+      else if (move.source.includes('siblingBridge')) shape = 'diamond'
+      else if (move.source.includes('sameChildBridge')) shape = 'triangle-down'
+      else if (move.source.includes('bootstrap'))     shape = 'triangle-up'
+      else if (move.source.includes('stepArms'))      shape = 'square'
+      else if (move.source.includes('intCornerBridge')) shape = 'pentagon'
+      else if (move.source.includes('contour'))       shape = 'x'
+      else if (move.source.includes('tryDirectLink')) shape = 'star'
+      else if (move.source.includes('microContour'))  shape = 'circle-outline'
+      drawSourceMarker(ctx, mx, my, shape, sourceMarkerColor(move.source), markerR)
+    }
   }
 }
 

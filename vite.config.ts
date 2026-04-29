@@ -30,11 +30,20 @@ const candidateSharedRoots = [
 const sharedProjectRoot = candidateSharedRoots.find((candidate) => (
   existsSync(resolve(candidate, 'package.json')) && existsSync(resolve(candidate, 'node_modules'))
 )) ?? configDir
+const realNodeModulesRoot = (() => {
+  const nodeModulesPath = resolve(configDir, 'node_modules')
+  if (!existsSync(nodeModulesPath)) {
+    return null
+  }
 
-const nodeModulesPath = resolve(configDir, 'node_modules')
-const resolvedNodeModulesRoot = existsSync(nodeModulesPath)
-  ? realpathSync(nodeModulesPath)
-  : null
+  try {
+    return realpathSync(nodeModulesPath)
+  } catch {
+    return null
+  }
+})()
+const realSharedProjectRoot = realNodeModulesRoot ? resolve(realNodeModulesRoot, '..') : null
+const realManifoldRoot = realNodeModulesRoot ? resolve(realNodeModulesRoot, 'manifold-3d') : null
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -47,7 +56,9 @@ export default defineConfig({
       allow: [
         searchForWorkspaceRoot(configDir),
         sharedProjectRoot,
-        ...(resolvedNodeModulesRoot ? [resolvedNodeModulesRoot] : []),
+        ...(realSharedProjectRoot ? [realSharedProjectRoot] : []),
+        ...(realNodeModulesRoot ? [realNodeModulesRoot] : []),
+        ...(realManifoldRoot ? [realManifoldRoot] : []),
       ],
     },
   },
