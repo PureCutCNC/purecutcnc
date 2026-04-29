@@ -402,6 +402,7 @@ function sourceMarkerColor(source: string): string {
   if (source.includes('tryDirectLink'))   return '#ff6b35'   // orange
   if (source.includes('bridgeSplitArms'))  return '#ff6b6b'  // red
   if (source.includes('siblingBridge'))   return '#ffd93d'   // yellow
+  if (source.includes('sameChildBridge')) return '#00f2ff'   // cyan
   if (source.includes('bootstrap'))       return '#6bcb77'   // green
   if (source.includes('stepArms'))        return '#4d96ff'   // blue
   if (source.includes('intCornerBridge')) return '#ff8fab'   // pink
@@ -437,6 +438,13 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
       ctx.moveTo(cx, cy - r)
       ctx.lineTo(cx + r * 0.866, cy + r * 0.5)
       ctx.lineTo(cx - r * 0.866, cy + r * 0.5)
+      ctx.closePath()
+      ctx.fill()
+      break
+    case 'triangle-down':
+      ctx.moveTo(cx, cy + r)
+      ctx.lineTo(cx + r * 0.866, cy - r * 0.5)
+      ctx.lineTo(cx - r * 0.866, cy - r * 0.5)
       ctx.closePath()
       ctx.fill()
       break
@@ -664,6 +672,7 @@ export function drawToolpath(
       let shape = 'dot'
       if (move.source.includes('bridgeSplitArms'))   shape = 'circle'
       else if (move.source.includes('siblingBridge')) shape = 'diamond'
+      else if (move.source.includes('sameChildBridge')) shape = 'triangle-down'
       else if (move.source.includes('bootstrap'))     shape = 'triangle-up'
       else if (move.source.includes('stepArms'))      shape = 'square'
       else if (move.source.includes('intCornerBridge')) shape = 'pentagon'

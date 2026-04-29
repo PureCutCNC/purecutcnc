@@ -9,7 +9,9 @@ When the **debug toolpath** checkbox is enabled on a V-carve recursive operation
 | ▲ Triangle-up | Green | `#6bcb77` | `bootstrap` |
 | ■ Square | Blue | `#4d96ff` | `stepArms` |
 | ⬠ Pentagon | Pink | `#ff8fab` | `intCornerBridge` |
+| ▼ Triangle-down | Cyan | `#00f2ff` | `sameChildBridge` |
 | ✕ X | Purple | `#c084fc` | `contour` |
+
 | ★ Star | Orange | `#ff6b35` | `tryDirectLink` |
 | ○ Circle-outline | Gray | `#a8a8a8` | `microContour` |
 | • Dot | White | `#ffffff` | (fallback / untagged) |
@@ -20,6 +22,7 @@ When the **debug toolpath** checkbox is enabled on a V-carve recursive operation
 |-----|---------------|-------------|
 | `bridgeSplitArms` | [`emitCollapseGeometry`](../src/engine/toolpaths/vcarveRecursive.ts:1988) / [`bridgeSplitArms`](../src/engine/toolpaths/vcarveRecursive.ts:1172) | Bridge cuts from parent arm corners into child regions after a micro-offset split (1→N collapse). |
 | `siblingBridge` | [`bridgeSiblingChildren`](../src/engine/toolpaths/vcarveRecursive.ts:1342) | Cross-child bridges connecting sibling regions through shared pinch points on the parent contour. |
+| `sameChildBridge` | [`bridgeSiblingChildren`](../src/engine/toolpaths/vcarveRecursive.ts:1342) | Same-child bridges connecting corners on the same contour through shared pinch points on the parent contour. |
 | `bootstrap` | [`buildFreshSeedBootstrapCuts`](../src/engine/toolpaths/vcarveRecursive.ts:1769) | Fresh-seed bootstrap cuts that restart arm tracking from new corners that appear on a child/next contour. |
 | `stepArms` | [`stepArms`](../src/engine/toolpaths/vcarveRecursive.ts:950) | Standard arm-advance cuts — the main skeleton arm tracking step (CONTINUE or 1→1 collapse). |
 | `intCornerBridge` | [`buildInteriorCornerBridge`](../src/engine/toolpaths/vcarveRecursive.ts:1918) | Bridge cuts across interior corners of a contour, preventing narrow-feature dropouts. |

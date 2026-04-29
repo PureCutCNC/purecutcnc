@@ -1350,8 +1350,6 @@ function bridgeSiblingChildren(
   minZ: number,
   topZ: number,
 ): Path3D[] {
-  if (nextRegions.length < 2) return []
-
   const logicParent = recursiveLogicContour(parentContour, stepSize)
   const logicIslands = parentIslands.map((isl) => recursiveLogicContour(isl, stepSize))
   const allParentContours = [logicParent, ...logicIslands]
@@ -1362,7 +1360,6 @@ function bridgeSiblingChildren(
       allChildCorners.push({ point: c, childIdx: ci })
     }
   }
-
   const cuts: Path3D[] = []
   const MAX_WALK_STEPS = 256
 
@@ -1387,6 +1384,7 @@ function bridgeSiblingChildren(
     let currentGuide = { ...outward }
     let lastZ = nextZ
     let connected = false
+    let isSameChildConnection = false
 
     for (let step = 0; step < MAX_WALK_STEPS; step += 1) {
       // Step 3: probe point at stepSize along the current ray.
@@ -1412,14 +1410,22 @@ function bridgeSiblingChildren(
       const targetZ = topZ - distToWall / slope
       const pointZ = Math.max(minZ, Math.min(lastZ, targetZ))
 
-      // Step 8: check if any corner from a different child is within stepSize.
+      // Step 8: check if any OTHER corner (same child or different child) is within stepSize.
+      // Same-child connections bridge close corners across the parent region, following the
+      // medial-axis-style bridging algorithm (SAME_CHILD_BRIDGE_Algorithm.md).
+      // We exclude ci (the starting corner itself) to avoid self-connections, but allow
+      // corners on the same child — the walk has already moved into the parent region so
+      // any found same-child corner is across the narrow passage, not adjacent along the contour.
       const snapTargetIdx = allChildCorners.findIndex(
-        (c) => c.childIdx !== startChildIdx
+        (c, idx) => idx !== ci
           && Math.hypot(c.point.x - channel.point.x, c.point.y - channel.point.y) <= stepSize,
       )
 
       if (snapTargetIdx !== -1) {
         const snapTarget = allChildCorners[snapTargetIdx]
+        if (snapTarget.childIdx === startChildIdx) {
+          isSameChildConnection = true
+        }
         // Mark the target corner as already connected so it won't walk and
         // create a duplicate back-and-forth path when its turn comes.
         connectedCornerIndices.add(snapTargetIdx)
@@ -1429,19 +1435,31 @@ function bridgeSiblingChildren(
         break
       }
 
-      // Step 9: advance currentPoint to channel midpoint. Keep guide fixed —
-      // the outward bisector direction is constant for this walk; updating it
-      // from channel-to-currentPoint causes the probe to exit the thin parent
-      // band on the next step.
+      // Step 9: advance currentPoint to channel midpoint.
       path.push({ x: channel.point.x, y: channel.point.y, z: pointZ })
       currentPoint = channel.point
+      // Update guide to follow the channel centerline (direction from previous
+      // channel midpoint to current channel midpoint). This keeps the walk
+      // centered in curved narrow passages where the fixed outward bisector
+      // would exit the parent (e.g. the letter e's bowl-to-outer pinch point).
+      // For straight passages (e.g. letter A legs), the centerline direction
+      // matches the bisector so behaviour is unchanged.
+      if (path.length >= 3) {
+        const pdx = channel.point.x - path[path.length - 3].x
+        const pdy = channel.point.y - path[path.length - 3].y
+        const plen = Math.hypot(pdx, pdy)
+        if (plen > 1e-12) {
+          currentGuide = { x: pdx / plen, y: pdy / plen }
+        }
+      }
       lastZ = pointZ
     }
 
     // Emit the path whether or not we found a target child corner.
     if (path.length >= 2 && connected) {
       const simplified = simplifyPath3DCollinear(path, stepSize * 0.05)
-      diagTag('bridgeSiblingChildren', simplified)
+      const tag = isSameChildConnection ? 'sameChildBridge' : 'siblingBridge'
+      diagTag(tag, simplified)
       cuts.push(simplified)
     }
   }
@@ -2132,8 +2150,11 @@ function traceRegion(
       for (const c of cuts) diagTag('traceRegion-SPLIT-bridgeSplitArms', c)
       paths.push(...cuts)
 
-      // Sibling bridges (cross-child): connect children to each other through
-      // their shared pinch points on the parent contour.
+      // Sibling bridges (cross-child and same-child): connect children to each
+      // other through their shared pinch points on the parent contour. Also
+      // connects same-child corners across narrow passages. The source tag
+      // emitted inside bridgeSiblingChildren distinguishes the case:
+      //   bridgeSameChild vs bridgeSiblingChildren.
       const siblingCuts = bridgeSiblingChildren(
         region.outer,
         region.islands ?? [],
@@ -2145,7 +2166,6 @@ function traceRegion(
         topZ - maxDepth,
         topZ,
       )
-      for (const c of siblingCuts) diagTag('traceRegion-SPLIT-siblingBridge', c)
       paths.push(...siblingCuts)
 
       // Recurse inside each split child. Fresh-seed restart is enabled in
@@ -2246,6 +2266,25 @@ function traceRegion(
   const intBridges = buildInteriorCornerBridge(nextRegion.outer, nextArms.map((arm) => arm.point), nextZ, stepSize)
   for (const ib of intBridges) diagTag('traceRegion-CONTINUE-intCornerBridge', ib)
   paths.push(...intBridges)
+
+  // Same-child corner bridge (CONTINUE): when a single child region has two close
+  // corners across a narrow passage of the parent, walk from one corner outward
+  // through the parent contour to find the other corner on the same child, following
+  // the medial-axis-style bridging algorithm (SAME_CHILD_BRIDGE_Algorithm.md).
+  // The source tag emitted inside bridgeSiblingChildren distinguishes same-child
+  // (bridgeSameChild) from cross-child (bridgeSiblingChildren) connections.
+  const siblingCuts = bridgeSiblingChildren(
+    region.outer,
+    region.islands ?? [],
+    nextRegions,
+    currentZ,
+    nextZ,
+    stepSize,
+    slope,
+    topZ - maxDepth,
+    topZ,
+  )
+  paths.push(...siblingCuts)
 
   // Continue guide-driven tracking, but also re-seed any fresh corners that
   // appear on the new contour so a missed lane can restart at the next level.
