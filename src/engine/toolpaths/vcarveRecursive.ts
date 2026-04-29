@@ -2493,6 +2493,28 @@ function chainPaths(paths: Path3D[]): Path3D[] {
   return [...chained, ...contours]
 }
 
+/**
+ * Rotate a closed path so that the vertex at `startIdx` becomes the first
+ * point.  Assumes the path is closed (last point is a duplicate of the first).
+ * The last point of the result is rebuilt as a copy of the new first point
+ * to maintain the closed-loop invariant.
+ *
+ * The DIAG source tag is carried forward to the new array.
+ */
+function rotateClosedPath(path: Path3D, startIdx: number): Path3D {
+  const n = path.length - 1                           // unique vertex count
+  const rotated: Path3D = []
+  for (let i = 0; i < n; i++) {
+    rotated.push({ ...path[(startIdx + i) % n] })
+  }
+  rotated.push({ ...rotated[0] })                     // close the loop
+  const src = (path as unknown as Record<string, unknown>).__diagSource
+  if (typeof src === 'string') {
+    ;(rotated as unknown as Record<string, unknown>).__diagSource = src
+  }
+  return rotated
+}
+
 // ---------------------------------------------------------------------------
 // Path ordering — nearest-neighbour sort to minimise rapid travel
 // ---------------------------------------------------------------------------
@@ -2506,10 +2528,13 @@ function chainPaths(paths: Path3D[]): Path3D[] {
  *
  * For open paths (arm chains) both orientations are considered: we pick the
  * endpoint (start or end) that is closest to the current position and reverse
- * the path when that saves travel.  Closed contours (collapse outlines, split
- * bridges) are left in their original orientation — reversing a closed loop
- * has no meaningful effect on air travel but could confuse downstream code
- * that expects a specific winding.
+ * the path when that saves travel.
+ *
+ * For closed paths (collapse outlines, split bridges, sibling bridges) we
+ * additionally find the vertex on the loop closest to the current position
+ * and rotate the path so that vertex becomes the entry point.  This lets the
+ * tool enter a closed contour at the nearest point instead of always at the
+ * original first vertex, reducing or eliminating unnecessary rapids.
  *
  * Only XY distance is used for cost: all rapids happen at safeZ so the Z
  * component of path endpoints does not contribute to air-travel time.
@@ -2534,39 +2559,69 @@ function sortPathsNearestNeighbor(
   let curY = startXY?.y ?? 0
 
   while (remaining.length > 0) {
-    let bestIdx     = 0
-    let bestDist    = Infinity
-    let bestReverse = false
+    let bestIdx       = 0
+    let bestDist      = Infinity
+    let bestReverse   = false
+    let bestRotateIdx = -1  // -1 = no rotation; ≥0 = rotate so this vertex becomes path[0]
 
     for (let i = 0; i < remaining.length; i++) {
       const path  = remaining[i]
       const first = path[0]
       const last  = path[path.length - 1]
 
-      const distToStart = Math.hypot(first.x - curX, first.y - curY)
-      const distToEnd   = isClosed(path)
-        ? Infinity  // closed — only consider forward entry
-        : Math.hypot(last.x - curX, last.y - curY)
+      if (isClosed(path)) {
+        // Closed contour — find the vertex closest to current position and
+        // rotate the loop so that vertex becomes the entry point.
+        let closestDist = Infinity
+        let closestIdx  = 0
+        for (let j = 0; j < path.length - 1; j++) {  // exclude closing duplicate
+          const d = Math.hypot(path[j].x - curX, path[j].y - curY)
+          if (d < closestDist) {
+            closestDist = d
+            closestIdx  = j
+          }
+        }
+        const d   = closestDist
+        const rev = false  // reversal meaningless for a closed loop
+        // Store rotateIdx only if rotation is needed (non-zero index)
+        const rotateIdx = closestIdx > 0 ? closestIdx : -1
 
-      const d   = Math.min(distToStart, distToEnd)
-      const rev = distToEnd < distToStart
+        if (d < bestDist) {
+          bestDist      = d
+          bestIdx       = i
+          bestReverse   = rev
+          bestRotateIdx = rotateIdx
+        }
+      } else {
+        // Open path — try both forward and reverse orientation
+        const distToStart = Math.hypot(first.x - curX, first.y - curY)
+        const distToEnd   = Math.hypot(last.x - curX, last.y - curY)
 
-      if (d < bestDist) {
-        bestDist    = d
-        bestIdx     = i
-        bestReverse = rev
+        const d   = Math.min(distToStart, distToEnd)
+        const rev = distToEnd < distToStart
+
+        if (d < bestDist) {
+          bestDist      = d
+          bestIdx       = i
+          bestReverse   = rev
+          bestRotateIdx = -1  // no rotation for open paths
+        }
       }
     }
 
     const chosen  = remaining.splice(bestIdx, 1)[0]
-    const emitted = bestReverse ? [...chosen].reverse() : chosen
-    // Carry forward the DIAG source tag through reversal (which creates a new
-    // array) so debug markers work on reversed paths.
-    if (bestReverse) {
+    let emitted: Path3D
+    if (bestRotateIdx >= 0) {
+      emitted = rotateClosedPath(chosen, bestRotateIdx)
+    } else if (bestReverse) {
+      emitted = [...chosen].reverse()
+      // Carry forward the DIAG source tag through reversal.
       const src = (chosen as unknown as Record<string, unknown>).__diagSource
       if (typeof src === 'string') {
         ;(emitted as unknown as Record<string, unknown>).__diagSource = src
       }
+    } else {
+      emitted = chosen
     }
     ordered.push(emitted)
 
@@ -2583,6 +2638,10 @@ function pathsToMoves(
   safeZ: number,
   moves: ToolpathMove[],
   startPosition: ToolpathPoint | null,
+  /** Maximum XY distance for which a direct cut (instead of retract+plunge)
+   *  may be used to link the end of one path to the start of the next.
+   *  Pass 0 or omit to disable linking (always retract). */
+  maxLinkDistance = 0,
 ): ToolpathPoint | null {
   let pos = startPosition
   const chainedPaths = chainPaths(paths)
@@ -2602,11 +2661,36 @@ function pathsToMoves(
 
     if (pos === null) {
       pos = pushRapidAndPlunge(moves, null, entry, safeZ)
+    } else if (pos.x === entry.x && pos.y === entry.y) {
+      // Paths share the same XY entry point — transition vertically without
+      // retracting to safeZ.
+      if (pos.z !== entry.z) {
+        moves.push({
+          kind: entry.z < pos.z ? 'plunge' : 'rapid',
+          from: pos,
+          to: entry,
+        })
+      }
+      // If Z is identical, no transition move is needed
+    } else if (pos.z === entry.z && maxLinkDistance > 0) {
+      // Same Z, different XY — if the gap is short enough, cut directly
+      // instead of retracting.  The nearest-neighbour sort already places
+      // paths close together, so most gaps are within a few stepSizes.
+      // Using the same budget as the direct-connect heuristic (4 × stepSize)
+      // ensures we only link genuinely adjacent paths.
+      const dx = entry.x - pos.x
+      const dy = entry.y - pos.y
+      const dist = Math.hypot(dx, dy)
+      if (dist <= maxLinkDistance) {
+        moves.push({ kind: 'cut', from: pos, to: entry, source })
+      } else {
+        pos = retractToSafe(moves, pos, safeZ)
+        pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
+      }
     } else {
-      // Always retract to safe Z and plunge — never cut directly between
-      // the end of one path and the start of the next. Direct-link cuts
-      // (tryDirectLink) were shown to produce spurious diagonal gouges
-      // across the interior of the letter A (move [29]).
+      // Different Z or gap exceeds maxLinkDistance — retract and plunge.
+      // Direct-link cuts across disconnected XY were shown to produce
+      // spurious diagonal gouges across the interior of letter A (move [29]).
       pos = retractToSafe(moves, pos, safeZ)
       pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
     }
@@ -2729,7 +2813,7 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
     for (const region of band.regions) {
       const paths: Path3D[] = []
       traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths)
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition)
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize * 4)
     }
   }
 
