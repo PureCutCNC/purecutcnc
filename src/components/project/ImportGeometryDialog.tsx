@@ -107,7 +107,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             text: '',
             dataUrl,
             sourceType: nextSourceType,
-            inspection: { layers: [], warnings: [], sourceUnitScale: 1, detectedUnits: null }
+            inspection: { layers: [], warnings: [], sourceUnitScale: 1, detectedUnits: null, unitsReliable: false, summary: 'STL file - 3D mesh imported by top-down silhouette projection' }
           })
           setSourceUnits(project.meta.units) // Default to project units for STL
         } else {
@@ -215,7 +215,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             dimensions: [],
             constraints: []
           },
-          operation: 'add',
+          operation: 'model',
           z_top: stlInfo.z_top,
           z_bottom: stlInfo.z_bottom,
           visible: true,
@@ -251,12 +251,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${result.warnings.join('\n')}`,
           )
         }
-      }
 
-      if (createdIds.length === 0) {
-        setDialogError(result.warnings[0] ?? 'No importable geometry found in the selected file.')
-        setBusy(false)
-        return
+        if (createdIds.length === 0) {
+          setDialogError(result.warnings[0] ?? 'No importable geometry found in the selected file.')
+          setBusy(false)
+          return
+        }
       }
 
 

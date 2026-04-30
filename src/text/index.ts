@@ -195,6 +195,7 @@ const GLYPHS: Record<string, GlyphDefinition> = {
 }
 
 function invertOperation(operation: FeatureOperation): FeatureOperation {
+  if (operation === 'region' || operation === 'model') return operation
   return operation === 'add' ? 'subtract' : 'add'
 }
 

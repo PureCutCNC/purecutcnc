@@ -65,3 +65,16 @@ Given that PureCutCNC relies on `manifold-3d` for its CSG engine and `clipper-li
 - Verify an exact silhouette is drawn in the 2D sketch view.
 - Ensure the object can be moved, rotated, uniformly scaled, copied, and deleted.
 - Save and reload the `.camj` project file to ensure the STL feature persists correctly.
+
+## 6. Known Issues & Backlog
+
+### 6.1. Region wall rendering with stock visibility
+Region features use transparent wall-only geometry (`buildWallGeometry`) for their 3D preview. When the stock mesh (opaque) is visible, the region walls sit at the same z-level as the stock surface, causing depth buffer conflicts that result in rendering artifacts (walls partially hidden or showing as thin lines).
+
+**Attempted fixes:**
+- `depthTest: false` — renders region walls on top of everything, but shows through other geometry where it shouldn't.
+- `polygonOffset` (factor: -1, units: -1) — pushes fragments toward camera, but still produces visible artifacts (walls render as thin lines on the stock surface).
+
+**Root cause:** The wall geometry and stock mesh occupy the same spatial volume; transparent overlay rendering over opaque solid geometry is inherently tricky without proper order-independent transparency or stencil buffer techniques.
+
+**Deferred:** Needs a proper solution such as rendering region walls as a separate render pass, using stencil masking, or offsetting the wall geometry above the stock surface at the shader level.

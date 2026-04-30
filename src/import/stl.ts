@@ -16,20 +16,38 @@
 
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import type { ManifoldMesh } from 'manifold-3d'
 import { getManifoldModule } from '../engine/csg'
 import { polygonProfile, type Point, type SketchProfile } from '../types/project'
-import { unionClipperPaths, type ClipperPolyNode } from '../store/helpers/clipping'
+import { unionClipperPaths } from '../store/helpers/clipping'
+
+/** Cross-platform base64-to-binary-string decoder (works in browser and Node) */
+function base64ToBinaryString(data: string): string {
+  if (typeof window !== 'undefined') {
+    return window.atob(data)
+  }
+  // Node.js fallback using a pure-JS approach
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+  let result = ''
+  const blocks = data.replace(/[^A-Za-z0-9+/=]/g, '')
+  for (let i = 0; i < blocks.length; i += 4) {
+    const a = chars.indexOf(blocks[i])
+    const b = chars.indexOf(blocks[i + 1])
+    const c = chars.indexOf(blocks[i + 2])
+    const d = chars.indexOf(blocks[i + 3])
+    result += String.fromCharCode((a << 2) | (b >> 4))
+    if (c !== 64) result += String.fromCharCode(((b & 15) << 4) | (c >> 2))
+    if (d !== 64) result += String.fromCharCode(((c & 3) << 6) | d)
+  }
+  return result
+}
 
 export async function extractStlProfileAndBounds(
-  base64Data: string, 
-  scale: number, 
+  base64Data: string,
+  scale: number,
   axisSwap: 'none' | 'yz' | 'xz' | 'xy' = 'none',
   onProgress?: (percent: number) => void
 ): Promise<{ profile: SketchProfile, z_bottom: number, z_top: number } | null> {
-  const binaryString = typeof window !== 'undefined' 
-    ? window.atob(base64Data) 
-    : Buffer.from(base64Data, 'base64').toString('binary')
+  const binaryString = base64ToBinaryString(base64Data)
   const bytes = new Uint8Array(binaryString.length)
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i)
@@ -80,10 +98,9 @@ export async function extractStlProfileAndBounds(
     }
   }
 
-  const mesh: ManifoldMesh = {
+  const module = await getManifoldModule()
+  const manifoldMesh = new module.Mesh({
     numProp: 3,
-    numVert: numVerts,
-    numTri: triVerts.length / 3,
     vertProperties: new Float32Array(positions),
     triVerts: triVerts,
     halfedgeTangent: new Float32Array(0),
@@ -91,16 +108,17 @@ export async function extractStlProfileAndBounds(
     runOriginalID: new Uint32Array([0]),
     runTransform: new Float32Array(12).fill(0),
     faceID: new Uint32Array(triVerts.length / 3).fill(0),
-  }
+  })
 
-  const module = await getManifoldModule()
   let polys: Point[][] = []
 
   try {
-    const solid = new module.Manifold(mesh)
+    const solid = new module.Manifold(manifoldMesh)
     const scaledSolid = solid.scale([scale, scale, scale])
-    const crossSection = module.project(scaledSolid)
-    polys = crossSection.toPolygons()
+    const crossSection = scaledSolid.project()
+    polys = crossSection.toPolygons().map(poly =>
+      poly.map(([x, y]) => ({ x, y }))
+    )
     
     solid.delete()
     scaledSolid.delete()

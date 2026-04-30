@@ -17,7 +17,7 @@
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
+import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
@@ -181,6 +181,41 @@ export function buildStockMesh(stock: Stock): THREE.Mesh {
 
 // ── Feature mesh ─────────────────────────────────────────────────────────────
 
+/**
+ * Build a hollow wall geometry for region features — semi-transparent walls
+ * with no top or bottom faces, rendered as a thin box outline in 3D.
+ */
+function buildWallGeometry(shape: THREE.Shape, depth: number): THREE.BufferGeometry {
+  const points = shape.getPoints()
+  if (points.length < 2 || depth < 0.01) return new THREE.BufferGeometry()
+
+  const positions: number[] = []
+  const indices: number[] = []
+
+  for (let i = 0; i < points.length; i++) {
+    const next = (i + 1) % points.length
+    const p0 = points[i]
+    const p1 = points[next]
+    const off = positions.length / 3
+
+    // Two triangles per wall quad (bottom-left, bottom-right, top-left, top-right)
+    positions.push(p0.x, p0.y, 0)
+    positions.push(p1.x, p1.y, 0)
+    positions.push(p0.x, p0.y, depth)
+    positions.push(p1.x, p1.y, depth)
+
+    // CCW winding for outward-facing normals (ExtrudeGeometry convention)
+    indices.push(off, off + 2, off + 1)
+    indices.push(off + 1, off + 2, off + 3)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 export function buildFeatureMesh(
   feature: SketchFeature,
   selected = false,
@@ -188,9 +223,7 @@ export function buildFeatureMesh(
 ): THREE.Mesh {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
     const base64Data = feature.stl.fileData.split(',')[1]
-    const binaryString = typeof window !== 'undefined' 
-      ? window.atob(base64Data) 
-      : Buffer.from(base64Data, 'base64').toString('binary')
+    const binaryString = window.atob(base64Data)
     const bytes = new Uint8Array(binaryString.length)
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i)
@@ -222,17 +255,22 @@ export function buildFeatureMesh(
     // Initial uniform scale
     geometry.scale(scale, scale, scale)
     
+    // Resolve z dimensions (DimensionRef → number)
+    // STL features always store numeric z values, but the type allows DimensionRef
+    const zTop = Number(feature.z_top) || 0
+    const zBottom = Number(feature.z_bottom) || 0
+    
     // Vertical positioning and scaling based on z_bottom/z_top
     geometry.computeBoundingBox()
     const bbox = geometry.boundingBox!
     const meshHeight = bbox.max.z - bbox.min.z
-    const targetHeight = Math.max(0.1, Math.abs((feature.z_top ?? 0) - (feature.z_bottom ?? 0)))
+    const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
     const zScale = targetHeight / (meshHeight || 1)
     
     // Move to 0, scale Z, then move to feature.z_bottom
     geometry.translate(0, 0, -bbox.min.z)
     geometry.scale(1, 1, zScale)
-    geometry.translate(0, 0, Math.min(feature.z_top ?? 0, feature.z_bottom ?? 0))
+    geometry.translate(0, 0, Math.min(zTop, zBottom))
 
     geometry.rotateZ(angleRad)
     geometry.translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
@@ -256,16 +294,22 @@ export function buildFeatureMesh(
   const yStart = Math.min(zTop, zBottom)
   const depth = Math.abs(zBottom - zTop)
 
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth: Math.max(depth, 0.1),
-    bevelEnabled: false,
-  })
+  const isRegion = feature.operation === 'region'
+
+  const geometry = isRegion
+    ? buildWallGeometry(shape, Math.max(depth, 0.1))
+    : new THREE.ExtrudeGeometry(shape, {
+        depth: Math.max(depth, 0.1),
+        bevelEnabled: false,
+      })
+
   geometry.rotateX(-Math.PI / 2)
   geometry.translate(0, yStart, 0)
 
   const color =
     selected ? 0xffaa00
     : hovered ? 0x44aaff
+    : isRegion ? 0x9966cc
     : feature.operation === 'subtract' ? 0x3366cc
     : 0x33aa66
 
@@ -273,10 +317,19 @@ export function buildFeatureMesh(
     color,
     roughness: 0.78,
     metalness: 0.08,
-    side: THREE.FrontSide,
+    side: isRegion ? THREE.DoubleSide : THREE.FrontSide,
+    ...(isRegion && {
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    }),
   })
 
   const mesh = new THREE.Mesh(geometry, material)
+  if (isRegion) mesh.renderOrder = 1
   mesh.scale.z = -1
   return mesh
 }
@@ -390,7 +443,7 @@ export function buildOriginTriad(origin: MachineOrigin, size: number): THREE.Gro
   return group
 }
 
-function manifoldMeshToGeometry(mesh: ManifoldMesh): THREE.BufferGeometry {
+function manifoldMeshToGeometry(mesh: import('manifold-3d').Mesh): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry()
   const positions = new Float32Array(mesh.numVert * 3)
 
@@ -465,10 +518,8 @@ function buildFeatureSolid(
         }
       }
       
-      const mesh: ManifoldMesh = {
+      const manifoldMesh = new module.Mesh({
         numProp: 3,
-        numVert: numVerts,
-        numTri: triVerts.length / 3,
         vertProperties: new Float32Array(positions),
         triVerts: triVerts,
         halfedgeTangent: new Float32Array(0),
@@ -476,23 +527,30 @@ function buildFeatureSolid(
         runOriginalID: new Uint32Array([0]),
         runTransform: new Float32Array(12).fill(0),
         faceID: new Uint32Array(triVerts.length / 3).fill(0),
-      }
+      })
       
-      const solid = new module.Manifold(mesh)
+      const solid = new module.Manifold(manifoldMesh)
       const scale = feature.stl.scale ?? 1
       const angleDeg = feature.sketch.orientationAngle ?? 0
+      
+      // Resolve z dimensions (DimensionRef → number)
+      const zTop = resolveDimension(feature.z_top, project)
+      const zBottom = resolveDimension(feature.z_bottom, project)
       
       // Compute vertical scale and translation to match z_bottom/z_top
       const bbox = solid.boundingBox()
       const meshHeight = bbox.max[2] - bbox.min[2]
-      const targetHeight = Math.max(0.1, Math.abs((feature.z_top ?? 0) - (feature.z_bottom ?? 0)))
-      const zScale = targetHeight / (meshHeight || 1)
+      const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+      // bbox is computed BEFORE uniform scale, so meshHeight = originalHeight.
+      // After .scale([scale, scale, scale]), height = originalHeight * scale.
+      // We want final height = targetHeight, so zScale = targetHeight / (originalHeight * scale).
+      const zScale = targetHeight / ((meshHeight || 1) * scale)
 
       return solid
         .scale([scale, scale, scale]) // Apply uniform scale first
         .translate([0, 0, -bbox.min[2] * scale]) // Move to 0 (accounting for uniform scale)
         .scale([1, 1, zScale]) // Scale Z to match target height
-        .translate([0, 0, Math.min(feature.z_top ?? 0, feature.z_bottom ?? 0)]) // Move to target bottom
+        .translate([0, 0, Math.min(zTop, zBottom)]) // Move to target bottom
         .rotate(0, 0, angleDeg)
         .translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
     } catch (error) {
@@ -564,7 +622,7 @@ async function buildBooleanModel(
         // because we render the high-resolution mesh as an overlay. This prevents
         // non-manifold STLs from showing their blocky 2.5D fallback extrusion
         // while still allowing 'subtract' STLs to cut holes in the stock.
-        if (feature.kind === 'stl' && feature.operation === 'add') {
+        if (feature.operation === 'model' || feature.operation === 'region') {
           continue
         }
 
@@ -665,15 +723,16 @@ export async function buildScene(
 
     // Always include STL meshes for visual detail, even if boolean model succeeded.
     // This ensures non-manifold STLs show their real mesh instead of just the 2.5D extrusion fallback.
+    // Region features also get their own mesh since they are visual-only (not part of boolean model).
     for (const feature of visibleFeatures) {
-      if (feature.kind === 'stl') {
+      if (feature.kind === 'stl' || feature.operation === 'region') {
         featureMeshes.set(feature.id, buildFeatureMesh(feature))
       }
       
       // If buildBooleanModel failed, we need the rest of the meshes too
       if (!modelMesh) {
         for (const expanded of expandFeatureGeometry(feature)) {
-          if (expanded.kind !== 'stl') {
+          if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
             featureMeshes.set(expanded.id, buildFeatureMesh(expanded))
           }
         }

@@ -17,7 +17,7 @@
 import type { SketchProfile } from '../types/project'
 import type { Units } from '../utils/units'
 
-export type ImportSourceType = 'svg' | 'dxf'
+export type ImportSourceType = 'svg' | 'dxf' | 'stl'
 
 export interface ImportedShape {
   name: string

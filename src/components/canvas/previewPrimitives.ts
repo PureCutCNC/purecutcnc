@@ -83,6 +83,16 @@ export function drawFeature(
     stroke = '#63b176'
   }
 
+  if (feature.operation === 'model') {
+    fill = 'rgba(160, 170, 180, 0.35)'
+    stroke = '#a0b0c0'
+  }
+
+  if (feature.operation === 'region') {
+    fill = 'rgba(153, 102, 204, 0.30)'
+    stroke = '#9966cc'
+  }
+
   if (hovered) {
     fill = 'rgba(203, 148, 86, 0.35)'
     stroke = '#d2a064'

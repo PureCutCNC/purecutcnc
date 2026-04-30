@@ -150,7 +150,7 @@ export interface LocalDimension {
 // Feature — core building block
 // ============================================================
 
-export type FeatureOperation = 'add' | 'subtract'
+export type FeatureOperation = 'add' | 'subtract' | 'region' | 'model'
 export type TextFontStyle = 'skeleton' | 'outline'
 export type TextFontId =
   | 'simple_stroke'

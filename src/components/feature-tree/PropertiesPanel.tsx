@@ -1030,19 +1030,27 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              <select
-                value={commonSelectedOperation ?? ''}
-                onChange={(event) =>
-                  updateFeatures(selectedFeatureIds, {
-                    operation: event.target.value as 'add' | 'subtract',
-                  })}
-              >
-                {commonSelectedOperation === '__mixed__' ? (
-                  <option value="__mixed__">Mixed operations</option>
-                ) : null}
-                <option value="subtract">Subtract</option>
-                <option value="add">Add</option>
-              </select>
+              {allSelectedFeatures.some((f) => f.operation === 'model') ? (
+                <div className="properties-locked-field" title="Model features cannot change operation type">
+                  <span>Contains model features</span>
+                  <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+                </div>
+              ) : (
+                <select
+                  value={commonSelectedOperation ?? ''}
+                  onChange={(event) =>
+                    updateFeatures(selectedFeatureIds, {
+                      operation: event.target.value as import('../../types/project').FeatureOperation,
+                    })}
+                >
+                  {commonSelectedOperation === '__mixed__' ? (
+                    <option value="__mixed__">Mixed operations</option>
+                  ) : null}
+                  <option value="subtract">Subtract</option>
+                  <option value="add">Add</option>
+                  <option value="region">Region</option>
+                </select>
+              )}
             </label>
             <label className="properties-field">
               <span>Z Top</span>
@@ -1113,9 +1121,13 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          {isFirstFeature ? (
-            <div className="properties-locked-field" title="The first feature must always be Add — it defines the base solid of the part model">
-              <span>Add</span>
+          {isFirstFeature || selectedFeature.operation === 'model' ? (
+            <div className="properties-locked-field" title={
+              isFirstFeature
+                ? 'The first feature must always be Add — it defines the base solid of the part model'
+                : 'Model features are imported 3D objects and cannot change operation type'
+            }>
+              <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
               <span className="properties-locked-hint" aria-hidden="true">🔒</span>
             </div>
           ) : (
@@ -1123,11 +1135,12 @@ export function PropertiesPanel() {
               value={selectedFeature.operation}
               onChange={(event) =>
                 updateFeature(selectedFeature.id, {
-                  operation: event.target.value as 'add' | 'subtract',
+                  operation: event.target.value as import('../../types/project').FeatureOperation,
                 })}
             >
               <option value="subtract">Subtract</option>
               <option value="add">Add</option>
+              <option value="region">Region</option>
             </select>
           )}
         </label>
