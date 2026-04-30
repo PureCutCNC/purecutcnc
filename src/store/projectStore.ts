@@ -1538,7 +1538,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       return false
     }
 
-    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && featureHasClosedGeometry(feature))
   }
 
   if (target.source !== 'features' || target.featureIds.length === 0) {
@@ -1554,7 +1554,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
   }
 
   if (kind === 'pocket' || kind === 'edge_route_inside') {
-    return features.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && feature.sketch.profile.closed)
   }
 
   return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
@@ -4984,7 +4984,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const targetFeatures = operation.target.featureIds
         .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model')
+        .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')
 
       if (targetFeatures.length === 0) {
         return {}

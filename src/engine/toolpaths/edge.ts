@@ -356,7 +356,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === expectedFeatureOperation)
+    .filter((feature) => feature.operation === expectedFeatureOperation || feature.operation === 'region')
 
   const warnings: string[] = []
   const maxFeatureDepth = targetFeatures.reduce((max, feature) => {
@@ -369,7 +369,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
   }
 
   if (targetFeatures.length !== operation.target.featureIds.length) {
-    warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation} features`)
+    warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation}/region features`)
   }
 
   const closedTargetFeatures = targetFeatures.filter((feature) => featureHasClosedGeometry(feature))

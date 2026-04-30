@@ -377,7 +377,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -396,7 +396,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  if (!features.every((feature) => feature.operation === expectedOperation || feature.operation === 'model')) {
+  if (!features.every((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')) {
     return null
   }
 
