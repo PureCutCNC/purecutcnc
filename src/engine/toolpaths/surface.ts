@@ -172,7 +172,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'add')
+    .filter((feature) => feature.operation === 'add' || feature.operation === 'model')
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
@@ -183,7 +183,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     })
 
   if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
-    warnings.push('Some selected target features are missing or are not add features')
+    warnings.push('Some selected target features are missing or are not add/model features')
   }
 
   const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))

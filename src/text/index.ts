@@ -690,21 +690,34 @@ export function getFeatureGeometryBounds(feature: SketchFeature) {
     )
 }
 
-export function expandFeatureGeometry(feature: SketchFeature): SketchFeature[] {
-  if (!isTextFeature(feature)) {
-    return [feature]
+export function expandFeatureGeometry(feature: SketchFeature, includeSynthetic = true): SketchFeature[] {
+  if (isTextFeature(feature)) {
+    return resolveTextFeatureShapes(feature).map((shape, index) => ({
+      ...feature,
+      id: `${feature.id}:text:${index}`,
+      name: feature.name,
+      kind: 'composite',
+      text: null,
+      sketch: {
+        ...feature.sketch,
+        profile: shape.profile,
+      },
+      operation: shape.operation,
+    }))
   }
 
-  return resolveTextFeatureShapes(feature).map((shape, index) => ({
-    ...feature,
-    id: `${feature.id}:text:${index}`,
-    name: feature.name,
-    kind: 'composite',
-    text: null,
-    sketch: {
-      ...feature.sketch,
-      profile: shape.profile,
-    },
-    operation: shape.operation,
-  }))
+  // Model features (imported STL meshes) are treated as 'add' obstacles for
+  // 2.5D toolpath operations. We return a synthetic 'add' feature that uses
+  // the model's 2D silhouette profile so pockets and other operations see it
+  // as a solid obstacle they must machine around.
+  if (includeSynthetic && feature.operation === 'model') {
+    const syntheticAdd: SketchFeature = {
+      ...feature,
+      operation: 'add',
+      stl: null,
+    }
+    return [feature, syntheticAdd]
+  }
+
+  return [feature]
 }

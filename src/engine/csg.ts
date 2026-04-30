@@ -606,7 +606,7 @@ async function buildBooleanModel(
 ): Promise<THREE.Mesh | null> {
   const module = await getManifoldModule()
   let current: ManifoldSolid | null = null
-  const expandedFeatures = visibleFeatures.flatMap((feature) => expandFeatureGeometry(feature))
+  const expandedFeatures = visibleFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))
 
   try {
     for (const feature of expandedFeatures) {

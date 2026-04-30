@@ -1522,7 +1522,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       return false
     }
 
-    return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+    return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
   }
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
@@ -1557,7 +1557,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     return features.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
   }
 
-  return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+  return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
@@ -4984,7 +4984,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const targetFeatures = operation.target.featureIds
         .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.operation === expectedOperation)
+        .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model')
 
       if (targetFeatures.length === 0) {
         return {}

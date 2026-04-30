@@ -78,3 +78,8 @@ Region features use transparent wall-only geometry (`buildWallGeometry`) for the
 **Root cause:** The wall geometry and stock mesh occupy the same spatial volume; transparent overlay rendering over opaque solid geometry is inherently tricky without proper order-independent transparency or stencil buffer techniques.
 
 **Deferred:** Needs a proper solution such as rendering region walls as a separate render pass, using stencil masking, or offsetting the wall geometry above the stock surface at the shader level.
+
+### 6.2. Surface-clean operation with model features
+Surface-clean (`surface_clean`) operations applied to model features produce incorrect or unexpected toolpaths. The `surface.ts` resolver's obstacle/band logic was designed around add-type features that always produce closed 2D profiles via `expandFeatureGeometry`, but model features may differ in how their silhouette bounds interact with depth bands and island detection.
+
+**Deferred:** Needs investigation into how model feature silhouette profiles interact with the surface-clean depth-band algorithm (band construction, obstacle inclusion, material removal regions). May require adjusting the `allAddFeatures` collection or the band-splitting logic in `surface.ts` to correctly account for model features.
