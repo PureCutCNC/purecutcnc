@@ -1010,7 +1010,8 @@ export function resizeFeatureFromReference(
   const profile = transformProfileAffine(feature.sketch.profile, transformPoint)
   return {
     ...feature,
-    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
+    kind: feature.kind === 'text' ? 'text' : (feature.kind === 'stl' ? 'stl' : inferFeatureKind(profile)),
+    stl: feature.stl ? { ...feature.stl, scale: feature.stl.scale * scaleU } : feature.stl,
     sketch: {
       ...feature.sketch,
       origin: transformPoint(feature.sketch.origin),
@@ -1044,7 +1045,7 @@ export function rotateFeatureFromReference(
   const profile = transformProfile(feature.sketch.profile, (point) => rotatePointAround(point, referenceStart, angle))
   return {
     ...feature,
-    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
     sketch: {
       ...feature.sketch,
       origin: rotatePointAround(feature.sketch.origin, referenceStart, angle),
@@ -1208,7 +1209,7 @@ export function filletFeatureFromRadius(
 
   return {
     ...feature,
-    kind: inferFeatureKind(profile),
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
     sketch: {
       ...feature.sketch,
       profile,
@@ -1691,6 +1692,9 @@ function buildCopiedFeatures(
         folderId: sourceFeature.folderId,
         sketch: {
           ...sourceFeature.sketch,
+          origin: ['text', 'stl'].includes(sourceFeature.kind)
+            ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+            : sourceFeature.sketch.origin,
           profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
         },
         locked: false,
@@ -4686,7 +4690,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
               ...feature.sketch,
               profile: normalizedProfile,
             },
-            kind: inferFeatureKind(normalizedProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(normalizedProfile),
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -4739,7 +4743,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,
@@ -4786,7 +4790,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,
@@ -4832,7 +4836,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,

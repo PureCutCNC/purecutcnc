@@ -183,7 +183,7 @@ export type TextFontId =
   | 'droid_serif_bold'
   | 'droid_serif_regular_italic'
   | 'droid_serif_bold_italic'
-export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text'
+export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text' | 'stl'
 
 export interface TextFeatureData {
   text: string
@@ -192,11 +192,20 @@ export interface TextFeatureData {
   size: number
 }
 
+export interface STLFeatureData {
+  filePath?: string
+  fileData?: string // base64
+  scale: number
+  axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
+}
+
+
 export interface SketchFeature {
   id: string
   name: string
   kind: FeatureKind
   text?: TextFeatureData | null
+  stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
   operation: FeatureOperation

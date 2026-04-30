@@ -15,6 +15,8 @@
  */
 
 import * as THREE from 'three'
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel, type Mesh as ManifoldMesh } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
@@ -38,7 +40,7 @@ function resolveDimension(ref: DimensionRef, project: Project): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-async function getManifoldModule(): Promise<ManifoldToplevel> {
+export async function getManifoldModule(): Promise<ManifoldToplevel> {
   if (!manifoldModulePromise) {
     manifoldModulePromise = ManifoldModule().then((module) => {
       module.setup()
@@ -184,6 +186,70 @@ export function buildFeatureMesh(
   selected = false,
   hovered = false
 ): THREE.Mesh {
+  if (feature.kind === 'stl' && feature.stl?.fileData) {
+    const base64Data = feature.stl.fileData.split(',')[1]
+    const binaryString = typeof window !== 'undefined' 
+      ? window.atob(base64Data) 
+      : Buffer.from(base64Data, 'base64').toString('binary')
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+    
+    const loader = new STLLoader()
+    const geometry = loader.parse(bytes.buffer)
+    
+    // Apply axis swap
+    const axisSwap = feature.stl.axisSwap || 'none'
+    if (axisSwap !== 'none') {
+      const pos = geometry.attributes.position.array
+      for (let i = 0; i < pos.length; i += 3) {
+        if (axisSwap === 'yz') {
+          const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
+        } else if (axisSwap === 'xz') {
+          const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
+        } else if (axisSwap === 'xy') {
+          const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
+        }
+      }
+    }
+    
+    geometry.computeVertexNormals()
+    
+    const scale = feature.stl.scale ?? 1
+    const angleRad = (feature.sketch.orientationAngle ?? 0) * (Math.PI / 180)
+    
+    // Initial uniform scale
+    geometry.scale(scale, scale, scale)
+    
+    // Vertical positioning and scaling based on z_bottom/z_top
+    geometry.computeBoundingBox()
+    const bbox = geometry.boundingBox!
+    const meshHeight = bbox.max.z - bbox.min.z
+    const targetHeight = Math.max(0.1, Math.abs((feature.z_top ?? 0) - (feature.z_bottom ?? 0)))
+    const zScale = targetHeight / (meshHeight || 1)
+    
+    // Move to 0, scale Z, then move to feature.z_bottom
+    geometry.translate(0, 0, -bbox.min.z)
+    geometry.scale(1, 1, zScale)
+    geometry.translate(0, 0, Math.min(feature.z_top ?? 0, feature.z_bottom ?? 0))
+
+    geometry.rotateZ(angleRad)
+    geometry.translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
+    geometry.rotateX(-Math.PI / 2)
+    
+    const material = new THREE.MeshStandardMaterial({
+      color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
+      roughness: 0.82,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    })
+    
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.scale.z = -1
+    return mesh
+  }
+
   const shape = profileToShape(feature.sketch.profile)
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 0
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 5
@@ -353,6 +419,107 @@ function buildFeatureSolid(
   project: Project,
   feature: SketchFeature
 ): ManifoldSolid | null {
+  if (feature.kind === 'stl' && feature.stl?.fileData) {
+    try {
+      // Decode Base64 dataURL
+      const base64Data = feature.stl.fileData.split(',')[1]
+      if (!base64Data) return null
+      const binaryString = window.atob(base64Data)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      
+      const loader = new STLLoader()
+      let geometry = loader.parse(bytes.buffer)
+      
+      // Apply axis swap
+      const axisSwap = feature.stl?.axisSwap || 'none'
+      if (axisSwap !== 'none') {
+        const pos = geometry.attributes.position.array
+        for (let i = 0; i < pos.length; i += 3) {
+          if (axisSwap === 'yz') {
+            const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
+          } else if (axisSwap === 'xz') {
+            const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
+          } else if (axisSwap === 'xy') {
+            const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
+          }
+        }
+      }
+      
+      // Critical: STLLoader returns non-indexed triangle soup.
+      // Manifold requires an indexed mesh to identify shared edges.
+      geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
+      
+      const positions = geometry.attributes.position.array
+      const numVerts = positions.length / 3
+      let triVerts: Uint32Array
+      
+      if (geometry.index) {
+        triVerts = new Uint32Array(geometry.index.array)
+      } else {
+        triVerts = new Uint32Array(numVerts)
+        for (let i = 0; i < numVerts; i++) {
+          triVerts[i] = i
+        }
+      }
+      
+      const mesh: ManifoldMesh = {
+        numProp: 3,
+        numVert: numVerts,
+        numTri: triVerts.length / 3,
+        vertProperties: new Float32Array(positions),
+        triVerts: triVerts,
+        halfedgeTangent: new Float32Array(0),
+        runIndex: new Uint32Array([0]),
+        runOriginalID: new Uint32Array([0]),
+        runTransform: new Float32Array(12).fill(0),
+        faceID: new Uint32Array(triVerts.length / 3).fill(0),
+      }
+      
+      const solid = new module.Manifold(mesh)
+      const scale = feature.stl.scale ?? 1
+      const angleDeg = feature.sketch.orientationAngle ?? 0
+      
+      // Compute vertical scale and translation to match z_bottom/z_top
+      const bbox = solid.boundingBox()
+      const meshHeight = bbox.max[2] - bbox.min[2]
+      const targetHeight = Math.max(0.1, Math.abs((feature.z_top ?? 0) - (feature.z_bottom ?? 0)))
+      const zScale = targetHeight / (meshHeight || 1)
+
+      return solid
+        .scale([scale, scale, scale]) // Apply uniform scale first
+        .translate([0, 0, -bbox.min[2] * scale]) // Move to 0 (accounting for uniform scale)
+        .scale([1, 1, zScale]) // Scale Z to match target height
+        .translate([0, 0, Math.min(feature.z_top ?? 0, feature.z_bottom ?? 0)]) // Move to target bottom
+        .rotate(0, 0, angleDeg)
+        .translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
+    } catch (error) {
+      console.warn('STL is non-manifold, falling back to 2.5D silhouette extrusion for boolean model.', error)
+      
+      // Treat as a 2.5D composite feature by extruding the silhouette.
+      // This allows non-manifold STLs to participate in boolean operations (like pockets/cuts) 
+      // based on their footprint.
+      const contour = profileToPolygon(feature.sketch.profile)
+      if (contour.length < 3) {
+        return null
+      }
+
+      const zTop = resolveDimension(feature.z_top, project)
+      const zBottom = resolveDimension(feature.z_bottom, project)
+      const yStart = Math.min(zTop, zBottom)
+      const depth = Math.max(Math.abs(zBottom - zTop), 0.1)
+
+      const crossSection = module.CrossSection.ofPolygons([contour], 'EvenOdd')
+      try {
+        return crossSection.extrude(depth).translate(0, 0, yStart)
+      } finally {
+        crossSection.delete()
+      }
+    }
+  }
+
   if (!feature.sketch.profile.closed) {
     return null
   }
@@ -390,6 +557,14 @@ async function buildBooleanModel(
       try {
         solid = buildFeatureSolid(module, project, feature)
         if (!solid) {
+          continue
+        }
+
+        // For STL 'add' operations, we skip including them in the boolean model
+        // because we render the high-resolution mesh as an overlay. This prevents
+        // non-manifold STLs from showing their blocky 2.5D fallback extrusion
+        // while still allowing 'subtract' STLs to cut holes in the stock.
+        if (feature.kind === 'stl' && feature.operation === 'add') {
           continue
         }
 
@@ -486,8 +661,22 @@ export async function buildScene(
       modelMesh = await buildBooleanModel(project, visibleFeatures)
     } catch (error) {
       console.error('Failed to build boolean 3D preview, falling back to feature meshes.', error)
-      for (const feature of visibleFeatures.flatMap((entry) => expandFeatureGeometry(entry))) {
+    }
+
+    // Always include STL meshes for visual detail, even if boolean model succeeded.
+    // This ensures non-manifold STLs show their real mesh instead of just the 2.5D extrusion fallback.
+    for (const feature of visibleFeatures) {
+      if (feature.kind === 'stl') {
         featureMeshes.set(feature.id, buildFeatureMesh(feature))
+      }
+      
+      // If buildBooleanModel failed, we need the rest of the meshes too
+      if (!modelMesh) {
+        for (const expanded of expandFeatureGeometry(feature)) {
+          if (expanded.kind !== 'stl') {
+            featureMeshes.set(expanded.id, buildFeatureMesh(expanded))
+          }
+        }
       }
     }
   }

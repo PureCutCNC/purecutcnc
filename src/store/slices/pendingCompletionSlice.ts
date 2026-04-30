@@ -182,6 +182,9 @@ export function createPendingCompletionSlice(
                     ...feature,
                     sketch: {
                       ...feature.sketch,
+                      origin: ['text', 'stl'].includes(feature.kind) 
+                        ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy } 
+                        : feature.sketch.origin,
                       profile: deps.transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
                   }

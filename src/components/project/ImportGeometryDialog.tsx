@@ -17,12 +17,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { importDxfString, importSvgString, inspectDxfString, inspectSvgString, type ImportInspection, type ImportSourceType } from '../../import'
+import { extractStlProfileAndBounds } from '../../import/stl'
 import { useProjectStore } from '../../store/projectStore'
 import type { Units } from '../../utils/units'
 
 interface LoadedImportFile {
   fileName: string
   text: string
+  dataUrl?: string // For STL
   sourceType: ImportSourceType
   inspection: ImportInspection
 }
@@ -33,7 +35,10 @@ interface ImportGeometryDialogProps {
 }
 
 function sourceTypeLabel(sourceType: ImportSourceType): string {
-  return sourceType === 'svg' ? 'SVG' : 'DXF'
+  if (sourceType === 'svg') return 'SVG'
+  if (sourceType === 'dxf') return 'DXF'
+  if (sourceType === 'stl') return 'STL'
+  return 'Unknown'
 }
 
 function unitsLabel(units: Units): string {
@@ -52,6 +57,7 @@ function detectSourceType(fileName: string): ImportSourceType | null {
   const lowerName = fileName.toLowerCase()
   if (lowerName.endsWith('.svg')) return 'svg'
   if (lowerName.endsWith('.dxf')) return 'dxf'
+  if (lowerName.endsWith('.stl')) return 'stl'
   return null
 }
 
@@ -64,6 +70,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [selectedLayers, setSelectedLayers] = useState<Set<string>>(new Set())
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState<number | null>(null)
+  const [axisSwap, setAxisSwap] = useState<'none' | 'yz' | 'xz' | 'xy'>('none')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -92,13 +100,31 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     const reader = new FileReader()
     reader.onload = (readerEvent) => {
       try {
-        const text = String(readerEvent.target?.result ?? '')
-        const inspection = nextSourceType === 'svg' ? inspectSvgString(text) : inspectDxfString(text)
-        setLoadedFile({ fileName: file.name, text, sourceType: nextSourceType, inspection })
-        setSourceUnits(inspection.detectedUnits ?? '')
+        if (nextSourceType === 'stl') {
+          const dataUrl = String(readerEvent.target?.result ?? '')
+          setLoadedFile({
+            fileName: file.name,
+            text: '',
+            dataUrl,
+            sourceType: nextSourceType,
+            inspection: { layers: [], warnings: [], sourceUnitScale: 1, detectedUnits: null }
+          })
+          setSourceUnits(project.meta.units) // Default to project units for STL
+        } else {
+          const text = String(readerEvent.target?.result ?? '')
+          const inspection = nextSourceType === 'svg' ? inspectSvgString(text) : inspectDxfString(text)
+          setLoadedFile({ fileName: file.name, text, sourceType: nextSourceType, inspection })
+          setSourceUnits(inspection.detectedUnits ?? '')
+        }
         setJoinTolerance(defaultJoinTolerance(project.meta.units))
         setAllowCrossLayerJoins(false)
-        setSelectedLayers(new Set(inspection.layers))
+        if (nextSourceType !== 'stl') {
+          const text = String(readerEvent.target?.result ?? '')
+          const inspection = nextSourceType === 'svg' ? inspectSvgString(text) : inspectDxfString(text)
+          setSelectedLayers(new Set(inspection.layers))
+        } else {
+          setSelectedLayers(new Set())
+        }
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
@@ -109,7 +135,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
       }
     }
-    reader.readAsText(file)
+    if (nextSourceType === 'stl') {
+      reader.readAsDataURL(file)
+    } else {
+      reader.readAsText(file)
+    }
   }
 
   function toggleLayer(layer: string) {
@@ -125,9 +155,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     setSelectedLayers(value ? new Set(loadedFile?.inspection.layers ?? []) : new Set())
   }
 
-  function handleImport() {
+  async function handleImport() {
     if (!loadedFile) {
-      setDialogError('Choose an SVG or DXF file to import.')
+      setDialogError('Choose an SVG, DXF, or STL file to import.')
       return
     }
     if (!sourceUnits) {
@@ -136,6 +166,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     }
 
     setBusy(true)
+    setLoadingProgress(0)
     setDialogError(null)
 
     try {
@@ -151,28 +182,76 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       const hasDxfLayers = loadedFile.sourceType === 'dxf' && loadedFile.inspection.layers.length > 0
       const layerFilter = hasDxfLayers ? [...selectedLayers] : null
 
-      const result = loadedFile.sourceType === 'svg'
-        ? importSvgString(loadedFile.text, {
-            fileName: loadedFile.fileName,
-            targetUnits: project.meta.units,
-            sourceUnits,
-            sourceUnitScale,
-          })
-        : importDxfString(loadedFile.text, {
-            fileName: loadedFile.fileName,
-            targetUnits: project.meta.units,
-            sourceUnits,
-            sourceUnitScale,
-            joinTolerance: parsedJoinTolerance,
-            allowCrossLayerJoins,
-            layerFilter,
-          })
+      let createdIds: string[] = []
 
-      const createdIds = importShapes({
-        fileName: loadedFile.fileName,
-        sourceType: loadedFile.sourceType,
-        shapes: result.shapes,
-      })
+      if (loadedFile.sourceType === 'stl') {
+        const stlScale = sourceUnits === project.meta.units ? 1 : (sourceUnits === 'inch' ? 25.4 : 1/25.4)
+        
+        // Wait for WebAssembly to parse and project the STL footprint
+        const base64Data = loadedFile.dataUrl?.split(',')[1]
+        if (!base64Data) throw new Error('Missing file data')
+        
+        const stlInfo = await extractStlProfileAndBounds(base64Data, stlScale, axisSwap, (p) => setLoadingProgress(p))
+        if (!stlInfo) throw new Error('Failed to parse STL or generate silhouette')
+
+        const { addFeature } = useProjectStore.getState()
+        const featureId = crypto.randomUUID()
+        
+        addFeature({
+          id: featureId,
+          name: loadedFile.fileName.replace(/\.stl$/i, ''),
+          kind: 'stl',
+          folderId: null,
+          stl: {
+            filePath: undefined,
+            fileData: loadedFile.dataUrl,
+            scale: stlScale,
+            axisSwap: axisSwap,
+          },
+          sketch: {
+            profile: stlInfo.profile,
+            origin: { x: 0, y: 0 },
+            orientationAngle: 0,
+            dimensions: [],
+            constraints: []
+          },
+          operation: 'add',
+          z_top: stlInfo.z_top,
+          z_bottom: stlInfo.z_bottom,
+          visible: true,
+          locked: false
+        })
+        createdIds = [featureId]
+      } else {
+        const result = loadedFile.sourceType === 'svg'
+          ? importSvgString(loadedFile.text, {
+              fileName: loadedFile.fileName,
+              targetUnits: project.meta.units,
+              sourceUnits,
+              sourceUnitScale,
+            })
+          : importDxfString(loadedFile.text, {
+              fileName: loadedFile.fileName,
+              targetUnits: project.meta.units,
+              sourceUnits,
+              sourceUnitScale,
+              joinTolerance: parsedJoinTolerance,
+              allowCrossLayerJoins,
+              layerFilter,
+            })
+
+        createdIds = importShapes({
+          fileName: loadedFile.fileName,
+          sourceType: loadedFile.sourceType,
+          shapes: result.shapes,
+        })
+        
+        if (result.warnings.length > 0) {
+          window.alert(
+            `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${result.warnings.join('\n')}`,
+          )
+        }
+      }
 
       if (createdIds.length === 0) {
         setDialogError(result.warnings[0] ?? 'No importable geometry found in the selected file.')
@@ -180,17 +259,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         return
       }
 
-      if (result.warnings.length > 0) {
-        window.alert(
-          `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${result.warnings.join('\n')}`,
-        )
-      }
+
 
       onImportComplete?.()
       onClose()
     } catch (error) {
       setDialogError(error instanceof Error ? error.message : 'Failed to import geometry file.')
       setBusy(false)
+      setLoadingProgress(null)
     }
   }
 
@@ -228,9 +304,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
               >
-                {loadedFile ? 'Choose Different File' : 'Choose SVG or DXF'}
+                {loadedFile ? 'Choose Different File' : 'Choose SVG, DXF, or STL'}
               </button>
-              <input ref={fileInputRef} type="file" accept=".svg,.dxf" onChange={handleFileChange} style={{ display: 'none' }} />
+              <input ref={fileInputRef} type="file" accept=".svg,.dxf,.stl" onChange={handleFileChange} style={{ display: 'none' }} />
               <div className="import-dialog__file-name">
                 {loadedFile ? loadedFile.fileName : 'No file selected.'}
               </div>
@@ -259,7 +335,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     <option value="inch">Inch</option>
                   </select>
                 </div>
-                {!loadedFile.inspection.detectedUnits ? (
+                {!loadedFile.inspection.detectedUnits && loadedFile.sourceType !== 'stl' ? (
                   <div className="import-dialog__field-note import-dialog__field-note--warn">
                     Units not detected — choose the source units before importing.
                   </div>
@@ -270,6 +346,22 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                   <span>Project Units</span>
                   <strong>{unitsLabel(project.meta.units)}</strong>
                 </div>
+
+                {/* Axis Swap (STL Only) */}
+                {loadedFile.sourceType === 'stl' ? (
+                  <div className="import-dialog__info-row">
+                    <span>Axis Orientation</span>
+                    <select
+                      value={axisSwap}
+                      onChange={(event) => setAxisSwap(event.target.value as any)}
+                    >
+                      <option value="none">Original (Z-Up)</option>
+                      <option value="yz">Swap Y / Z (Y-Up)</option>
+                      <option value="xz">Swap X / Z</option>
+                      <option value="xy">Swap X / Y</option>
+                    </select>
+                  </div>
+                ) : null}
 
                 {/* Join Tolerance */}
                 {showJoinTolerance ? (
@@ -304,6 +396,16 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     {inspectionWarnings.map((warning) => (
                       <div key={warning} className="export-warning">{warning}</div>
                     ))}
+                  </div>
+                ) : null}
+
+                {/* Progress */}
+                {busy && loadingProgress !== null ? (
+                  <div className="import-progress-container">
+                    <div className="import-progress-label">Processing STL... {loadingProgress}%</div>
+                    <div className="import-progress-track">
+                      <div className="import-progress-fill" style={{ width: `${loadingProgress}%` }} />
+                    </div>
                   </div>
                 ) : null}
               </div>
