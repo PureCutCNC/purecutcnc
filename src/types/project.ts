@@ -282,6 +282,7 @@ export type OperationKind =
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'
+  | 'rough_surface'
   | 'follow_line'
   | 'drilling'
 

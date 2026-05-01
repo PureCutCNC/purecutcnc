@@ -1460,6 +1460,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Edge route outside'
     case 'surface_clean':
       return 'Surface clean'
+    case 'rough_surface':
+      return 'Rough surface'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -1525,6 +1527,24 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
   }
 
+  if (kind === 'rough_surface') {
+    if (target.source !== 'features' || target.featureIds.length !== 2) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== 2) {
+      return false
+    }
+
+    const hasModel = features.some((feature) => feature.operation === 'model' && feature.kind === 'stl')
+    const hasRegion = features.some((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+    return hasModel && hasRegion
+  }
+
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
@@ -1561,7 +1581,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -1639,6 +1659,14 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
     return firstSubtractFeature
       ? { source: 'features', featureIds: [firstSubtractFeature.id] }
       : { source: 'stock' }
+  }
+
+  if (kind === 'rough_surface') {
+    const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
+    const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+    if (modelFeature && regionFeature) {
+      return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+    }
   }
 
   if (kind === 'surface_clean' || kind === 'edge_route_outside') {

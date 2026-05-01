@@ -25,6 +25,16 @@ import { expandFeatureGeometry } from '../text'
 const ARC_STEP_RADIANS = Math.PI / 18
 
 let manifoldModulePromise: Promise<ManifoldToplevel> | null = null
+let manifoldModuleInstance: ManifoldToplevel | null = null
+
+/**
+ * Returns the Manifold module synchronously if already loaded, or null if not yet initialized.
+ * The module is loaded during the first viewport render, so by the time a user creates
+ * a CAM operation it should always be available.
+ */
+export function getManifoldModuleSync(): ManifoldToplevel | null {
+  return manifoldModuleInstance
+}
 
 function resolveDimension(ref: DimensionRef, project: Project): number {
   if (typeof ref === 'number') {
@@ -44,9 +54,11 @@ export async function getManifoldModule(): Promise<ManifoldToplevel> {
   if (!manifoldModulePromise) {
     manifoldModulePromise = ManifoldModule().then((module) => {
       module.setup()
+      manifoldModuleInstance = module
       return module
     }).catch((error) => {
       manifoldModulePromise = null
+      manifoldModuleInstance = null
       throw error
     })
   }
@@ -214,6 +226,131 @@ function buildWallGeometry(shape: THREE.Shape, depth: number): THREE.BufferGeome
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return geometry
+}
+
+export interface STLTransformedData {
+  /** Transformed vertex positions (interleaved xyz). */
+  positions: Float32Array
+  /** Triangle index array. */
+  index: Uint32Array
+  /** Raw Z range information (before transform). */
+  rawMinZ: number
+  /** Mesh height after uniform scale. */
+  meshHeight: number
+}
+
+/**
+ * Load an STL feature and apply all design-space transformations
+ * (axis swap, scale, zScale, rotate, translate to origin).
+ *
+ * Does NOT apply render-only transforms (rotateX(-PI/2), scale.z = -1).
+ * Returns the raw position/index data needed for mesh slicing.
+ *
+ * Shares the same transformation logic as buildFeatureMesh, so the 3D
+ * preview matches the toolpath geometry.
+ */
+export function loadSTLTransformedGeometry(
+  feature: SketchFeature,
+  project: Project
+): STLTransformedData | null {
+  if (feature.kind !== 'stl' || !feature.stl?.fileData) return null
+
+  const base64Data = feature.stl.fileData.split(',')[1]
+  if (!base64Data) return null
+
+  const binaryString = window.atob(base64Data)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+
+  const loader = new STLLoader()
+  let geometry = loader.parse(bytes.buffer)
+
+  // Apply axis swap
+  const axisSwap = feature.stl.axisSwap || 'none'
+  if (axisSwap !== 'none') {
+    const pos = geometry.attributes.position.array
+    for (let i = 0; i < pos.length; i += 3) {
+      if (axisSwap === 'yz') {
+        const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
+      } else if (axisSwap === 'xz') {
+        const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
+      } else if (axisSwap === 'xy') {
+        const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
+      }
+    }
+  }
+
+  // Merge vertices to create an indexed mesh (required for per-triangle slicing)
+  geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
+
+  const rawPos = geometry.attributes.position.array as Float32Array
+  const numVerts = rawPos.length / 3
+
+  // Compute raw Z bounds
+  let rawMinZ = Infinity
+  let rawMaxZ = -Infinity
+  for (let i = 0; i < rawPos.length; i += 3) {
+    const z = rawPos[i + 2]
+    if (z < rawMinZ) rawMinZ = z
+    if (z > rawMaxZ) rawMaxZ = z
+  }
+
+  const meshHeight = rawMaxZ - rawMinZ
+  if (meshHeight < 0.001) return null
+
+  // BuildFeatureSolid-style transformations (same as buildFeatureMesh)
+  const scale = feature.stl.scale ?? 1
+  const angleDeg = feature.sketch.orientationAngle ?? 0
+  const zTop = resolveDimension(feature.z_top, project)
+  const zBottom = resolveDimension(feature.z_bottom, project)
+  const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+  const zScale = targetHeight / ((meshHeight || 1) * scale)
+  const angleRad = (angleDeg * Math.PI) / 180
+  const cosA = Math.cos(angleRad)
+  const sinA = Math.sin(angleRad)
+  const originX = feature.sketch.origin.x
+  const originY = feature.sketch.origin.y
+  const bottomZ = Math.min(zTop, zBottom)
+
+  // Apply transforms to vertex positions
+  const positions = new Float32Array(rawPos.length)
+  for (let i = 0; i < numVerts; i++) {
+    const ix = i * 3
+    const iy = i * 3 + 1
+    const iz = i * 3 + 2
+
+    // Uniform scale
+    let x = rawPos[ix] * scale
+    let y = rawPos[iy] * scale
+    let z = rawPos[iz] * scale
+
+    // Translate bottom to Z=0, then Z-only scale, then translate to target
+    z -= rawMinZ * scale
+    z *= zScale
+    z += bottomZ
+
+    // Rotate around Z
+    const rx = x * cosA - y * sinA
+    const ry = x * sinA + y * cosA
+    x = rx
+    y = ry
+
+    // Translate to sketch origin
+    x += originX
+    y += originY
+
+    positions[ix] = x
+    positions[iy] = y
+    positions[iz] = z
+  }
+
+  const index = geometry.index
+    ? new Uint32Array(geometry.index.array)
+    : new Uint32Array(numVerts).map((_, i) => i)
+
+  return { positions, index, rawMinZ: rawMinZ * scale, meshHeight: meshHeight * scale }
 }
 
 export function buildFeatureMesh(
@@ -467,7 +604,7 @@ function manifoldMeshToGeometry(mesh: import('manifold-3d').Mesh): THREE.BufferG
   return nonIndexed
 }
 
-function buildFeatureSolid(
+export function buildFeatureSolid(
   module: ManifoldToplevel,
   project: Project,
   feature: SketchFeature
