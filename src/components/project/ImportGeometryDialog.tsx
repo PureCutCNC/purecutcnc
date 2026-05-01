@@ -15,9 +15,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { CSSProperties, ChangeEvent } from 'react'
 import { importDxfString, importSvgString, inspectDxfString, inspectSvgString, type ImportInspection, type ImportSourceType } from '../../import'
-import { extractStlProfileAndBounds } from '../../import/stl'
+import { extractStlProfileAndBounds, renderSilhouetteToDataUrl, renderStlTopViewToDataUrl } from '../../import/stl'
 import { useProjectStore } from '../../store/projectStore'
 import type { Units } from '../../utils/units'
 
@@ -194,6 +194,23 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         const stlInfo = await extractStlProfileAndBounds(base64Data, stlScale, axisSwap, (p) => setLoadingProgress(p))
         if (!stlInfo) throw new Error('Failed to parse STL or generate silhouette')
 
+        // Pre-render the silhouette to a data URL so we can display it as a
+        // filled footprint within the feature in the sketch view.
+        let silhouetteDataUrl: string | undefined
+        let topViewDataUrl: string | undefined
+        try {
+          const url = renderSilhouetteToDataUrl(stlInfo.profile)
+          if (url) silhouetteDataUrl = url
+        } catch {
+          // silhouette rendering is best-effort
+        }
+        try {
+          const url = renderStlTopViewToDataUrl(base64Data, stlScale, axisSwap)
+          if (url) topViewDataUrl = url
+        } catch {
+          // top-view rendering is best-effort
+        }
+
         const { addFeature } = useProjectStore.getState()
         const featureId = crypto.randomUUID()
         
@@ -207,6 +224,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             fileData: loadedFile.dataUrl,
             scale: stlScale,
             axisSwap: axisSwap,
+            silhouetteDataUrl,
+            topViewDataUrl,
           },
           sketch: {
             profile: stlInfo.profile,
@@ -276,6 +295,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const showLayers = dxfLayers.length > 0
   const allLayersSelected = dxfLayers.length > 0 && dxfLayers.every((l) => selectedLayers.has(l))
   const someLayersSelected = dxfLayers.some((l) => selectedLayers.has(l))
+  const progressPercent = Math.min(100, Math.max(0, loadingProgress ?? 0))
+  const progressStyle = { '--progress': String(progressPercent / 100) } as CSSProperties
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -402,9 +423,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 {/* Progress */}
                 {busy && loadingProgress !== null ? (
                   <div className="import-progress-container">
-                    <div className="import-progress-label">Processing STL... {loadingProgress}%</div>
+                    <div className="import-progress-label">Processing STL... {progressPercent}%</div>
                     <div className="import-progress-track">
-                      <div className="import-progress-fill" style={{ width: `${loadingProgress}%` }} />
+                      <div className="import-progress-fill" style={progressStyle} />
                     </div>
                   </div>
                 ) : null}

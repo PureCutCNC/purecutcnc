@@ -135,10 +135,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     dragOverTarget.current = null
   }
 
-  // Warn if first feature is not 'add' — this should not normally happen
+  // Warn if first 2.5D feature is not 'add' — imported STL models may be first.
   // since the store enforces it, but a loaded file could be malformed.
   const firstFeatureInvalid =
-    project.features.length > 0 && project.features[0].operation !== 'add'
+    project.features.length > 0
+    && project.features[0].operation !== 'add'
+    && !(project.features[0].kind === 'stl' && project.features[0].operation === 'model')
 
   const rootEntries = project.featureTree
 
@@ -281,7 +283,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
-                ⚠ First feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
+                ⚠ First 2.5D feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
               </div>
             )}
             {rootEntries.map((entry) => {
@@ -654,7 +656,7 @@ function TreeRow({
               }}
               title={
                 operationLocked
-                  ? 'First feature must always be Add (base solid)'
+                  ? 'First 2.5D feature must be Add (base solid)'
                   : operation === 'model'
                   ? 'Model — imported 3D object (locked)'
                   : operation === 'add'

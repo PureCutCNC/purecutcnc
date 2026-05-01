@@ -2322,15 +2322,18 @@ function projectsEqual(a: Project, b: Project): boolean {
 }
 
 // ============================================================
-// Rule: first feature must always be 'add'
-// The part model is built from the first 'add' solid — subsequent
-// features add or subtract from it. Stock is a separate concept
-// used only during CAM operation generation.
+// Rule: the first 2.5D feature must be 'add'.
+// Imported STL model features are standalone 3D model targets and may be the
+// only feature in a project, so they are exempt from the base-solid rule.
 // ============================================================
+
+function isImportedModelFeature(feature: SketchFeature): boolean {
+  return feature.kind === 'stl' && feature.operation === 'model'
+}
 
 export function isFirstFeatureValid(features: SketchFeature[]): boolean {
   if (features.length === 0) return true
-  return features[0].operation === 'add'
+  return features[0].operation === 'add' || isImportedModelFeature(features[0])
 }
 
 // ============================================================
@@ -3682,8 +3685,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const safeId = s.project.features.some((existing) => existing.id === feature.id)
         ? nextUniqueGeneratedId(s.project, 'f')
         : feature.id
-      // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
+      const preserveImportedModelOperation = isFirst && isImportedModelFeature(feature)
       // Determine folder context and insertion point from current selection.
       const selectedNode = s.selection.selectedNode
       let effectiveFolderId: string | null = feature.folderId ?? null
@@ -3695,7 +3698,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         effectiveFolderId = selectedFeature?.folderId ?? null
         insertAfterFeatureId = selectedNode.featureId
       }
-      const safeFeature: SketchFeature = isFirst
+      const safeFeature: SketchFeature = isFirst && !preserveImportedModelOperation
         ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
         : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
       // Build features and featureTree arrays with correct insertion position.
@@ -3851,9 +3854,13 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => {
       const features = s.project.features
       const isFirst = features.length > 0 && features[0].id === id
-      // Prevent changing the first feature's operation away from 'add'
+      const existingFeature = features.find((feature) => feature.id === id) ?? null
+      const nextOperation = patch.operation ?? existingFeature?.operation
+      const nextKind = patch.kind ?? existingFeature?.kind
+      const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
+      // Prevent changing the first 2.5D feature's operation away from 'add'.
       const safePatch: Partial<SketchFeature> =
-        isFirst && patch.operation !== undefined && patch.operation !== 'add'
+        isFirst && !nextIsImportedModel && patch.operation !== undefined && patch.operation !== 'add'
           ? { ...patch, operation: 'add' }
           : patch
       const nextProject = {
@@ -3894,8 +3901,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
             return feature
           }
 
+          const nextOperation = patch.operation ?? feature.operation
+          const nextKind = patch.kind ?? feature.kind
+          const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
           const safePatch: Partial<SketchFeature> =
-            index === 0 && patch.operation !== undefined && patch.operation !== 'add'
+            index === 0 && !nextIsImportedModel && patch.operation !== undefined && patch.operation !== 'add'
               ? { ...patch, operation: 'add' }
               : patch
 
@@ -4136,9 +4146,9 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => {
       const map = new Map(s.project.features.map((f) => [f.id, f]))
       const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
-      // If reorder would put a subtract feature first, silently promote it to add.
+      // If reorder would put a non-model subtract/region feature first, silently promote it to add.
       // This is safer than blocking the reorder or showing an error mid-drag.
-      if (reordered.length > 0 && reordered[0].operation !== 'add') {
+      if (reordered.length > 0 && reordered[0].operation !== 'add' && !isImportedModelFeature(reordered[0])) {
         reordered[0] = { ...reordered[0], operation: 'add' }
       }
       return {

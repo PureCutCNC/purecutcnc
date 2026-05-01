@@ -1104,9 +1104,11 @@ export function PropertiesPanel() {
   const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
-  // First feature in the tree must always be 'add' — lock the operation field
+  // First 2.5D feature in the tree must be 'add'; imported STL models are locked as Model.
   const isFirstFeature =
     project.features.length > 0 && project.features[0].id === selectedFeature.id
+  const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
+  const operationLockedToAdd = isFirstFeature && !isImportedModelFeature
 
   return (
     <div className="properties-panel">
@@ -1121,11 +1123,11 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          {isFirstFeature || selectedFeature.operation === 'model' ? (
+          {operationLockedToAdd || selectedFeature.operation === 'model' ? (
             <div className="properties-locked-field" title={
-              isFirstFeature
-                ? 'The first feature must always be Add — it defines the base solid of the part model'
-                : 'Model features are imported 3D objects and cannot change operation type'
+              selectedFeature.operation === 'model'
+                ? 'Model features are imported 3D objects and cannot change operation type'
+                : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
             }>
               <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
               <span className="properties-locked-hint" aria-hidden="true">🔒</span>

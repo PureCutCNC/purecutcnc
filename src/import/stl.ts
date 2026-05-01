@@ -17,7 +17,7 @@
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getManifoldModule } from '../engine/csg'
-import { polygonProfile, type Point, type SketchProfile } from '../types/project'
+import { polygonProfile, profileVertices, type Point, type SketchProfile } from '../types/project'
 import { unionClipperPaths } from '../store/helpers/clipping'
 
 /** Cross-platform base64-to-binary-string decoder (works in browser and Node) */
@@ -39,6 +39,29 @@ function base64ToBinaryString(data: string): string {
     if (d !== 64) result += String.fromCharCode(((c & 3) << 6) | d)
   }
   return result
+}
+
+function applyAxisSwapToPositions(
+  positions: ArrayLike<number> & { [index: number]: number },
+  axisSwap: 'none' | 'yz' | 'xz' | 'xy',
+): void {
+  if (axisSwap === 'none') return
+
+  for (let i = 0; i < positions.length; i += 3) {
+    if (axisSwap === 'yz') {
+      const tmp = positions[i + 1]
+      positions[i + 1] = positions[i + 2]
+      positions[i + 2] = tmp
+    } else if (axisSwap === 'xz') {
+      const tmp = positions[i]
+      positions[i] = positions[i + 2]
+      positions[i + 2] = tmp
+    } else if (axisSwap === 'xy') {
+      const tmp = positions[i]
+      positions[i] = positions[i + 1]
+      positions[i + 1] = tmp
+    }
+  }
 }
 
 export async function extractStlProfileAndBounds(
@@ -80,23 +103,7 @@ export async function extractStlProfileAndBounds(
   }
 
   // Apply axis swap if requested
-  if (axisSwap !== 'none') {
-    for (let i = 0; i < positions.length; i += 3) {
-      if (axisSwap === 'yz') {
-        const tmp = positions[i + 1]
-        positions[i + 1] = positions[i + 2]
-        positions[i + 2] = tmp
-      } else if (axisSwap === 'xz') {
-        const tmp = positions[i]
-        positions[i] = positions[i + 2]
-        positions[i + 2] = tmp
-      } else if (axisSwap === 'xy') {
-        const tmp = positions[i]
-        positions[i] = positions[i + 1]
-        positions[i + 1] = tmp
-      }
-    }
-  }
+  applyAxisSwapToPositions(positions as any, axisSwap)
 
   const module = await getManifoldModule()
   const manifoldMesh = new module.Mesh({
@@ -212,4 +219,215 @@ export async function extractStlProfileAndBounds(
   const profile = polygonProfile(points)
 
   return { profile, z_bottom, z_top }
+}
+
+export function renderStlTopViewToDataUrl(
+  base64Data: string,
+  scale: number,
+  axisSwap: 'none' | 'yz' | 'xz' | 'xy' = 'none',
+): string | null {
+  let canvas: HTMLCanvasElement | undefined
+  try {
+    canvas = document.createElement('canvas')
+  } catch {
+    return null
+  }
+
+  const binaryString = base64ToBinaryString(base64Data)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+
+  const loader = new STLLoader()
+  const geometry = loader.parse(bytes.buffer)
+  const positions = geometry.attributes.position.array
+  applyAxisSwapToPositions(positions as any, axisSwap)
+
+  const index = geometry.index
+    ? Array.from(geometry.index.array as ArrayLike<number>)
+    : Array.from({ length: positions.length / 3 }, (_, i) => i)
+
+  let minX = Infinity, maxX = -Infinity
+  let minY = Infinity, maxY = -Infinity
+  let minZ = Infinity, maxZ = -Infinity
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i] * scale
+    const y = positions[i + 1] * scale
+    const z = positions[i + 2] * scale
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+
+  const widthWorld = maxX - minX
+  const heightWorld = maxY - minY
+  const depthWorld = maxZ - minZ
+  if (!(widthWorld > 1e-9) || !(heightWorld > 1e-9)) return null
+
+  const MAX_PX = 1024
+  const imageScale = MAX_PX / Math.max(widthWorld, heightWorld)
+  const canvasW = Math.max(1, Math.round(widthWorld * imageScale))
+  const canvasH = Math.max(1, Math.round(heightWorld * imageScale))
+  canvas.width = canvasW
+  canvas.height = canvasH
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.clearRect(0, 0, canvasW, canvasH)
+
+  const triangles: Array<{
+    ax: number; ay: number
+    bx: number; by: number
+    cx: number; cy: number
+    z: number
+    shade: number
+  }> = []
+
+  function px(vertexIndex: number): number {
+    return ((positions[vertexIndex * 3] * scale) - minX) * imageScale
+  }
+
+  function py(vertexIndex: number): number {
+    return ((positions[vertexIndex * 3 + 1] * scale) - minY) * imageScale
+  }
+
+  function pz(vertexIndex: number): number {
+    return positions[vertexIndex * 3 + 2] * scale
+  }
+
+  for (let i = 0; i < index.length; i += 3) {
+    const ia = index[i]
+    const ib = index[i + 1]
+    const ic = index[i + 2]
+    const ax = px(ia), ay = py(ia), az = pz(ia)
+    const bx = px(ib), by = py(ib), bz = pz(ib)
+    const cx = px(ic), cy = py(ic), cz = pz(ic)
+    const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    if (Math.abs(area) < 0.01) continue
+
+    const ux = positions[ib * 3] - positions[ia * 3]
+    const uy = positions[ib * 3 + 1] - positions[ia * 3 + 1]
+    const uz = positions[ib * 3 + 2] - positions[ia * 3 + 2]
+    const vx = positions[ic * 3] - positions[ia * 3]
+    const vy = positions[ic * 3 + 1] - positions[ia * 3 + 1]
+    const vz = positions[ic * 3 + 2] - positions[ia * 3 + 2]
+    const nx = uy * vz - uz * vy
+    const ny = uz * vx - ux * vz
+    const nz = ux * vy - uy * vx
+    const normalLength = Math.hypot(nx, ny, nz) || 1
+    const topLight = Math.max(0, nz / normalLength)
+    const sideLight = Math.max(0, (-0.35 * nx - 0.45 * ny + 0.82 * nz) / normalLength)
+    const shade = Math.max(0.18, Math.min(1, 0.35 + topLight * 0.45 + sideLight * 0.2))
+
+    triangles.push({
+      ax,
+      ay,
+      bx,
+      by,
+      cx,
+      cy,
+      z: (az + bz + cz) / 3,
+      shade,
+    })
+  }
+
+  triangles.sort((a, b) => a.z - b.z)
+
+  for (const tri of triangles) {
+    const zT = depthWorld > 1e-9 ? (tri.z - minZ) / depthWorld : 0.5
+    const r = Math.round((52 + zT * 72) * tri.shade)
+    const g = Math.round((92 + zT * 80) * tri.shade)
+    const b = Math.round((118 + zT * 88) * tri.shade)
+
+    ctx.beginPath()
+    ctx.moveTo(tri.ax, tri.ay)
+    ctx.lineTo(tri.bx, tri.by)
+    ctx.lineTo(tri.cx, tri.cy)
+    ctx.closePath()
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+    ctx.fill()
+  }
+
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * Render a silhouette SketchProfile (from STL import) to a PNG data URL using
+ * an offscreen canvas, and return positioning info for use as a backdrop.
+ *
+ * Returns null if the silhouette is degenerate or canvas is unavailable.
+ */
+export function renderSilhouetteToDataUrl(
+  profile: SketchProfile,
+): string | null {
+  const verts = profileVertices(profile)
+  if (verts.length < 3) return null
+
+  // ── Bounding box ────────────────────────────────────────────────────────
+  let minX = Infinity, maxX = -Infinity
+  let minY = Infinity, maxY = -Infinity
+  for (const v of verts) {
+    if (v.x < minX) minX = v.x
+    if (v.x > maxX) maxX = v.x
+    if (v.y < minY) minY = v.y
+    if (v.y > maxY) maxY = v.y
+  }
+  const bboxW = maxX - minX
+  const bboxH = maxY - minY
+  if (bboxW < 1e-9 || bboxH < 1e-9) return null
+
+  // ── Canvas dimensions (max 1024 on longest side) ──────────────────────
+  const MAX_PX = 1024
+  let canvasW: number
+  let canvasH: number
+  if (bboxW >= bboxH) {
+    canvasW = MAX_PX
+    canvasH = Math.max(1, Math.round(MAX_PX * (bboxH / bboxW)))
+  } else {
+    canvasH = MAX_PX
+    canvasW = Math.max(1, Math.round(MAX_PX * (bboxW / bboxH)))
+  }
+
+  let canvas: HTMLCanvasElement | undefined
+  try {
+    canvas = document.createElement('canvas')
+  } catch {
+    return null // canvas not available
+  }
+  canvas.width = canvasW
+  canvas.height = canvasH
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  // ── Scale: map bounding box to canvas pixels (no padding) ────────────
+  const scale = canvasW / bboxW
+  const originX = -minX
+  const originY = -minY
+
+  function sx(x: number): number { return (x + originX) * scale }
+  // Model Y increases in the same direction as canvas Y, so no flip needed.
+  function sy(y: number): number { return (y + originY) * scale }
+
+  // ── Draw filled silhouette ──────────────────────────────────────────────
+  // Saturated steel-blue fill — clearly visible against the dark sketch canvas
+  ctx.fillStyle = '#4a7fa8'
+  ctx.beginPath()
+  ctx.moveTo(sx(verts[0].x), sy(verts[0].y))
+  for (let i = 1; i < verts.length; i++) {
+    ctx.lineTo(sx(verts[i].x), sy(verts[i].y))
+  }
+  ctx.closePath()
+  ctx.fill()
+
+  // Slightly brighter outline for edge definition
+  ctx.strokeStyle = '#6b9fcb'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  return canvas.toDataURL('image/png')
 }

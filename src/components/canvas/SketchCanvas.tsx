@@ -146,6 +146,73 @@ interface SketchCanvasProps {
   onToggleDepthLegend?: () => void
 }
 
+function drawStlTopViewImage(
+  ctx: CanvasRenderingContext2D,
+  feature: SketchFeature,
+  image: HTMLImageElement,
+  vt: ViewTransform,
+  selected: boolean,
+  hovered: boolean,
+  editing: boolean,
+): void {
+  if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return
+
+  const verts = profileVertices(feature.sketch.profile)
+  if (verts.length < 3) return
+
+  const angle = ((feature.sketch.orientationAngle ?? 0) * Math.PI) / 180
+  const ux = Math.cos(angle)
+  const uy = Math.sin(angle)
+  const vx = -Math.sin(angle)
+  const vy = Math.cos(angle)
+
+  let minU = Infinity, maxU = -Infinity
+  let minV = Infinity, maxV = -Infinity
+  for (const point of verts) {
+    const projectedU = point.x * ux + point.y * uy
+    const projectedV = point.x * vx + point.y * vy
+    if (projectedU < minU) minU = projectedU
+    if (projectedU > maxU) maxU = projectedU
+    if (projectedV < minV) minV = projectedV
+    if (projectedV > maxV) maxV = projectedV
+  }
+
+  const width = maxU - minU
+  const height = maxV - minV
+  if (!(width > 1e-9) || !(height > 1e-9)) return
+
+  const centerU = minU + width / 2
+  const centerV = minV + height / 2
+  const center = worldToCanvas({
+    x: ux * centerU + vx * centerV,
+    y: uy * centerU + vy * centerV,
+  }, vt)
+  const drawW = width * vt.scale
+  const drawH = height * vt.scale
+
+  ctx.save()
+  traceProfilePath(ctx, feature.sketch.profile, vt)
+  ctx.clip('evenodd')
+  ctx.translate(center.cx, center.cy)
+  ctx.rotate(angle)
+  ctx.globalAlpha = selected || hovered || editing ? 0.72 : 0.86
+  ctx.drawImage(image, -drawW / 2, -drawH / 2, drawW, drawH)
+  ctx.restore()
+
+  ctx.save()
+  traceProfilePath(ctx, feature.sketch.profile, vt)
+  ctx.strokeStyle = selected
+    ? '#efbc7a'
+    : hovered
+      ? '#d2a064'
+      : editing
+        ? '#f7cd87'
+        : '#8eb6d8'
+  ctx.lineWidth = selected || editing ? 2.5 : 1.8
+  ctx.stroke()
+  ctx.restore()
+}
+
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
   {
     onFeatureContextMenu,
@@ -191,6 +258,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
+  const [stlImageRevision, setStlImageRevision] = useState(0)
   const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
   const hoveredEditControlRef = useRef<SketchControlRef | null>(null)
@@ -293,6 +361,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingConstraintRef = useRef(pendingConstraint)
   const viewStateRef = useRef(viewState)
   const backdropImageRef = useRef(backdropImage)
+  const stlImageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const toolpathsRef = useRef(toolpaths)
   const selectedOperationIdRef = useRef(selectedOperationId)
   const collidingClampIdsRef = useRef(collidingClampIds)
@@ -465,6 +534,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [project.backdrop?.imageDataUrl, setBackdropImageLoading])
 
   useEffect(() => {
+    const activeUrls = new Set(
+      project.features
+        .map((feature) => feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null)
+        .filter((url): url is string => !!url),
+    )
+    const cache = stlImageCacheRef.current
+
+    for (const url of cache.keys()) {
+      if (!activeUrls.has(url)) {
+        cache.delete(url)
+      }
+    }
+
+    for (const url of activeUrls) {
+      if (cache.has(url)) continue
+
+      const image = new Image()
+      image.onload = () => {
+        cache.set(url, image)
+        setStlImageRevision((revision) => revision + 1)
+      }
+      image.onerror = () => {
+        cache.delete(url)
+      }
+      cache.set(url, image)
+      image.src = url
+    }
+  }, [project.features])
+
+  useEffect(() => {
     return () => {
       onActiveSnapModeChange?.(null)
     }
@@ -472,7 +571,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit])
+  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -678,6 +777,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
 
       drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
+
+      const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null
+      const stlTopViewImage = stlTopViewUrl ? stlImageCacheRef.current.get(stlTopViewUrl) : null
+      if (feature.kind === 'stl' && stlTopViewImage) {
+        drawStlTopViewImage(ctx, feature, stlTopViewImage, vt, selected, hovered, editing)
+      }
 
       if (editing) {
         const hoveredEditControl =
