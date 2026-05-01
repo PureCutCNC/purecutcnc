@@ -1461,9 +1461,9 @@ function operationKindLabel(kind: OperationKind): string {
     case 'surface_clean':
       return 'Surface clean'
     case 'rough_surface':
-      return 'Rough surface'
+      return '3D Surface rough'
     case 'finish_surface':
-      return 'Finish surface'
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -1551,7 +1551,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
   }
 
   if (kind === 'rough_surface') {
-    if (target.source !== 'features' || target.featureIds.length !== 2) {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
 
@@ -1559,13 +1559,11 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is SketchFeature => feature !== null)
 
-    if (features.length !== 2) {
+    if (features.length !== target.featureIds.length) {
       return false
     }
 
-    const hasModel = features.some((feature) => feature.operation === 'model' && feature.kind === 'stl')
-    const hasRegion = features.some((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
-    return hasModel && hasRegion
+    return features.some((feature) => feature.operation === 'model' && feature.kind === 'stl')
   }
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
@@ -1698,9 +1696,13 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
 
   if (kind === 'rough_surface') {
     const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
-    const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
-    if (modelFeature && regionFeature) {
-      return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+    if (modelFeature) {
+      // Optionally include a region if one exists (for constraining the outer boundary)
+      const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+      if (regionFeature) {
+        return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+      }
+      return { source: 'features', featureIds: [modelFeature.id] }
     }
   }
 

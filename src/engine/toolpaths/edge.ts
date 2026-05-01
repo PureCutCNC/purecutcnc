@@ -143,11 +143,11 @@ function transitionToCutEntry(
   safeZ: number,
   maxLinkDistance: number,
 ): ToolpathPoint {
+  // Vertical-only move at same XY — no retraction needed
   if (from && from.x === toXY.x && from.y === toXY.y) {
     if (from.z === toXY.z) {
       return toXY
     }
-
     moves.push({
       kind: toXY.z < from.z ? 'plunge' : 'rapid',
       from,
@@ -156,7 +156,7 @@ function transitionToCutEntry(
     return toXY
   }
 
-  if (from && from.z === toXY.z) {
+  if (from) {
     const dx = toXY.x - from.x
     const dy = toXY.y - from.y
     const distance = Math.hypot(dx, dy)
@@ -166,6 +166,7 @@ function transitionToCutEntry(
     }
 
     if (distance <= maxLinkDistance) {
+      // Direct cut link — works across Z levels for 3D ramping
       moves.push({
         kind: 'cut',
         from,

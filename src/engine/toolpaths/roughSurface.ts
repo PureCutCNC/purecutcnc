@@ -15,13 +15,17 @@
  *
  * Rough Surface Operation
  *
- * A 3D roughing operation that clears the material between the 3D model
- * surface and the region boundary at each step-down level.
+ * A 3D roughing operation that clears the material around a 3D model
+ * (STL mesh) at each step-down level.
+ *
+ * The outer boundary is computed automatically from the mesh silhouette
+ * (the 2D projection of all triangles) offset by tool.diameter + 2 × stepover,
+ * so no separate range/region feature is required.
  *
  * Algorithm (per Z level):
  *   1. Slice the 3D model triangle mesh at this Z to get the true 3D
  *      cross-section (works on any mesh, manifold or not)
- *   2. Use the region feature as the outer boundary
+ *   2. Use the computed silhouette outline as the outer boundary
  *   3. Build a pocket region with the slice(s) as inner islands (the
  *      model occupies this area — we must not cut there)
  *   4. Apply the initial tool-radius + radial-leave inset
@@ -31,7 +35,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { CutDirection, Operation, Point, Project, SketchFeature } from '../../types/project'
+import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import type { ResolvedPocketRegion } from './types'
 import {
@@ -191,7 +195,7 @@ function chainSegments(
   const visited = new Set<string>()
   const polygons: Array<Array<[number, number]>> = []
 
-  for (const [startKey, startNode] of graph) {
+  for (const [startKey, _startNode] of graph) {
     if (visited.has(startKey)) continue
 
     const poly: Array<[number, number]> = []
@@ -249,22 +253,72 @@ function chainSegments(
   return polygons
 }
 
+/**
+ * Convert a scaled Clipper path back to unscaled Point[].
+ */
+function clipperPathToPoints(path: ClipperPath): Point[] {
+  const scale = DEFAULT_CLIPPER_SCALE
+  return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
+}
+
+/**
+ * Offset a set of Clipper paths outward (or inward) by `delta` project units.
+ */
+function offsetClipperPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
+  if (paths.length === 0) return []
+  const offset = new ClipperLib.ClipperOffset()
+  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  const solution = new ClipperLib.Paths()
+  offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
+  return solution as ClipperPath[]
+}
+
+/**
+ * Compute the signed area of a Clipper path using the Shoelace formula.
+ * Positive = counter-clockwise (outer), Negative = clockwise (hole).
+ */
+function clipperPathArea(path: ClipperPath): number {
+  let area = 0
+  const n = path.length
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    area += path[i].X * path[j].Y
+    area -= path[j].X * path[i].Y
+  }
+  return area / 2
+}
+
+/**
+ * Find the polygon with the largest signed area — the outermost contour.
+ */
+function largestPolygon(paths: ClipperPath[]): ClipperPath | null {
+  if (paths.length === 0) return null
+  let best = paths[0]
+  let bestArea = -Infinity
+  for (const path of paths) {
+    const area = clipperPathArea(path)
+    if (area > bestArea) {
+      bestArea = area
+      best = path
+    }
+  }
+  return best
+}
+
 // ── Region helpers ──────────────────────────────────────────────────────
 
 /**
- * Build a ResolvedPocketRegion from a region feature boundary and slice
+ * Build a ResolvedPocketRegion from a computed outer boundary and slice
  * polygons (the model cross-section at a given Z).
  *
- * The region boundary becomes the outer contour; each slice polygon becomes
+ * The outer boundary becomes the outer contour; each slice polygon becomes
  * an island (area the tool must avoid).
  */
-function buildRoughSurfaceRegion(
-  regionFeature: SketchFeature,
+function buildRegionFromSlice(
+  outerBoundary: Point[],
   slicePolygons: Array<Array<[number, number]>>,
 ): ResolvedPocketRegion {
-  // Flatten the region feature's sketch profile → outer boundary
-  const flattened = flattenProfile(regionFeature.sketch.profile)
-  const outer = normalizeWinding(flattened.points, false)
+  const outer = normalizeWinding(outerBoundary, false)
 
   // Convert slice tuples to Point arrays, normalized as islands
   const islands: Point[][] = slicePolygons.map((poly) =>
@@ -277,19 +331,9 @@ function buildRoughSurfaceRegion(
   return {
     outer,
     islands,
-    targetFeatureIds: [regionFeature.id],
+    targetFeatureIds: [],
     islandFeatureIds: [],
   }
-}
-
-/**
- * Convert slice polygon tuples to a Clipper path (scaled to integer coords).
- */
-function slicePolyToClipperPath(poly: Array<[number, number]>): ClipperPath {
-  return poly.map(([x, y]) => ({
-    X: Math.round(x * DEFAULT_CLIPPER_SCALE),
-    Y: Math.round(y * DEFAULT_CLIPPER_SCALE),
-  }))
 }
 
 // ── Main entry point ────────────────────────────────────────────────────
@@ -299,43 +343,24 @@ export function generateRoughSurfaceToolpath(
   operation: Operation,
 ): PocketToolpathResult {
   const target = operation.target
-  if (target.source !== 'features' || target.featureIds.length !== 2) {
+  if (target.source !== 'features' || target.featureIds.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Rough surface requires exactly one model feature and one region feature'],
+      warnings: ['Rough surface requires a model feature to be selected'],
       bounds: null,
       stepLevels: [],
     }
   }
 
-  // ── Identify features ──────────────────────────────────────────────────
+  // ── Identify the model feature ─────────────────────────────────────────
 
-  const featureA = project.features.find((f) => f.id === target.featureIds[0]) ?? null
-  const featureB = project.features.find((f) => f.id === target.featureIds[1]) ?? null
-  if (!featureA || !featureB) {
+  const modelFeature = project.features.find((f) => f.id === target.featureIds[0]) ?? null
+  if (!modelFeature) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['One or more target features not found'],
-      bounds: null,
-      stepLevels: [],
-    }
-  }
-
-  let modelFeature: SketchFeature
-  let regionFeature: SketchFeature
-  if (featureA.operation === 'model' && featureB.operation === 'region') {
-    modelFeature = featureA
-    regionFeature = featureB
-  } else if (featureB.operation === 'model' && featureA.operation === 'region') {
-    modelFeature = featureB
-    regionFeature = featureA
-  } else {
-    return {
-      operationId: operation.id,
-      moves: [],
-      warnings: ['Rough surface requires one model feature and one region feature'],
+      warnings: ['Target feature not found'],
       bounds: null,
       stepLevels: [],
     }
@@ -458,6 +483,28 @@ export function generateRoughSurfaceToolpath(
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
 
+  // ── Compute outer boundary from model's 2D silhouette (sketch profile) ─
+  //      The STL import stores the projected silhouette as the feature's
+  //      sketch profile. Flatten → convert to Clipper path → offset outward
+  //      by tool.diameter + 2 × radial stock-to-leave so the tool can enter
+  //      from outside the model's projected footprint.
+
+  const modelProfile = flattenProfile(modelFeature.sketch.profile)
+  const modelSilhouettePath = toClipperPath(modelProfile.points)
+  const silhouetteOffset = tool.diameter + 2 * radialLeave
+  const offsetSilhouette = offsetClipperPaths([modelSilhouettePath], silhouetteOffset)
+  const largest = largestPolygon(offsetSilhouette)
+  if (!largest || largest.length < 3) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: ['Computed outer boundary is degenerate — model silhouette may be too small'],
+      bounds: null,
+      stepLevels: [],
+    }
+  }
+  const outlinePolygon = clipperPathToPoints(largest)
+
   // ── Per-level: slice → build pocket region → offset + cut ──────────────
 
   const allMoves: ToolpathMove[] = []
@@ -492,8 +539,8 @@ export function generateRoughSurfaceToolpath(
       continue
     }
 
-    // ═══ 2. Build pocket region: region boundary = outer, slice = islands ══
-    const baseRegion = buildRoughSurfaceRegion(regionFeature, slicePolygons)
+    // ═══ 2. Build pocket region: silhouette outline = outer, slice = islands ══
+    const baseRegion = buildRegionFromSlice(outlinePolygon, slicePolygons)
 
     // ═══ 3. Apply initial inset (tool radius + radial leave) ══════════════
     //      This offsets the outer INWARD and the islands OUTWARD, so the
@@ -514,6 +561,10 @@ export function generateRoughSurfaceToolpath(
     )
 
     // ═══ 5. Recursively cut each region (offset inward by stepover) ═══════
+    //        The generalized transitionToCutEntry (used by cutClosedContours
+    //        inside cutOffsetRegionRecursive) now handles 3D cut links
+    //        across Z levels automatically, so no explicit Z-level linking
+    //        is needed here.
     for (const region of orderedRegions) {
       currentPosition = cutOffsetRegionRecursive(
         allMoves,
@@ -526,8 +577,6 @@ export function generateRoughSurfaceToolpath(
         direction,
       )
     }
-
-    currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
   }
 
   // ── Bounds ─────────────────────────────────────────────────────────────

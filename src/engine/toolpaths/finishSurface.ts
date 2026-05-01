@@ -18,15 +18,21 @@
  * A 3D finishing operation that cleans the walls of a 3D model by following
  * its true surface contour at each step-down level.
  *
- * Algorithm (Contour strategy) — per Z level:
- *   1. Slice the 3D model triangle mesh at this Z to get the true 3D
- *      cross-section (works on any mesh, manifold or not)
- *   2. Optionally clip the slice contours to the region boundary
- *   3. Offset outward by tool.radius + stockToLeaveRadial
- *   4. Emit as closed contour moves at this Z
+ * Two path strategies are supported:
  *
- * Parallel strategy (future): generates 3D parallel passes connecting
- * slice contours across Z levels along a scanline angle.
+ *   Contour (pocketPattern === 'offset'):
+ *     1. Slice the 3D model triangle mesh at each step-down Z level
+ *     2. Optionally clip the slice contours to the region boundary
+ *     3. Offset outward by tool.radius + stockToLeaveRadial
+ *     4. Emit as closed contour moves at each Z
+ *
+ *   Parallel (pocketPattern === 'parallel'):
+ *     1. Slice the mesh at every step-down Z level
+ *     2. For a given scanline angle, rotate all slice contours by -angle
+ *     3. Scan across the rotated bounding box at stepover intervals
+ *     4. At each scanline Y, find X-interval intersections with all Z-level contours
+ *     5. Collect all 3D intersection points, sort along scanline direction
+ *     6. Emit as 3D open cut moves connecting surface points across Z levels
  */
 
 import ClipperLib from 'clipper-lib'
@@ -37,7 +43,6 @@ import {
   applyContourDirection,
   checkMaxCutDepthWarning,
   flattenProfile,
-  fromClipperPath,
   getOperationSafeZ,
   normalizeToolForProject,
   normalizeWinding,
@@ -159,7 +164,7 @@ function chainSegments(
   const visited = new Set<string>()
   const polygons: Array<Array<[number, number]>> = []
 
-  for (const [startKey, startNode] of graph) {
+  for (const [startKey, _startNode] of graph) {
     if (visited.has(startKey)) continue
 
     const poly: Array<[number, number]> = []
@@ -269,6 +274,228 @@ function clipToRegion(
     if (pts.length >= 3) result.push(pts)
   }
   return result
+}
+
+// ── Parallel strategy helpers ───────────────────────────────────────────
+
+function pointEpsilonEqual(a: Point, b: Point): boolean {
+  return Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9
+}
+
+function rotatePoint(point: Point, cosTheta: number, sinTheta: number): Point {
+  return {
+    x: point.x * cosTheta - point.y * sinTheta,
+    y: point.x * sinTheta + point.y * cosTheta,
+  }
+}
+
+/**
+ * Find X-intervals where a horizontal scanline at `y` intersects a closed polygon.
+ */
+function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
+  const intersections: number[] = []
+  const closed = points.length > 0 && pointEpsilonEqual(points[0], points[points.length - 1])
+    ? points
+    : [...points, points[0]]
+
+  for (let index = 0; index < closed.length - 1; index += 1) {
+    const a = closed[index]
+    const b = closed[index + 1]
+
+    if (Math.abs(a.y - b.y) <= 1e-9) continue
+
+    const intersects = (a.y <= y && b.y > y) || (b.y <= y && a.y > y)
+    if (!intersects) continue
+
+    const t = (y - a.y) / (b.y - a.y)
+    intersections.push(a.x + (b.x - a.x) * t)
+  }
+
+  intersections.sort((left, right) => left - right)
+
+  const intervals: Array<[number, number]> = []
+  for (let index = 0; index + 1 < intersections.length; index += 2) {
+    const start = intersections[index]
+    const end = intersections[index + 1]
+    if (end - start > 1e-9) {
+      intervals.push([start, end])
+    }
+  }
+  return intervals
+}
+
+/**
+ * Build a minimal XY bounding box from a Float32Array of positions (stride = 3).
+ */
+function computeXYBounds(positions: Float32Array): { minX: number; maxX: number; minY: number; maxY: number } {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i]
+    const y = positions[i + 1]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  return { minX, maxX, minY, maxY }
+}
+
+/**
+ * Emit 3D open cut moves where each point has its own Z.
+ */
+function toOpenCutMoves3D(points: ToolpathPoint[]): ToolpathMove[] {
+  if (points.length < 2) return []
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < points.length - 1; i += 1) {
+    moves.push({
+      kind: 'cut',
+      from: points[i],
+      to: points[i + 1],
+    })
+  }
+  return moves
+}
+
+/**
+ * Parallel strategy for finish surface.
+ *
+ * Generates 3D parallel passes where the tool follows the model surface
+ * along parallel scanlines at a configurable angle. At each step-down Z
+ * level, the scanline is intersected with the model's slice contours to
+ * produce 3D points. These are sorted along the scanline direction and
+ * emitted as 3D open cut moves.
+ */
+function generateFinishSurfaceParallel(
+  _project: Project,
+  operation: Operation,
+  _modelFeature: SketchFeature,
+  regionFeature: SketchFeature | undefined,
+  tool: ReturnType<typeof normalizeToolForProject>,
+  stepLevels: number[],
+  transformedPos: Float32Array,
+  index: Uint32Array,
+  safeZ: number,
+  maxLinkDistance: number,
+  warnings: string[],
+): { moves: ToolpathMove[]; stepLevels: Set<number> } {
+  const stepoverRatio = operation.stepover ?? 0.5
+  const stepoverDistance = Math.max(stepoverRatio * tool.diameter, 1e-3)
+  const angleDeg = operation.pocketAngle ?? 0
+
+  if (operation.debugToolpath) {
+    warnings.push(
+      `Debug: parallel mode, angle=${angleDeg}°, stepover=${stepoverDistance.toFixed(4)}`,
+    )
+  }
+
+  // ── Pre-compute slice contours at each Z level ────────────────────────
+
+  const sliceMap = new Map<number, Array<Array<[number, number]>>>()
+  for (const z of stepLevels) {
+    let polygons = sliceMeshAtZ(transformedPos, index, z)
+    if (polygons.length > 0 && regionFeature) {
+      polygons = clipToRegion(polygons, regionFeature)
+    }
+    sliceMap.set(z, polygons)
+  }
+
+  // ── XY bounding box of the model ──────────────────────────────────────
+
+  const bbox = computeXYBounds(transformedPos)
+
+  // ── Rotate bounding box by -angle to align scanlines with Y axis ─────
+
+  const angleRad = (angleDeg * Math.PI) / 180
+  const cosNeg = Math.cos(-angleRad)
+  const sinNeg = Math.sin(-angleRad)
+  const cosPos = Math.cos(angleRad)
+  const sinPos = Math.sin(angleRad)
+
+  const corners = [
+    { x: bbox.minX, y: bbox.minY },
+    { x: bbox.maxX, y: bbox.minY },
+    { x: bbox.maxX, y: bbox.maxY },
+    { x: bbox.minX, y: bbox.maxY },
+  ].map((p) => rotatePoint(p, cosNeg, sinNeg))
+
+  const rotMinY = Math.min(...corners.map((c) => c.y))
+  const rotMaxY = Math.max(...corners.map((c) => c.y))
+
+  // ── Generate scanlines ────────────────────────────────────────────────
+
+  const allMoves: ToolpathMove[] = []
+  const allStepLevels = new Set<number>()
+  let currentPosition: ToolpathPoint | null = null
+  let scanIndex = 0
+
+  for (
+    let rotY = rotMinY + stepoverDistance / 2;
+    rotY < rotMaxY;
+    rotY += stepoverDistance, scanIndex += 1
+  ) {
+    const scanPoints: Array<{ x: number; y: number; z: number; rotX: number }> = []
+
+    // Collect intersection points from all Z levels for this scanline
+    for (const z of stepLevels) {
+      const contours = sliceMap.get(z)
+      if (!contours || contours.length === 0) continue
+
+      for (const contour of contours) {
+        // Rotate contour by -angle so scanlines become horizontal
+        const rotatedContour = contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg))
+
+        const intervals = scanlineIntervals(rotatedContour, rotY)
+        for (const [x1, x2] of intervals) {
+          // Convert back to original coordinates
+          const p1 = rotatePoint({ x: x1, y: rotY }, cosPos, sinPos)
+          const p2 = rotatePoint({ x: x2, y: rotY }, cosPos, sinPos)
+          scanPoints.push({ x: p1.x, y: p1.y, z, rotX: x1 })
+          scanPoints.push({ x: p2.x, y: p2.y, z, rotX: x2 })
+        }
+      }
+    }
+
+    if (scanPoints.length < 2) continue
+
+    // Sort by position along scanline (rotated X coordinate)
+    scanPoints.sort((a, b) => a.rotX - b.rotX)
+
+    // Alternate direction to minimise rapids (zigzag)
+    if (scanIndex % 2 === 1) {
+      scanPoints.reverse()
+    }
+
+    // Record step levels touched
+    for (const sp of scanPoints) {
+      allStepLevels.add(sp.z)
+    }
+
+    // Build 3D points for this scanline
+    const cutPoints3D: ToolpathPoint[] = scanPoints.map((sp) => ({
+      x: sp.x,
+      y: sp.y,
+      z: sp.z,
+    }))
+    const entryPoint = cutPoints3D[0]
+
+    // Link from previous position to this scanline's start.
+    // transitionToCutEntry now handles 3D cut links across Z levels when
+    // the XY distance is within maxLinkDistance, and falls back to
+    // retract → rapid → plunge when it isn't.
+    currentPosition = transitionToCutEntry(
+      allMoves,
+      currentPosition,
+      entryPoint,
+      safeZ,
+      maxLinkDistance,
+    )
+
+    // Emit 3D cut moves for this scanline
+    allMoves.push(...toOpenCutMoves3D(cutPoints3D))
+    currentPosition = cutPoints3D[cutPoints3D.length - 1]
+  }
+
+  return { moves: allMoves, stepLevels: allStepLevels }
 }
 
 // ── Main entry point ────────────────────────────────────────────────────
@@ -421,10 +648,43 @@ export function generateFinishSurfaceToolpath(
   const direction: CutDirection = operation.cutDirection ?? 'conventional'
   const finishOffset = tool.radius + radialLeave
 
+  const warnings: string[] = []
+
+  // ── Route to parallel or contour strategy ─────────────────────────────
+
+  if (operation.pocketPattern === 'parallel') {
+    const parallelResult = generateFinishSurfaceParallel(
+      project,
+      operation,
+      modelFeature,
+      regionFeature ?? undefined,
+      tool,
+      stepLevels,
+      transformedPos,
+      index,
+      safeZ,
+      maxLinkDistance,
+      warnings,
+    )
+
+    let bounds: ToolpathBounds | null = null
+    for (const move of parallelResult.moves) {
+      bounds = updateBounds(bounds, move.from)
+      bounds = updateBounds(bounds, move.to)
+    }
+
+    return {
+      operationId: operation.id,
+      moves: parallelResult.moves,
+      warnings,
+      bounds,
+      stepLevels: [...parallelResult.stepLevels].sort((a, b) => b - a),
+    }
+  }
+
   // ── Per-level: slice → clip → offset → emit contour moves ─────────────
 
   const allMoves: ToolpathMove[] = []
-  const warnings: string[] = []
   const allStepLevels = new Set<number>()
 
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(modelTopZ - effectiveBottom))

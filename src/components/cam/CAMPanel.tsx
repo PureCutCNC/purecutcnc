@@ -244,11 +244,15 @@ function operationKindLabel(kind: OperationKind): string {
     case 'surface_clean':
       return 'Surface clean'
     case 'rough_surface':
-      return 'Rough surface'
+      return '3D Surface rough'
+    case 'finish_surface':
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
       return 'Drill'
+    default:
+      return 'Unknown'
   }
 }
 
@@ -267,9 +271,9 @@ function operationAddButtonLabel(kind: OperationKind): string {
     case 'surface_clean':
       return 'Surface'
     case 'rough_surface':
-      return 'Rough surface'
+      return '3D Surface rough'
     case 'finish_surface':
-      return 'Finish surface'
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -389,7 +393,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
   }
 
   if (kind === 'rough_surface') {
-    if (selection.selectedFeatureIds.length !== 2) {
+    if (selection.selectedFeatureIds.length === 0) {
       return null
     }
 
@@ -397,13 +401,12 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    if (features.length !== 2) {
+    if (features.length !== selection.selectedFeatureIds.length) {
       return null
     }
 
     const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
-    const hasRegion = features.some((f) => f.operation === 'region' && f.sketch.profile.closed)
-    return hasModel && hasRegion
+    return hasModel
       ? { source: 'features', featureIds: features.map((f) => f.id) }
       : null
   }
@@ -493,30 +496,21 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
   if (kind === 'rough_surface') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one model feature and one closed region feature'
-    }
-
-    if (selection.selectedFeatureIds.length !== 2) {
-      return 'Rough surface requires exactly one model feature and one region feature'
+      return 'Select a model (STL) feature first'
     }
 
     const features = selection.selectedFeatureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    if (features.length !== 2) {
+    if (features.length !== selection.selectedFeatureIds.length) {
       return 'One or more selected features not found'
     }
 
     const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
-    const hasRegion = features.some((f) => f.operation === 'region' && f.sketch.profile.closed)
 
     if (!hasModel) {
-      return 'Select a model (STL) feature as the first target'
-    }
-
-    if (!hasRegion) {
-      return 'Select a closed region feature as the second target'
+      return 'Rough surface requires at least one model (STL) feature'
     }
 
     return null
@@ -699,16 +693,6 @@ export function CAMPanel({
         hint: getOperationAddHint(project, selection, 'surface_clean') ?? undefined,
       },
       {
-        kind: 'rough_surface',
-        label: operationAddButtonLabel('rough_surface'),
-        hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
-      },
-      {
-        kind: 'finish_surface',
-        label: operationAddButtonLabel('finish_surface'),
-        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
-      },
-      {
         kind: 'follow_line',
         label: operationAddButtonLabel('follow_line'),
         hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
@@ -717,6 +701,16 @@ export function CAMPanel({
         kind: 'drilling',
         label: operationAddButtonLabel('drilling'),
         hint: getOperationAddHint(project, selection, 'drilling') ?? undefined,
+      },
+      {
+        kind: 'rough_surface',
+        label: operationAddButtonLabel('rough_surface'),
+        hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
+      },
+      {
+        kind: 'finish_surface',
+        label: operationAddButtonLabel('finish_surface'),
+        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
       },
     ]),
     [project, selection]
@@ -1202,7 +1196,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' ? (
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Pattern</span>
                       <select
@@ -1214,7 +1208,7 @@ export function CAMPanel({
                       </select>
                     </label>
                   ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pocketPattern === 'parallel' ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface') && selectedOperation.pocketPattern === 'parallel' ? (
                     <label className="properties-field">
                       <span>Angle</span>
                       <DraftNumberInput
