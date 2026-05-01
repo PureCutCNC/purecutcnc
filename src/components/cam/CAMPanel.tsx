@@ -411,6 +411,25 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       : null
   }
 
+  if (kind === 'finish_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+    return hasModel
+      ? { source: 'features', featureIds: features.map((f) => f.id) }
+      : null
+  }
+
   if (selection.selectedFeatureIds.length === 0) {
     return null
   }
@@ -511,6 +530,28 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
     if (!hasModel) {
       return 'Rough surface requires at least one model (STL) feature'
+    }
+
+    return null
+  }
+
+  if (kind === 'finish_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select a model (STL) feature first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return 'One or more selected features not found'
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+
+    if (!hasModel) {
+      return 'Finish surface requires at least one model (STL) feature'
     }
 
     return null
@@ -1196,7 +1237,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' ? (
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
                     <label className="properties-field">
                       <span>Pattern</span>
                       <select
@@ -1471,7 +1512,8 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
                     && selectedOperation.kind !== 'v_carve_recursive'
-                    && selectedOperation.kind !== 'drilling' ? (
+                    && selectedOperation.kind !== 'drilling'
+                    && selectedOperation.kind !== 'finish_surface' ? (
                     <>
                       <label className="properties-field">
                         <span>Stock To Leave Radial</span>
@@ -1492,6 +1534,17 @@ export function CAMPanel({
                         />
                       </label>
                     </>
+                  ) : null}
+                  {selectedOperation.kind === 'finish_surface' ? (
+                    <label className="properties-field">
+                      <span>Stock To Leave Axial</span>
+                      <DraftLengthInput
+                        value={selectedOperation.stockToLeaveAxial}
+                        units={project.meta.units}
+                        min={0}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
+                      />
+                    </label>
                   ) : null}
                     </div>
                   </div>

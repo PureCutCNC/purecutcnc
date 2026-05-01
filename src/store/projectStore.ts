@@ -1530,7 +1530,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
   }
 
   if (kind === 'finish_surface') {
-    if (target.source !== 'features' || target.featureIds.length === 0 || target.featureIds.length > 2) {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
 
@@ -1543,10 +1543,13 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     }
 
     const modelCount = features.filter((f) => f.operation === 'model' && f.kind === 'stl').length
-    const regionCount = features.filter((f) => f.operation === 'region' && f.sketch.profile.closed).length
+    const allValid = features.every((f) =>
+      (f.operation === 'model' && f.kind === 'stl') ||
+      (f.operation === 'region' && f.sketch.profile.closed)
+    )
 
     if (modelCount !== 1) return false
-    if (target.featureIds.length === 2 && regionCount !== 1) return false
+    if (!allValid) return false
     return true
   }
 
@@ -1641,7 +1644,7 @@ function defaultOperationForTarget(
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
-    pocketPattern: 'offset',
+    pocketPattern: kind === 'finish_surface' ? 'parallel' : 'offset',
     pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
