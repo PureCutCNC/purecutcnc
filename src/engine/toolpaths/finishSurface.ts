@@ -202,20 +202,13 @@ function chainSegments(
   return polygons
 }
 
-/**
- * Clip (intersect) slice contours against a region boundary polygon.
- * Returns the intersection of each slice contour with the region.
- */
-function clipToRegion(
-  slicePolygons: Array<Array<[number, number]>>,
-  regionFeatures: SketchFeature[],
-): Array<Array<[number, number]>> {
-  if (slicePolygons.length === 0) return []
+function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
+  const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
+  if (regions.length === 0) return []
 
-  // Union all region profiles into a single clip path
   const clipperUnion = new ClipperLib.Clipper()
   const regionPaths: ClipperPath[] = []
-  for (const region of regionFeatures) {
+  for (const region of regions) {
     const flattened = flattenProfile(region.sketch.profile)
     const path = toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)
     regionPaths.push(path)
@@ -228,6 +221,18 @@ function clipToRegion(
     ClipperLib.PolyFillType.pftNonZero,
     ClipperLib.PolyFillType.pftNonZero,
   )
+  return unionSolution as ClipperPath[]
+}
+
+/**
+ * Clip (intersect) slice contours against pre-unioned region boundary paths.
+ * Returns the intersection of each slice contour with the allowed region.
+ */
+function clipToRegionPaths(
+  slicePolygons: Array<Array<[number, number]>>,
+  regionPaths: ClipperPath[],
+): Array<Array<[number, number]>> {
+  if (slicePolygons.length === 0 || regionPaths.length === 0) return []
 
   // Intersect slice polygons with the unioned region boundary
   const clipper = new ClipperLib.Clipper()
@@ -238,7 +243,7 @@ function clipToRegion(
     })),
   )
   clipper.AddPaths(subjectPaths as ClipperPath[], ClipperLib.PolyType.ptSubject, true)
-  clipper.AddPaths(unionSolution as ClipperPath[], ClipperLib.PolyType.ptClip, true)
+  clipper.AddPaths(regionPaths, ClipperLib.PolyType.ptClip, true)
 
   const solution = new ClipperLib.Paths()
   clipper.Execute(ClipperLib.ClipType.ctIntersection, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)
@@ -249,6 +254,25 @@ function clipToRegion(
     if (pts.length >= 3) result.push(pts)
   }
   return result
+}
+
+function computeContourBounds(
+  contours: Iterable<Array<Array<[number, number]>>>,
+): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const contourSet of contours) {
+    for (const contour of contourSet) {
+      for (const [x, y] of contour) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+  }
+  return Number.isFinite(minX) && Number.isFinite(maxX) && Number.isFinite(minY) && Number.isFinite(maxY)
+    ? { minX, maxX, minY, maxY }
+    : null
 }
 
 // ── Parallel strategy helpers ───────────────────────────────────────────
@@ -341,6 +365,9 @@ interface HeightMap {
   originY: number
   cellSize: number
 }
+
+type SliceMap = Map<number, Array<Array<[number, number]>>>
+type RotatedSliceMap = Map<number, Point[][]>
 
 /**
  * Rasterize mesh triangles onto a regular 2D grid. Each cell stores the
@@ -515,7 +542,7 @@ function generateFinishSurfaceParallel(
   // ── Helper: generate scanlines for a single slice map & bbox ────────
 
   function emitScanlines(
-    sliceMap: Map<number, Array<Array<[number, number]>>>,
+    sliceMap: SliceMap,
     bbox: { minX: number; maxX: number; minY: number; maxY: number },
     startScanIndex: number,
     moves: ToolpathMove[],
@@ -531,6 +558,10 @@ function generateFinishSurfaceParallel(
 
     const rotMinY = Math.min(...corners.map((c) => c.y))
     const rotMaxY = Math.max(...corners.map((c) => c.y))
+    const rotatedSliceMap: RotatedSliceMap = new Map()
+    for (const [z, contours] of sliceMap) {
+      rotatedSliceMap.set(z, contours.map((contour) => contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg))))
+    }
     let scanIndex = startScanIndex
     let pos = position
 
@@ -543,12 +574,11 @@ function generateFinishSurfaceParallel(
 
       // Use the outer stepLevels (number[]) from generateFinishSurfaceParallel
       for (const z of stepLevels) {
-        const contours = sliceMap.get(z)
+        const contours = rotatedSliceMap.get(z)
         if (!contours || contours.length === 0) continue
 
         for (const contour of contours) {
-          const rotatedContour = contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg))
-          const intervals = scanlineIntervals(rotatedContour, rotY)
+          const intervals = scanlineIntervals(contour, rotY)
           for (const [x1, x2] of intervals) {
             const p1 = rotatePoint({ x: x1, y: rotY }, cosPos, sinPos)
             const p2 = rotatePoint({ x: x2, y: rotY }, cosPos, sinPos)
@@ -593,32 +623,31 @@ function generateFinishSurfaceParallel(
   const allStepLevels = new Set<number>()
   let currentPosition: ToolpathPoint | null = null
   let scanIndex = 0
+  const rawSliceMap: SliceMap = new Map()
+  for (const z of stepLevels) {
+    rawSliceMap.set(z, sliceMeshAtZ(transformedPos, index, z))
+  }
 
   if (regionFeatures.length === 0) {
     // No regions — process entire model as one
-    const sliceMap = new Map<number, Array<Array<[number, number]>>>()
-    for (const z of stepLevels) {
-      sliceMap.set(z, sliceMeshAtZ(transformedPos, index, z))
-    }
-    currentPosition = emitScanlines(sliceMap, modelBbox, scanIndex, allMoves, allStepLevels, currentPosition)
+    currentPosition = emitScanlines(rawSliceMap, modelBbox, scanIndex, allMoves, allStepLevels, currentPosition)
   } else {
-    // Region-first ordering: finish all scanlines for one region, then move to next
+    // Region-first ordering: finish all scanlines for one region, then move to next.
+    // Raw mesh slices are cached above so multiple regions do not re-slice the STL.
     for (let ri = 0; ri < regionFeatures.length; ri++) {
       const region = regionFeatures[ri]
-
-      // Build slice map clipped to this region only
-      const regionSliceMap = new Map<number, Array<Array<[number, number]>>>()
-      for (const z of stepLevels) {
-        let polygons = sliceMeshAtZ(transformedPos, index, z)
-        if (polygons.length > 0) {
-          polygons = clipToRegion(polygons, [region])
-        }
-        regionSliceMap.set(z, polygons)
+      const regionPaths = buildRegionUnionPaths(region)
+      const clippedSliceMap: SliceMap = new Map()
+      for (const [z, polygons] of rawSliceMap) {
+        clippedSliceMap.set(z, clipToRegionPaths(polygons, regionPaths))
       }
 
-      // Use model bbox for scanline extent; per-region slice clipping
-      // (above) already confines intervals to this region's boundaries.
-      currentPosition = emitScanlines(regionSliceMap, modelBbox, scanIndex, allMoves, allStepLevels, currentPosition)
+      const clippedBounds = computeContourBounds(clippedSliceMap.values())
+      if (clippedBounds) {
+        currentPosition = emitScanlines(clippedSliceMap, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
+      } else if (operation.debugToolpath) {
+        warnings.push(`Debug: region ${region.name} does not intersect the model slices`)
+      }
 
       // Retract to safeZ between regions (but not after the last)
       if (ri < regionFeatures.length - 1) {

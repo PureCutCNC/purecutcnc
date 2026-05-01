@@ -296,7 +296,7 @@ function largestPolygon(paths: ClipperPath[]): ClipperPath | null {
   let best = paths[0]
   let bestArea = -Infinity
   for (const path of paths) {
-    const area = clipperPathArea(path)
+    const area = Math.abs(clipperPathArea(path))
     if (area > bestArea) {
       bestArea = area
       best = path
@@ -355,18 +355,22 @@ export function generateRoughSurfaceToolpath(
 
   // ── Identify the model feature ─────────────────────────────────────────
 
-  const modelFeature = project.features.find((f) => f.id === target.featureIds[0]) ?? null
-  if (!modelFeature) {
+  const targetFeatures = target.featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is Project['features'][number] => feature !== null)
+
+  if (targetFeatures.length !== target.featureIds.length) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Target feature not found'],
+      warnings: ['One or more target features not found'],
       bounds: null,
       stepLevels: [],
     }
   }
 
-  if (modelFeature.kind !== 'stl' || !modelFeature.stl?.fileData) {
+  const modelFeature = targetFeatures.find((feature) => feature.operation === 'model' && feature.kind === 'stl') ?? null
+  if (!modelFeature?.stl?.fileData) {
     return {
       operationId: operation.id,
       moves: [],

@@ -83,12 +83,6 @@ export async function extractStlProfileAndBounds(
   // Manifold requires an indexed mesh to identify shared edges.
   geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
   
-  // Compute Z bounds
-  geometry.computeBoundingBox()
-  const bbox = geometry.boundingBox
-  const z_bottom = bbox ? bbox.min.z * scale : 0
-  const z_top = bbox ? bbox.max.z * scale : 5
-
   const positions = geometry.attributes.position.array
   const numVerts = positions.length / 3
   let triVerts: Uint32Array
@@ -104,6 +98,12 @@ export async function extractStlProfileAndBounds(
 
   // Apply axis swap if requested
   applyAxisSwapToPositions(positions as any, axisSwap)
+
+  // Compute bounds after axis orientation has been applied.
+  geometry.computeBoundingBox()
+  const bbox = geometry.boundingBox
+  const z_bottom = bbox ? bbox.min.z * scale : 0
+  const z_top = bbox ? bbox.max.z * scale : 5
 
   const module = await getManifoldModule()
   const manifoldMesh = new module.Mesh({
@@ -145,17 +145,17 @@ export async function extractStlProfileAndBounds(
       const p2 = { X: Math.round(positions[b] * scale * clipperScale), Y: Math.round(positions[b + 1] * scale * clipperScale) }
       const p3 = { X: Math.round(positions[c] * scale * clipperScale), Y: Math.round(positions[c + 1] * scale * clipperScale) }
       
-      // Compute 2D cross product to determine winding
+      // Compute 2D cross product to reject degenerate projected triangles and
+      // normalize winding. STL triangle winding is not reliable enough to use
+      // as a front/back filter for silhouettes.
       const crossProduct = (p2.X - p1.X) * (p3.Y - p1.Y) - (p2.Y - p1.Y) * (p3.X - p1.X)
       
-      // Skip completely flat/degenerate triangles in 2D projection
-      // Also skip "backfaces" (CW triangles) to cut work in half; the silhouette is typically 
-      // defined by the boundary of the front faces anyway.
-      if (crossProduct <= 0) {
+      // Skip completely flat/degenerate triangles in 2D projection.
+      if (crossProduct === 0) {
         continue
       }
       
-      paths.push([p1, p2, p3])
+      paths.push(crossProduct > 0 ? [p1, p2, p3] : [p1, p3, p2])
     }
     
     if (onProgress) {
