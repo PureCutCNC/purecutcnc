@@ -268,6 +268,8 @@ function operationAddButtonLabel(kind: OperationKind): string {
       return 'Surface'
     case 'rough_surface':
       return 'Rough surface'
+    case 'finish_surface':
+      return 'Finish surface'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -276,7 +278,7 @@ function operationAddButtonLabel(kind: OperationKind): string {
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive' && kind !== 'drilling' && kind !== 'rough_surface'
+  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive' && kind !== 'drilling' && kind !== 'rough_surface' && kind !== 'finish_surface'
 }
 
 function drillTypeLabel(type: DrillType): string {
@@ -702,6 +704,11 @@ export function CAMPanel({
         hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
       },
       {
+        kind: 'finish_surface',
+        label: operationAddButtonLabel('finish_surface'),
+        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
+      },
+      {
         kind: 'follow_line',
         label: operationAddButtonLabel('follow_line'),
         hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
@@ -820,7 +827,7 @@ export function CAMPanel({
       return
     }
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface') && mode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface') && mode === 'pair') {
       const operationId = addOperation(kind, 'rough', target)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
@@ -1172,7 +1179,7 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Pass</span>
                       <select
@@ -1195,7 +1202,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' ? (
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Pattern</span>
                       <select
@@ -1216,7 +1223,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface') ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface') ? (
                     <label className="properties-field">
                       <span>Cut Direction</span>
                       <select
@@ -1414,7 +1421,7 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Stepdown</span>
                       <DraftLengthInput

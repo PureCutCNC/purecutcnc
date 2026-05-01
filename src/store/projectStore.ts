@@ -1462,6 +1462,8 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Surface clean'
     case 'rough_surface':
       return 'Rough surface'
+    case 'finish_surface':
+      return 'Finish surface'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -1527,6 +1529,27 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
     return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
   }
 
+  if (kind === 'finish_surface') {
+    if (target.source !== 'features' || target.featureIds.length === 0 || target.featureIds.length > 2) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    const modelCount = features.filter((f) => f.operation === 'model' && f.kind === 'stl').length
+    const regionCount = features.filter((f) => f.operation === 'region' && f.sketch.profile.closed).length
+
+    if (modelCount !== 1) return false
+    if (target.featureIds.length === 2 && regionCount !== 1) return false
+    return true
+  }
+
   if (kind === 'rough_surface') {
     if (target.source !== 'features' || target.featureIds.length !== 2) {
       return false
@@ -1581,7 +1604,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -1659,6 +1682,18 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
     return firstSubtractFeature
       ? { source: 'features', featureIds: [firstSubtractFeature.id] }
       : { source: 'stock' }
+  }
+
+  if (kind === 'finish_surface') {
+    const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
+    if (modelFeature) {
+      // Optionally include a region if one exists
+      const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+      if (regionFeature) {
+        return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+      }
+      return { source: 'features', featureIds: [modelFeature.id] }
+    }
   }
 
   if (kind === 'rough_surface') {
