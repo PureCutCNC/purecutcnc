@@ -1421,7 +1421,7 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'finish_surface' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
                     <label className="properties-field">
                       <span>Stepdown</span>
                       <DraftLengthInput
