@@ -180,6 +180,14 @@ export function createPendingCompletionSlice(
 
                   return {
                     ...feature,
+                    stl: feature.stl?.silhouettePaths
+                      ? {
+                          ...feature.stl,
+                          silhouettePaths: feature.stl.silhouettePaths.map((path) =>
+                            path.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+                          ),
+                        }
+                      : feature.stl,
                     sketch: {
                       ...feature.sketch,
                       origin: ['text', 'stl'].includes(feature.kind) 

@@ -222,11 +222,21 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
   }
 }
 
-function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
+function featureSilhouettePaths(feature: SketchFeature): Point[][] {
+  if (feature.kind === 'stl' && feature.stl?.silhouettePaths?.length) {
+    return feature.stl.silhouettePaths.filter((path) => path.length >= 3)
+  }
+
   const flattened = flattenProfile(feature.sketch.profile)
+  return [flattened.points]
+}
+
+function featureToClipperPaths(feature: SketchFeature): ClipperPath[] {
   // Clipper normalises closed paths to CCW in Y-up (its outer-polygon convention) regardless
   // of the winding supplied here, so the input orientation does not affect offset output.
-  return toClipperPath(normalizeWinding(flattened.points, true), DEFAULT_CLIPPER_SCALE)
+  return featureSilhouettePaths(feature).map((path) =>
+    toClipperPath(normalizeWinding(path, true), DEFAULT_CLIPPER_SCALE),
+  )
 }
 
 function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation): boolean {
@@ -473,12 +483,12 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
       const span = resolveFeatureZSpan(project, feature)
       return {
         feature,
-        contourPath: flattenFeatureToClipperPath(feature),
+        contourPaths: featureToClipperPaths(feature),
         topZ: span.top,
         bottomZ: effectiveBottom,
       }
     })
-    .filter((entry): entry is { feature: SketchFeature; contourPath: ClipperPath; topZ: number; bottomZ: number } => entry !== null)
+    .filter((entry): entry is { feature: SketchFeature; contourPaths: ClipperPath[]; topZ: number; bottomZ: number } => entry !== null)
 
   if (routableTargets.length === 0) {
     return {
@@ -499,7 +509,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
 
     if (canCombineOutsideTargets) {
       const rawContours = resolveContourPaths(
-        unionPaths(routableTargets.map((target) => target.contourPath)),
+        unionPaths(routableTargets.flatMap((target) => target.contourPaths)),
         offsetDistance,
       )
 
@@ -523,7 +533,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
 
   if (moves.length === 0) {
     for (const target of routableTargets) {
-      const rawContours = resolveContourPaths([target.contourPath], offsetDistance)
+      const rawContours = resolveContourPaths(target.contourPaths, offsetDistance)
       if (rawContours.length === 0) {
         warnings.push(`No valid contour could be generated for ${target.feature.name}`)
         continue

@@ -24,7 +24,7 @@ export async function extractStlProfileAndBounds(
   scale: number,
   axisSwap: ModelAxisOrientation = 'none',
   onProgress?: (percent: number) => void
-): Promise<{ profile: SketchProfile, z_bottom: number, z_top: number } | null> {
+): Promise<{ profile: SketchProfile, silhouettePaths: Point[][], z_bottom: number, z_top: number } | null> {
   const mesh = loadImportedTriangleMesh('stl', base64Data, axisSwap)
   if (!mesh) return null
 
@@ -142,10 +142,13 @@ export async function extractStlProfileAndBounds(
     }
   }
 
+  const silhouettePaths = polys
+    .map((poly) => poly.map((p) => ({ x: p.x, y: p.y })))
+    .filter((poly) => poly.length >= 3)
   const points: Point[] = outerPoly.map(p => ({ x: p.x, y: p.y }))
   const profile = polygonProfile(points)
 
-  return { profile, z_bottom, z_top }
+  return { profile, silhouettePaths, z_bottom, z_top }
 }
 
 export function renderStlTopViewToDataUrl(

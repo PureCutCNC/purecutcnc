@@ -79,6 +79,18 @@ function makeModelFeature(
       constraints: [],
     },
     operation: 'model',
+    stl: {
+      format: 'stl',
+      fileData: 'data:model/stl;base64,',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x, y },
+        { x: x + w, y },
+        { x: x + w, y: y + h },
+        { x, y: y + h },
+      ]],
+    },
     z_top: zTop,
     z_bottom: zBottom,
     visible: true,
@@ -440,6 +452,44 @@ function testEdgeOutsideAcceptsModelSilhouette() {
   console.log('edge_route_outside model silhouette: PASSED')
 }
 
+function testEdgeOutsideUsesStoredModelSilhouettePaths() {
+  console.log('Testing edge_route_outside uses stored model silhouette paths...')
+
+  const tool = makeFlatEndmill('t1', 2)
+  const model = makeModelFeature('model', 0, 0, 10, 10, 4, 0)
+  model.stl!.silhouettePaths = [
+    [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 },
+    ],
+    [
+      { x: 30, y: 0 },
+      { x: 40, y: 0 },
+      { x: 40, y: 10 },
+      { x: 30, y: 10 },
+    ],
+  ]
+  const project = baseProject([tool], [model])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['model'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'outside edge route produces cut moves')
+  assert(
+    cuts.some((move) => move.to.x > 40),
+    'expected outside edge route to include the second stored silhouette island',
+  )
+
+  console.log('edge_route_outside stored silhouette paths: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
@@ -569,6 +619,7 @@ try {
   testPocketSingleFeatureParity()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeOutsideAcceptsModelSilhouette()
+  testEdgeOutsideUsesStoredModelSilhouettePaths()
   testVCarveFeatureFirstProducesSameMoveCount()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   console.log('\nAll toolpath tests PASSED.')

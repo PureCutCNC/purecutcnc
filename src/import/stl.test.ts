@@ -68,6 +68,7 @@ async function testAxisBounds(): Promise<void> {
     assert(approx(result!.z_top, zTop), `expected z_top=${zTop} for axis ${axis}, got ${result!.z_top}`)
     assert(result!.profile.closed, `expected closed profile for axis ${axis}`)
     assert(result!.profile.segments.length >= 3, `expected polygon profile for axis ${axis}`)
+    assert(result!.silhouettePaths.length >= 1, `expected at least one silhouette path for axis ${axis}`)
   }
 }
 

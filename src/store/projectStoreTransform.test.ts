@@ -27,6 +27,12 @@ function makeFeature(kind: 'rect' | 'stl'): SketchFeature {
           fileData: 'data:model/stl;base64,',
           scale: 1,
           axisSwap: 'none',
+          silhouettePaths: [[
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 5 },
+            { x: 0, y: 5 },
+          ]],
         }
       : null,
     sketch: {
@@ -75,6 +81,10 @@ function testStlFeatureResizeIsUniform(): void {
   assert(approx(resized.stl?.scale ?? 0, 2), `expected STL mesh scale 2, got ${resized.stl?.scale}`)
   assert(approx(Number(resized.z_bottom), 0), `expected z_bottom anchored at 0, got ${resized.z_bottom}`)
   assert(approx(Number(resized.z_top), 10), `expected z_top scaled to 10, got ${resized.z_top}`)
+  const path = resized.stl?.silhouettePaths?.[0]
+  assert(Boolean(path), 'expected resized STL silhouette path')
+  assert(approx(path![1].x, 20), `expected silhouette path x scaled to 20, got ${path![1].x}`)
+  assert(approx(path![2].y, 10), `expected silhouette path y scaled to 10, got ${path![2].y}`)
 }
 
 testRegularFeatureCanResizeOneAxis()

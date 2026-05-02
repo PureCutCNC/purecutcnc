@@ -315,11 +315,23 @@ Still pending:
 
 ### Phase 3: Robust silhouette representation
 
-1. Store full projected silhouette paths on STL features.
-2. Preserve outers/holes/multiple islands.
-3. Draw the top-view image clipped by all silhouette paths, not only the largest profile.
-4. Update rough outer-boundary generation to use full silhouette path data.
-5. Keep `sketch.profile` as a compatibility/selectability outline.
+Status: started locally. Multiple projected paths are now preserved, but explicit outer/hole classification is still pending.
+
+Done:
+
+1. Added `stl.silhouettePaths` to imported STL metadata.
+2. `extractStlProfileAndBounds()` now returns all projected silhouette paths while still mirroring the largest path into `sketch.profile` for compatibility/selectability.
+3. New STL imports persist `silhouettePaths`.
+4. STL silhouette paths now follow feature copy, move, rotate, and uniform resize in the main transform paths.
+5. Outside edge routing uses all stored model silhouette paths when present, allowing multi-island imported model outlines.
+6. Rough surface uses all stored model silhouette paths when building the expanded outer machining boundary.
+7. Added regression coverage for import path metadata, STL transform path scaling, and outside edge routing with multiple stored model silhouette paths.
+
+Still pending:
+
+1. Preserve explicit outer/hole classification instead of storing path lists without topology.
+2. Draw the top-view image clipped by all silhouette paths, not only the mesh-rendered top view.
+3. Audit less common constraint/align translation paths for `silhouettePaths` parity if those workflows become important for STL models.
 
 ### Phase 4: Shared robust slicing
 

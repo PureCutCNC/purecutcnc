@@ -216,6 +216,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             fileData: loadedFile.dataUrl,
             scale: stlScale,
             axisSwap: axisSwap,
+            silhouettePaths: stlInfo.silhouettePaths,
             topViewDataUrl,
           },
           sketch: {

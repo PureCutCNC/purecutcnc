@@ -201,6 +201,8 @@ export interface STLFeatureData {
   axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
   /** Legacy imported silhouette PNG. New imports store only topViewDataUrl. */
   silhouetteDataUrl?: string
+  /** Project-coordinate projected model silhouette paths. The first/largest path is mirrored in sketch.profile for legacy tools. */
+  silhouettePaths?: Point[][]
   topViewDataUrl?: string // pre-rendered top-down model image for sketch view
 }
 

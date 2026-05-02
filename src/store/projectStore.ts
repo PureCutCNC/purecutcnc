@@ -55,6 +55,7 @@ import type {
   Project,
   SketchProfile,
   SketchFeature,
+  STLFeatureData,
   Tab,
   Tool,
 } from '../types/project'
@@ -822,6 +823,17 @@ function transformProfile(
   }
 }
 
+function transformStlFeatureData(
+  stl: STLFeatureData | null | undefined,
+  transformPoint: (point: Point) => Point,
+): STLFeatureData | null | undefined {
+  if (!stl?.silhouettePaths) return stl
+  return {
+    ...stl,
+    silhouettePaths: stl.silhouettePaths.map((path) => path.map(transformPoint)),
+  }
+}
+
 function arcToBezierSegments(start: Point, segment: Extract<Segment, { type: 'arc' }>): Array<Extract<Segment, { type: 'bezier' }>> {
   const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
   const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
@@ -1034,7 +1046,12 @@ export function resizeFeatureFromReference(
   return {
     ...feature,
     kind: feature.kind === 'text' ? 'text' : (feature.kind === 'stl' ? 'stl' : inferFeatureKind(profile)),
-    stl: feature.stl ? { ...feature.stl, scale: feature.stl.scale * scaleU } : feature.stl,
+    stl: feature.stl
+      ? {
+          ...transformStlFeatureData(feature.stl, transformPoint)!,
+          scale: feature.stl.scale * scaleU,
+        }
+      : feature.stl,
     z_top: resizedZ.z_top,
     z_bottom: resizedZ.z_bottom,
     sketch: {
@@ -1067,13 +1084,15 @@ export function rotateFeatureFromReference(
     return null
   }
 
-  const profile = transformProfile(feature.sketch.profile, (point) => rotatePointAround(point, referenceStart, angle))
+  const rotatePoint = (point: Point) => rotatePointAround(point, referenceStart, angle)
+  const profile = transformProfile(feature.sketch.profile, rotatePoint)
   return {
     ...feature,
     kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
+    stl: transformStlFeatureData(feature.stl, rotatePoint),
     sketch: {
       ...feature.sketch,
-      origin: rotatePointAround(feature.sketch.origin, referenceStart, angle),
+      origin: rotatePoint(feature.sketch.origin),
       orientationAngle: normalizeAngleDegrees(
         (feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile)) + angle * (180 / Math.PI),
       ),
@@ -1786,6 +1805,7 @@ function buildCopiedFeatures(
         id: nextId,
         name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
         folderId: sourceFeature.folderId,
+        stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
         sketch: {
           ...sourceFeature.sketch,
           origin: ['text', 'stl'].includes(sourceFeature.kind)

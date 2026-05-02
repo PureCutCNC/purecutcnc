@@ -35,7 +35,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { CutDirection, Operation, Point, Project } from '../../types/project'
+import type { CutDirection, Operation, Point, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import type { ResolvedPocketRegion } from './types'
 import {
@@ -78,38 +78,6 @@ function offsetClipperPaths(paths: ClipperPath[], delta: number): ClipperPath[] 
   return solution as ClipperPath[]
 }
 
-/**
- * Compute the signed area of a Clipper path using the Shoelace formula.
- * Positive = counter-clockwise (outer), Negative = clockwise (hole).
- */
-function clipperPathArea(path: ClipperPath): number {
-  let area = 0
-  const n = path.length
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n
-    area += path[i].X * path[j].Y
-    area -= path[j].X * path[i].Y
-  }
-  return area / 2
-}
-
-/**
- * Find the polygon with the largest signed area — the outermost contour.
- */
-function largestPolygon(paths: ClipperPath[]): ClipperPath | null {
-  if (paths.length === 0) return null
-  let best = paths[0]
-  let bestArea = -Infinity
-  for (const path of paths) {
-    const area = Math.abs(clipperPathArea(path))
-    if (area > bestArea) {
-      bestArea = area
-      best = path
-    }
-  }
-  return best
-}
-
 function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
   return slicePolygons
     .filter((poly) => poly.length >= 3)
@@ -117,6 +85,17 @@ function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]
       normalizeWinding(poly.map(([x, y]) => ({ x, y })), false),
       DEFAULT_CLIPPER_SCALE,
     ))
+}
+
+function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[] {
+  if (modelFeature.kind === 'stl' && modelFeature.stl?.silhouettePaths?.length) {
+    return modelFeature.stl.silhouettePaths
+      .filter((path) => path.length >= 3)
+      .map((path) => toClipperPath(normalizeWinding(path, true), DEFAULT_CLIPPER_SCALE))
+  }
+
+  const modelProfile = flattenProfile(modelFeature.sketch.profile)
+  return [toClipperPath(modelProfile.points)]
 }
 
 function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
@@ -330,12 +309,13 @@ export function generateRoughSurfaceToolpath(
   //      by tool.diameter + 2 × radial stock-to-leave so the tool can enter
   //      from outside the model's projected footprint.
 
-  const modelProfile = flattenProfile(modelFeature.sketch.profile)
-  const modelSilhouettePath = toClipperPath(modelProfile.points)
+  const modelSilhouettePaths = modelSilhouetteClipperPaths(modelFeature)
   const silhouetteOffset = tool.diameter + 2 * radialLeave
-  const offsetSilhouette = offsetClipperPaths([modelSilhouettePath], silhouetteOffset)
-  const largest = largestPolygon(offsetSilhouette)
-  if (!largest || largest.length < 3) {
+  const offsetSilhouette = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
+  const outlinePolygons = offsetSilhouette
+    .filter((path) => path.length >= 3)
+    .map(clipperPathToPoints)
+  if (outlinePolygons.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
@@ -344,7 +324,6 @@ export function generateRoughSurfaceToolpath(
       stepLevels: [],
     }
   }
-  const outlinePolygon = clipperPathToPoints(largest)
 
   // ── Per-level: slice → build pocket region → offset + cut ──────────────
 
@@ -393,12 +372,12 @@ export function generateRoughSurfaceToolpath(
 
     // ═══ 2. Build pocket region: silhouette outline = outer, protected model shadow = islands ══
     const protectedPolygons = clipperPathsToSlicePolygons(protectedSlicePaths)
-    const baseRegion = buildRegionFromSlice(outlinePolygon, protectedPolygons)
+    const baseRegions = outlinePolygons.map((outlinePolygon) => buildRegionFromSlice(outlinePolygon, protectedPolygons))
 
     // ═══ 3. Apply initial inset (tool radius + radial leave) ══════════════
     //      This offsets the outer INWARD and the islands OUTWARD, so the
     //      first pass respects the tool's physical radius.
-    const insetRegions = buildInsetRegions(baseRegion, initialInset)
+    const insetRegions = baseRegions.flatMap((baseRegion) => buildInsetRegions(baseRegion, initialInset))
     if (insetRegions.length === 0) {
       if (operation.debugToolpath) {
         warnings.push(`Debug: Z=${z.toFixed(4)} no machinable region after initial inset`)
