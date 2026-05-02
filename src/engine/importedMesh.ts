@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
+export type ImportedModelFormat = 'stl'
 export type ModelAxisOrientation = 'none' | 'yz' | 'xz' | 'xy'
 
 export interface ImportedMeshBounds {
@@ -161,6 +162,18 @@ export function loadStlBufferGeometry(
   return geometry
 }
 
+export function loadImportedBufferGeometry(
+  format: ImportedModelFormat,
+  fileData: string,
+  axisOrientation: ModelAxisOrientation,
+  mergeVertices: boolean,
+): THREE.BufferGeometry | null {
+  switch (format) {
+    case 'stl':
+      return loadStlBufferGeometry(fileData, axisOrientation, mergeVertices)
+  }
+}
+
 export function computeMeshBounds(positions: Float32Array): ImportedMeshBounds {
   let minX = Infinity, maxX = -Infinity
   let minY = Infinity, maxY = -Infinity
@@ -230,4 +243,15 @@ export function loadStlTriangleMesh(
   const mesh = { positions, index, bounds: computeMeshBounds(positions) }
   setCachedTriangleMesh(key, fileData, mesh)
   return mesh
+}
+
+export function loadImportedTriangleMesh(
+  format: ImportedModelFormat,
+  fileData: string,
+  axisOrientation: ModelAxisOrientation,
+): ImportedTriangleMesh | null {
+  switch (format) {
+    case 'stl':
+      return loadStlTriangleMesh(fileData, axisOrientation)
+  }
 }

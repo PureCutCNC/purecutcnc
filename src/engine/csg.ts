@@ -19,7 +19,7 @@ import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel }
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
-import { loadStlBufferGeometry } from './importedMesh'
+import { loadImportedBufferGeometry } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 
 const ARC_STEP_RADIANS = Math.PI / 18
@@ -318,7 +318,7 @@ export function loadSTLTransformedGeometry(
   const cached = getCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData)
   if (cached) return cached
 
-  const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', true)
+  const geometry = loadImportedBufferGeometry('stl', feature.stl.fileData, feature.stl.axisSwap || 'none', true)
   if (!geometry) return null
 
   const rawPos = geometry.attributes.position.array as Float32Array
@@ -397,7 +397,7 @@ export function buildFeatureMesh(
   hovered = false
 ): THREE.Mesh {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
-    const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', false)
+    const geometry = loadImportedBufferGeometry('stl', feature.stl.fileData, feature.stl.axisSwap || 'none', false)
     const material = new THREE.MeshStandardMaterial({
       color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
       roughness: 0.82,
@@ -626,7 +626,7 @@ export function buildFeatureSolid(
 ): ManifoldSolid | null {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
     try {
-      const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', true)
+      const geometry = loadImportedBufferGeometry('stl', feature.stl.fileData, feature.stl.axisSwap || 'none', true)
       if (!geometry) return null
       
       const positions = geometry.attributes.position.array

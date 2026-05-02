@@ -15,7 +15,7 @@
  */
 
 import { getManifoldModule } from '../engine/csg'
-import { loadStlTriangleMesh, type ModelAxisOrientation } from '../engine/importedMesh'
+import { loadImportedTriangleMesh, type ModelAxisOrientation } from '../engine/importedMesh'
 import { polygonProfile, profileVertices, type Point, type SketchProfile } from '../types/project'
 import { unionClipperPaths } from '../store/helpers/clipping'
 
@@ -25,7 +25,7 @@ export async function extractStlProfileAndBounds(
   axisSwap: ModelAxisOrientation = 'none',
   onProgress?: (percent: number) => void
 ): Promise<{ profile: SketchProfile, z_bottom: number, z_top: number } | null> {
-  const mesh = loadStlTriangleMesh(base64Data, axisSwap)
+  const mesh = loadImportedTriangleMesh('stl', base64Data, axisSwap)
   if (!mesh) return null
 
   const { positions, index: triVerts, bounds } = mesh
@@ -160,7 +160,7 @@ export function renderStlTopViewToDataUrl(
     return null
   }
 
-  const mesh = loadStlTriangleMesh(base64Data, axisSwap)
+  const mesh = loadImportedTriangleMesh('stl', base64Data, axisSwap)
   if (!mesh) return null
 
   const { positions, index, bounds } = mesh

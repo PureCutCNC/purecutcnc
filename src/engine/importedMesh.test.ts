@@ -4,7 +4,13 @@
  * Run with: npx tsx src/engine/importedMesh.test.ts
  */
 
-import { loadStlBufferGeometry, loadStlTriangleMesh, type ModelAxisOrientation } from './importedMesh'
+import {
+  loadImportedBufferGeometry,
+  loadImportedTriangleMesh,
+  loadStlBufferGeometry,
+  loadStlTriangleMesh,
+  type ModelAxisOrientation,
+} from './importedMesh'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -74,8 +80,18 @@ function testGeometryCloneCache(): void {
   assert(approx(secondBounds.min.x, 0), 'second geometry should not inherit first geometry mutation')
 }
 
+function testGenericFormatDispatch(): void {
+  console.log('Testing generic imported model format dispatch...')
+  const base64 = makeAsciiStlBase64()
+  const mesh = loadImportedTriangleMesh('stl', base64, 'none')
+  const geometry = loadImportedBufferGeometry('stl', base64, 'none', true)
+  assert(mesh !== null, 'generic triangle mesh dispatch should load STL')
+  assert(geometry !== null, 'generic buffer geometry dispatch should load STL')
+}
+
 testAxisOrientations()
 testTriangleMeshCacheReuse()
 testGeometryCloneCache()
+testGenericFormatDispatch()
 
 console.log('importedMesh tests passed')
