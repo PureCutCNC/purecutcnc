@@ -220,6 +220,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           kind: 'stl',
           folderId: null,
           stl: {
+            format: 'stl',
             filePath: undefined,
             fileData: loadedFile.dataUrl,
             scale: stlScale,

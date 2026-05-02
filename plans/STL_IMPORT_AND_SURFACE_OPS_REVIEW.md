@@ -139,6 +139,22 @@ Fix:
 - Prefer full PolyTree handling so outers and holes remain classified.
 - Use the full STL silhouette data from Finding 4 once available.
 
+### 7a. Rough surface can cut away model material under overhangs
+
+The first rough implementation used only the model slice at the current Z as the protected island. For inverted tapers, overhangs, or any model where upper Z levels occupy XY space that lower Z levels do not, lower roughing levels could cut inside the upper model footprint and destroy material that should remain.
+
+Impact:
+
+- Inverted cone/frustum shapes can be hollowed out or destroyed by roughing.
+- Any top-visible overhang is unsafe because the operation treats lower, smaller slices as free machining space.
+- This is especially risky because the generated path can look plausible level-by-level.
+
+Fix:
+
+- For each roughing Z level, protect the union of the current slice and all higher slices.
+- Sample just below the model top so coplanar top faces still contribute to the protected shadow.
+- Keep this conservative until a true 3-axis reachability/visibility model exists.
+
 ### 8. Finish surface is not yet true surface-following finishing
 
 Current finish surface slices the mesh at Z levels, intersects those closed contours with XY scanlines, sorts all resulting points by scanline X, then connects them as 3D open moves. This produces waterline-contour intersection points, not a continuous top-surface raster sampled from the actual surface.
@@ -224,11 +240,27 @@ Fix:
 - Medium term: store generated preview images in a non-history cache and regenerate when missing.
 - Long term: use asset references/blobs for STL files instead of embedding base64 in every project/history snapshot.
 
+### 13. 3D surface operations do not honor tabs yet
+
+The 2.5D edge/pocket pipeline has tab handling, but rough and finish surface operations currently ignore project tabs.
+
+Impact:
+
+- Users can place tabs and still have 3D rough/finish paths cut through them.
+- This is especially surprising when an STL model is combined with an outside edge route that does honor tabs.
+- The generated preview does not clearly communicate that tabs are unsupported for the 3D operations.
+
+Fix:
+
+- Add tab clipping/avoidance to rough and finish surface operations, or explicitly disable/show a warning for tabs while 3D operations are selected.
+- Reuse the existing tab footprint/Z-range logic where possible, but adapt it to mesh-derived 3D paths rather than 2.5D closed contours.
+- Add regression tests with tabs overlapping a 3D surface toolpath.
+
 ## Suggested Implementation Plan
 
 ### Phase 1: Correctness fixes with low blast radius
 
-Status: partially implemented locally, awaiting user testing. No commit/push yet.
+Status: implemented locally and checkpointed during STL import work. No push yet.
 
 Done:
 
@@ -238,6 +270,7 @@ Done:
 4. Changed rough `largestPolygon()` selection to absolute area until full PolyTree support lands.
 5. Added `src/import/stl.test.ts` to verify axis-oriented STL bounds and profile creation using an in-memory frustum STL.
 6. Added `src/engine/toolpaths/roughSurface.test.ts` to exercise the real `generateRoughSurfaceToolpath()` integration path using a synthetic imported STL model, including the `[region, model]` target-order regression.
+7. Updated rough surface to protect the cumulative top-down model shadow at each Z level, preventing lower roughing passes from cutting under upper model overhangs. Added an inverted-taper regression test.
 
 Still pending:
 
@@ -247,7 +280,7 @@ Still pending:
 
 ### Phase 2: Shared mesh pipeline and caching
 
-Status: started locally, awaiting user testing. No commit/push yet.
+Status: implemented locally and checkpointed during STL import work. No push yet.
 
 Done:
 
@@ -259,6 +292,7 @@ Done:
 6. Replaced the import-local and CSG-local parser/cache implementations with a shared `src/engine/importedMesh.ts` module. The module exposes STL-backed imported mesh loading now, but uses format-neutral names/types (`ImportedTriangleMesh`, `ModelAxisOrientation`) so OBJ/PLY/glTF/3DM tessellation can be added behind the same internal mesh contract later.
 7. Added `src/engine/importedMesh.test.ts` to cover axis orientation bounds, triangle mesh cache reuse, and cloned buffer geometry cache behavior.
 8. Added generic imported-model dispatch entry points (`loadImportedTriangleMesh()` and `loadImportedBufferGeometry()`) with STL as the first implementation.
+9. Added optional `stl.format` metadata for new imports and routed CSG through that field, defaulting missing legacy data to STL. `roughSurface.test.ts` covers both explicit and legacy missing-format model data.
 
 Still pending:
 
@@ -280,7 +314,7 @@ Still pending:
 
 ### Phase 4: Shared robust slicing
 
-Status: started locally, awaiting user testing. No commit/push yet.
+Status: implemented locally and checkpointed during STL import work. No push yet.
 
 Done:
 
@@ -303,7 +337,7 @@ Still pending:
 
 ### Phase 5: Rework finish surface into explicit strategies
 
-Status: not reworked yet. A small performance pass has been applied locally to the existing finish implementation.
+Status: not fully reworked yet. Performance and safety passes have been applied locally to the existing finish implementation.
 
 Done:
 
@@ -313,6 +347,8 @@ Done:
 4. Finish surface height-map construction is bounded to selected region bounds plus one tool radius when regions are present, falling back to the full model bbox if the expanded region does not overlap the model.
 5. Finish surface pre-rotates contours per scanline pass so contours are not re-rotated inside every scanline loop.
 6. Added a maximum height-map cell budget; very large maps are automatically coarsened with a warning instead of allocating an unbounded grid.
+7. Finish surface now emits separated visible intervals instead of stitching all Z-slice intersections on a scanline into one cut.
+8. Finish surface samples the top height map along accepted intervals, reducing destructive straight-chord cuts through raised details such as external threads.
 
 Still pending:
 
@@ -329,6 +365,7 @@ Still pending:
 2. Move heavy STL toolpath work to a worker if feasible.
 3. Introduce generated-asset caches outside project history.
 4. Audit history snapshots for large embedded STL/top-view strings.
+5. Add tab support or explicit tab-unsupported warnings for 3D rough/finish operations.
 
 ## Recommended First PR
 
@@ -345,6 +382,6 @@ Remaining before PR is ready:
 
 1. Add targeted tests/scripts for those cases.
 2. User test the current local changes in the app.
-3. Commit only after user approval.
+3. Continue user testing against real imported models.
 
 This reduces the chance of obviously wrong imports/toolpaths before investing in the larger shared mesh and true finishing rewrites.

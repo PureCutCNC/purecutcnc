@@ -567,10 +567,16 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  if (!features.every((feature) => feature.operation === expectedOperation)) {
+  const acceptsOperation = (feature: Project['features'][number]) => (
+    feature.operation === expectedOperation
+    || (kind === 'edge_route_outside' && feature.operation === 'model')
+  )
+  if (!features.every(acceptsOperation)) {
     return wantsSubtract
       ? 'This operation only accepts subtract features'
-      : 'This operation only accepts add features'
+      : kind === 'edge_route_outside'
+        ? 'This operation only accepts add or model features'
+        : 'This operation only accepts add features'
   }
 
   if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {

@@ -193,6 +193,8 @@ export interface TextFeatureData {
 }
 
 export interface STLFeatureData {
+  /** Imported model file format. Missing means legacy STL. */
+  format?: 'stl'
   filePath?: string
   fileData?: string // base64
   scale: number

@@ -229,6 +229,12 @@ function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
   return toClipperPath(normalizeWinding(flattened.points, true), DEFAULT_CLIPPER_SCALE)
 }
 
+function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation): boolean {
+  if (feature.operation === 'region') return true
+  if (operation.kind === 'edge_route_inside') return feature.operation === 'subtract'
+  return feature.operation === 'add' || feature.operation === 'model'
+}
+
 function resolveContourPaths(paths: ClipperPath[], offsetDistance: number): Point[][] {
   const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE)
   return offset
@@ -352,12 +358,13 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     }
   }
 
-  const expectedFeatureOperation = operation.kind === 'edge_route_inside' ? 'subtract' : 'add'
-  const targetFeatures = operation.target.featureIds
+  const selectedFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
-    .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === expectedFeatureOperation || feature.operation === 'region')
+
+  const targetFeatures = selectedFeatures
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => isEdgeRouteTargetFeature(feature, operation))
 
   const warnings: string[] = []
   const maxFeatureDepth = targetFeatures.reduce((max, feature) => {
@@ -369,8 +376,12 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     warnings.push(depthWarning)
   }
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
-    warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation}/region features`)
+  if (selectedFeatures.length !== operation.target.featureIds.length || targetFeatures.length < selectedFeatures.length) {
+    warnings.push(
+      operation.kind === 'edge_route_inside'
+        ? 'Some selected target features are missing or are not subtract/region features'
+        : 'Some selected target features are missing or are not add/model/region features',
+    )
   }
 
   const closedTargetFeatures = targetFeatures.filter((feature) => featureHasClosedGeometry(feature))

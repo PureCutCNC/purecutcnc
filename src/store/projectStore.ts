@@ -1710,9 +1710,12 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
   }
 
   if (kind === 'surface_clean' || kind === 'edge_route_outside') {
-    const firstAddFeature = project.features.find((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
-    if (firstAddFeature) {
-      return { source: 'features', featureIds: [firstAddFeature.id] }
+    const firstAddOrModelFeature = project.features.find((feature) => (
+      (feature.operation === 'add' || (kind === 'edge_route_outside' && feature.operation === 'model'))
+      && feature.sketch.profile.closed
+    ))
+    if (firstAddOrModelFeature) {
+      return { source: 'features', featureIds: [firstAddOrModelFeature.id] }
     }
   }
 

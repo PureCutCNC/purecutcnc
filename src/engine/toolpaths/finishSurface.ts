@@ -24,9 +24,9 @@
  *     1. Slice the mesh at every step-down Z level
  *     2. For a given scanline angle, rotate all slice contours by -angle
  *     3. Scan across the rotated bounding box at stepover intervals
- *     4. At each scanline Y, find X-interval intersections with all Z-level contours
- *     5. Collect all 3D intersection points, sort along scanline direction
- *     6. Emit as 3D open cut moves connecting surface points across Z levels
+ *     4. At each scanline Y, find X-interval intersections with each Z-level contour
+ *     5. Keep only intervals that are near the visible top surface
+ *     6. Emit each interval as its own 3D cut segment
  */
 
 import ClipperLib from 'clipper-lib'
@@ -396,14 +396,75 @@ function applyGougeProtection(
   }
 }
 
+function queryHeightMapTopZ(heightMap: HeightMap, x: number, y: number): number | null {
+  const col = Math.floor((x - heightMap.originX) / heightMap.cellSize)
+  const row = Math.floor((y - heightMap.originY) / heightMap.cellSize)
+  if (col < 0 || col >= heightMap.width || row < 0 || row >= heightMap.height) return null
+
+  const z = heightMap.data[row * heightMap.width + col]
+  return isFinite(z) ? z : null
+}
+
+function intervalIsNearVisibleSurface(
+  p1: Point,
+  p2: Point,
+  z: number,
+  heightMap: HeightMap,
+  tolerance: number,
+): boolean {
+  const samples = [
+    p1,
+    { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 },
+    p2,
+  ]
+
+  for (const sample of samples) {
+    const topZ = queryHeightMapTopZ(heightMap, sample.x, sample.y)
+    if (topZ !== null && topZ > z + tolerance) return false
+  }
+
+  return true
+}
+
+function buildTopSurfaceSegment(
+  x1: number,
+  x2: number,
+  rotY: number,
+  cosPos: number,
+  sinPos: number,
+  heightMap: HeightMap,
+  sampleDistance: number,
+): Array<{ x: number; y: number; z: number; rotX: number }> {
+  const length = Math.abs(x2 - x1)
+  const sampleCount = Math.max(1, Math.ceil(length / sampleDistance))
+  const points: Array<{ x: number; y: number; z: number; rotX: number }> = []
+
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const t = index / sampleCount
+    const rotX = x1 + (x2 - x1) * t
+    const point = rotatePoint({ x: rotX, y: rotY }, cosPos, sinPos)
+    const topZ = queryHeightMapTopZ(heightMap, point.x, point.y)
+    if (topZ === null) continue
+
+    points.push({
+      x: point.x,
+      y: point.y,
+      z: topZ,
+      rotX,
+    })
+  }
+
+  return points
+}
+
 /**
  * Parallel strategy for finish surface.
  *
  * Generates 3D parallel passes where the tool follows the model surface
  * along parallel scanlines at a configurable angle. At each step-down Z
  * level, the scanline is intersected with the model's slice contours to
- * produce 3D points. These are sorted along the scanline direction and
- * emitted as 3D open cut moves.
+ * produce 3D intervals. Each visible interval is emitted as a separate
+ * segment so the finish pass does not stitch through raised details.
  */
 function generateFinishSurfaceParallel(
   _project: Project,
@@ -416,7 +477,7 @@ function generateFinishSurfaceParallel(
   index: Uint32Array,
   sliceIndexHost: MeshSliceIndexHost,
   safeZ: number,
-  maxLinkDistance: number,
+  _maxLinkDistance: number,
   warnings: string[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
@@ -439,6 +500,8 @@ function generateFinishSurfaceParallel(
     : modelBbox
   const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, tool.radius / 3, warnings)
   const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, heightMapCellSize)
+  const visibleSurfaceTolerance = Math.max(tool.radius * 0.25, heightMapCellSize * 2, 1e-3)
+  const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
   // ── Rotation parameters for angled scanlines ─────────────────────────
 
@@ -479,7 +542,7 @@ function generateFinishSurfaceParallel(
       rotY < rotMaxY;
       rotY += stepoverDistance, scanIndex += 1
     ) {
-      const scanPoints: Array<{ x: number; y: number; z: number; rotX: number }> = []
+      const scanSegments: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
 
       // Use the outer stepLevels (number[]) from generateFinishSurfaceParallel
       for (const z of stepLevels) {
@@ -491,36 +554,42 @@ function generateFinishSurfaceParallel(
           for (const [x1, x2] of intervals) {
             const p1 = rotatePoint({ x: x1, y: rotY }, cosPos, sinPos)
             const p2 = rotatePoint({ x: x2, y: rotY }, cosPos, sinPos)
-            scanPoints.push({ x: p1.x, y: p1.y, z, rotX: x1 })
-            scanPoints.push({ x: p2.x, y: p2.y, z, rotX: x2 })
+            if (!intervalIsNearVisibleSurface(p1, p2, z, heightMap, visibleSurfaceTolerance)) continue
+            const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
+            if (segment.length >= 2) scanSegments.push(segment)
           }
         }
       }
 
-      if (scanPoints.length < 2) continue
+      if (scanSegments.length === 0) continue
 
-      scanPoints.sort((a, b) => a.rotX - b.rotX)
+      scanSegments.sort((a, b) => a[0].rotX - b[0].rotX)
 
       if (scanIndex % 2 === 1) {
-        scanPoints.reverse()
+        scanSegments.reverse()
+        for (const segment of scanSegments) {
+          segment.reverse()
+        }
       }
 
-      applyGougeProtection(scanPoints, heightMap, tool.radius)
+      for (const segment of scanSegments) {
+        applyGougeProtection(segment, heightMap, tool.radius)
 
-      for (const sp of scanPoints) {
-        outStepLevels.add(sp.z)
+        for (const sp of segment) {
+          outStepLevels.add(sp.z)
+        }
+
+        const cutPoints3D: ToolpathPoint[] = segment.map((sp) => ({
+          x: sp.x,
+          y: sp.y,
+          z: sp.z,
+        }))
+        const entryPoint = cutPoints3D[0]
+
+        pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, 0)
+        moves.push(...toOpenCutMoves3D(cutPoints3D))
+        pos = cutPoints3D[cutPoints3D.length - 1]
       }
-
-      const cutPoints3D: ToolpathPoint[] = scanPoints.map((sp) => ({
-        x: sp.x,
-        y: sp.y,
-        z: sp.z,
-      }))
-      const entryPoint = cutPoints3D[0]
-
-      pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, maxLinkDistance)
-      moves.push(...toOpenCutMoves3D(cutPoints3D))
-      pos = cutPoints3D[cutPoints3D.length - 1]
     }
 
     return pos

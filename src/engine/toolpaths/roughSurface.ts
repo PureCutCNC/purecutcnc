@@ -23,11 +23,11 @@
  * so no separate range/region feature is required.
  *
  * Algorithm (per Z level):
- *   1. Slice the 3D model triangle mesh at this Z to get the true 3D
- *      cross-section (works on any mesh, manifold or not)
+ *   1. Slice the 3D model triangle mesh at this Z and union it with all
+ *      higher slices to get the top-down protected model shadow at this depth
  *   2. Use the computed silhouette outline as the outer boundary
- *   3. Build a pocket region with the slice(s) as inner islands (the
- *      model occupies this area — we must not cut there)
+ *   3. Build a pocket region with the protected shadow as inner islands
+ *      (the model occupies this area at or above this Z — we must not cut there)
  *   4. Apply the initial tool-radius + radial-leave inset
  *   5. Use standard pocket recursive offsetting to generate concentric
  *      passes from the region boundary inward, stepover by stepover,
@@ -110,23 +110,54 @@ function largestPolygon(paths: ClipperPath[]): ClipperPath | null {
   return best
 }
 
+function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
+  return slicePolygons
+    .filter((poly) => poly.length >= 3)
+    .map((poly) => toClipperPath(
+      normalizeWinding(poly.map(([x, y]) => ({ x, y })), false),
+      DEFAULT_CLIPPER_SCALE,
+    ))
+}
+
+function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
+  if (paths.length === 0) return []
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
+}
+
+function clipperPathsToSlicePolygons(paths: ClipperPath[]): Array<Array<[number, number]>> {
+  return paths
+    .filter((path) => path.length >= 3)
+    .map((path) => path.map((point) => [point.X / DEFAULT_CLIPPER_SCALE, point.Y / DEFAULT_CLIPPER_SCALE]))
+}
+
 // ── Region helpers ──────────────────────────────────────────────────────
 
 /**
- * Build a ResolvedPocketRegion from a computed outer boundary and slice
- * polygons (the model cross-section at a given Z).
+ * Build a ResolvedPocketRegion from a computed outer boundary and protected
+ * model-shadow polygons for a given Z.
  *
- * The outer boundary becomes the outer contour; each slice polygon becomes
- * an island (area the tool must avoid).
+ * The outer boundary becomes the outer contour; each protected polygon becomes
+ * an island (area the tool must avoid because model material exists there at
+ * this Z or above it).
  */
 function buildRegionFromSlice(
   outerBoundary: Point[],
-  slicePolygons: Array<Array<[number, number]>>,
+  protectedPolygons: Array<Array<[number, number]>>,
 ): ResolvedPocketRegion {
   const outer = normalizeWinding(outerBoundary, false)
 
-  // Convert slice tuples to Point arrays, normalized as islands
-  const islands: Point[][] = slicePolygons.map((poly) =>
+  // Convert protected-shadow tuples to Point arrays, normalized as islands.
+  const islands: Point[][] = protectedPolygons.map((poly) =>
     normalizeWinding(
       poly.map(([x, y]) => ({ x, y })),
       false,
@@ -336,21 +367,33 @@ export function generateRoughSurfaceToolpath(
   }
 
   let currentPosition: ToolpathPoint | null = null
+  let protectedSlicePaths: ClipperPath[] = []
+  const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - modelBottomZ) * 1e-6, 1e-6)
 
   for (const z of stepLevels) {
     allStepLevels.add(z)
 
     // ═══ 1. Slice the triangle mesh at this Z ════════════════════════════
-    const slicePolygons = sliceMeshAtZ(sliceIndex, z)
+    const sliceZ = z >= modelTopZ - sliceSampleEpsilon
+      ? Math.max(modelBottomZ + sliceSampleEpsilon, modelTopZ - sliceSampleEpsilon)
+      : z
+    const slicePolygons = sliceMeshAtZ(sliceIndex, sliceZ)
+    if (slicePolygons.length > 0) {
+      protectedSlicePaths = unionClipperPaths([
+        ...protectedSlicePaths,
+        ...slicePolygonsToClipperPaths(slicePolygons),
+      ])
+    }
 
-    if (slicePolygons.length === 0) {
+    if (protectedSlicePaths.length === 0) {
       if (operation.debugToolpath) warnings.push(`Debug: Z=${z.toFixed(4)} empty slice — no model at this level`)
       currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
       continue
     }
 
-    // ═══ 2. Build pocket region: silhouette outline = outer, slice = islands ══
-    const baseRegion = buildRegionFromSlice(outlinePolygon, slicePolygons)
+    // ═══ 2. Build pocket region: silhouette outline = outer, protected model shadow = islands ══
+    const protectedPolygons = clipperPathsToSlicePolygons(protectedSlicePaths)
+    const baseRegion = buildRegionFromSlice(outlinePolygon, protectedPolygons)
 
     // ═══ 3. Apply initial inset (tool radius + radial leave) ══════════════
     //      This offsets the outer INWARD and the islands OUTWARD, so the

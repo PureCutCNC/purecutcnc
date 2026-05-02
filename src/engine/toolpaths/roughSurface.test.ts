@@ -12,17 +12,28 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
-function makeFrustumStlDataUrl(): string {
-  const vertices = {
-    b0: [0, 0, 0],
-    b1: [12, 0, 0],
-    b2: [12, 8, 0],
-    b3: [0, 8, 0],
-    t0: [4, 2, 6],
-    t1: [8, 2, 6],
-    t2: [8, 6, 6],
-    t3: [4, 6, 6],
-  } as const
+function makeFrustumStlDataUrl(inverted = false): string {
+  const vertices = inverted
+    ? {
+        b0: [4, 2, 0],
+        b1: [8, 2, 0],
+        b2: [8, 6, 0],
+        b3: [4, 6, 0],
+        t0: [0, 0, 6],
+        t1: [12, 0, 6],
+        t2: [12, 8, 6],
+        t3: [0, 8, 6],
+      } as const
+    : {
+        b0: [0, 0, 0],
+        b1: [12, 0, 0],
+        b2: [12, 8, 0],
+        b3: [0, 8, 0],
+        t0: [4, 2, 6],
+        t1: [8, 2, 6],
+        t2: [8, 6, 6],
+        t3: [4, 6, 6],
+      } as const
 
   const faces: Array<[keyof typeof vertices, keyof typeof vertices, keyof typeof vertices]> = [
     ['b0', 'b2', 'b1'], ['b0', 'b3', 'b2'],
@@ -60,13 +71,14 @@ function makeTool(): Tool {
   }
 }
 
-function makeModelFeature(): SketchFeature {
+function makeModelFeature(includeFormat = true, inverted = false): SketchFeature {
   return {
     id: 'model1',
     name: 'Frustum STL',
     kind: 'stl',
     stl: {
-      fileData: makeFrustumStlDataUrl(),
+      ...(includeFormat ? { format: 'stl' as const } : {}),
+      fileData: makeFrustumStlDataUrl(inverted),
       scale: 1,
       axisSwap: 'none',
     },
@@ -147,6 +159,28 @@ function makeProject(featureIds: string[]): { project: Project; operation: Opera
   return { project, operation: makeRoughOperation(featureIds) }
 }
 
+function makeLegacyProject(featureIds: string[]): { project: Project; operation: Operation } {
+  const model = makeModelFeature(false)
+  const region = makeRegionFeature()
+  const project = {
+    ...newProject('rough-surface-legacy-test', 'mm'),
+    tools: [makeTool()],
+    features: [model, region],
+  }
+  return { project, operation: makeRoughOperation(featureIds) }
+}
+
+function makeInvertedProject(featureIds: string[]): { project: Project; operation: Operation } {
+  const model = makeModelFeature(true, true)
+  const region = makeRegionFeature()
+  const project = {
+    ...newProject('rough-surface-inverted-test', 'mm'),
+    tools: [makeTool()],
+    features: [model, region],
+  }
+  return { project, operation: makeRoughOperation(featureIds) }
+}
+
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
 }
@@ -177,7 +211,36 @@ function testRoughSurfaceFindsModelWhenRegionIsFirst(): void {
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves with region-first target order')
 }
 
+function testRoughSurfaceDefaultsLegacyModelFormatToStl(): void {
+  console.log('Testing rough_surface legacy STL model format default...')
+  const { project, operation } = makeLegacyProject(['model1'])
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves for legacy STL model data')
+}
+
+function testRoughSurfaceProtectsOverhangingModelShadow(): void {
+  console.log('Testing rough_surface protects upper model shadow on inverted taper...')
+  const { project, operation } = makeInvertedProject(['model1'])
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const destructiveCuts = cutMoves(result.moves).filter((move) => {
+    if (move.to.z > 3) return false
+    const endpoints = [move.from, move.to]
+    return endpoints.some((point) => (
+      point.x > 0.25 && point.x < 11.75 &&
+      point.y > 0.25 && point.y < 7.75
+    ))
+  })
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves for inverted taper')
+  assert(destructiveCuts.length === 0, `expected no lower-level cuts inside upper model shadow, got ${destructiveCuts.length}`)
+}
+
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
+testRoughSurfaceDefaultsLegacyModelFormatToStl()
+testRoughSurfaceProtectsOverhangingModelShadow()
 
 console.log('roughSurface tests passed')

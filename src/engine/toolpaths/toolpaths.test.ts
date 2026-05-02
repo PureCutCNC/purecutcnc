@@ -57,6 +57,35 @@ function makePocketFeature(
   }
 }
 
+function makeModelFeature(
+  id: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  zTop: number,
+  zBottom: number,
+): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'stl',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'model',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
 function makeFlatEndmill(id: string, diameter = 4): Tool {
   const base = defaultTool('mm', 1)
   return {
@@ -381,6 +410,36 @@ function testEdgeInsideLevelFirstVsFeatureFirst() {
   console.log('edge_route_inside ordering: PASSED')
 }
 
+function testEdgeOutsideAcceptsModelSilhouette() {
+  console.log('Testing edge_route_outside accepts model silhouette...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const model = makeModelFeature('model', 10, 10, 20, 10, 6, 0)
+  const project = baseProject([tool], [model])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['model'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  assert(result.moves.length > 0, 'outside edge route produces moves for model silhouette')
+  assert(
+    !result.warnings.some((warning) => warning.includes('not add/model/region')),
+    `model target should be accepted; warnings: ${result.warnings.join(', ')}`,
+  )
+
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'outside edge route produces cut moves for model silhouette')
+  assert(
+    cuts.some((move) => move.to.x < 10 || move.to.x > 30 || move.to.y < 10 || move.to.y > 20),
+    'outside edge route offsets around the model silhouette, not through the original outline',
+  )
+
+  console.log('edge_route_outside model silhouette: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
@@ -509,6 +568,7 @@ try {
   testPocketFeatureFirstOrder()
   testPocketSingleFeatureParity()
   testEdgeInsideLevelFirstVsFeatureFirst()
+  testEdgeOutsideAcceptsModelSilhouette()
   testVCarveFeatureFirstProducesSameMoveCount()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   console.log('\nAll toolpath tests PASSED.')
