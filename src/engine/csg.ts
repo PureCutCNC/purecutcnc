@@ -21,6 +21,7 @@ import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel }
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
+import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
@@ -237,6 +238,8 @@ export interface STLTransformedData {
   rawMinZ: number
   /** Mesh height after uniform scale. */
   meshHeight: number
+  /** Lazily-created slice acceleration/caching data for CAM operations. */
+  sliceIndex?: MeshSliceIndex
 }
 
 const STL_TRANSFORM_CACHE_LIMIT = 6

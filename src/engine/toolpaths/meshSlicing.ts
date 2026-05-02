@@ -29,6 +29,18 @@ interface SliceTriangle {
 
 export interface MeshSliceIndex {
   triangles: SliceTriangle[]
+  minZ: number
+  maxZ: number
+  bucketStep: number
+  buckets: SliceTriangle[][]
+  wideTriangles: SliceTriangle[]
+  sliceCache: Map<number, Array<Array<[number, number]>>>
+}
+
+export interface MeshSliceIndexHost {
+  positions: Float32Array
+  index: Uint32Array
+  sliceIndex?: MeshSliceIndex
 }
 
 function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
@@ -50,6 +62,8 @@ export function buildMeshSliceIndex(
   index: Uint32Array,
 ): MeshSliceIndex {
   const triangles: SliceTriangle[] = []
+  let minZ = Infinity
+  let maxZ = -Infinity
 
   for (let i = 0; i < index.length; i += 3) {
     const i0 = index[i] * 3
@@ -59,47 +73,112 @@ export function buildMeshSliceIndex(
     const p1 = { x: positions[i1], y: positions[i1 + 1], z: positions[i1 + 2] }
     const p2 = { x: positions[i2], y: positions[i2 + 1], z: positions[i2 + 2] }
 
+    const triMinZ = Math.min(p0.z, p1.z, p2.z)
+    const triMaxZ = Math.max(p0.z, p1.z, p2.z)
+    if (triMinZ < minZ) minZ = triMinZ
+    if (triMaxZ > maxZ) maxZ = triMaxZ
+
     triangles.push({
       p0,
       p1,
       p2,
-      minZ: Math.min(p0.z, p1.z, p2.z),
-      maxZ: Math.max(p0.z, p1.z, p2.z),
+      minZ: triMinZ,
+      maxZ: triMaxZ,
     })
   }
 
-  return { triangles }
+  if (!Number.isFinite(minZ) || !Number.isFinite(maxZ) || maxZ - minZ <= Z_EPS) {
+    return {
+      triangles,
+      minZ,
+      maxZ,
+      bucketStep: 0,
+      buckets: [],
+      wideTriangles: triangles,
+      sliceCache: new Map(),
+    }
+  }
+
+  const bucketCount = Math.max(16, Math.min(256, Math.ceil(Math.sqrt(Math.max(1, triangles.length)))))
+  const bucketStep = (maxZ - minZ) / bucketCount
+  const buckets: SliceTriangle[][] = Array.from({ length: bucketCount }, () => [])
+  const wideTriangles: SliceTriangle[] = []
+
+  for (const triangle of triangles) {
+    const start = Math.max(0, Math.min(bucketCount - 1, Math.floor((triangle.minZ - minZ) / bucketStep)))
+    const end = Math.max(0, Math.min(bucketCount - 1, Math.floor((triangle.maxZ - minZ) / bucketStep)))
+
+    // Tall/vertical triangles spanning many buckets are cheaper to keep in a
+    // shared side list than duplicated into most buckets.
+    if (end - start > bucketCount / 2) {
+      wideTriangles.push(triangle)
+      continue
+    }
+
+    for (let bucketIndex = start; bucketIndex <= end; bucketIndex += 1) {
+      buckets[bucketIndex].push(triangle)
+    }
+  }
+
+  return { triangles, minZ, maxZ, bucketStep, buckets, wideTriangles, sliceCache: new Map() }
+}
+
+export function getMeshSliceIndex(host: MeshSliceIndexHost): MeshSliceIndex {
+  if (!host.sliceIndex) {
+    host.sliceIndex = buildMeshSliceIndex(host.positions, host.index)
+  }
+  return host.sliceIndex
 }
 
 export function sliceMeshAtZ(
   mesh: MeshSliceIndex,
   z: number,
 ): Array<Array<[number, number]>> {
+  const cacheKey = Math.round(z / Z_EPS)
+  const cached = mesh.sliceCache.get(cacheKey)
+  if (cached) return cached
+
   const segments: Array<[[number, number], [number, number]]> = []
+  const bucketIndex = mesh.bucketStep > 0
+    ? Math.max(0, Math.min(mesh.buckets.length - 1, Math.floor((z - mesh.minZ) / mesh.bucketStep)))
+    : -1
 
-  for (const triangle of mesh.triangles) {
-    if (z < triangle.minZ - Z_EPS || z > triangle.maxZ + Z_EPS) continue
+  function appendSegments(candidates: SliceTriangle[]): void {
+    for (const triangle of candidates) {
+      if (z < triangle.minZ - Z_EPS || z > triangle.maxZ + Z_EPS) continue
 
-    const { p0, p1, p2 } = triangle
-    const dz = [p0.z - z, p1.z - z, p2.z - z]
-    const above = dz.filter((d) => d > Z_EPS).length
-    const below = dz.filter((d) => d < -Z_EPS).length
-    if (above === 0 || below === 0) continue
+      const { p0, p1, p2 } = triangle
+      const dz0 = p0.z - z
+      const dz1 = p1.z - z
+      const dz2 = p2.z - z
+      const above = (dz0 > Z_EPS ? 1 : 0) + (dz1 > Z_EPS ? 1 : 0) + (dz2 > Z_EPS ? 1 : 0)
+      const below = (dz0 < -Z_EPS ? 1 : 0) + (dz1 < -Z_EPS ? 1 : 0) + (dz2 < -Z_EPS ? 1 : 0)
+      if (above === 0 || below === 0) continue
 
-    const pts: Array<[number, number]> = []
-    const e01 = edgeCrossZ(p0, p1, z)
-    if (e01) pts.push([e01.x, e01.y])
-    const e12 = edgeCrossZ(p1, p2, z)
-    if (e12) pts.push([e12.x, e12.y])
-    const e20 = edgeCrossZ(p2, p0, z)
-    if (e20) pts.push([e20.x, e20.y])
+      const pts: Array<[number, number]> = []
+      const e01 = edgeCrossZ(p0, p1, z)
+      if (e01) pts.push([e01.x, e01.y])
+      const e12 = edgeCrossZ(p1, p2, z)
+      if (e12) pts.push([e12.x, e12.y])
+      const e20 = edgeCrossZ(p2, p0, z)
+      if (e20) pts.push([e20.x, e20.y])
 
-    if (pts.length >= 2) {
-      segments.push([pts[0], pts[1]])
+      if (pts.length >= 2) {
+        segments.push([pts[0], pts[1]])
+      }
     }
   }
 
-  return chainSegments(segments)
+  if (bucketIndex >= 0) {
+    appendSegments(mesh.buckets[bucketIndex])
+    appendSegments(mesh.wideTriangles)
+  } else {
+    appendSegments(mesh.triangles)
+  }
+
+  const polygons = chainSegments(segments)
+  mesh.sliceCache.set(cacheKey, polygons)
+  return polygons
 }
 
 function ptKey(x: number, y: number): string {

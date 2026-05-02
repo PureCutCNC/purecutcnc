@@ -56,7 +56,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-import { buildMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 
 /**
  * Convert a scaled Clipper path back to unscaled Point[].
@@ -232,7 +232,7 @@ export function generateRoughSurfaceToolpath(
   }
 
   const { positions: transformedPos, index } = stlData
-  const sliceIndex = buildMeshSliceIndex(transformedPos, index)
+  const sliceIndex = getMeshSliceIndex(stlData)
 
   // ── Compute Z bounds from transformed positions ───────────────────────
 

@@ -47,7 +47,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-import { buildMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { getMeshSliceIndex, sliceMeshAtZ, type MeshSliceIndexHost } from './meshSlicing'
 
 function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
   const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
@@ -238,6 +238,8 @@ function toOpenCutMoves3D(points: ToolpathPoint[]): ToolpathMove[] {
 
 // ── Height map for gouge protection ──────────────────────────────────────
 
+const MAX_HEIGHT_MAP_CELLS = 1_000_000
+
 interface HeightMap {
   data: Float32Array
   width: number
@@ -249,6 +251,26 @@ interface HeightMap {
 
 type SliceMap = Map<number, Array<Array<[number, number]>>>
 type RotatedSliceMap = Map<number, Point[][]>
+
+function chooseHeightMapCellSize(
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  requestedCellSize: number,
+  warnings: string[],
+): number {
+  let cellSize = Math.max(requestedCellSize, 1e-6)
+  const spanX = Math.max(0, bbox.maxX - bbox.minX)
+  const spanY = Math.max(0, bbox.maxY - bbox.minY)
+  const requestedWidth = Math.max(1, Math.ceil(spanX / cellSize))
+  const requestedHeight = Math.max(1, Math.ceil(spanY / cellSize))
+  const requestedCells = requestedWidth * requestedHeight
+  if (requestedCells <= MAX_HEIGHT_MAP_CELLS) return cellSize
+
+  cellSize *= Math.sqrt(requestedCells / MAX_HEIGHT_MAP_CELLS)
+  warnings.push(
+    `Finish surface height map reduced from ${requestedCells.toLocaleString()} to about ${MAX_HEIGHT_MAP_CELLS.toLocaleString()} cells for performance`,
+  )
+  return cellSize
+}
 
 /**
  * Rasterize mesh triangles onto a regular 2D grid. Each cell stores the
@@ -392,6 +414,7 @@ function generateFinishSurfaceParallel(
   stepLevels: number[],
   transformedPos: Float32Array,
   index: Uint32Array,
+  sliceIndexHost: MeshSliceIndexHost,
   safeZ: number,
   maxLinkDistance: number,
   warnings: string[],
@@ -414,7 +437,8 @@ function generateFinishSurfaceParallel(
   const heightMapBbox = regionBounds
     ? clampExpandedBoundsToModel(regionBounds, modelBbox, tool.radius)
     : modelBbox
-  const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, tool.radius / 3)
+  const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, tool.radius / 3, warnings)
+  const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, heightMapCellSize)
 
   // ── Rotation parameters for angled scanlines ─────────────────────────
 
@@ -508,7 +532,7 @@ function generateFinishSurfaceParallel(
   const allStepLevels = new Set<number>()
   let currentPosition: ToolpathPoint | null = null
   let scanIndex = 0
-  const sliceIndex = buildMeshSliceIndex(transformedPos, index)
+  const sliceIndex = getMeshSliceIndex(sliceIndexHost)
   const rawSliceMap: SliceMap = new Map()
   for (const z of stepLevels) {
     rawSliceMap.set(z, sliceMeshAtZ(sliceIndex, z))
@@ -694,6 +718,7 @@ export function generateFinishSurfaceToolpath(
     stepLevels,
     transformedPos,
     index,
+    stlData,
     safeZ,
     maxLinkDistance,
     warnings,
