@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent } from 'react'
 import { importDxfString, importSvgString, inspectDxfString, inspectSvgString, type ImportInspection, type ImportSourceType } from '../../import'
-import { extractStlProfileAndBounds, renderSilhouetteToDataUrl, renderStlTopViewToDataUrl } from '../../import/stl'
+import { extractStlProfileAndBounds, renderStlTopViewToDataUrl } from '../../import/stl'
 import { useProjectStore } from '../../store/projectStore'
 import type { Units } from '../../utils/units'
 
@@ -194,16 +194,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         const stlInfo = await extractStlProfileAndBounds(base64Data, stlScale, axisSwap, (p) => setLoadingProgress(p))
         if (!stlInfo) throw new Error('Failed to parse STL or generate silhouette')
 
-        // Pre-render the silhouette to a data URL so we can display it as a
-        // filled footprint within the feature in the sketch view.
-        let silhouetteDataUrl: string | undefined
         let topViewDataUrl: string | undefined
-        try {
-          const url = renderSilhouetteToDataUrl(stlInfo.profile)
-          if (url) silhouetteDataUrl = url
-        } catch {
-          // silhouette rendering is best-effort
-        }
         try {
           const url = renderStlTopViewToDataUrl(base64Data, stlScale, axisSwap)
           if (url) topViewDataUrl = url
@@ -225,7 +216,6 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             fileData: loadedFile.dataUrl,
             scale: stlScale,
             axisSwap: axisSwap,
-            silhouetteDataUrl,
             topViewDataUrl,
           },
           sketch: {

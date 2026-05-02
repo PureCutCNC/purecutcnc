@@ -965,6 +965,21 @@ function snappedResizeScales(
   return { scaleU, scaleV }
 }
 
+function scaleNumericZSpan(
+  zTop: SketchFeature['z_top'],
+  zBottom: SketchFeature['z_bottom'],
+  scale: number,
+): Pick<SketchFeature, 'z_top' | 'z_bottom'> {
+  if (typeof zTop !== 'number' || typeof zBottom !== 'number') {
+    return { z_top: zTop, z_bottom: zBottom }
+  }
+
+  return {
+    z_top: zBottom + (zTop - zBottom) * scale,
+    z_bottom: zBottom,
+  }
+}
+
 export function resizeFeatureFromReference(
   feature: SketchFeature,
   referenceStart: Point,
@@ -987,7 +1002,11 @@ export function resizeFeatureFromReference(
     return null
   }
 
-  const { scaleU, scaleV } = snappedScales
+  const uniformModelScale = feature.kind === 'stl'
+    ? projectedLength / referenceLength
+    : null
+  const scaleU = uniformModelScale ?? snappedScales.scaleU
+  const scaleV = uniformModelScale ?? snappedScales.scaleV
   if (
     !Number.isFinite(scaleU)
     || !Number.isFinite(scaleV)
@@ -1008,10 +1027,16 @@ export function resizeFeatureFromReference(
   }
 
   const profile = transformProfileAffine(feature.sketch.profile, transformPoint)
+  const resizedZ = feature.kind === 'stl'
+    ? scaleNumericZSpan(feature.z_top, feature.z_bottom, scaleU)
+    : { z_top: feature.z_top, z_bottom: feature.z_bottom }
+
   return {
     ...feature,
     kind: feature.kind === 'text' ? 'text' : (feature.kind === 'stl' ? 'stl' : inferFeatureKind(profile)),
     stl: feature.stl ? { ...feature.stl, scale: feature.stl.scale * scaleU } : feature.stl,
+    z_top: resizedZ.z_top,
+    z_bottom: resizedZ.z_bottom,
     sketch: {
       ...feature.sketch,
       origin: transformPoint(feature.sketch.origin),

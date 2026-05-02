@@ -199,7 +199,8 @@ export interface STLFeatureData {
   fileData?: string // base64
   scale: number
   axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
-  silhouetteDataUrl?: string // pre-rendered PNG of the top-down silhouette
+  /** Legacy imported silhouette PNG. New imports store only topViewDataUrl. */
+  silhouetteDataUrl?: string
   topViewDataUrl?: string // pre-rendered top-down model image for sketch view
 }
 

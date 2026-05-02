@@ -16,7 +16,7 @@
 
 import { getManifoldModule } from '../engine/csg'
 import { loadImportedTriangleMesh, type ModelAxisOrientation } from '../engine/importedMesh'
-import { polygonProfile, profileVertices, type Point, type SketchProfile } from '../types/project'
+import { polygonProfile, type Point, type SketchProfile } from '../types/project'
 import { unionClipperPaths } from '../store/helpers/clipping'
 
 export async function extractStlProfileAndBounds(
@@ -259,83 +259,6 @@ export function renderStlTopViewToDataUrl(
     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
     ctx.fill()
   }
-
-  return canvas.toDataURL('image/png')
-}
-
-/**
- * Render a silhouette SketchProfile (from STL import) to a PNG data URL using
- * an offscreen canvas, and return positioning info for use as a backdrop.
- *
- * Returns null if the silhouette is degenerate or canvas is unavailable.
- */
-export function renderSilhouetteToDataUrl(
-  profile: SketchProfile,
-): string | null {
-  const verts = profileVertices(profile)
-  if (verts.length < 3) return null
-
-  // ── Bounding box ────────────────────────────────────────────────────────
-  let minX = Infinity, maxX = -Infinity
-  let minY = Infinity, maxY = -Infinity
-  for (const v of verts) {
-    if (v.x < minX) minX = v.x
-    if (v.x > maxX) maxX = v.x
-    if (v.y < minY) minY = v.y
-    if (v.y > maxY) maxY = v.y
-  }
-  const bboxW = maxX - minX
-  const bboxH = maxY - minY
-  if (bboxW < 1e-9 || bboxH < 1e-9) return null
-
-  // ── Canvas dimensions (max 1024 on longest side) ──────────────────────
-  const MAX_PX = 1024
-  let canvasW: number
-  let canvasH: number
-  if (bboxW >= bboxH) {
-    canvasW = MAX_PX
-    canvasH = Math.max(1, Math.round(MAX_PX * (bboxH / bboxW)))
-  } else {
-    canvasH = MAX_PX
-    canvasW = Math.max(1, Math.round(MAX_PX * (bboxW / bboxH)))
-  }
-
-  let canvas: HTMLCanvasElement | undefined
-  try {
-    canvas = document.createElement('canvas')
-  } catch {
-    return null // canvas not available
-  }
-  canvas.width = canvasW
-  canvas.height = canvasH
-
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-
-  // ── Scale: map bounding box to canvas pixels (no padding) ────────────
-  const scale = canvasW / bboxW
-  const originX = -minX
-  const originY = -minY
-
-  function sx(x: number): number { return (x + originX) * scale }
-  // Model Y increases in the same direction as canvas Y, so no flip needed.
-  function sy(y: number): number { return (y + originY) * scale }
-
-  // ── Draw filled silhouette ──────────────────────────────────────────────
-  // Saturated steel-blue fill — clearly visible against the dark sketch canvas
-  ctx.fillStyle = '#4a7fa8'
-  ctx.beginPath()
-  ctx.moveTo(sx(verts[0].x), sy(verts[0].y))
-  for (let i = 1; i < verts.length; i++) {
-    ctx.lineTo(sx(verts[i].x), sy(verts[i].y))
-  }
-  ctx.closePath()
-  ctx.fill()
-
-  // Slightly brighter outline for edge definition
-  ctx.strokeStyle = '#6b9fcb'
-  ctx.lineWidth = 2
-  ctx.stroke()
 
   return canvas.toDataURL('image/png')
 }

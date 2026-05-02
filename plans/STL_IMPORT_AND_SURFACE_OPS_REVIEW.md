@@ -224,6 +224,12 @@ Fix:
 - Either block non-uniform resize for STL model features, or store full STL transform data (`scaleX`, `scaleY`, `scaleZ` or a 2D affine transform plus Z scale).
 - Prefer blocking non-uniform resize initially unless there is a clear CNC use case for non-uniform STL distortion.
 
+Status:
+
+- Implemented the conservative path: STL model resize now applies a uniform scale factor to the stored silhouette profile, `stl.scale`, and the numeric Z span anchored at `z_bottom`.
+- Regular sketch feature resize still supports the existing axis/non-uniform behavior.
+- Added `src/store/projectStoreTransform.test.ts` to cover both cases.
+
 ### 12. Project serialization can become very large
 
 STL `fileData` and `topViewDataUrl` are stored directly on the feature.
@@ -302,7 +308,10 @@ Still pending:
    - done for initial parser dispatch by model format.
 2. Replace persisted feature data naming from `stl` to a generic `model` shape with project-load backward compatibility.
 3. Expand transformed mesh caching if needed after profiling real projects.
-4. Remove `silhouetteDataUrl` if no longer used.
+4. Stop writing `silhouetteDataUrl` for new STL imports:
+   - done; new imports store the rendered `topViewDataUrl` only,
+   - removed the unused `renderSilhouetteToDataUrl()` helper,
+   - the optional field remains in the type as legacy project-load compatibility.
 
 ### Phase 3: Robust silhouette representation
 
