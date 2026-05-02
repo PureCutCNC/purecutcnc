@@ -239,6 +239,63 @@ export interface STLTransformedData {
   meshHeight: number
 }
 
+const STL_TRANSFORM_CACHE_LIMIT = 6
+
+interface STLTransformedCacheEntry {
+  fileData: string
+  data: STLTransformedData
+}
+
+const stlTransformedGeometryCache = new Map<string, STLTransformedCacheEntry>()
+
+function stlTransformedGeometryCacheKey(
+  feature: SketchFeature,
+  project: Project,
+): string {
+  const stl = feature.stl
+  const zTop = resolveDimension(feature.z_top, project)
+  const zBottom = resolveDimension(feature.z_bottom, project)
+  return [
+    feature.id,
+    stl?.axisSwap ?? 'none',
+    stl?.scale ?? 1,
+    feature.sketch.origin.x,
+    feature.sketch.origin.y,
+    feature.sketch.orientationAngle ?? 0,
+    zTop,
+    zBottom,
+    stl?.fileData?.length ?? 0,
+  ].join('|')
+}
+
+function getCachedSTLTransformedGeometry(
+  key: string,
+  fileData: string,
+): STLTransformedData | null {
+  const entry = stlTransformedGeometryCache.get(key)
+  if (!entry || entry.fileData !== fileData) {
+    return null
+  }
+
+  // Refresh insertion order for a small LRU cache.
+  stlTransformedGeometryCache.delete(key)
+  stlTransformedGeometryCache.set(key, entry)
+  return entry.data
+}
+
+function setCachedSTLTransformedGeometry(
+  key: string,
+  fileData: string,
+  data: STLTransformedData,
+): void {
+  stlTransformedGeometryCache.set(key, { fileData, data })
+  while (stlTransformedGeometryCache.size > STL_TRANSFORM_CACHE_LIMIT) {
+    const oldestKey = stlTransformedGeometryCache.keys().next().value
+    if (!oldestKey) break
+    stlTransformedGeometryCache.delete(oldestKey)
+  }
+}
+
 /**
  * Load an STL feature and apply all design-space transformations
  * (axis swap, scale, zScale, rotate, translate to origin).
@@ -254,6 +311,10 @@ export function loadSTLTransformedGeometry(
   project: Project
 ): STLTransformedData | null {
   if (feature.kind !== 'stl' || !feature.stl?.fileData) return null
+
+  const cacheKey = stlTransformedGeometryCacheKey(feature, project)
+  const cached = getCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData)
+  if (cached) return cached
 
   const base64Data = feature.stl.fileData.split(',')[1]
   if (!base64Data) return null
@@ -350,7 +411,9 @@ export function loadSTLTransformedGeometry(
     ? new Uint32Array(geometry.index.array)
     : new Uint32Array(numVerts).map((_, i) => i)
 
-  return { positions, index, rawMinZ: rawMinZ * scale, meshHeight: meshHeight * scale }
+  const data = { positions, index, rawMinZ: rawMinZ * scale, meshHeight: meshHeight * scale }
+  setCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData, data)
+  return data
 }
 
 export function buildFeatureMesh(

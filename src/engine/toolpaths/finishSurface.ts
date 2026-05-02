@@ -30,7 +30,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import { getProfileBounds, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -47,160 +47,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-
-// ── Constants ───────────────────────────────────────────────────────────
-
-/** Epsilon for floating-point Z comparisons during mesh slicing. */
-const Z_EPS = 1e-8
-
-/** Epsilon for 2D point matching during segment chaining. */
-const PT_EPS = 1e-6
-
-// ── 3D → 2D mesh slicing (non-manifold safe, shared from roughSurface) ──
-
-interface Vec3 { x: number; y: number; z: number }
-
-function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t }
-}
-
-function edgeCrossZ(a: Vec3, b: Vec3, z: number): Vec3 | null {
-  const dzA = a.z - z
-  const dzB = b.z - z
-  if (Math.abs(dzA) < Z_EPS) return a
-  if (Math.abs(dzB) < Z_EPS) return b
-  if (dzA * dzB > 0) return null
-  const t = -dzA / (dzB - dzA)
-  return lerp(a, b, t)
-}
-
-function sliceMeshAtZ(
-  positions: Float32Array,
-  index: Uint32Array,
-  z: number,
-): Array<Array<[number, number]>> {
-  const segments: Array<[[number, number], [number, number]]> = []
-
-  for (let i = 0; i < index.length; i += 3) {
-    const i0 = index[i]
-    const i1 = index[i + 1]
-    const i2 = index[i + 2]
-
-    const p0: Vec3 = {
-      x: positions[i0 * 3],
-      y: positions[i0 * 3 + 1],
-      z: positions[i0 * 3 + 2],
-    }
-    const p1: Vec3 = {
-      x: positions[i1 * 3],
-      y: positions[i1 * 3 + 1],
-      z: positions[i1 * 3 + 2],
-    }
-    const p2: Vec3 = {
-      x: positions[i2 * 3],
-      y: positions[i2 * 3 + 1],
-      z: positions[i2 * 3 + 2],
-    }
-
-    const dz = [p0.z - z, p1.z - z, p2.z - z]
-    const above = dz.filter((d) => d > Z_EPS).length
-    const below = dz.filter((d) => d < -Z_EPS).length
-    if (above === 0 || below === 0) continue
-
-    const pts: Array<[number, number]> = []
-    const e01 = edgeCrossZ(p0, p1, z)
-    if (e01) pts.push([e01.x, e01.y])
-    const e12 = edgeCrossZ(p1, p2, z)
-    if (e12) pts.push([e12.x, e12.y])
-    const e20 = edgeCrossZ(p2, p0, z)
-    if (e20) pts.push([e20.x, e20.y])
-    if (pts.length >= 2) {
-      segments.push([pts[0], pts[1]])
-    }
-  }
-
-  return chainSegments(segments)
-}
-
-function ptKey(x: number, y: number): string {
-  return `${x.toFixed(6)},${y.toFixed(6)}`
-}
-
-function chainSegments(
-  segments: Array<[[number, number], [number, number]]>,
-): Array<Array<[number, number]>> {
-  if (segments.length === 0) return []
-
-  const graph = new Map<
-    string,
-    { pt: [number, number]; neighbors: Array<{ key: string; pt: [number, number] }> }
-  >()
-
-  function ensureNode(x: number, y: number): string {
-    const key = ptKey(x, y)
-    if (!graph.has(key)) {
-      graph.set(key, { pt: [x, y], neighbors: [] })
-    }
-    return key
-  }
-
-  for (const [a, b] of segments) {
-    const ka = ensureNode(a[0], a[1])
-    const kb = ensureNode(b[0], b[1])
-    graph.get(ka)!.neighbors.push({ key: kb, pt: b })
-    graph.get(kb)!.neighbors.push({ key: ka, pt: a })
-  }
-
-  const visited = new Set<string>()
-  const polygons: Array<Array<[number, number]>> = []
-
-  for (const [startKey, _startNode] of graph) {
-    if (visited.has(startKey)) continue
-
-    const poly: Array<[number, number]> = []
-    let currentKey = startKey
-    let prevKey: string | null = null
-
-    while (true) {
-      if (visited.has(currentKey)) break
-      visited.add(currentKey)
-
-      const node = graph.get(currentKey)!
-      if (poly.length === 0) {
-        poly.push(node.pt)
-      }
-
-      let next: { key: string; pt: [number, number] } | null = null
-      for (const n of node.neighbors) {
-        if (n.key !== prevKey) {
-          next = n
-          break
-        }
-      }
-      if (!next) break
-      if (next.key === startKey) break
-
-      poly.push(next.pt)
-      prevKey = currentKey
-      currentKey = next.key
-      if (poly.length > segments.length * 2) break
-    }
-
-    if (poly.length >= 3) {
-      const first = poly[0]
-      const last = poly[poly.length - 1]
-      if (
-        Math.abs(last[0] - first[0]) > PT_EPS ||
-        Math.abs(last[1] - first[1]) > PT_EPS
-      ) {
-        poly.push(first)
-      }
-      polygons.push(poly)
-    }
-  }
-
-  return polygons
-}
+import { buildMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 
 function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
   const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
@@ -337,6 +184,40 @@ function computeXYBounds(positions: Float32Array): { minX: number; maxX: number;
     if (y > maxY) maxY = y
   }
   return { minX, maxX, minY, maxY }
+}
+
+function computeRegionFeatureBounds(regionFeatures: SketchFeature[]): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  if (regionFeatures.length === 0) return null
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const region of regionFeatures) {
+    const bounds = getProfileBounds(region.sketch.profile)
+    if (bounds.minX < minX) minX = bounds.minX
+    if (bounds.maxX > maxX) maxX = bounds.maxX
+    if (bounds.minY < minY) minY = bounds.minY
+    if (bounds.maxY > maxY) maxY = bounds.maxY
+  }
+
+  return Number.isFinite(minX) && Number.isFinite(maxX) && Number.isFinite(minY) && Number.isFinite(maxY)
+    ? { minX, maxX, minY, maxY }
+    : null
+}
+
+function clampExpandedBoundsToModel(
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  modelBounds: { minX: number; maxX: number; minY: number; maxY: number },
+  padding: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  const expanded = {
+    minX: Math.max(modelBounds.minX, bounds.minX - padding),
+    maxX: Math.min(modelBounds.maxX, bounds.maxX + padding),
+    minY: Math.max(modelBounds.minY, bounds.minY - padding),
+    maxY: Math.min(modelBounds.maxY, bounds.maxY + padding),
+  }
+
+  return expanded.maxX > expanded.minX && expanded.maxY > expanded.minY
+    ? expanded
+    : modelBounds
 }
 
 /**
@@ -529,7 +410,11 @@ function generateFinishSurfaceParallel(
   //     Cell size = tool.radius / 3 balances accuracy vs performance.
   //     Built once per operation (not per scanline).
   const modelBbox = computeXYBounds(transformedPos)
-  const heightMap = buildHeightMap(transformedPos, index, modelBbox, tool.radius / 3)
+  const regionBounds = computeRegionFeatureBounds(regionFeatures)
+  const heightMapBbox = regionBounds
+    ? clampExpandedBoundsToModel(regionBounds, modelBbox, tool.radius)
+    : modelBbox
+  const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, tool.radius / 3)
 
   // ── Rotation parameters for angled scanlines ─────────────────────────
 
@@ -623,9 +508,10 @@ function generateFinishSurfaceParallel(
   const allStepLevels = new Set<number>()
   let currentPosition: ToolpathPoint | null = null
   let scanIndex = 0
+  const sliceIndex = buildMeshSliceIndex(transformedPos, index)
   const rawSliceMap: SliceMap = new Map()
   for (const z of stepLevels) {
-    rawSliceMap.set(z, sliceMeshAtZ(transformedPos, index, z))
+    rawSliceMap.set(z, sliceMeshAtZ(sliceIndex, z))
   }
 
   if (regionFeatures.length === 0) {

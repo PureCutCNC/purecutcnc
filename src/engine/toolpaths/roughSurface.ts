@@ -56,202 +56,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-
-// ── Constants ───────────────────────────────────────────────────────────
-
-/** Epsilon for floating-point Z comparisons during mesh slicing. */
-const Z_EPS = 1e-8
-
-/** Epsilon for 2D point matching during segment chaining. */
-const PT_EPS = 1e-6
-
-// ── 3D → 2D mesh slicing (non-manifold safe) ───────────────────────────
-
-interface Vec3 { x: number; y: number; z: number }
-
-function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t }
-}
-
-/**
- * Compute the XY intersection point where edge (a→b) crosses the Z plane.
- * Returns null if the edge does not cross the plane.
- */
-function edgeCrossZ(a: Vec3, b: Vec3, z: number): Vec3 | null {
-  const dzA = a.z - z
-  const dzB = b.z - z
-  if (Math.abs(dzA) < Z_EPS) return a
-  if (Math.abs(dzB) < Z_EPS) return b
-  if (dzA * dzB > 0) return null // same side
-  const t = -dzA / (dzB - dzA)
-  return lerp(a, b, t)
-}
-
-/**
- * Slice a triangle mesh at Z height `z` by intersecting every triangle
- * with the horizontal plane. Works on **any** triangle mesh (manifold or not).
- *
- * Returns an array of closed polygon contours (each contour is an array
- * of [x, y] points).
- */
-function sliceMeshAtZ(
-  positions: Float32Array,
-  index: Uint32Array,
-  z: number,
-): Array<Array<[number, number]>> {
-  const segments: Array<[[number, number], [number, number]]> = []
-
-  for (let i = 0; i < index.length; i += 3) {
-    const i0 = index[i]
-    const i1 = index[i + 1]
-    const i2 = index[i + 2]
-
-    const p0: Vec3 = {
-      x: positions[i0 * 3],
-      y: positions[i0 * 3 + 1],
-      z: positions[i0 * 3 + 2],
-    }
-    const p1: Vec3 = {
-      x: positions[i1 * 3],
-      y: positions[i1 * 3 + 1],
-      z: positions[i1 * 3 + 2],
-    }
-    const p2: Vec3 = {
-      x: positions[i2 * 3],
-      y: positions[i2 * 3 + 1],
-      z: positions[i2 * 3 + 2],
-    }
-
-    // Classify vertices relative to the Z plane
-    const dz = [p0.z - z, p1.z - z, p2.z - z]
-    const above = dz.filter((d) => d > Z_EPS).length
-    const below = dz.filter((d) => d < -Z_EPS).length
-
-    // All on one side → no intersection
-    if (above === 0 || below === 0) continue
-
-    // Triangle crosses the plane — find intersection points on crossing edges
-    const pts: Array<[number, number]> = []
-
-    const e01 = edgeCrossZ(p0, p1, z)
-    if (e01) pts.push([e01.x, e01.y])
-
-    const e12 = edgeCrossZ(p1, p2, z)
-    if (e12) pts.push([e12.x, e12.y])
-
-    const e20 = edgeCrossZ(p2, p0, z)
-    if (e20) pts.push([e20.x, e20.y])
-
-    if (pts.length >= 2) {
-      segments.push([pts[0], pts[1]])
-    }
-  }
-
-  // Chain segments into closed polygons
-  return chainSegments(segments)
-}
-
-/**
- * Key function for 2D point hashing in the adjacency map.
- */
-function ptKey(x: number, y: number): string {
-  return `${x.toFixed(6)},${y.toFixed(6)}`
-}
-
-/**
- * Chain unordered line segments into closed polygon contours.
- *
- * Builds an adjacency graph (point → neighbor points) and walks it
- * to extract closed loops.
- */
-function chainSegments(
-  segments: Array<[[number, number], [number, number]]>,
-): Array<Array<[number, number]>> {
-  if (segments.length === 0) return []
-
-  // ── Build adjacency graph ──────────────────────────────────────────────
-  // pointKey → { pt: [x,y], neighbors: [{ key, pt }] }
-  const graph = new Map<
-    string,
-    { pt: [number, number]; neighbors: Array<{ key: string; pt: [number, number] }> }
-  >()
-
-  function ensureNode(x: number, y: number): string {
-    const key = ptKey(x, y)
-    if (!graph.has(key)) {
-      graph.set(key, { pt: [x, y], neighbors: [] })
-    }
-    return key
-  }
-
-  for (const [a, b] of segments) {
-    const ka = ensureNode(a[0], a[1])
-    const kb = ensureNode(b[0], b[1])
-    graph.get(ka)!.neighbors.push({ key: kb, pt: b })
-    graph.get(kb)!.neighbors.push({ key: ka, pt: a })
-  }
-
-  // ── Walk the graph ─────────────────────────────────────────────────────
-  const visited = new Set<string>()
-  const polygons: Array<Array<[number, number]>> = []
-
-  for (const [startKey, _startNode] of graph) {
-    if (visited.has(startKey)) continue
-
-    const poly: Array<[number, number]> = []
-    let currentKey = startKey
-    let prevKey: string | null = null
-
-    while (true) {
-      if (visited.has(currentKey)) {
-        // Already visited — loop closed
-        break
-      }
-      visited.add(currentKey)
-
-      const node = graph.get(currentKey)!
-      if (poly.length === 0) {
-        // First point — add the start node's coordinates
-        poly.push(node.pt)
-      }
-
-      // Pick next neighbor (prefer unvisited, avoid backtracking)
-      let next: { key: string; pt: [number, number] } | null = null
-      for (const n of node.neighbors) {
-        if (n.key !== prevKey) {
-          next = n
-          break
-        }
-      }
-      if (!next) break // dead end
-
-      // If the next point would close the loop without adding new info, stop
-      if (next.key === startKey) break
-
-      poly.push(next.pt)
-      prevKey = currentKey
-      currentKey = next.key
-
-      // Safety: prevent infinite loops with a max iteration count
-      if (poly.length > segments.length * 2) break
-    }
-
-    if (poly.length >= 3) {
-      // Ensure polygon is closed (last point ≈ first point)
-      const first = poly[0]
-      const last = poly[poly.length - 1]
-      if (
-        Math.abs(last[0] - first[0]) > PT_EPS ||
-        Math.abs(last[1] - first[1]) > PT_EPS
-      ) {
-        poly.push(first)
-      }
-      polygons.push(poly)
-    }
-  }
-
-  return polygons
-}
+import { buildMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 
 /**
  * Convert a scaled Clipper path back to unscaled Point[].
@@ -427,6 +232,7 @@ export function generateRoughSurfaceToolpath(
   }
 
   const { positions: transformedPos, index } = stlData
+  const sliceIndex = buildMeshSliceIndex(transformedPos, index)
 
   // ── Compute Z bounds from transformed positions ───────────────────────
 
@@ -535,7 +341,7 @@ export function generateRoughSurfaceToolpath(
     allStepLevels.add(z)
 
     // ═══ 1. Slice the triangle mesh at this Z ════════════════════════════
-    const slicePolygons = sliceMeshAtZ(transformedPos, index, z)
+    const slicePolygons = sliceMeshAtZ(sliceIndex, z)
 
     if (slicePolygons.length === 0) {
       if (operation.debugToolpath) warnings.push(`Debug: Z=${z.toFixed(4)} empty slice — no model at this level`)
