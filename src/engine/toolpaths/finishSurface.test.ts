@@ -162,6 +162,19 @@ function testFinishSurfaceCoversLowerTopPlateau(): void {
   assert(lowPlateauCuts.length > 0, 'expected finish cuts on lower top plateau outside the high boss')
 }
 
+function testFinishSurfaceRepeatGenerationIsStable(): void {
+  console.log('Testing finish_surface repeat generation is stable...')
+  const { project, operation } = makeProject()
+  const first = generateFinishSurfaceToolpath(project, operation)
+  const second = generateFinishSurfaceToolpath(project, operation)
+
+  assert(first.warnings.length === 0, `unexpected first warnings: ${first.warnings.join(', ')}`)
+  assert(second.warnings.length === 0, `unexpected second warnings: ${second.warnings.join(', ')}`)
+  assert(first.moves.length === second.moves.length, `expected repeat move count ${first.moves.length}, got ${second.moves.length}`)
+  assert(cutMoves(second.moves).length > 0, 'expected repeated finish surface cut moves')
+}
+
 testFinishSurfaceCoversLowerTopPlateau()
+testFinishSurfaceRepeatGenerationIsStable()
 
 console.log('finishSurface tests passed')

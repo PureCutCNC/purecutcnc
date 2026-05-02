@@ -250,6 +250,7 @@ interface HeightMap {
 }
 
 type CoverageContours = Array<Array<[number, number]>>
+type HeightMapCacheHost = { finishHeightMapCache?: Map<string, HeightMap> }
 
 function chooseHeightMapCellSize(
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
@@ -337,6 +338,38 @@ function buildHeightMap(
   }
 
   return { data, width, height, originX: bbox.minX, originY: bbox.minY, cellSize }
+}
+
+function heightMapCacheKey(
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  cellSize: number,
+): string {
+  return [
+    bbox.minX,
+    bbox.maxX,
+    bbox.minY,
+    bbox.maxY,
+    cellSize,
+  ].map((value) => value.toFixed(6)).join('|')
+}
+
+function getCachedHeightMap(
+  host: HeightMapCacheHost,
+  positions: Float32Array,
+  index: Uint32Array,
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  cellSize: number,
+): HeightMap {
+  const key = heightMapCacheKey(bbox, cellSize)
+  const cached = host.finishHeightMapCache?.get(key)
+  if (cached) return cached
+
+  const heightMap = buildHeightMap(positions, index, bbox, cellSize)
+  if (!host.finishHeightMapCache) {
+    host.finishHeightMapCache = new Map()
+  }
+  host.finishHeightMapCache.set(key, heightMap)
+  return heightMap
 }
 
 /**
@@ -464,7 +497,7 @@ function generateFinishSurfaceParallel(
   _stepLevels: number[],
   transformedPos: Float32Array,
   index: Uint32Array,
-  _sliceIndexHost: unknown,
+  sliceIndexHost: HeightMapCacheHost,
   safeZ: number,
   _maxLinkDistance: number,
   warnings: string[],
@@ -488,7 +521,7 @@ function generateFinishSurfaceParallel(
     ? clampExpandedBoundsToModel(regionBounds, modelBbox, tool.radius)
     : modelBbox
   const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, tool.radius / 3, warnings)
-  const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, heightMapCellSize)
+  const heightMap = getCachedHeightMap(sliceIndexHost, transformedPos, index, heightMapBbox, heightMapCellSize)
   const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
   // ── Rotation parameters for angled scanlines ─────────────────────────
@@ -760,7 +793,7 @@ export function generateFinishSurfaceToolpath(
     stepLevels,
     transformedPos,
     index,
-    stlData,
+    stlData as HeightMapCacheHost,
     safeZ,
     maxLinkDistance,
     warnings,

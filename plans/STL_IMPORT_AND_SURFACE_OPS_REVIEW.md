@@ -374,6 +374,7 @@ Done:
 8. Finish surface samples the top height map along accepted intervals, reducing destructive straight-chord cuts through raised details such as external threads.
 9. Finish parallel coverage now comes from the model's projected silhouette, clipped by selected regions, instead of from Z-slice contours. This restores coverage on broad lower top surfaces while preserving top-surface Z sampling.
 10. Added a finish regression test for a stepped STL model to ensure lower top plateaus are covered.
+11. Finish height maps are cached on the transformed STL data object by bbox/cell size, so repeated finish recalculations for an unchanged model can reuse the rasterized top surface.
 
 Still pending:
 
