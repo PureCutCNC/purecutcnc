@@ -16,6 +16,7 @@
 
 import { getManifoldModule } from '../engine/csg'
 import { loadImportedTriangleMesh, type ModelAxisOrientation } from '../engine/importedMesh'
+import { significantSilhouettePaths } from '../engine/toolpaths/silhouette'
 import { polygonProfile, type Point, type SketchProfile } from '../types/project'
 import { unionClipperPaths } from '../store/helpers/clipping'
 
@@ -142,9 +143,9 @@ export async function extractStlProfileAndBounds(
     }
   }
 
-  const silhouettePaths = polys
-    .map((poly) => poly.map((p) => ({ x: p.x, y: p.y })))
-    .filter((poly) => poly.length >= 3)
+  const silhouettePaths = significantSilhouettePaths(
+    polys.map((poly) => poly.map((p) => ({ x: p.x, y: p.y }))),
+  )
   const points: Point[] = outerPoly.map(p => ({ x: p.x, y: p.y }))
   const profile = polygonProfile(points)
 

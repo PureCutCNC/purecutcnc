@@ -33,6 +33,7 @@ import {
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
 import { resolveInsideEdgeRegions } from './resolver'
+import { significantSilhouettePaths } from './silhouette'
 
 function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   if (paths.length === 0) {
@@ -224,7 +225,7 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
 
 function featureSilhouettePaths(feature: SketchFeature): Point[][] {
   if (feature.kind === 'stl' && feature.stl?.silhouettePaths?.length) {
-    return feature.stl.silhouettePaths.filter((path) => path.length >= 3)
+    return significantSilhouettePaths(feature.stl.silhouettePaths)
   }
 
   const flattened = flattenProfile(feature.sketch.profile)

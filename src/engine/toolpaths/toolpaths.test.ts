@@ -490,6 +490,44 @@ function testEdgeOutsideUsesStoredModelSilhouettePaths() {
   console.log('edge_route_outside stored silhouette paths: PASSED')
 }
 
+function testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts() {
+  console.log('Testing edge_route_outside ignores tiny stored model silhouette artifacts...')
+
+  const tool = makeFlatEndmill('t1', 2)
+  const model = makeModelFeature('model', 0, 0, 20, 10, 4, 0)
+  model.stl!.silhouettePaths = [
+    [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 10 },
+      { x: 0, y: 10 },
+    ],
+    [
+      { x: 10, y: 5 },
+      { x: 10.002, y: 5 },
+      { x: 10.002, y: 5.002 },
+      { x: 10, y: 5.002 },
+    ],
+  ]
+  const project = baseProject([tool], [model])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['model'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const artifactCuts = cutMoves(result.moves).filter((move) => (
+    Math.abs(move.to.x - 10) < 2 && Math.abs(move.to.y - 5) < 2
+  ))
+
+  assert(result.moves.length > 0, 'outside edge route produces moves')
+  assert(artifactCuts.length === 0, `expected no edge cuts around tiny interior artifact path, got ${artifactCuts.length}`)
+
+  console.log('edge_route_outside tiny stored silhouette artifacts: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
@@ -620,6 +658,7 @@ try {
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeOutsideAcceptsModelSilhouette()
   testEdgeOutsideUsesStoredModelSilhouettePaths()
+  testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()
   testVCarveFeatureFirstProducesSameMoveCount()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   console.log('\nAll toolpath tests PASSED.')

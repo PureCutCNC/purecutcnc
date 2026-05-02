@@ -57,6 +57,7 @@ import {
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { significantSilhouettePaths } from './silhouette'
 
 /**
  * Convert a scaled Clipper path back to unscaled Point[].
@@ -89,8 +90,7 @@ function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]
 
 function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[] {
   if (modelFeature.kind === 'stl' && modelFeature.stl?.silhouettePaths?.length) {
-    return modelFeature.stl.silhouettePaths
-      .filter((path) => path.length >= 3)
+    return significantSilhouettePaths(modelFeature.stl.silhouettePaths)
       .map((path) => toClipperPath(normalizeWinding(path, true), DEFAULT_CLIPPER_SCALE))
   }
 

@@ -326,12 +326,14 @@ Done:
 5. Outside edge routing uses all stored model silhouette paths when present, allowing multi-island imported model outlines.
 6. Rough surface uses all stored model silhouette paths when building the expanded outer machining boundary.
 7. Added regression coverage for import path metadata, STL transform path scaling, and outside edge routing with multiple stored model silhouette paths.
+8. Added shared filtering for insignificant silhouette paths so tiny projection artifacts are not stored on new imports and are not treated as model islands/contours by edge-out, rough, or finish coverage.
 
 Still pending:
 
 1. Preserve explicit outer/hole classification instead of storing path lists without topology.
 2. Draw the top-view image clipped by all silhouette paths, not only the mesh-rendered top view.
 3. Audit less common constraint/align translation paths for `silhouettePaths` parity if those workflows become important for STL models.
+4. Replace relative-area artifact filtering with explicit topology once silhouette paths carry outer/hole/island roles.
 
 ### Phase 4: Shared robust slicing
 
@@ -370,13 +372,15 @@ Done:
 6. Added a maximum height-map cell budget; very large maps are automatically coarsened with a warning instead of allocating an unbounded grid.
 7. Finish surface now emits separated visible intervals instead of stitching all Z-slice intersections on a scanline into one cut.
 8. Finish surface samples the top height map along accepted intervals, reducing destructive straight-chord cuts through raised details such as external threads.
+9. Finish parallel coverage now comes from the model's projected silhouette, clipped by selected regions, instead of from Z-slice contours. This restores coverage on broad lower top surfaces while preserving top-surface Z sampling.
+10. Added a finish regression test for a stepped STL model to ensure lower top plateaus are covered.
 
 Still pending:
 
 1. Rename or internally separate current behavior as experimental waterline/contour logic.
-2. Implement true parallel finishing using XY scanlines and surface-height sampling.
-3. Clip scanlines to regions/silhouette before sampling.
-4. Apply gouge protection after Z sampling.
+2. Improve top-height sampling quality/resolution for detailed models.
+3. Preserve explicit hole topology in silhouette/region coverage.
+4. Apply more complete gouge protection after Z sampling.
 5. Consider exposing the height-map tolerance/cell size in advanced operation settings.
 6. Consider adding a separate waterline finish operation later for steep walls.
 

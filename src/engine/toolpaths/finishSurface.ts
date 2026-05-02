@@ -21,11 +21,11 @@
  * A single parallel-strategy path is used:
  *
  *   Parallel (pocketPattern === 'parallel'):
- *     1. Slice the mesh at every step-down Z level
- *     2. For a given scanline angle, rotate all slice contours by -angle
- *     3. Scan across the rotated bounding box at stepover intervals
- *     4. At each scanline Y, find X-interval intersections with each Z-level contour
- *     5. Keep only intervals that are near the visible top surface
+ *     1. Use the model's projected silhouette, clipped by selected regions
+ *     2. For a given scanline angle, rotate coverage contours by -angle
+ *     3. Scan across the rotated coverage box at stepover intervals
+ *     4. At each scanline Y, find X-intervals inside the coverage contours
+ *     5. Sample the top height map along each interval
  *     6. Emit each interval as its own 3D cut segment
  */
 
@@ -47,7 +47,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-import { getMeshSliceIndex, sliceMeshAtZ, type MeshSliceIndexHost } from './meshSlicing'
+import { significantSilhouettePaths } from './silhouette'
 
 function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
   const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
@@ -249,8 +249,7 @@ interface HeightMap {
   cellSize: number
 }
 
-type SliceMap = Map<number, Array<Array<[number, number]>>>
-type RotatedSliceMap = Map<number, Point[][]>
+type CoverageContours = Array<Array<[number, number]>>
 
 function chooseHeightMapCellSize(
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
@@ -405,27 +404,6 @@ function queryHeightMapTopZ(heightMap: HeightMap, x: number, y: number): number 
   return isFinite(z) ? z : null
 }
 
-function intervalIsNearVisibleSurface(
-  p1: Point,
-  p2: Point,
-  z: number,
-  heightMap: HeightMap,
-  tolerance: number,
-): boolean {
-  const samples = [
-    p1,
-    { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 },
-    p2,
-  ]
-
-  for (const sample of samples) {
-    const topZ = queryHeightMapTopZ(heightMap, sample.x, sample.y)
-    if (topZ !== null && topZ > z + tolerance) return false
-  }
-
-  return true
-}
-
 function buildTopSurfaceSegment(
   x1: number,
   x2: number,
@@ -457,25 +435,36 @@ function buildTopSurfaceSegment(
   return points
 }
 
+function modelSilhouetteContours(modelFeature: SketchFeature): CoverageContours {
+  if (modelFeature.kind === 'stl' && modelFeature.stl?.silhouettePaths?.length) {
+    return significantSilhouettePaths(modelFeature.stl.silhouettePaths)
+      .map((path) => path.map((point) => [point.x, point.y]))
+  }
+
+  const flattened = flattenProfile(modelFeature.sketch.profile)
+  return flattened.points.length >= 3
+    ? [flattened.points.map((point) => [point.x, point.y])]
+    : []
+}
+
 /**
  * Parallel strategy for finish surface.
  *
  * Generates 3D parallel passes where the tool follows the model surface
  * along parallel scanlines at a configurable angle. At each step-down Z
- * level, the scanline is intersected with the model's slice contours to
- * produce 3D intervals. Each visible interval is emitted as a separate
- * segment so the finish pass does not stitch through raised details.
+ * level, the scanline is intersected with the model's projected coverage to
+ * produce 3D intervals. Each interval is sampled from the top height map.
  */
 function generateFinishSurfaceParallel(
   _project: Project,
   operation: Operation,
-  _modelFeature: SketchFeature,
+  modelFeature: SketchFeature,
   regionFeatures: SketchFeature[],
   tool: ReturnType<typeof normalizeToolForProject>,
-  stepLevels: number[],
+  _stepLevels: number[],
   transformedPos: Float32Array,
   index: Uint32Array,
-  sliceIndexHost: MeshSliceIndexHost,
+  _sliceIndexHost: unknown,
   safeZ: number,
   _maxLinkDistance: number,
   warnings: string[],
@@ -500,7 +489,6 @@ function generateFinishSurfaceParallel(
     : modelBbox
   const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, tool.radius / 3, warnings)
   const heightMap = buildHeightMap(transformedPos, index, heightMapBbox, heightMapCellSize)
-  const visibleSurfaceTolerance = Math.max(tool.radius * 0.25, heightMapCellSize * 2, 1e-3)
   const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
   // ── Rotation parameters for angled scanlines ─────────────────────────
@@ -511,10 +499,10 @@ function generateFinishSurfaceParallel(
   const cosPos = Math.cos(angleRad)
   const sinPos = Math.sin(angleRad)
 
-  // ── Helper: generate scanlines for a single slice map & bbox ────────
+  // ── Helper: generate scanlines for a coverage contour set & bbox ─────
 
   function emitScanlines(
-    sliceMap: SliceMap,
+    contours: CoverageContours,
     bbox: { minX: number; maxX: number; minY: number; maxY: number },
     startScanIndex: number,
     moves: ToolpathMove[],
@@ -530,10 +518,7 @@ function generateFinishSurfaceParallel(
 
     const rotMinY = Math.min(...corners.map((c) => c.y))
     const rotMaxY = Math.max(...corners.map((c) => c.y))
-    const rotatedSliceMap: RotatedSliceMap = new Map()
-    for (const [z, contours] of sliceMap) {
-      rotatedSliceMap.set(z, contours.map((contour) => contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg))))
-    }
+    const rotatedContours = contours.map((contour) => contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg)))
     let scanIndex = startScanIndex
     let pos = position
 
@@ -544,20 +529,11 @@ function generateFinishSurfaceParallel(
     ) {
       const scanSegments: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
 
-      // Use the outer stepLevels (number[]) from generateFinishSurfaceParallel
-      for (const z of stepLevels) {
-        const contours = rotatedSliceMap.get(z)
-        if (!contours || contours.length === 0) continue
-
-        for (const contour of contours) {
-          const intervals = scanlineIntervals(contour, rotY)
-          for (const [x1, x2] of intervals) {
-            const p1 = rotatePoint({ x: x1, y: rotY }, cosPos, sinPos)
-            const p2 = rotatePoint({ x: x2, y: rotY }, cosPos, sinPos)
-            if (!intervalIsNearVisibleSurface(p1, p2, z, heightMap, visibleSurfaceTolerance)) continue
-            const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
-            if (segment.length >= 2) scanSegments.push(segment)
-          }
+      for (const contour of rotatedContours) {
+        const intervals = scanlineIntervals(contour, rotY)
+        for (const [x1, x2] of intervals) {
+          const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
+          if (segment.length >= 2) scanSegments.push(segment)
         }
       }
 
@@ -601,31 +577,28 @@ function generateFinishSurfaceParallel(
   const allStepLevels = new Set<number>()
   let currentPosition: ToolpathPoint | null = null
   let scanIndex = 0
-  const sliceIndex = getMeshSliceIndex(sliceIndexHost)
-  const rawSliceMap: SliceMap = new Map()
-  for (const z of stepLevels) {
-    rawSliceMap.set(z, sliceMeshAtZ(sliceIndex, z))
+  const baseContours = modelSilhouetteContours(modelFeature)
+  const baseBounds = computeContourBounds([baseContours])
+  if (!baseBounds) {
+    warnings.push('Model silhouette is degenerate — no finish surface coverage generated')
+    return { moves: allMoves, stepLevels: allStepLevels }
   }
 
   if (regionFeatures.length === 0) {
     // No regions — process entire model as one
-    currentPosition = emitScanlines(rawSliceMap, modelBbox, scanIndex, allMoves, allStepLevels, currentPosition)
+    currentPosition = emitScanlines(baseContours, baseBounds, scanIndex, allMoves, allStepLevels, currentPosition)
   } else {
     // Region-first ordering: finish all scanlines for one region, then move to next.
-    // Raw mesh slices are cached above so multiple regions do not re-slice the STL.
     for (let ri = 0; ri < regionFeatures.length; ri++) {
       const region = regionFeatures[ri]
       const regionPaths = buildRegionUnionPaths(region)
-      const clippedSliceMap: SliceMap = new Map()
-      for (const [z, polygons] of rawSliceMap) {
-        clippedSliceMap.set(z, clipToRegionPaths(polygons, regionPaths))
-      }
+      const clippedContours = clipToRegionPaths(baseContours, regionPaths)
 
-      const clippedBounds = computeContourBounds(clippedSliceMap.values())
+      const clippedBounds = computeContourBounds([clippedContours])
       if (clippedBounds) {
-        currentPosition = emitScanlines(clippedSliceMap, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
+        currentPosition = emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
       } else if (operation.debugToolpath) {
-        warnings.push(`Debug: region ${region.name} does not intersect the model slices`)
+        warnings.push(`Debug: region ${region.name} does not intersect the model silhouette`)
       }
 
       // Retract to safeZ between regions (but not after the last)

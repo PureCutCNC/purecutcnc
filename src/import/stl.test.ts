@@ -51,6 +51,28 @@ export function makeFrustumStlBase64(): string {
   return btoa(`${lines.join('\n')}\n`)
 }
 
+function makeArtifactStlBase64(): string {
+  const lines = ['solid artifact']
+  const faces = [
+    [[0, 0, 0], [20, 0, 0], [20, 10, 0]],
+    [[0, 0, 0], [20, 10, 0], [0, 10, 0]],
+    [[10, 5, 1], [10.002, 5, 1], [10.002, 5.002, 1]],
+  ]
+
+  for (const face of faces) {
+    lines.push('  facet normal 0 0 0')
+    lines.push('    outer loop')
+    for (const vertex of face) {
+      lines.push(`      vertex ${vertex.join(' ')}`)
+    }
+    lines.push('    endloop')
+    lines.push('  endfacet')
+  }
+
+  lines.push('endsolid artifact')
+  return btoa(`${lines.join('\n')}\n`)
+}
+
 async function testAxisBounds(): Promise<void> {
   console.log('Testing STL import axis-oriented Z bounds...')
 
@@ -72,7 +94,16 @@ async function testAxisBounds(): Promise<void> {
   }
 }
 
+async function testSilhouetteArtifactsAreFiltered(): Promise<void> {
+  console.log('Testing STL import filters tiny silhouette artifacts...')
+
+  const result = await extractStlProfileAndBounds(makeArtifactStlBase64(), 1, 'none')
+  assert(result !== null, 'expected artifact STL extraction result')
+  assert(result!.silhouettePaths.length === 1, `expected one significant silhouette path, got ${result!.silhouettePaths.length}`)
+}
+
 testAxisBounds()
+  .then(() => testSilhouetteArtifactsAreFiltered())
   .then(() => console.log('stl import tests passed'))
   .catch((error) => {
     console.error(error)
