@@ -15,12 +15,11 @@
  */
 
 import * as THREE from 'three'
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
+import { loadStlBufferGeometry } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 
 const ARC_STEP_RADIANS = Math.PI / 18
@@ -319,35 +318,8 @@ export function loadSTLTransformedGeometry(
   const cached = getCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData)
   if (cached) return cached
 
-  const base64Data = feature.stl.fileData.split(',')[1]
-  if (!base64Data) return null
-
-  const binaryString = window.atob(base64Data)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-
-  const loader = new STLLoader()
-  let geometry = loader.parse(bytes.buffer)
-
-  // Apply axis swap
-  const axisSwap = feature.stl.axisSwap || 'none'
-  if (axisSwap !== 'none') {
-    const pos = geometry.attributes.position.array
-    for (let i = 0; i < pos.length; i += 3) {
-      if (axisSwap === 'yz') {
-        const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
-      } else if (axisSwap === 'xz') {
-        const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
-      } else if (axisSwap === 'xy') {
-        const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
-      }
-    }
-  }
-
-  // Merge vertices to create an indexed mesh (required for per-triangle slicing)
-  geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
+  const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', true)
+  if (!geometry) return null
 
   const rawPos = geometry.attributes.position.array as Float32Array
   const numVerts = rawPos.length / 3
@@ -425,30 +397,14 @@ export function buildFeatureMesh(
   hovered = false
 ): THREE.Mesh {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
-    const base64Data = feature.stl.fileData.split(',')[1]
-    const binaryString = window.atob(base64Data)
-    const bytes = new Uint8Array(binaryString.length)
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i)
-    }
-    
-    const loader = new STLLoader()
-    const geometry = loader.parse(bytes.buffer)
-    
-    // Apply axis swap
-    const axisSwap = feature.stl.axisSwap || 'none'
-    if (axisSwap !== 'none') {
-      const pos = geometry.attributes.position.array
-      for (let i = 0; i < pos.length; i += 3) {
-        if (axisSwap === 'yz') {
-          const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
-        } else if (axisSwap === 'xz') {
-          const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
-        } else if (axisSwap === 'xy') {
-          const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
-        }
-      }
-    }
+    const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', false)
+    const material = new THREE.MeshStandardMaterial({
+      color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
+      roughness: 0.82,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    })
+    if (!geometry) return new THREE.Mesh(new THREE.BufferGeometry(), material)
     
     geometry.computeVertexNormals()
     
@@ -478,13 +434,6 @@ export function buildFeatureMesh(
     geometry.rotateZ(angleRad)
     geometry.translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
     geometry.rotateX(-Math.PI / 2)
-    
-    const material = new THREE.MeshStandardMaterial({
-      color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
-      roughness: 0.82,
-      metalness: 0.05,
-      side: THREE.DoubleSide,
-    })
     
     const mesh = new THREE.Mesh(geometry, material)
     mesh.scale.z = -1
@@ -677,36 +626,8 @@ export function buildFeatureSolid(
 ): ManifoldSolid | null {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
     try {
-      // Decode Base64 dataURL
-      const base64Data = feature.stl.fileData.split(',')[1]
-      if (!base64Data) return null
-      const binaryString = window.atob(base64Data)
-      const bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-      
-      const loader = new STLLoader()
-      let geometry = loader.parse(bytes.buffer)
-      
-      // Apply axis swap
-      const axisSwap = feature.stl?.axisSwap || 'none'
-      if (axisSwap !== 'none') {
-        const pos = geometry.attributes.position.array
-        for (let i = 0; i < pos.length; i += 3) {
-          if (axisSwap === 'yz') {
-            const tmp = pos[i + 1]; pos[i + 1] = pos[i + 2]; pos[i + 2] = tmp
-          } else if (axisSwap === 'xz') {
-            const tmp = pos[i]; pos[i] = pos[i + 2]; pos[i + 2] = tmp
-          } else if (axisSwap === 'xy') {
-            const tmp = pos[i]; pos[i] = pos[i + 1]; pos[i + 1] = tmp
-          }
-        }
-      }
-      
-      // Critical: STLLoader returns non-indexed triangle soup.
-      // Manifold requires an indexed mesh to identify shared edges.
-      geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
+      const geometry = loadStlBufferGeometry(feature.stl.fileData, feature.stl.axisSwap || 'none', true)
+      if (!geometry) return null
       
       const positions = geometry.attributes.position.array
       const numVerts = positions.length / 3

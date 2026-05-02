@@ -14,96 +14,23 @@
  * limitations under the License.
  */
 
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getManifoldModule } from '../engine/csg'
+import { loadStlTriangleMesh, type ModelAxisOrientation } from '../engine/importedMesh'
 import { polygonProfile, profileVertices, type Point, type SketchProfile } from '../types/project'
 import { unionClipperPaths } from '../store/helpers/clipping'
-
-/** Cross-platform base64-to-binary-string decoder (works in browser and Node) */
-function base64ToBinaryString(data: string): string {
-  if (typeof window !== 'undefined') {
-    return window.atob(data)
-  }
-  // Node.js fallback using a pure-JS approach
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
-  let result = ''
-  const blocks = data.replace(/[^A-Za-z0-9+/=]/g, '')
-  for (let i = 0; i < blocks.length; i += 4) {
-    const a = chars.indexOf(blocks[i])
-    const b = chars.indexOf(blocks[i + 1])
-    const c = chars.indexOf(blocks[i + 2])
-    const d = chars.indexOf(blocks[i + 3])
-    result += String.fromCharCode((a << 2) | (b >> 4))
-    if (c !== 64) result += String.fromCharCode(((b & 15) << 4) | (c >> 2))
-    if (d !== 64) result += String.fromCharCode(((c & 3) << 6) | d)
-  }
-  return result
-}
-
-function applyAxisSwapToPositions(
-  positions: ArrayLike<number> & { [index: number]: number },
-  axisSwap: 'none' | 'yz' | 'xz' | 'xy',
-): void {
-  if (axisSwap === 'none') return
-
-  for (let i = 0; i < positions.length; i += 3) {
-    if (axisSwap === 'yz') {
-      const tmp = positions[i + 1]
-      positions[i + 1] = positions[i + 2]
-      positions[i + 2] = tmp
-    } else if (axisSwap === 'xz') {
-      const tmp = positions[i]
-      positions[i] = positions[i + 2]
-      positions[i + 2] = tmp
-    } else if (axisSwap === 'xy') {
-      const tmp = positions[i]
-      positions[i] = positions[i + 1]
-      positions[i + 1] = tmp
-    }
-  }
-}
 
 export async function extractStlProfileAndBounds(
   base64Data: string,
   scale: number,
-  axisSwap: 'none' | 'yz' | 'xz' | 'xy' = 'none',
+  axisSwap: ModelAxisOrientation = 'none',
   onProgress?: (percent: number) => void
 ): Promise<{ profile: SketchProfile, z_bottom: number, z_top: number } | null> {
-  const binaryString = base64ToBinaryString(base64Data)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
+  const mesh = loadStlTriangleMesh(base64Data, axisSwap)
+  if (!mesh) return null
 
-  const loader = new STLLoader()
-  let geometry = loader.parse(bytes.buffer)
-  
-  // Critical: STLLoader returns non-indexed triangle soup.
-  // Manifold requires an indexed mesh to identify shared edges.
-  geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
-  
-  const positions = geometry.attributes.position.array
-  const numVerts = positions.length / 3
-  let triVerts: Uint32Array
-
-  if (geometry.index) {
-    triVerts = new Uint32Array(geometry.index.array)
-  } else {
-    triVerts = new Uint32Array(numVerts)
-    for (let i = 0; i < numVerts; i++) {
-      triVerts[i] = i
-    }
-  }
-
-  // Apply axis swap if requested
-  applyAxisSwapToPositions(positions as any, axisSwap)
-
-  // Compute bounds after axis orientation has been applied.
-  geometry.computeBoundingBox()
-  const bbox = geometry.boundingBox
-  const z_bottom = bbox ? bbox.min.z * scale : 0
-  const z_top = bbox ? bbox.max.z * scale : 5
+  const { positions, index: triVerts, bounds } = mesh
+  const z_bottom = Number.isFinite(bounds.minZ) ? bounds.minZ * scale : 0
+  const z_top = Number.isFinite(bounds.maxZ) ? bounds.maxZ * scale : 5
 
   const module = await getManifoldModule()
   const manifoldMesh = new module.Mesh({
@@ -224,7 +151,7 @@ export async function extractStlProfileAndBounds(
 export function renderStlTopViewToDataUrl(
   base64Data: string,
   scale: number,
-  axisSwap: 'none' | 'yz' | 'xz' | 'xy' = 'none',
+  axisSwap: ModelAxisOrientation = 'none',
 ): string | null {
   let canvas: HTMLCanvasElement | undefined
   try {
@@ -233,35 +160,16 @@ export function renderStlTopViewToDataUrl(
     return null
   }
 
-  const binaryString = base64ToBinaryString(base64Data)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
+  const mesh = loadStlTriangleMesh(base64Data, axisSwap)
+  if (!mesh) return null
 
-  const loader = new STLLoader()
-  const geometry = loader.parse(bytes.buffer)
-  const positions = geometry.attributes.position.array
-  applyAxisSwapToPositions(positions as any, axisSwap)
-
-  const index = geometry.index
-    ? Array.from(geometry.index.array as ArrayLike<number>)
-    : Array.from({ length: positions.length / 3 }, (_, i) => i)
-
-  let minX = Infinity, maxX = -Infinity
-  let minY = Infinity, maxY = -Infinity
-  let minZ = Infinity, maxZ = -Infinity
-  for (let i = 0; i < positions.length; i += 3) {
-    const x = positions[i] * scale
-    const y = positions[i + 1] * scale
-    const z = positions[i + 2] * scale
-    if (x < minX) minX = x
-    if (x > maxX) maxX = x
-    if (y < minY) minY = y
-    if (y > maxY) maxY = y
-    if (z < minZ) minZ = z
-    if (z > maxZ) maxZ = z
-  }
+  const { positions, index, bounds } = mesh
+  const minX = bounds.minX * scale
+  const maxX = bounds.maxX * scale
+  const minY = bounds.minY * scale
+  const maxY = bounds.maxY * scale
+  const minZ = bounds.minZ * scale
+  const maxZ = bounds.maxZ * scale
 
   const widthWorld = maxX - minX
   const heightWorld = maxY - minY
