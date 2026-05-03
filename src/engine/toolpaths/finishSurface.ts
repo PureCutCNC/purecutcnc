@@ -48,6 +48,15 @@ import {
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { significantSilhouettePaths } from './silhouette'
+import {
+  buildProtectedFootprintPaths,
+  clipperPathsToTupleContours,
+  differenceClipperPaths,
+  offsetClipperPaths,
+  relatedSubtractFeatures,
+  safeSubtractBottomZAtPoint,
+  unionClipperPaths,
+} from './modelProtection'
 
 function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
   const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
@@ -135,26 +144,25 @@ function rotatePoint(point: Point, cosTheta: number, sinTheta: number): Point {
   }
 }
 
-/**
- * Find X-intervals where a horizontal scanline at `y` intersects a closed polygon.
- */
-function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
+function scanlineIntervalsForContours(contours: Point[][], y: number): Array<[number, number]> {
   const intersections: number[] = []
-  const closed = points.length > 0 && pointEpsilonEqual(points[0], points[points.length - 1])
-    ? points
-    : [...points, points[0]]
+  for (const contour of contours) {
+    const closed = contour.length > 0 && pointEpsilonEqual(contour[0], contour[contour.length - 1])
+      ? contour
+      : [...contour, contour[0]]
 
-  for (let index = 0; index < closed.length - 1; index += 1) {
-    const a = closed[index]
-    const b = closed[index + 1]
+    for (let index = 0; index < closed.length - 1; index += 1) {
+      const a = closed[index]
+      const b = closed[index + 1]
 
-    if (Math.abs(a.y - b.y) <= 1e-9) continue
+      if (Math.abs(a.y - b.y) <= 1e-9) continue
 
-    const intersects = (a.y <= y && b.y > y) || (b.y <= y && a.y > y)
-    if (!intersects) continue
+      const intersects = (a.y <= y && b.y > y) || (b.y <= y && a.y > y)
+      if (!intersects) continue
 
-    const t = (y - a.y) / (b.y - a.y)
-    intersections.push(a.x + (b.x - a.x) * t)
+      const t = (y - a.y) / (b.y - a.y)
+      intersections.push(a.x + (b.x - a.x) * t)
+    }
   }
 
   intersections.sort((left, right) => left - right)
@@ -234,6 +242,49 @@ function toOpenCutMoves3D(points: ToolpathPoint[]): ToolpathMove[] {
     })
   }
   return moves
+}
+
+function clampSurfaceSegmentToMinZ(
+  segment: Array<{ x: number; y: number; z: number; rotX: number }>,
+  minZAtPoint: (point: Point) => number,
+): Array<{ x: number; y: number; z: number; rotX: number }> {
+  return segment.map((point) => ({
+    ...point,
+    z: Math.max(point.z, minZAtPoint(point)),
+  }))
+}
+
+function splitAndClampSurfaceSegmentToMinZ(
+  segment: Array<{ x: number; y: number; z: number; rotX: number }>,
+  minZAtPoint: (point: Point) => number,
+): Array<Array<{ x: number; y: number; z: number; rotX: number }>> {
+  const chunks: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
+  let current: Array<{ x: number; y: number; z: number; rotX: number }> = []
+  let currentFloor: number | null = null
+
+  for (const point of segment) {
+    const floorZ = minZAtPoint(point)
+    const clampedPoint = {
+      ...point,
+      z: Math.max(point.z, floorZ),
+    }
+
+    if (currentFloor !== null && Math.abs(floorZ - currentFloor) > 1e-9) {
+      if (current.length >= 2) {
+        chunks.push(current)
+      }
+      current = []
+    }
+
+    current.push(clampedPoint)
+    currentFloor = floorZ
+  }
+
+  if (current.length >= 2) {
+    chunks.push(current)
+  }
+
+  return chunks
 }
 
 // ── Height map for gouge protection ──────────────────────────────────────
@@ -480,6 +531,24 @@ function modelSilhouetteContours(modelFeature: SketchFeature): CoverageContours 
     : []
 }
 
+function coverageContoursToClipperPaths(contours: CoverageContours): ClipperPath[] {
+  return contours
+    .filter((contour) => contour.length >= 3)
+    .map((contour) => toClipperPath(
+      normalizeWinding(contour.map(([x, y]) => ({ x, y })), false),
+      DEFAULT_CLIPPER_SCALE,
+    ))
+}
+
+function subtractProtectedContours(contours: CoverageContours, protectedPaths: ClipperPath[]): CoverageContours {
+  if (contours.length === 0 || protectedPaths.length === 0) return contours
+  const clipped = differenceClipperPaths(
+    unionClipperPaths(coverageContoursToClipperPaths(contours)),
+    protectedPaths,
+  )
+  return clipperPathsToTupleContours(clipped)
+}
+
 /**
  * Parallel strategy for finish surface.
  *
@@ -489,7 +558,7 @@ function modelSilhouetteContours(modelFeature: SketchFeature): CoverageContours 
  * produce 3D intervals. Each interval is sampled from the top height map.
  */
 function generateFinishSurfaceParallel(
-  _project: Project,
+  project: Project,
   operation: Operation,
   modelFeature: SketchFeature,
   regionFeatures: SketchFeature[],
@@ -500,6 +569,7 @@ function generateFinishSurfaceParallel(
   sliceIndexHost: HeightMapCacheHost,
   safeZ: number,
   _maxLinkDistance: number,
+  minCutZAtPoint: (point: Point) => number,
   warnings: string[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
@@ -562,11 +632,11 @@ function generateFinishSurfaceParallel(
     ) {
       const scanSegments: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
 
-      for (const contour of rotatedContours) {
-        const intervals = scanlineIntervals(contour, rotY)
-        for (const [x1, x2] of intervals) {
-          const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
-          if (segment.length >= 2) scanSegments.push(segment)
+      const intervals = scanlineIntervalsForContours(rotatedContours, rotY)
+      for (const [x1, x2] of intervals) {
+        const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
+        if (segment.length >= 2) {
+          scanSegments.push(...splitAndClampSurfaceSegmentToMinZ(segment, minCutZAtPoint))
         }
       }
 
@@ -583,12 +653,13 @@ function generateFinishSurfaceParallel(
 
       for (const segment of scanSegments) {
         applyGougeProtection(segment, heightMap, tool.radius)
+        const clampedSegment = clampSurfaceSegmentToMinZ(segment, minCutZAtPoint)
 
-        for (const sp of segment) {
+        for (const sp of clampedSegment) {
           outStepLevels.add(sp.z)
         }
 
-        const cutPoints3D: ToolpathPoint[] = segment.map((sp) => ({
+        const cutPoints3D: ToolpathPoint[] = clampedSegment.map((sp) => ({
           x: sp.x,
           y: sp.y,
           z: sp.z,
@@ -611,6 +682,14 @@ function generateFinishSurfaceParallel(
   let currentPosition: ToolpathPoint | null = null
   let scanIndex = 0
   const baseContours = modelSilhouetteContours(modelFeature)
+  const baseCoveragePaths = unionClipperPaths(coverageContoursToClipperPaths(baseContours))
+  const protectedPaths = buildProtectedFootprintPaths(project, {
+    targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []),
+    featureExpansion: tool.radius + Math.max(0, operation.stockToLeaveRadial),
+    tabExpansion: tool.radius,
+    clampExpansion: tool.radius,
+    machiningEnvelopePaths: baseCoveragePaths,
+  })
   const baseBounds = computeContourBounds([baseContours])
   if (!baseBounds) {
     warnings.push('Model silhouette is degenerate — no finish surface coverage generated')
@@ -619,13 +698,20 @@ function generateFinishSurfaceParallel(
 
   if (regionFeatures.length === 0) {
     // No regions — process entire model as one
-    currentPosition = emitScanlines(baseContours, baseBounds, scanIndex, allMoves, allStepLevels, currentPosition)
+    const clippedContours = subtractProtectedContours(baseContours, protectedPaths)
+    const clippedBounds = computeContourBounds([clippedContours])
+    if (clippedBounds) {
+      currentPosition = emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
+    } else if (operation.debugToolpath) {
+      warnings.push('Debug: protected footprints remove all finish surface coverage')
+    }
   } else {
     // Region-first ordering: finish all scanlines for one region, then move to next.
     for (let ri = 0; ri < regionFeatures.length; ri++) {
       const region = regionFeatures[ri]
       const regionPaths = buildRegionUnionPaths(region)
-      const clippedContours = clipToRegionPaths(baseContours, regionPaths)
+      const regionContours = clipToRegionPaths(baseContours, regionPaths)
+      const clippedContours = subtractProtectedContours(regionContours, protectedPaths)
 
       const clippedBounds = computeContourBounds([clippedContours])
       if (clippedBounds) {
@@ -751,7 +837,7 @@ export function generateFinishSurfaceToolpath(
   // ── Operation parameters ───────────────────────────────────────────────
 
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
-  const effectiveBottom = modelBottomZ + axialLeave
+  let effectiveBottom = modelBottomZ + axialLeave
   if (effectiveBottom >= modelTopZ) {
     return {
       operationId: operation.id,
@@ -759,6 +845,29 @@ export function generateFinishSurfaceToolpath(
       warnings: ['Axial stock-to-leave exceeds model height — nothing to cut'],
       bounds: null,
       stepLevels: [],
+    }
+  }
+
+  const modelSilhouettePaths = unionClipperPaths(coverageContoursToClipperPaths(modelSilhouetteContours(modelFeature)))
+  const relatedSubtracts = relatedSubtractFeatures(
+    project,
+    new Set(target.featureIds),
+    modelSilhouettePaths,
+  ).map((subtract) => ({
+    ...subtract,
+    clearancePaths: offsetClipperPaths(subtract.paths, -tool.radius),
+  }))
+  if (relatedSubtracts.length > 0) {
+    const deepestRelatedBottom = relatedSubtracts.reduce((min, subtract) => Math.min(min, subtract.bottomZ), Infinity)
+    effectiveBottom = Math.max(effectiveBottom, deepestRelatedBottom)
+    if (effectiveBottom >= modelTopZ) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: ['Containing subtract feature leaves no finish depth for this model'],
+        bounds: null,
+        stepLevels: [],
+      }
     }
   }
 
@@ -781,6 +890,9 @@ export function generateFinishSurfaceToolpath(
   const maxLinkDistance = tool.diameter
 
   const warnings: string[] = []
+  const minCutZAtPoint = (point: Point): number => (
+    safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
+  )
 
   // ── Generate parallel finish toolpath ─────────────────────────────────
 
@@ -796,6 +908,7 @@ export function generateFinishSurfaceToolpath(
     stlData as HeightMapCacheHost,
     safeZ,
     maxLinkDistance,
+    minCutZAtPoint,
     warnings,
   )
 

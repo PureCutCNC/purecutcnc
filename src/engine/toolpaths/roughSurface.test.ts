@@ -119,6 +119,90 @@ function makeRegionFeature(): SketchFeature {
   }
 }
 
+function makeProtectedAddFeature(): SketchFeature {
+  return {
+    id: 'fixture1',
+    name: 'Protected fixture',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(-0.45, 3, 0.35, 2),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 6,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeContainingAddFeature(): SketchFeature {
+  return {
+    id: 'base1',
+    name: 'Base stock feature',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(-2, -2, 16, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 6,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeContainingSubtractFeature(): SketchFeature {
+  return {
+    id: 'pocket1',
+    name: 'Containing pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(-2, -2, 16, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 6,
+    z_bottom: 3,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeRightHalfSubtractFeature(): SketchFeature {
+  return {
+    id: 'pocket2',
+    name: 'Deeper right pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(6, -2, 8, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 6,
+    z_bottom: 2,
+    visible: true,
+    locked: false,
+  }
+}
+
 function makeRoughOperation(featureIds: string[]): Operation {
   return {
     id: 'rough1',
@@ -238,9 +322,72 @@ function testRoughSurfaceProtectsOverhangingModelShadow(): void {
   assert(destructiveCuts.length === 0, `expected no lower-level cuts inside upper model shadow, got ${destructiveCuts.length}`)
 }
 
+function testRoughSurfaceAvoidsSurroundingAddFeature(): void {
+  console.log('Testing rough_surface avoids surrounding add feature footprints...')
+  const { project, operation } = makeProject(['model1'])
+  project.features = [...project.features, makeProtectedAddFeature()]
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const protectedCuts = cutMoves(result.moves).filter((move) => {
+    const endpoints = [move.from, move.to]
+    return endpoints.some((point) => (
+      point.x > -0.5 && point.x < 0.05 &&
+      point.y > 2.8 && point.y < 5.2
+    ))
+  })
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')
+  assert(protectedCuts.length === 0, `expected no rough cuts inside protected add feature, got ${protectedCuts.length}`)
+}
+
+function testRoughSurfaceIgnoresContainingBaseFeature(): void {
+  console.log('Testing rough_surface ignores containing base add feature...')
+  const { project, operation } = makeProject(['model1'])
+  project.features = [makeContainingAddFeature(), ...project.features]
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves when a base add feature contains the model envelope')
+}
+
+function testRoughSurfaceRespectsContainingPocketDepth(): void {
+  console.log('Testing rough_surface respects containing subtract pocket depth...')
+  const { project, operation } = makeProject(['model1'])
+  project.features = [makeContainingAddFeature(), makeContainingSubtractFeature(), ...project.features]
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const minCutZ = Math.min(...cutMoves(result.moves).map((move) => move.to.z))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')
+  assert(minCutZ >= 3 - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
+}
+
+function testRoughSurfaceRespectsSplitPocketDepths(): void {
+  console.log('Testing rough_surface respects split subtract pocket depths...')
+  const { project, operation } = makeProject(['model1'])
+  project.features = [makeContainingAddFeature(), makeContainingSubtractFeature(), makeRightHalfSubtractFeature(), ...project.features]
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const belowShallow = cuts.filter((move) => move.to.z < 3 - 1e-9)
+  const leftBelowShallow = belowShallow.filter((move) => (
+    (move.from.x < 6 - 1e-9) || (move.to.x < 6 - 1e-9)
+  ))
+  const minCutZ = Math.min(...cuts.map((move) => move.to.z))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected rough surface moves')
+  assert(minCutZ >= 2 - 1e-9, `expected no rough cuts below deeper pocket bottom, got min Z ${minCutZ}`)
+  assert(belowShallow.length > 0, 'expected rough cuts below shallow pocket bottom in deeper right pocket')
+  assert(leftBelowShallow.length === 0, `expected no rough cuts below shallow pocket bottom on left side, got ${leftBelowShallow.length}`)
+}
+
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
 testRoughSurfaceDefaultsLegacyModelFormatToStl()
 testRoughSurfaceProtectsOverhangingModelShadow()
+testRoughSurfaceAvoidsSurroundingAddFeature()
+testRoughSurfaceIgnoresContainingBaseFeature()
+testRoughSurfaceRespectsContainingPocketDepth()
+testRoughSurfaceRespectsSplitPocketDepths()
 
 console.log('roughSurface tests passed')

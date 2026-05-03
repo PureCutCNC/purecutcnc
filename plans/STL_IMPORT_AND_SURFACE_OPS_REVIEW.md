@@ -155,28 +155,26 @@ Fix:
 - Sample just below the model top so coplanar top faces still contribute to the protected shadow.
 - Keep this conservative until a true 3-axis reachability/visibility model exists.
 
-### 8. Finish surface is not yet true surface-following finishing
+### 8. Finish surface needs explicit strategy definitions
 
-Current finish surface slices the mesh at Z levels, intersects those closed contours with XY scanlines, sorts all resulting points by scanline X, then connects them as 3D open moves. This produces waterline-contour intersection points, not a continuous top-surface raster sampled from the actual surface.
+The current finish surface implementation is now the parallel finishing strategy: it generates XY scanlines over the model silhouette or selected regions, uses `pocketAngle` for pass direction, samples the top surface from a height map, and emits 3D cut segments along those scanlines.
 
 Impact:
 
-- Toolpaths may connect points from unrelated Z levels/contours on the same scanline.
-- Moves can jump through the model or through air while marked as cuts.
-- It is closer to a hybrid contour/waterline experiment than a reliable 3D raster finish.
-- Gouge protection raises points using a top-height map, but the base path points are still not sampled from the top surface.
+- Parallel finish is useful as-is, especially for flatter or rolling top surfaces where the angle setting matters.
+- The future waterline strategy should be designed separately rather than treated as a rename of the current parallel behavior.
+- Waterline finishing is better suited for steep/vertical walls, but it needs its own cutter-contact, scallop, and interpolation design.
 
 Fix:
 
-- Define two distinct operations/strategies:
-  - `finish_surface_parallel`: raster over XY, sample top surface Z at regular spacing, then apply ball-end gouge protection.
-  - `finish_surface_waterline`: slice by Z and follow contours at each level for steep walls.
-- For the current “parallel” UI, switch to height-field sampling:
-  - build a top-surface height map or triangle spatial index,
-  - generate scanline intervals from silhouette/regions,
-  - sample XY points at a max chord length,
-  - query Z directly from intersected triangles,
-  - emit ordered 3D cut moves along each scanline.
+- Keep the current behavior as the `parallel` strategy in the finish operation.
+- Later add a `waterline` strategy as a separate option in the same finish operation.
+- Design waterline finish explicitly:
+  - slice the mesh at fine Z levels,
+  - assemble model boundary contours at each Z,
+  - generate cutter-center/tool-tip contours adjusted for tool contact,
+  - add dense/adaptive Z levels or interpolated contours when adjacent waterlines are too far apart in XY,
+  - keep it distinct from roughing, which clears area rather than following surface contact contours.
 
 ### 9. Height map gouge protection needs bounds and resolution controls
 
@@ -246,20 +244,23 @@ Fix:
 - Medium term: store generated preview images in a non-history cache and regenerate when missing.
 - Long term: use asset references/blobs for STL files instead of embedding base64 in every project/history snapshot.
 
-### 13. 3D surface operations do not honor tabs yet
+### 13. 3D surface operations need project-wide protected geometry
 
-The 2.5D edge/pocket pipeline has tab handling, but rough and finish surface operations currently ignore project tabs.
+The 2.5D edge/pocket pipeline resolves additive features and tabs into protected islands before path generation. 3D rough/finish originally only protected the target STL model itself, and clamp handling only happened afterward as collision warnings/lifted rapid moves.
 
 Impact:
 
-- Users can place tabs and still have 3D rough/finish paths cut through them.
-- This is especially surprising when an STL model is combined with an outside edge route that does honor tabs.
-- The generated preview does not clearly communicate that tabs are unsupported for the 3D operations.
+- Tabs, clamps, and surrounding additive/model features could be cut by 3D rough/finish paths.
+- Overlapping features are especially risky because a model operation can now be part of a larger project rather than the only feature.
+- Post-generation clamp warnings are still useful, but they do not prevent cutting into fixtures or adjacent features.
 
 Fix:
 
-- Add tab clipping/avoidance to rough and finish surface operations, or explicitly disable/show a warning for tabs while 3D operations are selected.
-- Reuse the existing tab footprint/Z-range logic where possible, but adapt it to mesh-derived 3D paths rather than 2.5D closed contours.
+- Reuse shared protected-footprint logic for add/model features, tabs, and clamps.
+- Treat selected regions as clipping filters, not machined geometry and not obstacles.
+- Rough surface should add active protected footprints as pocket islands at each Z level.
+- Finish surface should subtract expanded protected footprints from its projected coverage before scanline generation.
+- Keep clamp post-processing as a defensive check for rapid/plunge/link moves and for any future unsupported cases.
 - Add regression tests with tabs overlapping a 3D surface toolpath.
 
 ## Suggested Implementation Plan
@@ -358,9 +359,9 @@ Still pending:
 2. Replace greedy contour chaining only after we have a rough-surface regression fixture from a real model.
 3. Add harder test coverage for non-manifold edge cases, coplanar slice-plane triangles, and noisy duplicate vertices.
 
-### Phase 5: Rework finish surface into explicit strategies
+### Phase 5: First-cut finish surface strategy
 
-Status: not fully reworked yet. Performance and safety passes have been applied locally to the existing finish implementation.
+Status: first cut complete. Parallel finish is usable for the initial STL/model workflow; waterline and more advanced finishing remain backlog items.
 
 Done:
 
@@ -375,39 +376,97 @@ Done:
 9. Finish parallel coverage now comes from the model's projected silhouette, clipped by selected regions, instead of from Z-slice contours. This restores coverage on broad lower top surfaces while preserving top-surface Z sampling.
 10. Added a finish regression test for a stepped STL model to ensure lower top plateaus are covered.
 11. Finish height maps are cached on the transformed STL data object by bbox/cell size, so repeated finish recalculations for an unchanged model can reuse the rasterized top surface.
+12. Added shared protected-footprint helpers for model operations. The helper builds no-cut footprints for surrounding `add` features, surrounding `model` features, visible tabs, and visible clamps.
+13. Finish parallel now subtracts expanded protected footprints from model/region coverage before scanline generation.
+14. Finish scanline interval generation now uses combined contour parity, so holes created by subtracting protected geometry are treated as no-cut gaps instead of independent filled contours.
+15. Added a finish regression test proving an overlapping add feature footprint is avoided.
+16. Finish surface now honors the same containing-subtract bottom constraints as rough surface.
+17. Added a finish regression test proving no finish cuts are generated below a containing subtract pocket bottom.
+18. Finish supports split-depth subtract pockets by clamping each sampled point to the local floor under that XY position.
+19. Finish splits scanline chunks at local floor transitions and uses tool-radius inset clearance before selecting a deeper floor, so the ball endmill does not run at the deeper Z directly against a shallower/deeper separation line.
 
 Still pending:
 
-1. Rename or internally separate current behavior as experimental waterline/contour logic.
+1. Design and add a separate `waterline` finish strategy for steep walls.
 2. Improve top-height sampling quality/resolution for detailed models.
-3. Preserve explicit hole topology in silhouette/region coverage.
+3. Preserve explicit hole topology in imported silhouette metadata; generated finish coverage now handles subtractive holes by contour parity.
 4. Apply more complete gouge protection after Z sampling.
 5. Consider exposing the height-map tolerance/cell size in advanced operation settings.
 6. Consider adding a separate waterline finish operation later for steep walls.
 
-### Phase 6: Responsiveness and storage
+### Phase 5a: Model-operation protected geometry
+
+Status: first cut complete.
+
+Done:
+
+1. Added `src/engine/toolpaths/modelProtection.ts` to centralize protected XY footprints for model operations.
+2. Rough surface now clips its expanded outer machining boundary to selected regions when regions are part of the operation target.
+3. Rough surface now adds active surrounding add/model features, tabs, and clamps to the protected island set at each Z level.
+4. Finish surface now subtracts surrounding add/model features, tabs, and clamps from projected coverage before generating parallel passes.
+5. Added rough and finish regression tests for avoiding a surrounding additive feature footprint.
+6. Surrounding add/model features that fully contain the model operation's machining envelope are treated as parent/base stock and are not added as protected obstacles. This keeps a base additive rectangle from suppressing all 3D roughing while still protecting partial overlaps.
+7. Verified the saved `old-man-in-box.camj` project generates 3D rough moves again after the containment fix.
+8. 3D rough now derives local bottom constraints from related subtract features. At each Z level, the roughing envelope is clipped to the subtract pockets active at that Z, so split-depth pockets can rough deeper only where the deeper subtract geometry exists.
+9. Finish surface now derives local bottom constraints per sampled XY point from related subtract features. Sampled points are clamped to the deepest subtract pocket floor under that XY point.
+10. Finish uses tool-radius inset clearance paths when selecting a deeper local subtract floor, so a ball endmill does not run at the deeper Z directly against a shallower/deeper pocket split line.
+11. Verified `old-man-in-box.camj` roughing and finishing reach `z=0.250` only in the deeper half-pocket while respecting the shallower `z=0.400` floor elsewhere.
+
+Still pending:
+
+1. Add explicit tab and clamp regression tests for both rough and finish.
+2. Decide whether 3D tabs should be hard no-cut gaps, lifted-over preserved stock, or strategy-specific behavior. The current first pass treats them as protected no-cut footprints.
+3. Make surrounding feature protection more topology-aware once STL silhouettes preserve outer/hole roles.
+4. Revisit Z-activity rules for adjacent features if users need protect-through behavior below a feature's own bottom Z.
+
+### Phase 6: Backlog
 
 1. Add progress/cancellation to rough and finish generation.
 2. Move heavy STL toolpath work to a worker if feasible.
 3. Introduce generated-asset caches outside project history.
 4. Audit history snapshots for large embedded STL/top-view strings.
-5. Add tab support or explicit tab-unsupported warnings for 3D rough/finish operations.
+5. Continue tab/clamp regression coverage for 3D rough/finish operations.
 
-## Recommended First PR
+## First PR Scope
 
-The first PR should stay small and correctness-focused.
+Status: ready for PR after app testing with `old-man-in-box.camj` and additional overlapping-feature scenarios.
 
-Implemented locally:
+Covered in this first cut:
 
-1. Fix axis-swap Z bounds.
-2. Fix rough model target lookup.
-3. Stop winding-based triangle dropping in fallback silhouette generation.
-4. Use absolute area in rough outer-boundary fallback.
+1. STL import correctness and silhouette robustness:
+   - axis-swap-aware Z bounds,
+   - non-manifold fallback no longer drops triangles by projected winding,
+   - stored filtered `silhouettePaths`,
+   - model silhouettes used by edge-out, rough, and finish.
+2. STL/model performance:
+   - shared imported mesh parsing/caching,
+   - transformed mesh cache,
+   - shared/cached mesh slicing,
+   - cached finish height maps.
+3. 3D rough first cut:
+   - model target lookup independent of target order,
+   - cumulative top-down model-shadow protection for overhangs,
+   - selected region clipping,
+   - surrounding add/model feature, tab, and clamp no-cut footprints,
+   - containing base add features ignored as parent stock,
+   - split-depth subtract pockets respected per Z level.
+4. 3D finish first cut:
+   - parallel finish over model/region coverage,
+   - top-height-map Z sampling,
+   - protected-footprint subtraction,
+   - combined contour parity for holes created by protected geometry,
+   - split-depth subtract pockets respected per sampled XY point,
+   - tool-radius clearance at shallow/deep floor transitions.
+5. Regression and diagnostic coverage:
+   - focused rough/finish tests for target order, overhang protection, surrounding feature avoidance, containing pocket depth, and split-depth pockets,
+   - import and imported-mesh tests,
+   - `scripts/diagnose-stl-cam.ts` for saved CAM project diagnostics.
 
-Remaining before PR is ready:
+Deferred backlog:
 
-1. Add targeted tests/scripts for those cases.
-2. User test the current local changes in the app.
-3. Continue user testing against real imported models.
-
-This reduces the chance of obviously wrong imports/toolpaths before investing in the larger shared mesh and true finishing rewrites.
+1. True waterline finish for steep walls.
+2. More complete gouge/contact modeling and user-facing tolerance controls.
+3. Explicit STL silhouette outer/hole topology.
+4. Stronger tab/clamp UX and dedicated 3D tab/clamp regression fixtures.
+5. Progress/cancellation/worker execution for large STL operations.
+6. More robust slicer contour assembly for difficult real meshes.

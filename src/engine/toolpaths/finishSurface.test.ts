@@ -148,6 +148,73 @@ function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
 }
 
+function makeProtectedAddFeature(): SketchFeature {
+  return {
+    id: 'boss1',
+    name: 'Protected boss',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(2, 2, 4, 6),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 4,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeContainingSubtractFeature(): SketchFeature {
+  return {
+    id: 'pocket1',
+    name: 'Containing pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(-1, -1, 22, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 4,
+    z_bottom: 2,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeRightHalfSubtractFeature(): SketchFeature {
+  return {
+    id: 'pocket2',
+    name: 'Deeper right pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(10, -1, 11, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 4,
+    z_bottom: 1,
+    visible: true,
+    locked: false,
+  }
+}
+
+function pointInsideProtectedBoss(point: { x: number; y: number }): boolean {
+  return point.x > 1.55 && point.x < 6.45 && point.y > 1.55 && point.y < 8.45
+}
+
 function testFinishSurfaceCoversLowerTopPlateau(): void {
   console.log('Testing finish_surface covers lower top plateau...')
   const { project, operation } = makeProject()
@@ -174,7 +241,60 @@ function testFinishSurfaceRepeatGenerationIsStable(): void {
   assert(cutMoves(second.moves).length > 0, 'expected repeated finish surface cut moves')
 }
 
+function testFinishSurfaceAvoidsSurroundingAddFeature(): void {
+  console.log('Testing finish_surface avoids surrounding add feature footprints...')
+  const { project, operation } = makeProject()
+  project.features = [...project.features, makeProtectedAddFeature()]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const protectedCuts = cutMoves(result.moves).filter((move) => (
+    pointInsideProtectedBoss(move.from) || pointInsideProtectedBoss(move.to)
+  ))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cutMoves(result.moves).length > 0, 'expected finish surface cut moves')
+  assert(protectedCuts.length === 0, `expected no finish cuts inside protected add feature, got ${protectedCuts.length}`)
+}
+
+function testFinishSurfaceRespectsContainingPocketDepth(): void {
+  console.log('Testing finish_surface respects containing subtract pocket depth...')
+  const { project, operation } = makeProject()
+  project.features = [makeContainingSubtractFeature(), ...project.features]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const minCutZ = Math.min(...cuts.map((move) => move.to.z))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected finish surface cut moves above containing pocket bottom')
+  assert(minCutZ >= 2 - 1e-9, `expected no finish cuts below containing pocket bottom, got min Z ${minCutZ}`)
+}
+
+function testFinishSurfaceRespectsSplitPocketDepths(): void {
+  console.log('Testing finish_surface respects split subtract pocket depths...')
+  const { project, operation } = makeProject()
+  project.features = [makeContainingSubtractFeature(), makeRightHalfSubtractFeature(), ...project.features]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const leftCutsBelowShallow = cuts.filter((move) => (
+    (move.from.x < 10 - 1e-9 || move.to.x < 10 - 1e-9) &&
+    (move.from.z < 2 - 1e-9 || move.to.z < 2 - 1e-9)
+  ))
+  const rightCutsBelowShallow = cuts.filter((move) => (
+    move.from.x > 10 + 1e-9 && move.to.x > 10 + 1e-9 &&
+    (move.from.z < 2 - 1e-9 || move.to.z < 2 - 1e-9)
+  ))
+  const minCutZ = Math.min(...cuts.map((move) => move.to.z))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected finish surface cut moves')
+  assert(minCutZ >= 1 - 1e-9, `expected no finish cuts below deeper pocket bottom, got min Z ${minCutZ}`)
+  assert(rightCutsBelowShallow.length > 0, 'expected finish cuts below shallow pocket bottom in deeper right pocket')
+  assert(leftCutsBelowShallow.length === 0, `expected no finish cuts below shallow pocket bottom on left side, got ${leftCutsBelowShallow.length}`)
+}
+
 testFinishSurfaceCoversLowerTopPlateau()
 testFinishSurfaceRepeatGenerationIsStable()
+testFinishSurfaceAvoidsSurroundingAddFeature()
+testFinishSurfaceRespectsContainingPocketDepth()
+testFinishSurfaceRespectsSplitPocketDepths()
 
 console.log('finishSurface tests passed')

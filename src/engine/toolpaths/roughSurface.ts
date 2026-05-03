@@ -34,7 +34,6 @@
  *      stopping at the model surface
  */
 
-import ClipperLib from 'clipper-lib'
 import type { CutDirection, Operation, Point, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import type { ResolvedPocketRegion } from './types'
@@ -58,26 +57,15 @@ import {
 import { loadSTLTransformedGeometry } from '../csg'
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 import { significantSilhouettePaths } from './silhouette'
-
-/**
- * Convert a scaled Clipper path back to unscaled Point[].
- */
-function clipperPathToPoints(path: ClipperPath): Point[] {
-  const scale = DEFAULT_CLIPPER_SCALE
-  return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
-}
-
-/**
- * Offset a set of Clipper paths outward (or inward) by `delta` project units.
- */
-function offsetClipperPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
-  if (paths.length === 0) return []
-  const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
-  return solution as ClipperPath[]
-}
+import {
+  buildProtectedFootprintPaths,
+  clipperPathsToPointContours,
+  clipperPathsToTupleContours,
+  intersectClipperPaths,
+  offsetClipperPaths,
+  relatedSubtractFeatures,
+  unionClipperPaths,
+} from './modelProtection'
 
 function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
   return slicePolygons
@@ -96,27 +84,6 @@ function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[]
 
   const modelProfile = flattenProfile(modelFeature.sketch.profile)
   return [toClipperPath(modelProfile.points)]
-}
-
-function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
-  if (paths.length === 0) return []
-
-  const clipper = new ClipperLib.Clipper()
-  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
-  const solution = new ClipperLib.Paths()
-  clipper.Execute(
-    ClipperLib.ClipType.ctUnion,
-    solution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-  return solution as ClipperPath[]
-}
-
-function clipperPathsToSlicePolygons(paths: ClipperPath[]): Array<Array<[number, number]>> {
-  return paths
-    .filter((path) => path.length >= 3)
-    .map((path) => path.map((point) => [point.X / DEFAULT_CLIPPER_SCALE, point.Y / DEFAULT_CLIPPER_SCALE]))
 }
 
 // ── Region helpers ──────────────────────────────────────────────────────
@@ -185,6 +152,7 @@ export function generateRoughSurfaceToolpath(
   }
 
   const modelFeature = targetFeatures.find((feature) => feature.operation === 'model' && feature.kind === 'stl') ?? null
+  const regionFeatures = targetFeatures.filter((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
   if (!modelFeature?.stl?.fileData) {
     return {
       operationId: operation.id,
@@ -258,7 +226,7 @@ export function generateRoughSurfaceToolpath(
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
-  const effectiveBottom = modelBottomZ + axialLeave
+  let effectiveBottom = modelBottomZ + axialLeave
   if (effectiveBottom >= modelTopZ) {
     return {
       operationId: operation.id,
@@ -275,19 +243,6 @@ export function generateRoughSurfaceToolpath(
       operationId: operation.id,
       moves: [],
       warnings: ['Stepover ratio must be between 0 and 1'],
-      bounds: null,
-      stepLevels: [],
-    }
-  }
-
-  // ── Step levels ────────────────────────────────────────────────────────
-
-  const stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
-  if (stepLevels.length === 0) {
-    return {
-      operationId: operation.id,
-      moves: [],
-      warnings: ['No step levels generated'],
       bounds: null,
       stepLevels: [],
     }
@@ -311,15 +266,55 @@ export function generateRoughSurfaceToolpath(
 
   const modelSilhouettePaths = modelSilhouetteClipperPaths(modelFeature)
   const silhouetteOffset = tool.diameter + 2 * radialLeave
-  const offsetSilhouette = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
-  const outlinePolygons = offsetSilhouette
-    .filter((path) => path.length >= 3)
-    .map(clipperPathToPoints)
-  if (outlinePolygons.length === 0) {
+  let outlinePaths = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
+  if (regionFeatures.length > 0) {
+    const regionPaths = unionClipperPaths(regionFeatures.flatMap((region) => {
+      const flattened = flattenProfile(region.sketch.profile)
+      return flattened.points.length >= 3
+        ? [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
+        : []
+    }))
+    outlinePaths = intersectClipperPaths(outlinePaths, regionPaths)
+  }
+
+  if (outlinePaths.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
       warnings: ['Computed outer boundary is degenerate — model silhouette may be too small'],
+      bounds: null,
+      stepLevels: [],
+    }
+  }
+
+  const modelFootprintPaths = unionClipperPaths(modelSilhouettePaths)
+  const relatedSubtracts = relatedSubtractFeatures(
+    project,
+    new Set(target.featureIds),
+    modelFootprintPaths,
+  )
+  if (relatedSubtracts.length > 0) {
+    const deepestRelatedBottom = relatedSubtracts.reduce((min, subtract) => Math.min(min, subtract.bottomZ), Infinity)
+    effectiveBottom = Math.max(effectiveBottom, deepestRelatedBottom)
+    if (effectiveBottom >= modelTopZ) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: ['Containing subtract feature leaves no roughing depth for this model'],
+        bounds: null,
+        stepLevels: [],
+      }
+    }
+  }
+
+  // ── Step levels ────────────────────────────────────────────────────────
+
+  const stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
+  if (stepLevels.length === 0) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: ['No step levels generated'],
       bounds: null,
       stepLevels: [],
     }
@@ -371,7 +366,35 @@ export function generateRoughSurfaceToolpath(
     }
 
     // ═══ 2. Build pocket region: silhouette outline = outer, protected model shadow = islands ══
-    const protectedPolygons = clipperPathsToSlicePolygons(protectedSlicePaths)
+    const surroundingProtectedPaths = buildProtectedFootprintPaths(project, {
+      targetFeatureIds: new Set(target.featureIds),
+      z,
+      featureExpansion: 0,
+      tabExpansion: 0,
+      clampExpansion: 0,
+      machiningEnvelopePaths: outlinePaths,
+    })
+    const activeSubtractPaths = relatedSubtracts.length > 0
+      ? unionClipperPaths(
+        relatedSubtracts
+          .filter((subtract) => z <= subtract.topZ + 1e-9 && z >= subtract.bottomZ - 1e-9)
+          .flatMap((subtract) => subtract.paths),
+      )
+      : []
+    const levelOutlinePaths = relatedSubtracts.length > 0
+      ? intersectClipperPaths(outlinePaths, activeSubtractPaths)
+      : outlinePaths
+    if (levelOutlinePaths.length === 0) {
+      if (operation.debugToolpath) warnings.push(`Debug: Z=${z.toFixed(4)} outside active subtract pocket depth`)
+      currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
+      continue
+    }
+    const outlinePolygons = clipperPathsToPointContours(levelOutlinePaths)
+    const protectedAtLevel = unionClipperPaths([
+      ...protectedSlicePaths,
+      ...surroundingProtectedPaths,
+    ])
+    const protectedPolygons = clipperPathsToTupleContours(intersectClipperPaths(protectedAtLevel, levelOutlinePaths))
     const baseRegions = outlinePolygons.map((outlinePolygon) => buildRegionFromSlice(outlinePolygon, protectedPolygons))
 
     // ═══ 3. Apply initial inset (tool radius + radial leave) ══════════════
