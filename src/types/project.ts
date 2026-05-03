@@ -226,6 +226,7 @@ export interface FeatureFolder {
   id: string
   name: string
   collapsed: boolean
+  section?: 'features' | 'regions'
 }
 
 export type FeatureTreeEntry =

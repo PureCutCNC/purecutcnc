@@ -23,7 +23,7 @@ import {
   toClipperPath,
 } from './geometry'
 import { buildInsetRegions } from './pocket'
-import { differenceClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
+import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
 import { resolvePocketRegions } from './resolver'
 import type { ClipperPath, ResolvedPocketRegion } from './types'
 
@@ -59,6 +59,61 @@ function offsetClosedPaths(paths: ClipperPath[], delta: number, joinType: number
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
   return solution as ClipperPath[]
+}
+
+function splitNarrowConnections(paths: ClipperPath[], clearance: number): ClipperPath[] {
+  if (paths.length === 0 || clearance <= 0) return paths
+
+  const eroded = offsetClosedPaths(paths, -clearance, ClipperLib.JoinType.jtMiter)
+  if (eroded.length === 0) return paths
+
+  const restored = offsetClosedPaths(eroded, clearance, ClipperLib.JoinType.jtMiter)
+  return restored.length > 0 ? unionClipperPaths(restored) : paths
+}
+
+function clipperPathBounds(path: ClipperPath): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (path.length === 0) return null
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of path) {
+    minX = Math.min(minX, point.X)
+    minY = Math.min(minY, point.Y)
+    maxX = Math.max(maxX, point.X)
+    maxY = Math.max(maxY, point.Y)
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+function rectanglePath(bounds: { minX: number; minY: number; maxX: number; maxY: number }, expansion: number): ClipperPath {
+  const delta = Math.round(expansion * DEFAULT_CLIPPER_SCALE)
+  const minX = bounds.minX - delta
+  const minY = bounds.minY - delta
+  const maxX = bounds.maxX + delta
+  const maxY = bounds.maxY + delta
+  return [
+    { X: minX, Y: minY },
+    { X: maxX, Y: minY },
+    { X: maxX, Y: maxY },
+    { X: minX, Y: maxY },
+  ]
+}
+
+function rebuildOriginalRestComponents(restPaths: ClipperPath[], splitPaths: ClipperPath[], expansion: number): ClipperPath[] {
+  const rebuilt: ClipperPath[] = []
+
+  for (const path of splitPaths) {
+    const bounds = clipperPathBounds(path)
+    if (!bounds) continue
+    const localRest = intersectClipperPaths(restPaths, [rectanglePath(bounds, expansion)])
+    rebuilt.push(...localRest)
+  }
+
+  const rebuiltUnion = unionClipperPaths(rebuilt)
+  const missingRest = differenceClipperPaths(restPaths, offsetClosedPaths(rebuiltUnion, expansion, ClipperLib.JoinType.jtMiter))
+  return unionClipperPaths([...rebuiltUnion, ...missingRest])
 }
 
 function squaredDistance(a: Point, b: Point): number {
@@ -146,6 +201,38 @@ function cleanClosedContour(contour: Point[]): Point[] {
   return cleaned
 }
 
+function cross(origin: Point, a: Point, b: Point): number {
+  return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x)
+}
+
+function convexHull(points: Point[]): Point[] {
+  const sorted = [...points]
+    .sort((left, right) => left.x === right.x ? left.y - right.y : left.x - right.x)
+    .filter((point, index, list) => (
+      index === 0 || squaredDistance(point, list[index - 1]) > 1e-18
+    ))
+
+  if (sorted.length <= 3) return sorted
+
+  const lower: Point[] = []
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop()
+    }
+    lower.push(point)
+  }
+
+  const upper: Point[] = []
+  for (const point of [...sorted].reverse()) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop()
+    }
+    upper.push(point)
+  }
+
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)]
+}
+
 export function generatePocketRestRegionDrafts(project: Project, operation: Operation): RestRegionDraftResult {
   if (operation.kind !== 'pocket') {
     return {
@@ -191,13 +278,17 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
 
   const reachableUnion = unionClipperPaths(reachableAreaPaths)
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
+  const splitClearance = Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.08)
+  const splitRestPaths = splitNarrowConnections(restPaths, splitClearance)
+  const outputRestPaths = rebuildOriginalRestComponents(restPaths, splitRestPaths, Math.max(splitClearance * 2, toolRadius * 0.6))
   const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, tool.diameter * tool.diameter * 0.0001)
-  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.35)
-  const contours = clipperPathsToPointContours(restPaths)
+  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.8)
+  const contours = clipperPathsToPointContours(outputRestPaths)
     .filter((contour) => contour.length >= 3)
     .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
     .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
     .map(cleanClosedContour)
+    .map(convexHull)
     .filter((contour) => contour.length >= 3)
 
   return {

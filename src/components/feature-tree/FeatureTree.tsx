@@ -23,12 +23,11 @@ interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
   onTabContextMenu?: (tabId: string, x: number, y: number) => void
   onClampContextMenu?: (clampId: string, x: number, y: number) => void
-  onEditFeature?: (featureId: string) => void
   onEditTab?: (tabId: string) => void
   onEditClamp?: (clampId: string) => void
 }
 
-export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampContextMenu, onEditFeature, onEditTab, onEditClamp }: FeatureTreeProps) {
+export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampContextMenu, onEditTab, onEditClamp }: FeatureTreeProps) {
   const {
     project,
     selection,
@@ -144,6 +143,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // since the store enforces it, but a loaded file could be malformed.
   const machiningFeatures = project.features.filter((feature) => feature.operation !== 'region')
   const regionFeatures = project.features.filter((feature) => feature.operation === 'region')
+  const featureFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') !== 'regions')
+  const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
   const firstMachiningFeature = machiningFeatures[0] ?? null
   const firstFeatureInvalid =
     !!firstMachiningFeature
@@ -151,7 +152,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     && !(firstMachiningFeature.kind === 'stl' && firstMachiningFeature.operation === 'model')
 
   const rootEntries = project.featureTree.filter((entry) => {
-    if (entry.type === 'folder') return true
+    if (entry.type === 'folder') {
+      const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+      return (folder?.section ?? 'features') !== 'regions'
+    }
     const feature = project.features.find((item) => item.id === entry.featureId)
     return feature?.operation !== 'region'
   })
@@ -281,14 +285,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onClick={selectFeaturesRoot}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
-          onAddFolder={() => addFeatureFolder()}
+          onAddFolder={() => addFeatureFolder('features')}
           onToggleCollapse={() => setFeaturesCollapsed((value) => !value)}
           onShowAll={() => setAllFeaturesVisible(true)}
           onHideAll={() => setAllFeaturesVisible(false)}
           onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
           onDrop={handleDrop}
         />
-        {featuresCollapsed ? null : machiningFeatures.length === 0 ? (
+        {featuresCollapsed ? null : machiningFeatures.length === 0 && featureFolders.length === 0 ? (
           <div className="feature-tree-empty">No feature nodes yet.</div>
         ) : (
           <div className="tree-children">
@@ -355,12 +359,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onClick={selectRegionsRoot}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
-          onAddFolder={() => addFeatureFolder()}
+          onAddFolder={() => addFeatureFolder('regions')}
           onToggleCollapse={() => setRegionsCollapsed((value) => !value)}
           onShowAll={() => setAllRegionsVisible(true)}
           onHideAll={() => setAllRegionsVisible(false)}
         />
-        {regionsCollapsed ? null : regionFeatures.length === 0 ? (
+        {regionsCollapsed ? null : regionFeatures.length === 0 && regionFolders.length === 0 ? (
           <div className="feature-tree-empty">No regions yet.</div>
         ) : (
           <div className="tree-children">
@@ -374,6 +378,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
               const folder = project.featureFolders.find((item) => item.id === entry.folderId)
               if (!folder) {
+                return null
+              }
+              if ((folder.section ?? 'features') !== 'regions') {
                 return null
               }
 
@@ -803,6 +810,19 @@ function TreeRow({
                   >
                     <span className="tree-operation-menu__icon">−</span>
                     <span>Subtract</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={['tree-operation-menu__item', operation === 'region' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onToggleOperation('region')
+                      setShowOperationMenu(false)
+                    }}
+                    title="Region — feature filters machining operations"
+                  >
+                    <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
+                    <span>Region</span>
                   </button>
                 </div>
               </>

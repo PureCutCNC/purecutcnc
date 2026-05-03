@@ -1367,6 +1367,16 @@ function duplicateTabName(name: string, tabs: Tab[]): string {
   return `${baseName} ${index}`
 }
 
+function folderIdForOperation(project: Project, folderId: string | null, operation: FeatureOperation | undefined): string | null {
+  if (!folderId) return null
+  const folder = project.featureFolders.find((entry) => entry.id === folderId) ?? null
+  if (!folder) return null
+  const folderSection = folder.section ?? 'features'
+  return operation === 'region'
+    ? folderSection === 'regions' ? folderId : null
+    : folderSection === 'regions' ? null : folderId
+}
+
 function nextAutoTabName(baseName: string, tabs: Tab[]): string {
   const preferred = `${baseName} Tab`
   if (!tabs.some((tab) => tab.name === preferred)) {
@@ -3377,19 +3387,33 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
-  createPocketRestRegions: (operationId) => {
+  createPocketRestOperation: (operationId) => {
     const state = get()
     const operation = state.project.operations.find((item) => item.id === operationId)
     if (!operation) {
-      return { createdIds: [], warnings: ['Operation not found'] }
+      return { operationId: null, regionIds: [], warnings: ['Operation not found'] }
+    }
+    if (operation.kind !== 'pocket' || operation.target.source !== 'features') {
+      return { operationId: null, regionIds: [], warnings: ['Rest operations can only be created from pocket operations with feature targets'] }
     }
 
     const result = generatePocketRestRegionDrafts(state.project, operation)
     if (result.drafts.length === 0) {
-      return { createdIds: [], warnings: result.warnings }
+      return { operationId: null, regionIds: [], warnings: result.warnings }
     }
 
     let nextProjectLike = state.project
+    const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
+    const restFolder: FeatureFolder = {
+      id: restFolderId,
+      name: uniqueFolderName(`${operation.name || 'Pocket'} Rest Regions`, state.project.featureFolders),
+      collapsed: false,
+      section: 'regions',
+    }
+    nextProjectLike = {
+      ...nextProjectLike,
+      featureFolders: [...nextProjectLike.featureFolders, restFolder],
+    }
     const createdFeatures: SketchFeature[] = result.drafts.map((draft, index) => {
       const id = nextUniqueGeneratedId(nextProjectLike, 'f')
       const feature = normalizeFeatureZRange({
@@ -3399,7 +3423,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           nextProjectLike.features.map((feature) => feature.name),
         ),
         kind: inferFeatureKind(draft.profile),
-        folderId: null,
+        folderId: restFolderId,
         sketch: {
           profile: draft.profile,
           origin: { x: 0, y: 0 },
@@ -3420,28 +3444,40 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       return feature
     })
     const createdIds = createdFeatures.map((feature) => feature.id)
+    const machiningTargetIds = operation.target.featureIds.filter((featureId) => {
+      const feature = state.project.features.find((item) => item.id === featureId)
+      return feature?.operation !== 'region'
+    })
+    const restTarget: OperationTarget = {
+      source: 'features',
+      featureIds: [...machiningTargetIds, ...createdIds],
+    }
+    const nextOperationId = nextUniqueGeneratedId(nextProjectLike, 'op')
+    const restOperation: Operation = {
+      ...operation,
+      id: nextOperationId,
+      name: uniqueName(`${operation.name || 'Pocket'} Rest`, state.project.operations.map((item) => item.name)),
+      pass: 'rough',
+      showToolpath: true,
+      target: restTarget,
+      toolRef: null,
+    }
 
     set((s) => {
       const nextProject = syncFeatureTreeProject({
         ...s.project,
+        featureFolders: [...s.project.featureFolders, restFolder],
         features: [...s.project.features, ...createdFeatures],
+        operations: [...s.project.operations, restOperation],
         featureTree: [
           ...s.project.featureTree,
-          ...createdFeatures.map<FeatureTreeEntry>((feature) => ({ type: 'feature', featureId: feature.id })),
+          { type: 'folder', folderId: restFolderId },
         ],
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
 
       return {
         project: nextProject,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: createdIds[createdIds.length - 1] ?? null,
-          selectedFeatureIds: createdIds,
-          selectedNode: { type: 'regions_root' },
-          mode: 'feature',
-          activeControl: null,
-        },
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -3450,7 +3486,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     })
 
-    return { createdIds, warnings: result.warnings }
+    return { operationId: nextOperationId, regionIds: createdIds, warnings: result.warnings }
   },
 
   setAllOperationToolpathVisibility: (visible) =>
@@ -3556,13 +3592,15 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   // ── Features ─────────────────────────────────────────────
 
-  addFeatureFolder: () => {
+  addFeatureFolder: (section = 'features') => {
     const state = get()
     const nextId = nextUniqueGeneratedId(state.project, 'fd')
+    const existingSectionFolders = state.project.featureFolders.filter((folder) => (folder.section ?? 'features') === section)
     const folder: FeatureFolder = {
       id: nextId,
-      name: `Folder ${state.project.featureFolders.length + 1}`,
+      name: `${section === 'regions' ? 'Region Folder' : 'Folder'} ${existingSectionFolders.length + 1}`,
       collapsed: false,
+      section,
     }
 
     set((s) => {
@@ -3907,7 +3945,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         effectiveFolderId = selectedFeature?.folderId ?? null
         insertAfterFeatureId = selectedNode.featureId
       }
-      if (feature.operation === 'region') {
+      const effectiveFolder = effectiveFolderId
+        ? s.project.featureFolders.find((folder) => folder.id === effectiveFolderId) ?? null
+        : null
+      const effectiveFolderSection = effectiveFolder?.section ?? 'features'
+      if (feature.operation === 'region' && effectiveFolderSection !== 'regions') {
+        effectiveFolderId = null
+      }
+      if (feature.operation !== 'region' && effectiveFolderSection === 'regions') {
         effectiveFolderId = null
       }
       const safeFeature: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
@@ -4078,10 +4123,17 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         isFirst && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add'
           ? { ...zSafePatch, operation: 'add' }
           : zSafePatch
+      const safeOperation = safePatch.operation ?? existingFeature?.operation
       const nextProject = {
         ...s.project,
         features: features.map((f) =>
-          f.id === id ? normalizeFeatureZRange({ ...f, ...safePatch }) : f
+          f.id === id
+            ? normalizeFeatureZRange({
+              ...f,
+              ...safePatch,
+              folderId: folderIdForOperation(s.project, safePatch.folderId ?? f.folderId, safeOperation),
+            })
+            : f
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -4126,8 +4178,13 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
             index === 0 && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add'
               ? { ...zSafePatch, operation: 'add' }
               : zSafePatch
+          const safeOperation = safePatch.operation ?? feature.operation
 
-          return normalizeFeatureZRange({ ...feature, ...safePatch })
+          return normalizeFeatureZRange({
+            ...feature,
+            ...safePatch,
+            folderId: folderIdForOperation(s.project, safePatch.folderId ?? feature.folderId, safeOperation),
+          })
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }

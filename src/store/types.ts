@@ -238,7 +238,7 @@ export interface ProjectStore {
   setUnits: (units: Project['meta']['units']) => void
   setCreationTarget: (target: CreationTarget) => void
 
-  addFeatureFolder: () => string
+  addFeatureFolder: (section?: 'features' | 'regions') => string
   updateFeatureFolder: (id: string, patch: Partial<FeatureFolder>) => void
   deleteFeatureFolder: (id: string) => void
   assignFeaturesToFolder: (featureIds: string[], folderId: string | null) => void
@@ -289,7 +289,7 @@ export interface ProjectStore {
 
   addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
-  createPocketRestRegions: (operationId: string) => { createdIds: string[]; warnings: string[] }
+  createPocketRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
   setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null

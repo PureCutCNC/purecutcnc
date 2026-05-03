@@ -734,7 +734,7 @@ export function CAMPanel({
     duplicateOperation,
     reorderOperations,
     autoPlaceTabsForOperation,
-    createPocketRestRegions,
+    createPocketRestOperation,
   } = useProjectStore()
 
   const selectedToolId =
@@ -1020,16 +1020,19 @@ export function CAMPanel({
     onSelectedOperationIdChange(fallback)
   }
 
-  function handleCreatePocketRestRegions() {
+  function handleCreatePocketRestOperation() {
     if (!selectedOperation) {
       return
     }
 
-    const result = createPocketRestRegions(selectedOperation.id)
-    const text = result.createdIds.length > 0
-      ? `Created ${result.createdIds.length} rest region${result.createdIds.length === 1 ? '' : 's'}`
+    const result = createPocketRestOperation(selectedOperation.id)
+    const text = result.operationId
+      ? `Created rest operation with ${result.regionIds.length} region${result.regionIds.length === 1 ? '' : 's'}; choose a smaller tool`
       : result.warnings[0] ?? 'No unreachable pocket areas found for this tool'
-    setOperationActionMessage({ operationId: selectedOperation.id, text })
+    setOperationActionMessage({ operationId: result.operationId ?? selectedOperation.id, text })
+    if (result.operationId) {
+      onSelectedOperationIdChange(result.operationId)
+    }
   }
 
   function handleSelectOperation(operationId: string) {
@@ -1506,9 +1509,9 @@ export function CAMPanel({
                   </div>
                   {selectedOperation.kind === 'pocket' ? (
                     <div className="properties-field">
-                      <span>Rest Regions</span>
-                      <button className="feat-btn" type="button" onClick={handleCreatePocketRestRegions}>
-                        Create from unreachable areas
+                      <span>Rest Machining</span>
+                      <button className="feat-btn feat-btn--primary" type="button" onClick={handleCreatePocketRestOperation}>
+                        Create rest operation
                       </button>
                       {operationActionMessage?.operationId === selectedOperation.id ? (
                         <span className="cam-field-message">{operationActionMessage.text}</span>
