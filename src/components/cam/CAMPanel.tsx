@@ -243,10 +243,16 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Edge route outside'
     case 'surface_clean':
       return 'Surface clean'
+    case 'rough_surface':
+      return '3D Surface rough'
+    case 'finish_surface':
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
       return 'Drill'
+    default:
+      return 'Unknown'
   }
 }
 
@@ -264,6 +270,10 @@ function operationAddButtonLabel(kind: OperationKind): string {
       return 'Edge out'
     case 'surface_clean':
       return 'Surface'
+    case 'rough_surface':
+      return '3D Surface rough'
+    case 'finish_surface':
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -272,7 +282,7 @@ function operationAddButtonLabel(kind: OperationKind): string {
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive' && kind !== 'drilling'
+  return kind !== 'follow_line' && kind !== 'v_carve' && kind !== 'v_carve_recursive' && kind !== 'drilling' && kind !== 'rough_surface' && kind !== 'finish_surface'
 }
 
 function drillTypeLabel(type: DrillType): string {
@@ -359,7 +369,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.operation === 'add' && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
+    return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -377,8 +387,46 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+      : null
+  }
+
+  if (kind === 'rough_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+    return hasModel
+      ? { source: 'features', featureIds: features.map((f) => f.id) }
+      : null
+  }
+
+  if (kind === 'finish_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return null
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+    return hasModel
+      ? { source: 'features', featureIds: features.map((f) => f.id) }
       : null
   }
 
@@ -396,7 +444,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  if (!features.every((feature) => feature.operation === expectedOperation)) {
+  if (!features.every((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')) {
     return null
   }
 
@@ -465,6 +513,50 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       : `${operationKindLabel(kind)} only accepts closed profiles`
   }
 
+  if (kind === 'rough_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select a model (STL) feature first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return 'One or more selected features not found'
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+
+    if (!hasModel) {
+      return 'Rough surface requires at least one model (STL) feature'
+    }
+
+    return null
+  }
+
+  if (kind === 'finish_surface') {
+    if (selection.selectedFeatureIds.length === 0) {
+      return 'Select a model (STL) feature first'
+    }
+
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+
+    if (features.length !== selection.selectedFeatureIds.length) {
+      return 'One or more selected features not found'
+    }
+
+    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+
+    if (!hasModel) {
+      return 'Finish surface requires at least one model (STL) feature'
+    }
+
+    return null
+  }
+
   if (selection.selectedFeatureIds.length === 0) {
     return 'Select one or more compatible features first'
   }
@@ -475,10 +567,16 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  if (!features.every((feature) => feature.operation === expectedOperation)) {
+  const acceptsOperation = (feature: Project['features'][number]) => (
+    feature.operation === expectedOperation
+    || (kind === 'edge_route_outside' && feature.operation === 'model')
+  )
+  if (!features.every(acceptsOperation)) {
     return wantsSubtract
       ? 'This operation only accepts subtract features'
-      : 'This operation only accepts add features'
+      : kind === 'edge_route_outside'
+        ? 'This operation only accepts add or model features'
+        : 'This operation only accepts add features'
   }
 
   if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {
@@ -651,6 +749,16 @@ export function CAMPanel({
         label: operationAddButtonLabel('drilling'),
         hint: getOperationAddHint(project, selection, 'drilling') ?? undefined,
       },
+      {
+        kind: 'rough_surface',
+        label: operationAddButtonLabel('rough_surface'),
+        hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
+      },
+      {
+        kind: 'finish_surface',
+        label: operationAddButtonLabel('finish_surface'),
+        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
+      },
     ]),
     [project, selection]
   )
@@ -760,7 +868,7 @@ export function CAMPanel({
       return
     }
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling') && mode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface') && mode === 'pair') {
       const operationId = addOperation(kind, 'rough', target)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
@@ -1112,7 +1220,7 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Pass</span>
                       <select
@@ -1147,7 +1255,7 @@ export function CAMPanel({
                       </select>
                     </label>
                   ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pocketPattern === 'parallel' ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface') && selectedOperation.pocketPattern === 'parallel' ? (
                     <label className="properties-field">
                       <span>Angle</span>
                       <DraftNumberInput
@@ -1156,7 +1264,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean') ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface') ? (
                     <label className="properties-field">
                       <span>Cut Direction</span>
                       <select
@@ -1410,7 +1518,8 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
                     && selectedOperation.kind !== 'v_carve_recursive'
-                    && selectedOperation.kind !== 'drilling' ? (
+                    && selectedOperation.kind !== 'drilling'
+                    && selectedOperation.kind !== 'finish_surface' ? (
                     <>
                       <label className="properties-field">
                         <span>Stock To Leave Radial</span>
@@ -1431,6 +1540,17 @@ export function CAMPanel({
                         />
                       </label>
                     </>
+                  ) : null}
+                  {selectedOperation.kind === 'finish_surface' ? (
+                    <label className="properties-field">
+                      <span>Stock To Leave Axial</span>
+                      <DraftLengthInput
+                        value={selectedOperation.stockToLeaveAxial}
+                        units={project.meta.units}
+                        min={0}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
+                      />
+                    </label>
                   ) : null}
                     </div>
                   </div>

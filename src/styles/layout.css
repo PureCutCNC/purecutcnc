@@ -2380,6 +2380,89 @@
   cursor: not-allowed;
 }
 
+.tree-action-btn--region {
+  color: #9966cc;
+  border-color: rgba(153, 102, 204, 0.45);
+}
+
+/* ── Operation popup menu in feature tree ─────────────────── */
+
+.tree-operation-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.tree-operation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.tree-operation-menu {
+  position: absolute;
+  z-index: 1000;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  min-width: 120px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(94, 121, 142, 0.72);
+  background: rgba(12, 18, 26, 0.96);
+  box-shadow:
+    0 12px 26px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  display: grid;
+  gap: 1px;
+}
+
+.tree-operation-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tree-operation-menu__item:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tree-operation-menu__item--active {
+  border-color: rgba(94, 121, 142, 0.5);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tree-operation-menu__item:nth-child(3) .tree-operation-menu__icon {
+  color: #9966cc;
+}
+
+.tree-operation-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.tree-operation-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
 /* ── Locked operation field in properties panel ───────────── */
 
 .properties-locked-field {

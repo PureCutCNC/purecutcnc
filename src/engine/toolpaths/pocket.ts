@@ -216,7 +216,7 @@ export function transitionToCutEntry(
   safeZ: number,
   maxLinkDistance: number,
 ): ToolpathPoint {
-  if (from && from.z === toXY.z) {
+  if (from) {
     const dx = toXY.x - from.x
     const dy = toXY.y - from.y
     const distance = Math.hypot(dx, dy)
@@ -226,6 +226,8 @@ export function transitionToCutEntry(
     }
 
     if (distance <= maxLinkDistance) {
+      // Direct cut link — works across Z levels (3D cut moves are valid
+      // for ramping between layers in roughing/surface operations).
       moves.push({
         kind: 'cut',
         from,

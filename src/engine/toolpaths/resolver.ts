@@ -231,18 +231,18 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract')
+    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'subtract')
+    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
 
   if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
-    warnings.push('Some selected target features are missing or are not subtract features')
+    warnings.push('Some selected target features are missing or are not subtract/region features')
   }
 
   const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
@@ -255,7 +255,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
+      warnings: [...warnings, `No valid subtract or region features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
@@ -315,7 +315,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
+      if ((feature.operation === 'subtract' || feature.operation === 'region') && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue
       }
@@ -403,18 +403,18 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract')
+    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'subtract')
+    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
 
   if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
-    warnings.push('Some selected target features are missing or are not subtract features')
+    warnings.push('Some selected target features are missing or are not subtract/region features')
   }
 
   const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
@@ -427,7 +427,7 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
+      warnings: [...warnings, `No valid subtract or region features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
@@ -480,7 +480,7 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
+      if ((feature.operation === 'subtract' || feature.operation === 'region') && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue
       }

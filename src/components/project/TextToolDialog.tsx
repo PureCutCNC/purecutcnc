@@ -133,6 +133,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
                 <select id="text-tool-operation" value={operation} onChange={(event) => setOperation(event.target.value as FeatureOperation)}>
                   <option value="subtract">Subtract</option>
                   <option value="add">Add</option>
+                  <option value="region">Region</option>
                 </select>
               </div>
             </div>

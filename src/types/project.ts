@@ -150,7 +150,7 @@ export interface LocalDimension {
 // Feature — core building block
 // ============================================================
 
-export type FeatureOperation = 'add' | 'subtract'
+export type FeatureOperation = 'add' | 'subtract' | 'region' | 'model'
 export type TextFontStyle = 'skeleton' | 'outline'
 export type TextFontId =
   | 'simple_stroke'
@@ -183,7 +183,7 @@ export type TextFontId =
   | 'droid_serif_bold'
   | 'droid_serif_regular_italic'
   | 'droid_serif_bold_italic'
-export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text'
+export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text' | 'stl'
 
 export interface TextFeatureData {
   text: string
@@ -192,11 +192,27 @@ export interface TextFeatureData {
   size: number
 }
 
+export interface STLFeatureData {
+  /** Imported model file format. Missing means legacy STL. */
+  format?: 'stl'
+  filePath?: string
+  fileData?: string // base64
+  scale: number
+  axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
+  /** Legacy imported silhouette PNG. New imports store only topViewDataUrl. */
+  silhouetteDataUrl?: string
+  /** Project-coordinate projected model silhouette paths. The first/largest path is mirrored in sketch.profile for legacy tools. */
+  silhouettePaths?: Point[][]
+  topViewDataUrl?: string // pre-rendered top-down model image for sketch view
+}
+
+
 export interface SketchFeature {
   id: string
   name: string
   kind: FeatureKind
   text?: TextFeatureData | null
+  stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
   operation: FeatureOperation
@@ -273,6 +289,8 @@ export type OperationKind =
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'
+  | 'rough_surface'
+  | 'finish_surface'
   | 'follow_line'
   | 'drilling'
 

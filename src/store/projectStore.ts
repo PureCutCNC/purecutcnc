@@ -55,6 +55,7 @@ import type {
   Project,
   SketchProfile,
   SketchFeature,
+  STLFeatureData,
   Tab,
   Tool,
 } from '../types/project'
@@ -822,6 +823,17 @@ function transformProfile(
   }
 }
 
+function transformStlFeatureData(
+  stl: STLFeatureData | null | undefined,
+  transformPoint: (point: Point) => Point,
+): STLFeatureData | null | undefined {
+  if (!stl?.silhouettePaths) return stl
+  return {
+    ...stl,
+    silhouettePaths: stl.silhouettePaths.map((path) => path.map(transformPoint)),
+  }
+}
+
 function arcToBezierSegments(start: Point, segment: Extract<Segment, { type: 'arc' }>): Array<Extract<Segment, { type: 'bezier' }>> {
   const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
   const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
@@ -965,6 +977,21 @@ function snappedResizeScales(
   return { scaleU, scaleV }
 }
 
+function scaleNumericZSpan(
+  zTop: SketchFeature['z_top'],
+  zBottom: SketchFeature['z_bottom'],
+  scale: number,
+): Pick<SketchFeature, 'z_top' | 'z_bottom'> {
+  if (typeof zTop !== 'number' || typeof zBottom !== 'number') {
+    return { z_top: zTop, z_bottom: zBottom }
+  }
+
+  return {
+    z_top: zBottom + (zTop - zBottom) * scale,
+    z_bottom: zBottom,
+  }
+}
+
 export function resizeFeatureFromReference(
   feature: SketchFeature,
   referenceStart: Point,
@@ -987,7 +1014,11 @@ export function resizeFeatureFromReference(
     return null
   }
 
-  const { scaleU, scaleV } = snappedScales
+  const uniformModelScale = feature.kind === 'stl'
+    ? projectedLength / referenceLength
+    : null
+  const scaleU = uniformModelScale ?? snappedScales.scaleU
+  const scaleV = uniformModelScale ?? snappedScales.scaleV
   if (
     !Number.isFinite(scaleU)
     || !Number.isFinite(scaleV)
@@ -1008,9 +1039,21 @@ export function resizeFeatureFromReference(
   }
 
   const profile = transformProfileAffine(feature.sketch.profile, transformPoint)
+  const resizedZ = feature.kind === 'stl'
+    ? scaleNumericZSpan(feature.z_top, feature.z_bottom, scaleU)
+    : { z_top: feature.z_top, z_bottom: feature.z_bottom }
+
   return {
     ...feature,
-    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
+    kind: feature.kind === 'text' ? 'text' : (feature.kind === 'stl' ? 'stl' : inferFeatureKind(profile)),
+    stl: feature.stl
+      ? {
+          ...transformStlFeatureData(feature.stl, transformPoint)!,
+          scale: feature.stl.scale * scaleU,
+        }
+      : feature.stl,
+    z_top: resizedZ.z_top,
+    z_bottom: resizedZ.z_bottom,
     sketch: {
       ...feature.sketch,
       origin: transformPoint(feature.sketch.origin),
@@ -1041,13 +1084,15 @@ export function rotateFeatureFromReference(
     return null
   }
 
-  const profile = transformProfile(feature.sketch.profile, (point) => rotatePointAround(point, referenceStart, angle))
+  const rotatePoint = (point: Point) => rotatePointAround(point, referenceStart, angle)
+  const profile = transformProfile(feature.sketch.profile, rotatePoint)
   return {
     ...feature,
-    kind: feature.kind === 'text' ? 'text' : inferFeatureKind(profile),
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
+    stl: transformStlFeatureData(feature.stl, rotatePoint),
     sketch: {
       ...feature.sketch,
-      origin: rotatePointAround(feature.sketch.origin, referenceStart, angle),
+      origin: rotatePoint(feature.sketch.origin),
       orientationAngle: normalizeAngleDegrees(
         (feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile)) + angle * (180 / Math.PI),
       ),
@@ -1208,7 +1253,7 @@ export function filletFeatureFromRadius(
 
   return {
     ...feature,
-    kind: inferFeatureKind(profile),
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
     sketch: {
       ...feature.sketch,
       profile,
@@ -1459,6 +1504,10 @@ function operationKindLabel(kind: OperationKind): string {
       return 'Edge route outside'
     case 'surface_clean':
       return 'Surface clean'
+    case 'rough_surface':
+      return '3D Surface rough'
+    case 'finish_surface':
+      return '3D Surface finish'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -1521,7 +1570,47 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       return false
     }
 
-    return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+    return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
+  }
+
+  if (kind === 'finish_surface') {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    const modelCount = features.filter((f) => f.operation === 'model' && f.kind === 'stl').length
+    const allValid = features.every((f) =>
+      (f.operation === 'model' && f.kind === 'stl') ||
+      (f.operation === 'region' && f.sketch.profile.closed)
+    )
+
+    if (modelCount !== 1) return false
+    if (!allValid) return false
+    return true
+  }
+
+  if (kind === 'rough_surface') {
+    if (target.source !== 'features' || target.featureIds.length === 0) {
+      return false
+    }
+
+    const features = target.featureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is SketchFeature => feature !== null)
+
+    if (features.length !== target.featureIds.length) {
+      return false
+    }
+
+    return features.some((feature) => feature.operation === 'model' && feature.kind === 'stl')
   }
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
@@ -1537,7 +1626,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       return false
     }
 
-    return features.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && featureHasClosedGeometry(feature))
   }
 
   if (target.source !== 'features' || target.featureIds.length === 0) {
@@ -1553,14 +1642,14 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
   }
 
   if (kind === 'pocket' || kind === 'edge_route_inside') {
-    return features.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
+    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && feature.sketch.profile.closed)
   }
 
-  return features.every((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
+  return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
 }
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -1599,7 +1688,7 @@ function defaultOperationForTarget(
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
-    pocketPattern: 'offset',
+    pocketPattern: kind === 'finish_surface' ? 'parallel' : 'offset',
     pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
@@ -1640,10 +1729,37 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
       : { source: 'stock' }
   }
 
+  if (kind === 'finish_surface') {
+    const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
+    if (modelFeature) {
+      // Optionally include a region if one exists
+      const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+      if (regionFeature) {
+        return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+      }
+      return { source: 'features', featureIds: [modelFeature.id] }
+    }
+  }
+
+  if (kind === 'rough_surface') {
+    const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
+    if (modelFeature) {
+      // Optionally include a region if one exists (for constraining the outer boundary)
+      const regionFeature = project.features.find((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+      if (regionFeature) {
+        return { source: 'features', featureIds: [modelFeature.id, regionFeature.id] }
+      }
+      return { source: 'features', featureIds: [modelFeature.id] }
+    }
+  }
+
   if (kind === 'surface_clean' || kind === 'edge_route_outside') {
-    const firstAddFeature = project.features.find((feature) => feature.operation === 'add' && feature.sketch.profile.closed)
-    if (firstAddFeature) {
-      return { source: 'features', featureIds: [firstAddFeature.id] }
+    const firstAddOrModelFeature = project.features.find((feature) => (
+      (feature.operation === 'add' || (kind === 'edge_route_outside' && feature.operation === 'model'))
+      && feature.sketch.profile.closed
+    ))
+    if (firstAddOrModelFeature) {
+      return { source: 'features', featureIds: [firstAddOrModelFeature.id] }
     }
   }
 
@@ -1689,8 +1805,12 @@ function buildCopiedFeatures(
         id: nextId,
         name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
         folderId: sourceFeature.folderId,
+        stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
         sketch: {
           ...sourceFeature.sketch,
+          origin: ['text', 'stl'].includes(sourceFeature.kind)
+            ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+            : sourceFeature.sketch.origin,
           profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
         },
         locked: false,
@@ -2250,15 +2370,18 @@ function projectsEqual(a: Project, b: Project): boolean {
 }
 
 // ============================================================
-// Rule: first feature must always be 'add'
-// The part model is built from the first 'add' solid — subsequent
-// features add or subtract from it. Stock is a separate concept
-// used only during CAM operation generation.
+// Rule: the first 2.5D feature must be 'add'.
+// Imported STL model features are standalone 3D model targets and may be the
+// only feature in a project, so they are exempt from the base-solid rule.
 // ============================================================
+
+function isImportedModelFeature(feature: SketchFeature): boolean {
+  return feature.kind === 'stl' && feature.operation === 'model'
+}
 
 export function isFirstFeatureValid(features: SketchFeature[]): boolean {
   if (features.length === 0) return true
-  return features[0].operation === 'add'
+  return features[0].operation === 'add' || isImportedModelFeature(features[0])
 }
 
 // ============================================================
@@ -3610,8 +3733,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const safeId = s.project.features.some((existing) => existing.id === feature.id)
         ? nextUniqueGeneratedId(s.project, 'f')
         : feature.id
-      // First feature must always be 'add' — it is the base solid of the part model.
       const isFirst = s.project.features.length === 0
+      const preserveImportedModelOperation = isFirst && isImportedModelFeature(feature)
       // Determine folder context and insertion point from current selection.
       const selectedNode = s.selection.selectedNode
       let effectiveFolderId: string | null = feature.folderId ?? null
@@ -3623,7 +3746,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         effectiveFolderId = selectedFeature?.folderId ?? null
         insertAfterFeatureId = selectedNode.featureId
       }
-      const safeFeature: SketchFeature = isFirst
+      const safeFeature: SketchFeature = isFirst && !preserveImportedModelOperation
         ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
         : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
       // Build features and featureTree arrays with correct insertion position.
@@ -3779,9 +3902,13 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => {
       const features = s.project.features
       const isFirst = features.length > 0 && features[0].id === id
-      // Prevent changing the first feature's operation away from 'add'
+      const existingFeature = features.find((feature) => feature.id === id) ?? null
+      const nextOperation = patch.operation ?? existingFeature?.operation
+      const nextKind = patch.kind ?? existingFeature?.kind
+      const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
+      // Prevent changing the first 2.5D feature's operation away from 'add'.
       const safePatch: Partial<SketchFeature> =
-        isFirst && patch.operation !== undefined && patch.operation !== 'add'
+        isFirst && !nextIsImportedModel && patch.operation !== undefined && patch.operation !== 'add'
           ? { ...patch, operation: 'add' }
           : patch
       const nextProject = {
@@ -3822,8 +3949,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
             return feature
           }
 
+          const nextOperation = patch.operation ?? feature.operation
+          const nextKind = patch.kind ?? feature.kind
+          const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
           const safePatch: Partial<SketchFeature> =
-            index === 0 && patch.operation !== undefined && patch.operation !== 'add'
+            index === 0 && !nextIsImportedModel && patch.operation !== undefined && patch.operation !== 'add'
               ? { ...patch, operation: 'add' }
               : patch
 
@@ -4064,9 +4194,9 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => {
       const map = new Map(s.project.features.map((f) => [f.id, f]))
       const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
-      // If reorder would put a subtract feature first, silently promote it to add.
+      // If reorder would put a non-model subtract/region feature first, silently promote it to add.
       // This is safer than blocking the reorder or showing an error mid-drag.
-      if (reordered.length > 0 && reordered[0].operation !== 'add') {
+      if (reordered.length > 0 && reordered[0].operation !== 'add' && !isImportedModelFeature(reordered[0])) {
         reordered[0] = { ...reordered[0], operation: 'add' }
       }
       return {
@@ -4686,7 +4816,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
               ...feature.sketch,
               profile: normalizedProfile,
             },
-            kind: inferFeatureKind(normalizedProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(normalizedProfile),
           }
         }),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -4739,7 +4869,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,
@@ -4786,7 +4916,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,
@@ -4832,7 +4962,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           changed = true
           return {
             ...feature,
-            kind: inferFeatureKind(nextProfile),
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
             sketch: {
               ...feature.sketch,
               profile: nextProfile,
@@ -4980,7 +5110,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       const targetFeatures = operation.target.featureIds
         .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.operation === expectedOperation)
+        .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')
 
       if (targetFeatures.length === 0) {
         return {}

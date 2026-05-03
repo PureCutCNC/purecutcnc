@@ -33,6 +33,7 @@ import {
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
 import { resolveInsideEdgeRegions } from './resolver'
+import { significantSilhouettePaths } from './silhouette'
 
 function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
   if (paths.length === 0) {
@@ -143,11 +144,11 @@ function transitionToCutEntry(
   safeZ: number,
   maxLinkDistance: number,
 ): ToolpathPoint {
+  // Vertical-only move at same XY — no retraction needed
   if (from && from.x === toXY.x && from.y === toXY.y) {
     if (from.z === toXY.z) {
       return toXY
     }
-
     moves.push({
       kind: toXY.z < from.z ? 'plunge' : 'rapid',
       from,
@@ -156,7 +157,7 @@ function transitionToCutEntry(
     return toXY
   }
 
-  if (from && from.z === toXY.z) {
+  if (from) {
     const dx = toXY.x - from.x
     const dy = toXY.y - from.y
     const distance = Math.hypot(dx, dy)
@@ -166,6 +167,7 @@ function transitionToCutEntry(
     }
 
     if (distance <= maxLinkDistance) {
+      // Direct cut link — works across Z levels for 3D ramping
       moves.push({
         kind: 'cut',
         from,
@@ -221,11 +223,27 @@ function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): Tool
   }
 }
 
-function flattenFeatureToClipperPath(feature: SketchFeature): ClipperPath {
+function featureSilhouettePaths(feature: SketchFeature): Point[][] {
+  if (feature.kind === 'stl' && feature.stl?.silhouettePaths?.length) {
+    return significantSilhouettePaths(feature.stl.silhouettePaths)
+  }
+
   const flattened = flattenProfile(feature.sketch.profile)
+  return [flattened.points]
+}
+
+function featureToClipperPaths(feature: SketchFeature): ClipperPath[] {
   // Clipper normalises closed paths to CCW in Y-up (its outer-polygon convention) regardless
   // of the winding supplied here, so the input orientation does not affect offset output.
-  return toClipperPath(normalizeWinding(flattened.points, true), DEFAULT_CLIPPER_SCALE)
+  return featureSilhouettePaths(feature).map((path) =>
+    toClipperPath(normalizeWinding(path, true), DEFAULT_CLIPPER_SCALE),
+  )
+}
+
+function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation): boolean {
+  if (feature.operation === 'region') return true
+  if (operation.kind === 'edge_route_inside') return feature.operation === 'subtract'
+  return feature.operation === 'add' || feature.operation === 'model'
 }
 
 function resolveContourPaths(paths: ClipperPath[], offsetDistance: number): Point[][] {
@@ -351,12 +369,13 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     }
   }
 
-  const expectedFeatureOperation = operation.kind === 'edge_route_inside' ? 'subtract' : 'add'
-  const targetFeatures = operation.target.featureIds
+  const selectedFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
-    .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === expectedFeatureOperation)
+
+  const targetFeatures = selectedFeatures
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => isEdgeRouteTargetFeature(feature, operation))
 
   const warnings: string[] = []
   const maxFeatureDepth = targetFeatures.reduce((max, feature) => {
@@ -368,8 +387,12 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     warnings.push(depthWarning)
   }
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
-    warnings.push(`Some selected target features are missing or are not ${expectedFeatureOperation} features`)
+  if (selectedFeatures.length !== operation.target.featureIds.length || targetFeatures.length < selectedFeatures.length) {
+    warnings.push(
+      operation.kind === 'edge_route_inside'
+        ? 'Some selected target features are missing or are not subtract/region features'
+        : 'Some selected target features are missing or are not add/model/region features',
+    )
   }
 
   const closedTargetFeatures = targetFeatures.filter((feature) => featureHasClosedGeometry(feature))
@@ -461,12 +484,12 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
       const span = resolveFeatureZSpan(project, feature)
       return {
         feature,
-        contourPath: flattenFeatureToClipperPath(feature),
+        contourPaths: featureToClipperPaths(feature),
         topZ: span.top,
         bottomZ: effectiveBottom,
       }
     })
-    .filter((entry): entry is { feature: SketchFeature; contourPath: ClipperPath; topZ: number; bottomZ: number } => entry !== null)
+    .filter((entry): entry is { feature: SketchFeature; contourPaths: ClipperPath[]; topZ: number; bottomZ: number } => entry !== null)
 
   if (routableTargets.length === 0) {
     return {
@@ -487,7 +510,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
 
     if (canCombineOutsideTargets) {
       const rawContours = resolveContourPaths(
-        unionPaths(routableTargets.map((target) => target.contourPath)),
+        unionPaths(routableTargets.flatMap((target) => target.contourPaths)),
         offsetDistance,
       )
 
@@ -511,7 +534,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
 
   if (moves.length === 0) {
     for (const target of routableTargets) {
-      const rawContours = resolveContourPaths([target.contourPath], offsetDistance)
+      const rawContours = resolveContourPaths(target.contourPaths, offsetDistance)
       if (rawContours.length === 0) {
         warnings.push(`No valid contour could be generated for ${target.feature.name}`)
         continue

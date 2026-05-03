@@ -309,6 +309,36 @@
   color: #f7b86a;
 }
 
+.import-progress-container {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.import-progress-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.import-progress-track {
+  width: 100%;
+  height: 6px;
+  background: #090f16;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.import-progress-fill {
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left center;
+  transition: transform 0.1s linear;
+}
+
 .import-dialog__toggle-row {
   display: flex;
   align-items: center;

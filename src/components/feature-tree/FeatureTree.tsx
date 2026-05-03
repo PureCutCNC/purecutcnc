@@ -16,6 +16,7 @@
 
 import { useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
+import type { FeatureOperation } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 
 interface FeatureTreeProps {
@@ -134,10 +135,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     dragOverTarget.current = null
   }
 
-  // Warn if first feature is not 'add' — this should not normally happen
+  // Warn if first 2.5D feature is not 'add' — imported STL models may be first.
   // since the store enforces it, but a loaded file could be malformed.
   const firstFeatureInvalid =
-    project.features.length > 0 && project.features[0].operation !== 'add'
+    project.features.length > 0
+    && project.features[0].operation !== 'add'
+    && !(project.features[0].kind === 'stl' && project.features[0].operation === 'model')
 
   const rootEntries = project.featureTree
 
@@ -163,9 +166,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
         onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
-        onToggleOperation={() =>
+        onToggleOperation={(op) =>
           updateFeature(feature.id, {
-            operation: feature.operation === 'add' ? 'subtract' : 'add',
+            operation: op,
           })
         }
         onContextMenu={(event) => {
@@ -280,7 +283,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
-                ⚠ First feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
+                ⚠ First 2.5D feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
               </div>
             )}
             {rootEntries.map((entry) => {
@@ -435,7 +438,7 @@ interface TreeRowProps {
   isSelected: boolean
   isDragging: boolean
   visible?: boolean
-  operation?: 'add' | 'subtract'
+  operation?: FeatureOperation
   isFirstFeature?: boolean
   collapsed?: boolean
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
@@ -443,7 +446,7 @@ interface TreeRowProps {
   onMouseLeave: () => void
   onToggleVisible?: () => void
   onSelectAllFeatures?: () => void
-  onToggleOperation?: () => void
+  onToggleOperation?: (operation: FeatureOperation) => void
   onToggleCollapse?: () => void
   onAddFolder?: () => void
   onAddTab?: () => void
@@ -493,6 +496,10 @@ function TreeRow({
 }: TreeRowProps) {
   // First feature's operation toggle is locked to 'add' — disable it
   const operationLocked = isFirstFeature && operation === 'add'
+
+  // Popup menu state for operation selector
+  const operationBtnRef = useRef<HTMLButtonElement>(null)
+  const [showOperationMenu, setShowOperationMenu] = useState(false)
 
   return (
     <div
@@ -633,36 +640,103 @@ function TreeRow({
           </button>
         ) : null}
         {kind === 'feature' && onToggleOperation ? (
-          <button
-            type="button"
-            className={[
-              'tree-action-btn',
-              'tree-action-btn--operation',
-              `tree-action-btn--${operation}`,
-              operationLocked ? 'tree-action-btn--locked' : '',
-            ].join(' ')}
-            onClick={(event) => {
-              event.stopPropagation()
-              if (!operationLocked) onToggleOperation()
-            }}
-            title={
-              operationLocked
-                ? 'First feature must always be Add (base solid)'
-                : operation === 'add'
-                ? 'Feature adds material — click to toggle'
-                : 'Feature subtracts material — click to toggle'
-            }
-            aria-label={
-              operationLocked
-                ? 'Operation locked to Add'
-                : operation === 'add'
-                ? 'Toggle to subtract'
-                : 'Toggle to add'
-            }
-            aria-disabled={operationLocked}
-          >
-            {operationLocked ? '🔒' : operation === 'add' ? '+' : '−'}
-          </button>
+          <div className="tree-operation-wrapper">
+            <button
+              ref={operationBtnRef}
+              type="button"
+              className={[
+                'tree-action-btn',
+                'tree-action-btn--operation',
+                `tree-action-btn--${operation}`,
+                operationLocked || operation === 'model' ? 'tree-action-btn--locked' : '',
+              ].join(' ')}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (!operationLocked && operation !== 'model') setShowOperationMenu((prev) => !prev)
+              }}
+              title={
+                operationLocked
+                  ? 'First 2.5D feature must be Add (base solid)'
+                  : operation === 'model'
+                  ? 'Model — imported 3D object (locked)'
+                  : operation === 'add'
+                  ? 'Feature adds material'
+                  : operation === 'subtract'
+                  ? 'Feature subtracts material'
+                  : 'Feature outlines machining region'
+              }
+              aria-label={
+                operationLocked ? 'Operation locked to Add'
+                : operation === 'model' ? 'Model — operation locked'
+                : 'Change operation'
+              }
+              aria-haspopup={operationLocked || operation === 'model' ? undefined : 'true'}
+              aria-expanded={showOperationMenu}
+              aria-disabled={operationLocked || operation === 'model'}
+            >
+              {operationLocked ? '🔒' : operation === 'model' ? (
+                <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
+                  <path d="M 12 2 L 22 7 L 12 12 L 2 7 L 12 2 Z" />
+                  <path d="M 2 7 L 12 12 L 12 22 L 2 17 L 2 7 Z" />
+                  <path d="M 22 7 L 12 12 L 12 22 L 22 17 L 22 7 Z" />
+                </svg>
+              ) : operation === 'add' ? '+' : operation === 'subtract' ? '−' : (
+                <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
+                  <path d="M 3 3 L 21 3 L 21 21 L 3 21 L 3 3 Z" />
+                </svg>
+              )}
+            </button>
+            {showOperationMenu && !operationLocked && operation !== 'model' ? (
+              <>
+                <div className="tree-operation-overlay" onClick={() => setShowOperationMenu(false)} />
+                <div className="tree-operation-menu">
+                  <button
+                    type="button"
+                    className={['tree-operation-menu__item', operation === 'add' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onToggleOperation('add')
+                      setShowOperationMenu(false)
+                    }}
+                    title="Add — feature adds material"
+                  >
+                    <span className="tree-operation-menu__icon">+</span>
+                    <span>Add</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={['tree-operation-menu__item', operation === 'subtract' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onToggleOperation('subtract')
+                      setShowOperationMenu(false)
+                    }}
+                    title="Subtract — feature removes material"
+                  >
+                    <span className="tree-operation-menu__icon">−</span>
+                    <span>Subtract</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={['tree-operation-menu__item', operation === 'region' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onToggleOperation('region')
+                      setShowOperationMenu(false)
+                    }}
+                    title="Region — outlines machining region"
+                  >
+                    <span className="tree-operation-menu__icon">
+                      <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
+                        <path d="M 3 3 L 21 3 L 21 21 L 3 21 L 3 3 Z" />
+                      </svg>
+                    </span>
+                    <span>Region</span>
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
         ) : null}
         {onSelectAllFeatures ? (
           <button
