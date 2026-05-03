@@ -59,7 +59,11 @@ They should be interpreted as:
 - no automatic edge machining,
 - no operation depth of their own except where a UI needs display metadata.
 
-Regions may still appear in the feature tree and canvas as normal selectable features, but their operation badge should communicate “mask/filter,” not “add/subtract material.”
+Regions remain stored as `project.features` in the short term, but the UI renders them in a separate `Regions` tree section instead of mixing them into the normal material/model feature list. Their operation badge should communicate “mask/filter,” not “add/subtract material.”
+
+Longer term, regions should probably move out of the normal feature list into a dedicated project collection and feature-tree root. That would prevent regions from being mistaken for cuttable add/subtract/model features and would better match tabs and clamps as CAM helper geometry.
+
+Region Z should be derived from stock/project context for display only. Users should not edit region top/bottom Z as machining depth; a region is a vertical XY filter through the resulting model.
 
 ## Implementation Guidance
 
@@ -77,24 +81,24 @@ There are two possible implementation points:
 
 Prefer pre-generation clipping when it preserves algorithm correctness and avoids generating unnecessary paths. Use post-generation clipping when the operation produces paths that are easier to filter than to pre-resolve.
 
-## Current TODOs
+## Current Status
 
-This behavior is not implemented consistently across all operations yet.
+The first range-aware pass is implemented for the current CAM operations.
 
-Known TODOs:
+Completed:
 
-1. Define a shared region-resolution helper:
+1. Shared region-resolution helper:
    - collect selected `operation === 'region'` features,
    - validate closed profiles,
    - union region profiles,
    - expose Clipper paths and point-in-region tests.
 
-2. Update operation target validation:
+2. Operation target validation:
    - allow region features as auxiliary targets for operations that support clipping,
    - require at least one real machining target where the operation needs one,
    - reject region-only operations unless the specific operation explicitly supports that mode.
 
-3. Update 2.5D operations:
+3. 2.5D operations:
    - pocket,
    - edge route inside/outside,
    - surface clean,
@@ -102,28 +106,34 @@ Known TODOs:
    - V-carve / recursive V-carve,
    - drilling.
 
-4. Update 3D operations:
+4. 3D operations:
    - rough surface should clip roughing areas/toolpaths to selected region union,
    - finish surface should clip scanlines/surface paths to selected region union.
 
-5. Add path-splitting utilities:
+5. Path-splitting utilities:
    - split line/cut moves at region boundaries,
    - preserve move Z interpolation for 3D paths,
    - discard outside fragments,
    - insert safe transitions between kept fragments.
 
-6. Update UI language:
+6. UI language:
    - label region features as machining masks/regions,
    - avoid implying regions are cut geometry,
    - operation hints should say regions limit the operation rather than being machined.
 
-7. Add tests:
+7. Tests:
    - operation with no region matches existing behavior,
    - single region clips path output,
    - multiple regions act as union,
    - region-only invalid where a real target is required,
    - clipped 3D moves preserve interpolated Z,
    - linking between clipped fragments retracts safely.
+
+Remaining follow-up:
+
+1. Move regions out of `project.features` into a dedicated project collection.
+2. Add broader per-operation fixture coverage for multi-region union and region-only invalid cases.
+3. Decide whether region masks need compound-profile holes before the generic sketch model supports explicit compound topology.
 
 ## Non-Goals
 

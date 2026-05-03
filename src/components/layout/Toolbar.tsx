@@ -21,7 +21,7 @@ import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
+import type { CreationTarget, FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
 import { useFileActions } from '../../platform/useFileActions'
@@ -101,6 +101,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startAddSplinePlacement,
     startAddCompositePlacement,
     startAddTextPlacement,
+    creationTarget,
+    setCreationTarget,
     startMoveFeature,
     startCopyFeature,
     startResizeFeature,
@@ -397,6 +399,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
     handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
     handleTextTool,
+    creationTarget,
+    setCreationTarget,
     confirmTextTool,
     handleFeatureMove,
     handleFeatureCopy,
@@ -539,7 +543,9 @@ function GlobalActions({
 
 function CreationActions({
   pendingShape,
+  creationTarget,
   tooltipSide,
+  onCreationTargetChange,
   onRect,
   onCircle,
   onPolygon,
@@ -548,7 +554,9 @@ function CreationActions({
   onText,
 }: {
   pendingShape: string | null
+  creationTarget: CreationTarget
   tooltipSide?: 'bottom' | 'right'
+  onCreationTargetChange: (target: CreationTarget) => void
   onRect: () => void
   onCircle: () => void
   onPolygon: () => void
@@ -556,50 +564,82 @@ function CreationActions({
   onComposite: () => void
   onText: () => void
 }) {
+  function renderCreationTargetButton(target: CreationTarget, icon: string, label: string) {
+    const active = creationTarget === target
+    return (
+      <div className="toolbar-action">
+        <button
+          type="button"
+          className={[
+            'toolbar-icon-btn',
+            'toolbar-target-btn',
+            target === 'region' ? 'toolbar-target-btn--region' : '',
+            active ? 'toolbar-icon-btn--active toolbar-target-btn--active' : '',
+          ].join(' ')}
+          onClick={() => onCreationTargetChange(target)}
+          title={label}
+          aria-label={label}
+          aria-pressed={active}
+        >
+          <Icon id={icon} size={18} />
+        </button>
+        <span className={`toolbar-tooltip toolbar-tooltip--${tooltipSide ?? 'bottom'}`} role="tooltip">
+          {label}
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <div className="toolbar-group">
-      <ToolbarActionButton
-        icon="rect"
-        label={pendingShape === 'rect' ? 'Cancel rectangle tool' : 'Add rectangle'}
-        active={pendingShape === 'rect'}
-        tooltipSide={tooltipSide}
-        onClick={onRect}
-      />
-      <ToolbarActionButton
-        icon="circle"
-        label={pendingShape === 'circle' ? 'Cancel circle tool' : 'Add circle'}
-        active={pendingShape === 'circle'}
-        tooltipSide={tooltipSide}
-        onClick={onCircle}
-      />
-      <ToolbarActionButton
-        icon="polygon"
-        label={pendingShape === 'polygon' ? 'Cancel polygon tool' : 'Add polygon'}
-        active={pendingShape === 'polygon'}
-        tooltipSide={tooltipSide}
-        onClick={onPolygon}
-      />
-      <ToolbarActionButton
-        icon="spline"
-        label={pendingShape === 'spline' ? 'Cancel spline tool' : 'Add spline'}
-        active={pendingShape === 'spline'}
-        tooltipSide={tooltipSide}
-        onClick={onSpline}
-      />
-      <ToolbarActionButton
-        icon="composite"
-        label={pendingShape === 'composite' ? 'Cancel composite tool' : 'Add composite'}
-        active={pendingShape === 'composite'}
-        tooltipSide={tooltipSide}
-        onClick={onComposite}
-      />
-      <ToolbarActionButton
-        icon="text"
-        label={pendingShape === 'text' ? 'Cancel text tool' : 'Add text'}
-        active={pendingShape === 'text'}
-        tooltipSide={tooltipSide}
-        onClick={onText}
-      />
+    <div className={`toolbar-creation-block toolbar-creation-block--${creationTarget}`}>
+      <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
+        {renderCreationTargetButton('feature', 'plus', 'Create features')}
+        {renderCreationTargetButton('region', 'pocket', 'Create regions')}
+      </div>
+      <div className="toolbar-group toolbar-group--drawing">
+        <ToolbarActionButton
+          icon="rect"
+          label={pendingShape === 'rect' ? 'Cancel rectangle tool' : `Add ${creationTarget} rectangle`}
+          active={pendingShape === 'rect'}
+          tooltipSide={tooltipSide}
+          onClick={onRect}
+        />
+        <ToolbarActionButton
+          icon="circle"
+          label={pendingShape === 'circle' ? 'Cancel circle tool' : `Add ${creationTarget} circle`}
+          active={pendingShape === 'circle'}
+          tooltipSide={tooltipSide}
+          onClick={onCircle}
+        />
+        <ToolbarActionButton
+          icon="polygon"
+          label={pendingShape === 'polygon' ? 'Cancel polygon tool' : `Add ${creationTarget} polygon`}
+          active={pendingShape === 'polygon'}
+          tooltipSide={tooltipSide}
+          onClick={onPolygon}
+        />
+        <ToolbarActionButton
+          icon="spline"
+          label={pendingShape === 'spline' ? 'Cancel spline tool' : `Add ${creationTarget} spline`}
+          active={pendingShape === 'spline'}
+          tooltipSide={tooltipSide}
+          onClick={onSpline}
+        />
+        <ToolbarActionButton
+          icon="composite"
+          label={pendingShape === 'composite' ? 'Cancel composite tool' : `Add ${creationTarget} composite`}
+          active={pendingShape === 'composite'}
+          tooltipSide={tooltipSide}
+          onClick={onComposite}
+        />
+        <ToolbarActionButton
+          icon="text"
+          label={pendingShape === 'text' ? 'Cancel text tool' : 'Add text'}
+          active={pendingShape === 'text'}
+          tooltipSide={tooltipSide}
+          onClick={onText}
+        />
+      </div>
     </div>
   )
 }
@@ -1157,7 +1197,9 @@ export function CreationToolbar({
       <div className={`toolbar toolbar--creation toolbar--${layout}`}>
         <CreationActions
           pendingShape={toolbar.pendingAdd?.shape ?? null}
+          creationTarget={toolbar.creationTarget}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onCreationTargetChange={toolbar.setCreationTarget}
           onRect={toolbar.handleRect}
           onCircle={toolbar.handleCircle}
           onPolygon={toolbar.handlePolygon}
@@ -1279,6 +1321,8 @@ export function Toolbar({
         />
         <CreationActions
           pendingShape={toolbar.pendingAdd?.shape ?? null}
+          creationTarget={toolbar.creationTarget}
+          onCreationTargetChange={toolbar.setCreationTarget}
           onRect={toolbar.handleRect}
           onCircle={toolbar.handleCircle}
           onPolygon={toolbar.handlePolygon}

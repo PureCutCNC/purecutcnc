@@ -29,7 +29,6 @@
  *     6. Emit each interval as its own 3D cut segment
  */
 
-import ClipperLib from 'clipper-lib'
 import { getProfileBounds, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import {
@@ -47,6 +46,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
+import { buildRegionMask, clipTupleContoursToRegionMask, splitFeatureTargets } from './regions'
 import { significantSilhouettePaths } from './silhouette'
 import {
   buildProtectedFootprintPaths,
@@ -57,60 +57,6 @@ import {
   safeSubtractBottomZAtPoint,
   unionClipperPaths,
 } from './modelProtection'
-
-function buildRegionUnionPaths(regionFeatures: SketchFeature[] | SketchFeature): ClipperPath[] {
-  const regions = Array.isArray(regionFeatures) ? regionFeatures : [regionFeatures]
-  if (regions.length === 0) return []
-
-  const clipperUnion = new ClipperLib.Clipper()
-  const regionPaths: ClipperPath[] = []
-  for (const region of regions) {
-    const flattened = flattenProfile(region.sketch.profile)
-    const path = toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)
-    regionPaths.push(path)
-  }
-  clipperUnion.AddPaths(regionPaths, ClipperLib.PolyType.ptSubject, true)
-  const unionSolution = new ClipperLib.Paths()
-  clipperUnion.Execute(
-    ClipperLib.ClipType.ctUnion,
-    unionSolution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-  return unionSolution as ClipperPath[]
-}
-
-/**
- * Clip (intersect) slice contours against pre-unioned region boundary paths.
- * Returns the intersection of each slice contour with the allowed region.
- */
-function clipToRegionPaths(
-  slicePolygons: Array<Array<[number, number]>>,
-  regionPaths: ClipperPath[],
-): Array<Array<[number, number]>> {
-  if (slicePolygons.length === 0 || regionPaths.length === 0) return []
-
-  // Intersect slice polygons with the unioned region boundary
-  const clipper = new ClipperLib.Clipper()
-  const subjectPaths = slicePolygons.map((poly) =>
-    poly.map(([x, y]) => ({
-      X: Math.round(x * DEFAULT_CLIPPER_SCALE),
-      Y: Math.round(y * DEFAULT_CLIPPER_SCALE),
-    })),
-  )
-  clipper.AddPaths(subjectPaths as ClipperPath[], ClipperLib.PolyType.ptSubject, true)
-  clipper.AddPaths(regionPaths, ClipperLib.PolyType.ptClip, true)
-
-  const solution = new ClipperLib.Paths()
-  clipper.Execute(ClipperLib.ClipType.ctIntersection, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)
-
-  const result: Array<Array<[number, number]>> = []
-  for (const path of solution as ClipperPath[]) {
-    const pts: Array<[number, number]> = path.map((p) => [p.X / DEFAULT_CLIPPER_SCALE, p.Y / DEFAULT_CLIPPER_SCALE])
-    if (pts.length >= 3) result.push(pts)
-  }
-  return result
-}
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -709,8 +655,7 @@ function generateFinishSurfaceParallel(
     // Region-first ordering: finish all scanlines for one region, then move to next.
     for (let ri = 0; ri < regionFeatures.length; ri++) {
       const region = regionFeatures[ri]
-      const regionPaths = buildRegionUnionPaths(region)
-      const regionContours = clipToRegionPaths(baseContours, regionPaths)
+      const regionContours = clipTupleContoursToRegionMask(baseContours, buildRegionMask([region]))
       const clippedContours = subtractProtectedContours(regionContours, protectedPaths)
 
       const clippedBounds = computeContourBounds([clippedContours])
@@ -749,11 +694,8 @@ export function generateFinishSurfaceToolpath(
 
   // ── Identify features ──────────────────────────────────────────────────
 
-  const targetFeatures = target.featureIds
-    .map((id) => project.features.find((f) => f.id === id) ?? null)
-    .filter((f): f is SketchFeature => f !== null)
-
-  if (targetFeatures.length !== target.featureIds.length) {
+  const splitTargets = splitFeatureTargets(project, target.featureIds)
+  if (splitTargets.missingFeatureIds.length > 0) {
     return {
       operationId: operation.id,
       moves: [],
@@ -763,8 +705,8 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const modelFeature = targetFeatures.find((f) => f.operation === 'model' && f.kind === 'stl')
-  const regionFeatures = targetFeatures.filter((f) => f.operation === 'region' && f.sketch.profile.closed)
+  const modelFeature = splitTargets.machiningFeatures.find((f) => f.operation === 'model' && f.kind === 'stl')
+  const regionFeatures = splitTargets.regionFeatures.filter((f) => f.sketch.profile.closed)
 
   if (!modelFeature) {
     return {

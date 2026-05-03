@@ -33,6 +33,7 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { buildRegionMask } from './regions'
 
 interface FeatureWithSpan {
   feature: SketchFeature
@@ -230,18 +231,21 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   const selectedTargetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+  const regionFeatures = selectedTargetFeatures
+    .filter((feature) => feature.operation === 'region')
+  const regionMask = buildRegionMask(regionFeatures)
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
+    .filter((feature) => feature.operation === 'subtract')
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
+    .filter((feature) => feature.operation === 'subtract')
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
 
-  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
+  if (validTargetSourceFeatures.length + regionFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing or are not subtract/region features')
   }
 
@@ -255,7 +259,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, `No valid subtract or region features were found for this ${operationLabel.toLowerCase()} operation`],
+      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
@@ -315,7 +319,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if ((feature.operation === 'subtract' || feature.operation === 'region') && targetIdSet.has(feature.id)) {
+      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue
       }
@@ -330,6 +334,10 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
         resolvedPaths,
         activeTabIslands.map((tab) => tab.path),
       )
+    }
+
+    if (operation.kind !== 'pocket' && resolvedPaths.length > 0 && regionMask) {
+      resolvedPaths = executeClipPaths(resolvedPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
     }
 
     if (resolvedPaths.length === 0) {
@@ -402,18 +410,21 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
   const selectedTargetFeatures = operation.target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is SketchFeature => feature !== null)
+  const regionFeatures = selectedTargetFeatures
+    .filter((feature) => feature.operation === 'region')
+  const regionMask = buildRegionMask(regionFeatures)
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
+    .filter((feature) => feature.operation === 'subtract')
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'subtract' || feature.operation === 'region')
+    .filter((feature) => feature.operation === 'subtract')
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
     }))
 
-  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
+  if (validTargetSourceFeatures.length + regionFeatures.length !== operation.target.featureIds.length) {
     warnings.push('Some selected target features are missing or are not subtract/region features')
   }
 
@@ -427,7 +438,7 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, `No valid subtract or region features were found for this ${operationLabel.toLowerCase()} operation`],
+      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
@@ -480,7 +491,7 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if ((feature.operation === 'subtract' || feature.operation === 'region') && targetIdSet.has(feature.id)) {
+      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue
       }
@@ -492,6 +503,15 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
 
     if (resolvedPaths.length === 0) {
       warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty subject geometry`)
+      continue
+    }
+
+    if (regionMask) {
+      resolvedPaths = executeClipPaths(resolvedPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
+    }
+
+    if (resolvedPaths.length === 0) {
+      warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty region-filtered geometry`)
       continue
     }
 

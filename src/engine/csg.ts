@@ -399,7 +399,8 @@ export function loadSTLTransformedGeometry(
 export function buildFeatureMesh(
   feature: SketchFeature,
   selected = false,
-  hovered = false
+  hovered = false,
+  stockThickness?: number,
 ): THREE.Mesh {
   if (feature.kind === 'stl' && feature.stl?.fileData) {
     const geometry = loadImportedBufferGeometry(importedModelFormat(feature.stl), feature.stl.fileData, feature.stl.axisSwap || 'none', false)
@@ -446,12 +447,15 @@ export function buildFeatureMesh(
   }
 
   const shape = profileToShape(feature.sketch.profile)
-  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 0
-  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 5
+  const isRegion = feature.operation === 'region'
+  const zTop = isRegion
+    ? stockThickness ?? (typeof feature.z_top === 'number' ? feature.z_top : 0)
+    : typeof feature.z_top === 'number' ? feature.z_top : 0
+  const zBottom = isRegion
+    ? 0
+    : typeof feature.z_bottom === 'number' ? feature.z_bottom : 5
   const yStart = Math.min(zTop, zBottom)
   const depth = Math.abs(zBottom - zTop)
-
-  const isRegion = feature.operation === 'region'
 
   const geometry = isRegion
     ? buildWallGeometry(shape, Math.max(depth, 0.1))
@@ -855,14 +859,14 @@ export async function buildScene(
     // Region features also get their own mesh since they are visual-only (not part of boolean model).
     for (const feature of visibleFeatures) {
       if (feature.kind === 'stl' || feature.operation === 'region') {
-        featureMeshes.set(feature.id, buildFeatureMesh(feature))
+        featureMeshes.set(feature.id, buildFeatureMesh(feature, false, false, project.stock.thickness))
       }
       
       // If buildBooleanModel failed, we need the rest of the meshes too
       if (!modelMesh) {
         for (const expanded of expandFeatureGeometry(feature)) {
           if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
-            featureMeshes.set(expanded.id, buildFeatureMesh(expanded))
+            featureMeshes.set(expanded.id, buildFeatureMesh(expanded, false, false, project.stock.thickness))
           }
         }
       }

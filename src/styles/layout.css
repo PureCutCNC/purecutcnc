@@ -95,12 +95,75 @@
   min-height: 32px;
 }
 
+.toolbar-creation-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-target-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.toolbar-target-btn {
+  color: var(--text-dim);
+}
+
+.toolbar-target-toggle .toolbar-action:first-child .toolbar-target-btn {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.toolbar-target-toggle .toolbar-action:last-child .toolbar-target-btn {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.toolbar-target-btn--active {
+  color: #fff;
+}
+
+.toolbar-target-btn--region.toolbar-target-btn--active {
+  border-color: rgba(153, 102, 204, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(153, 102, 204, 0.42);
+}
+
 .toolbar--creation.toolbar--vertical .toolbar-group {
   display: grid;
   justify-items: center;
   gap: 0;
   width: 100%;
   min-height: 0;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-creation-block {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-target-toggle {
+  display: grid;
+  width: 100%;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-target-toggle .toolbar-action {
+  width: 100%;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-target-btn {
+  width: 100%;
+  height: 32px;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-target-toggle .toolbar-action:first-child .toolbar-target-btn {
+  border-radius: 6px 6px 0 0;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-target-toggle .toolbar-action:last-child .toolbar-target-btn {
+  border-radius: 0 0 6px 6px;
 }
 
 .toolbar-action {
@@ -1260,6 +1323,7 @@
   padding: 3px 6px 3px 0;
   border-radius: 8px;
   cursor: pointer;
+  user-select: none;
 }
 
 .tree-row::before {
@@ -1288,7 +1352,8 @@
   margin-bottom: 2px;
 }
 
-.tree-row--features {
+.tree-row--features,
+.tree-row--regions {
   margin: 4px 0 2px;
 }
 
@@ -1332,9 +1397,15 @@
 }
 
 .tree-row--features .tree-branch,
+.tree-row--regions .tree-branch,
 .tree-row--folder .tree-branch {
   border-color: rgba(118, 144, 164, 0.7);
   background: rgba(41, 58, 72, 0.7);
+}
+
+.tree-row--regions .tree-branch {
+  border-color: rgba(153, 102, 204, 0.75);
+  background: rgba(153, 102, 204, 0.13);
 }
 
 .tree-row--folder .tree-branch {
@@ -1360,8 +1431,13 @@
 }
 
 .tree-row--features .tree-branch::before,
+.tree-row--regions .tree-branch::before,
 .tree-row--folder .tree-branch::before {
   background: rgba(214, 226, 236, 0.75);
+}
+
+.tree-row--regions .tree-branch::before {
+  background: #b98add;
 }
 
 .tree-branch--folder::before {
@@ -1386,12 +1462,14 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  user-select: none;
 }
 
 .tree-row-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  user-select: none;
 }
 
 .tree-action-btn {
@@ -2441,10 +2519,6 @@
 .tree-operation-menu__item--active {
   border-color: rgba(94, 121, 142, 0.5);
   background: rgba(255, 255, 255, 0.06);
-}
-
-.tree-operation-menu__item:nth-child(3) .tree-operation-menu__icon {
-  color: #9966cc;
 }
 
 .tree-operation-menu__icon {
