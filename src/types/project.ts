@@ -618,7 +618,7 @@ export function defaultStock(
     profile: rectProfile(0, 0, width, height),
     thickness: stockThickness,
     material: 'aluminum_6061',
-    color: '#8899aa',
+    color: '#b9a83c',
     visible: true,
     origin: { x: 0, y: 0 },
   }
