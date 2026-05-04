@@ -63,7 +63,7 @@ function UnsupportedMobileScreen() {
     <main className="unsupported-mobile-shell">
       <div className="unsupported-mobile-card">
         <div className="unsupported-mobile-eyebrow">Desktop Browser Only</div>
-        <h1>PureCut CNC is not supported on phones.</h1>
+        <h1>PureCutCNC is not supported on phones.</h1>
         <p>
           The browser app is designed for a desktop-sized workspace and does not
           behave well on phone screens. Use a desktop browser or install a

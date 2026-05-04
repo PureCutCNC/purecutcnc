@@ -47,7 +47,7 @@ export function renderErrorHTML(error: unknown, info?: string): string {
     <main class="app-error-shell">
       <div class="app-error-card">
         <div class="app-error-eyebrow">Something went wrong</div>
-        <h1>Sorry &mdash; PureCut CNC couldn't start on this device.</h1>
+        <h1>Sorry &mdash; PureCutCNC couldn't start on this device.</h1>
         <p>
           This usually means your browser or operating system doesn't support
           the 3D graphics features the app needs. Try a current version of

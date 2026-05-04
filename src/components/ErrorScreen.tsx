@@ -27,7 +27,7 @@ export function ErrorScreen({ error, info }: ErrorScreenProps) {
     <main className="app-error-shell">
       <div className="app-error-card">
         <div className="app-error-eyebrow">Something went wrong</div>
-        <h1>Sorry &mdash; PureCut CNC couldn't start on this device.</h1>
+        <h1>Sorry &mdash; PureCutCNC couldn't start on this device.</h1>
         <p>
           This usually means your browser or operating system doesn't support
           the 3D graphics features the app needs. Try a current version of
