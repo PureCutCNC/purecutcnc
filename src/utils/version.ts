@@ -40,7 +40,7 @@ export async function loadVersion(): Promise<string> {
  * Fetches version.json and updates document.title to include the version.
  * Call once at app startup.
  */
-export async function applyVersionToTitle(appName = 'PureCut CNC'): Promise<void> {
+export async function applyVersionToTitle(appName = 'PureCutCNC'): Promise<void> {
   const version = await loadVersion()
   document.title = `${appName} ${version}`
 }

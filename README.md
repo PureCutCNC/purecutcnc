@@ -1,6 +1,6 @@
-# PureCut CNC
+# PureCutCNC
 
-`PureCut CNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export.
+`PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export.
 
 It is aimed at the kind of work where you want one place to:
 
@@ -102,7 +102,7 @@ The app provides three main working views:
 
 ## Current Focus
 
-`PureCut CNC` is under active development. The core workflow is already usable, but the project is still evolving in areas such as:
+`PureCutCNC` is under active development. The core workflow is already usable, but the project is still evolving in areas such as:
 
 - additional font support and text workflows
 - deeper DXF coverage

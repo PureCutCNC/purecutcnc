@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "sync-icons": "node scripts/convert-camj-to-icons.js",
     "tauri": "tauri",
+    "tauri:icon": "npx tauri icon ./app-icon.png",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },

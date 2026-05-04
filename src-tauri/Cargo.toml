@@ -1,10 +1,10 @@
 [package]
-name = "app"
+name = "purecutcnc"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "PureCutCNC"
+authors = ["Franja (Frank) Povazanj"]
+license = "Apache-2.0"
+repository = "https://github.com/purecutcnc/purecutcnc"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -13,6 +13,10 @@ rust-version = "1.77.2"
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "PureCutCNC"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.6", features = [] }
