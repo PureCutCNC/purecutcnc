@@ -571,6 +571,27 @@ function testEdgeInsideLevelFirstVsFeatureFirst() {
   console.log('edge_route_inside ordering: PASSED')
 }
 
+function testEdgeInsideRegionClipsAtBoundary() {
+  console.log('Testing edge_route_inside region clips at region boundary...')
+  const tool = makeFlatEndmill('t1', 2)
+  const pocket = makePocketFeature('p1', 0, 0, 10, 10, 4, 0)
+  const region = makeRegionFeature('r1', 0, 0, 5, 10)
+  const project = baseProject([tool], [pocket, region])
+  const result = generateEdgeRouteToolpath(project, makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['p1', 'r1'] },
+    toolRef: 't1',
+    machiningOrder: 'level_first',
+  }))
+
+  const bounds = result.bounds
+  assert(bounds !== null, 'expected edge inside bounds')
+  if (!bounds) throw new Error('expected edge inside bounds')
+  assert(bounds.maxX <= 5 + 1e-6, `expected edge route clipped to region maxX <= 5, got ${bounds.maxX}`)
+  assert(bounds.maxX > 4.9, `expected edge route to clip at region boundary, not offset inward, got ${bounds.maxX}`)
+  console.log('edge_route_inside region boundary clipping: PASSED')
+}
+
 function testEdgeOutsideAcceptsModelSilhouette() {
   console.log('Testing edge_route_outside accepts model silhouette...')
 
@@ -851,6 +872,7 @@ try {
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
   testEdgeInsideLevelFirstVsFeatureFirst()
+  testEdgeInsideRegionClipsAtBoundary()
   testEdgeOutsideAcceptsModelSilhouette()
   testEdgeOutsideUsesStoredModelSilhouettePaths()
   testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()

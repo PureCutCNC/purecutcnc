@@ -412,7 +412,6 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
     .filter((feature): feature is SketchFeature => feature !== null)
   const regionFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'region')
-  const regionMask = buildRegionMask(regionFeatures)
   const validTargetSourceFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'subtract')
 
@@ -503,15 +502,6 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
 
     if (resolvedPaths.length === 0) {
       warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty subject geometry`)
-      continue
-    }
-
-    if (regionMask) {
-      resolvedPaths = executeClipPaths(resolvedPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
-    }
-
-    if (resolvedPaths.length === 0) {
-      warnings.push(`Band ${topZ} -> ${bottomZ} resolved to empty region-filtered geometry`)
       continue
     }
 

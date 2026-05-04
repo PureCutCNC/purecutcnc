@@ -734,7 +734,7 @@ export function CAMPanel({
     duplicateOperation,
     reorderOperations,
     autoPlaceTabsForOperation,
-    createPocketRestOperation,
+    createRestOperation,
   } = useProjectStore()
 
   const selectedToolId =
@@ -1020,12 +1020,12 @@ export function CAMPanel({
     onSelectedOperationIdChange(fallback)
   }
 
-  function handleCreatePocketRestOperation() {
+  function handleCreateRestOperation() {
     if (!selectedOperation) {
       return
     }
 
-    const result = createPocketRestOperation(selectedOperation.id)
+    const result = createRestOperation(selectedOperation.id)
     const text = result.operationId
       ? `Created rest operation with ${result.regionIds.length} region${result.regionIds.length === 1 ? '' : 's'}; choose a smaller tool`
       : result.warnings[0] ?? 'No unreachable pocket areas found for this tool'
@@ -1507,10 +1507,10 @@ export function CAMPanel({
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
-                  {selectedOperation.kind === 'pocket' ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
                       <span>Rest Machining</span>
-                      <button className="feat-btn feat-btn--primary" type="button" onClick={handleCreatePocketRestOperation}>
+                      <button className="feat-btn feat-btn--primary" type="button" onClick={handleCreateRestOperation}>
                         Create rest operation
                       </button>
                       {operationActionMessage?.operationId === selectedOperation.id ? (

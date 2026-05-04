@@ -3387,14 +3387,40 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
-  createPocketRestOperation: (operationId) => {
+  createRestOperation: (operationId) => {
     const state = get()
     const operation = state.project.operations.find((item) => item.id === operationId)
     if (!operation) {
       return { operationId: null, regionIds: [], warnings: ['Operation not found'] }
     }
-    if (operation.kind !== 'pocket' || operation.target.source !== 'features') {
-      return { operationId: null, regionIds: [], warnings: ['Rest operations can only be created from pocket operations with feature targets'] }
+    if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
+      return { operationId: null, regionIds: [], warnings: ['Rest operations can only be created from pocket or edge-route operations with feature targets'] }
+    }
+
+    if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
+      const nextOperationId = nextUniqueGeneratedId(state.project, 'op')
+      const restOperation: Operation = {
+        ...operation,
+        id: nextOperationId,
+        name: uniqueName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest`, state.project.operations.map((item) => item.name)),
+        showToolpath: true,
+        toolRef: null,
+      }
+
+      set((s) => ({
+        project: {
+          ...s.project,
+          operations: [...s.project.operations, restOperation],
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }))
+
+      return { operationId: nextOperationId, regionIds: [], warnings: [] }
     }
 
     const result = generatePocketRestRegionDrafts(state.project, operation)

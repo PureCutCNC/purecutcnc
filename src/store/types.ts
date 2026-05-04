@@ -289,7 +289,7 @@ export interface ProjectStore {
 
   addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
-  createPocketRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
+  createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
   setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
