@@ -1814,6 +1814,47 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
     : { source: 'stock' }
 }
 
+function buildRotatedCopies(
+  sourceFeatures: SketchFeature[],
+  existingFeatures: SketchFeature[],
+  pivot: Point,
+  angle: number,
+  count: number,
+): SketchFeature[] {
+  const created: SketchFeature[] = []
+  const projectLike: Project = { ...newProject(), features: existingFeatures, tools: [], operations: [] }
+
+  for (let step = 1; step <= count; step += 1) {
+    const stepAngle = angle * step
+    const rotatePoint = (point: Point) => rotatePointAround(point, pivot, stepAngle)
+    for (const sourceFeature of sourceFeatures) {
+      const nextId = nextUniqueGeneratedId(
+        { ...projectLike, features: [...existingFeatures, ...created] },
+        'f',
+      )
+      const profile = transformProfile(sourceFeature.sketch.profile, rotatePoint)
+      created.push({
+        ...sourceFeature,
+        id: nextId,
+        name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
+        folderId: sourceFeature.folderId,
+        stl: transformStlFeatureData(sourceFeature.stl, rotatePoint),
+        sketch: {
+          ...sourceFeature.sketch,
+          origin: rotatePoint(sourceFeature.sketch.origin),
+          orientationAngle: normalizeAngleDegrees(
+            (sourceFeature.sketch.orientationAngle ?? inferProfileOrientationAngle(sourceFeature.sketch.profile)) + stepAngle * (180 / Math.PI),
+          ),
+          profile,
+        },
+        locked: false,
+      })
+    }
+  }
+
+  return created
+}
+
 function buildCopiedFeatures(
   sourceFeatures: SketchFeature[],
   existingFeatures: SketchFeature[],
@@ -2502,6 +2543,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     buildCopiedFeatures,
     buildCopiedClamps,
     buildCopiedTabs,
+    buildRotatedCopies,
     resizeBackdropFromReference,
     rotateBackdropFromReference,
     resizeFeatureFromReference,

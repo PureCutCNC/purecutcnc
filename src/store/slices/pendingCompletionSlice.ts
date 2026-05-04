@@ -81,6 +81,13 @@ export interface PendingCompletionSliceDependencies {
     referenceEnd: Point,
     previewPoint: Point,
   ) => SketchFeature | null
+  buildRotatedCopies: (
+    sourceFeatures: SketchFeature[],
+    existingFeatures: SketchFeature[],
+    pivot: Point,
+    angle: number,
+    copyCount: number,
+  ) => SketchFeature[]
   previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
   syncFeatureTreeProject: (project: Project) => Project
   createDerivedFeature: (
@@ -342,7 +349,7 @@ export function createPendingCompletionSlice(
         }
       }),
 
-    completePendingTransform: (previewPoint) =>
+    completePendingTransform: (previewPoint, copyCount = 1) =>
       set((s) => {
         const pendingTransform = s.pendingTransform
         if (!pendingTransform?.referenceStart || !pendingTransform.referenceEnd) {
@@ -389,6 +396,61 @@ export function createPendingCompletionSlice(
           .filter((feature): feature is SketchFeature => feature !== null)
         if (sourceFeatures.length !== pendingTransform.entityIds.length) {
           return { pendingTransform: null }
+        }
+
+        // Rotate+copy: keep originals and add rotated copies
+        if (pendingTransform.mode === 'rotate' && pendingTransform.keepOriginals) {
+          const startVector = {
+            x: pendingTransform.referenceEnd.x - pendingTransform.referenceStart.x,
+            y: pendingTransform.referenceEnd.y - pendingTransform.referenceStart.y,
+          }
+          const endVector = {
+            x: previewPoint.x - pendingTransform.referenceStart.x,
+            y: previewPoint.y - pendingTransform.referenceStart.y,
+          }
+          const cross = startVector.x * endVector.y - startVector.y * endVector.x
+          const dot = startVector.x * endVector.x + startVector.y * endVector.y
+          const angle = Math.atan2(cross, dot)
+          if (!Number.isFinite(angle) || Math.abs(angle) < 1e-9) {
+            return { pendingTransform: null }
+          }
+          const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
+          const createdFeatures = deps.buildRotatedCopies(
+            sourceFeatures,
+            s.project.features,
+            pendingTransform.referenceStart,
+            angle,
+            normalizedCopyCount,
+          )
+          if (createdFeatures.length === 0) {
+            return { pendingTransform: null }
+          }
+          const nextProject = {
+            ...s.project,
+            features: [...s.project.features, ...createdFeatures],
+            featureTree: [
+              ...s.project.featureTree,
+              ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+            ],
+            meta: { ...s.project.meta, modified: new Date().toISOString() },
+          }
+          return {
+            project: nextProject,
+            pendingTransform: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+              selectedFeatureIds: createdFeatures.map((f) => f.id),
+              selectedNode: createdFeatures.at(-1)
+                ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                : s.selection.selectedNode,
+            },
+            history: {
+              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+          }
         }
 
         const transformedFeatures = new Map<string, SketchFeature>()
