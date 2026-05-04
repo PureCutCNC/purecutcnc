@@ -17,6 +17,7 @@
 import { useRef } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
+import { Select } from '../Select'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -321,21 +322,15 @@ export function PropertiesPanel() {
 
   function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void) {
     return (
-      <select
+      <Select
         value={value ?? ''}
-        onChange={(event) =>
-          onChange(event.target.value === '' || event.target.value === '__mixed__' ? null : event.target.value)}
-      >
-        {value === '__mixed__' ? (
-          <option value="__mixed__">Mixed folders</option>
-        ) : null}
-        <option value="">Root</option>
-        {project.featureFolders.map((folder) => (
-          <option key={folder.id} value={folder.id}>
-            {folder.name}
-          </option>
-        ))}
-      </select>
+        options={[
+          ...(value === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed folders' }] : []),
+          { value: '', label: 'Root' },
+          ...project.featureFolders.map((folder) => ({ value: folder.id, label: folder.name })),
+        ]}
+        onChange={(next) => onChange(next === '' || next === '__mixed__' ? null : next)}
+      />
     )
   }
 
@@ -353,13 +348,14 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Units</span>
-            <select
+            <Select
               value={project.meta.units}
-              onChange={(event) => setUnits(event.target.value as 'mm' | 'inch')}
-            >
-              <option value="mm">Millimeters</option>
-              <option value="inch">Inches</option>
-            </select>
+              options={[
+                { value: 'mm', label: 'Millimeters' },
+                { value: 'inch', label: 'Inches' },
+              ]}
+              onChange={(value) => setUnits(value)}
+            />
           </label>
           <label className="properties-check">
             <input
@@ -422,17 +418,14 @@ export function PropertiesPanel() {
                 <Icon id="refresh" size={15} />
               </button>
             </div>
-            <select
+            <Select
               value={project.meta.selectedMachineId ?? ''}
-              onChange={(event) => setSelectedMachineId(event.target.value || null)}
-            >
-              <option value="">None</option>
-              {project.meta.machineDefinitions.map((definition) => (
-                <option key={definition.id} value={definition.id}>
-                  {definition.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'None' },
+                ...project.meta.machineDefinitions.map((definition) => ({ value: definition.id, label: definition.name })),
+              ]}
+              onChange={(value) => setSelectedMachineId(value || null)}
+            />
           </label>
           <div className="properties-actions">
             <button type="button" onClick={handleAddMachine}>
@@ -1032,25 +1025,24 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              {allSelectedFeatures.some((f) => f.operation === 'model' || f.operation === 'region') ? (
-                <div className="properties-locked-field" title="Model and region entries cannot change operation type here">
-                  <span>{allSelectedFeatures.some((f) => f.operation === 'region') ? 'Contains regions' : 'Contains model features'}</span>
+              {allSelectedFeatures.some((f) => f.operation === 'model') ? (
+                <div className="properties-locked-field" title="Model entries cannot change operation type here">
+                  <span>Contains model features</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
               ) : (
-                <select
+                <Select
                   value={commonSelectedOperation ?? ''}
-                  onChange={(event) =>
-                    updateFeatures(selectedFeatureIds, {
-                      operation: event.target.value as import('../../types/project').FeatureOperation,
-                    })}
-                >
-                  {commonSelectedOperation === '__mixed__' ? (
-                    <option value="__mixed__">Mixed operations</option>
-                  ) : null}
-                  <option value="subtract">Subtract</option>
-                  <option value="add">Add</option>
-                </select>
+                  options={[
+                    ...(commonSelectedOperation === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed operations' }] : []),
+                    { value: 'subtract', label: 'Subtract' },
+                    { value: 'add', label: 'Add' },
+                    { value: 'region', label: 'Region' },
+                  ]}
+                  onChange={(value) => updateFeatures(selectedFeatureIds, {
+                    operation: value as import('../../types/project').FeatureOperation,
+                  })}
+                />
               )}
             </label>
             {selectedZEditableFeatures.length > 0 ? (
@@ -1137,28 +1129,27 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          {operationLockedToAdd || selectedFeature.operation === 'model' || selectedFeature.operation === 'region' ? (
+          {operationLockedToAdd || selectedFeature.operation === 'model' ? (
             <div className="properties-locked-field" title={
               selectedFeature.operation === 'model'
                 ? 'Model features are imported 3D objects and cannot change operation type'
-                : selectedFeature.operation === 'region'
-                  ? 'Regions are machining filters. Create regions from the toolbar.'
                 : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
             }>
-              <span>{selectedFeature.operation === 'model' ? 'Model' : selectedFeature.operation === 'region' ? 'Region' : 'Add'}</span>
+              <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
               <span className="properties-locked-hint" aria-hidden="true">🔒</span>
             </div>
           ) : (
-            <select
+            <Select
               value={selectedFeature.operation}
-              onChange={(event) =>
-                updateFeature(selectedFeature.id, {
-                  operation: event.target.value as import('../../types/project').FeatureOperation,
-                })}
-            >
-              <option value="subtract">Subtract</option>
-              <option value="add">Add</option>
-            </select>
+              options={[
+                { value: 'subtract', label: 'Subtract' },
+                { value: 'add', label: 'Add' },
+                { value: 'region', label: 'Region' },
+              ]}
+              onChange={(value) => updateFeature(selectedFeature.id, {
+                operation: value as import('../../types/project').FeatureOperation,
+              })}
+            />
           )}
         </label>
         <label className="properties-field">
@@ -1185,41 +1176,30 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Style</span>
-              <select
+              <Select
                 value={textFeature.style}
-                onChange={(event) => {
-                  const style = event.target.value as typeof textFeature.style
-                  updateFeature(selectedFeature.id, {
-                    text: {
-                      ...textFeature,
-                      style,
-                      fontId: defaultFontIdForStyle(style),
-                    },
-                  })
-                }}
-              >
-                <option value="skeleton">Skeleton</option>
-                <option value="outline">Outline</option>
-              </select>
+                options={[
+                  { value: 'skeleton', label: 'Skeleton' },
+                  { value: 'outline', label: 'Outline' },
+                ]}
+                onChange={(style) => updateFeature(selectedFeature.id, {
+                  text: {
+                    ...textFeature,
+                    style,
+                    fontId: defaultFontIdForStyle(style),
+                  },
+                })}
+              />
             </label>
             <label className="properties-field">
               <span>Font</span>
-              <select
+              <Select
                 value={textFeature.fontId}
-                onChange={(event) =>
-                  updateFeature(selectedFeature.id, {
-                    text: {
-                      ...textFeature,
-                      fontId: event.target.value as typeof textFeature.fontId,
-                    },
-                  })}
-              >
-                {textFontOptions.map((font) => (
-                  <option key={font.id} value={font.id}>
-                    {font.label}
-                  </option>
-                ))}
-              </select>
+                options={textFontOptions.map((font) => ({ value: font.id, label: font.label }))}
+                onChange={(fontId) => updateFeature(selectedFeature.id, {
+                  text: { ...textFeature, fontId },
+                })}
+              />
             </label>
           </>
         ) : null}

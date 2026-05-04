@@ -1577,14 +1577,164 @@
 .properties-field input,
 .properties-field select,
 .properties-field textarea,
-.properties-field button:not(.tree-action-btn) {
-  background: #0f1820;
+.properties-field button:not(.tree-action-btn):not(.feat-btn) {
+  background-color: #0f1820;
   border: 1px solid var(--line-strong);
   color: var(--text);
   border-radius: 7px;
   height: 32px;
   padding: 0 8px;
   min-width: 0;
+}
+
+.properties-field select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2394aabc'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  padding-right: 26px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.properties-field select:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--line-strong));
+}
+
+.properties-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+/* ── Scrollbars ─────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── ui-select ─────────────────────────────────────────── */
+
+.ui-select {
+  position: relative;
+  min-width: 0;
+}
+
+.ui-select__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  background-color: #0f1820;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--text);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+  text-align: left;
+}
+
+.ui-select__trigger:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--line-strong));
+}
+
+.ui-select--open .ui-select__trigger,
+.ui-select__trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.ui-select--disabled .ui-select__trigger {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ui-select__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select__arrow {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  margin-left: 7px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-dim);
+  transition: transform 120ms ease;
+}
+
+.ui-select--open .ui-select__arrow {
+  transform: rotate(180deg);
+}
+
+.ui-select__dropdown {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: #16222d;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  padding: 3px;
+}
+
+.ui-select__option {
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: inherit;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-select__option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ui-select__option--selected {
+  color: var(--accent);
+}
+
+.ui-select__option--selected:hover {
+  background: rgba(220, 165, 106, 0.1);
 }
 
 .properties-field textarea {

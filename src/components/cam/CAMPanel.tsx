@@ -19,10 +19,9 @@ import type { DragEvent } from 'react'
 import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
+import { Select } from '../Select'
 import type {
-  CutDirection,
   DrillType,
-  MachiningOrder,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -334,6 +333,16 @@ function pocketPatternLabel(pattern: PocketPattern): string {
 
 function operationRequiresClosedProfiles(kind: OperationKind): boolean {
   return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+}
+
+function showStepdown(operation: Project['operations'][number]): boolean {
+  if (operation.kind === 'v_carve' || operation.kind === 'v_carve_recursive' || operation.kind === 'drilling') {
+    return false
+  }
+  if ((operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') && operation.pass === 'finish') {
+    return false
+  }
+  return true
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
@@ -1333,13 +1342,14 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' ? (
                     <label className="properties-field">
                       <span>Pass</span>
-                      <select
+                      <Select
                         value={selectedOperation.pass}
-                        onChange={(event) => updateOperation(selectedOperation.id, { pass: event.target.value as OperationPass })}
-                      >
-                        <option value="rough">Rough</option>
-                        <option value="finish">Finish</option>
-                      </select>
+                        options={[
+                          { value: 'rough', label: 'Rough' },
+                          { value: 'finish', label: 'Finish' },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { pass: value })}
+                      />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' ? (
@@ -1356,13 +1366,14 @@ export function CAMPanel({
                   {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
                     <label className="properties-field">
                       <span>Pattern</span>
-                      <select
+                      <Select
                         value={selectedOperation.pocketPattern}
-                        onChange={(event) => updateOperation(selectedOperation.id, { pocketPattern: event.target.value as PocketPattern })}
-                      >
-                        <option value="offset">{pocketPatternLabel('offset')}</option>
-                        <option value="parallel">{pocketPatternLabel('parallel')}</option>
-                      </select>
+                        options={[
+                          { value: 'offset', label: pocketPatternLabel('offset') },
+                          { value: 'parallel', label: pocketPatternLabel('parallel') },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
+                      />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface') && selectedOperation.pocketPattern === 'parallel' ? (
@@ -1377,13 +1388,14 @@ export function CAMPanel({
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface') ? (
                     <label className="properties-field">
                       <span>Cut Direction</span>
-                      <select
+                      <Select
                         value={selectedOperation.cutDirection ?? 'conventional'}
-                        onChange={(event) => updateOperation(selectedOperation.id, { cutDirection: event.target.value as CutDirection })}
-                      >
-                        <option value="conventional">Conventional</option>
-                        <option value="climb">Climb</option>
-                      </select>
+                        options={[
+                          { value: 'conventional', label: 'Conventional' },
+                          { value: 'climb', label: 'Climb' },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
+                      />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
@@ -1391,13 +1403,14 @@ export function CAMPanel({
                     || selectedOperation.kind === 'edge_route_outside') ? (
                     <label className="properties-field">
                       <span>Machining Order</span>
-                      <select
+                      <Select
                         value={selectedOperation.machiningOrder ?? 'level_first'}
-                        onChange={(event) => updateOperation(selectedOperation.id, { machiningOrder: event.target.value as MachiningOrder })}
-                      >
-                        <option value="feature_first">Feature first</option>
-                        <option value="level_first">Level first</option>
-                      </select>
+                        options={[
+                          { value: 'feature_first', label: 'Feature first' },
+                          { value: 'level_first', label: 'Level first' },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
+                      />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'follow_line' ? (
@@ -1415,15 +1428,16 @@ export function CAMPanel({
                     <>
                       <label className="properties-field">
                         <span>Drill Type</span>
-                        <select
+                        <Select
                           value={selectedOperation.drillType ?? 'simple'}
-                          onChange={(event) => updateOperation(selectedOperation.id, { drillType: event.target.value as DrillType })}
-                        >
-                          <option value="simple">{drillTypeLabel('simple')}</option>
-                          <option value="peck">{drillTypeLabel('peck')}</option>
-                          <option value="dwell">{drillTypeLabel('dwell')}</option>
-                          <option value="chip_breaking">{drillTypeLabel('chip_breaking')}</option>
-                        </select>
+                          options={[
+                            { value: 'simple', label: drillTypeLabel('simple') },
+                            { value: 'peck', label: drillTypeLabel('peck') },
+                            { value: 'dwell', label: drillTypeLabel('dwell') },
+                            { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
+                          ]}
+                          onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
+                        />
                       </label>
                       {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
                         <label className="properties-field">
@@ -1508,7 +1522,7 @@ export function CAMPanel({
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
                       <span>Rest Machining</span>
-                      <button className="feat-btn feat-btn--primary" type="button" onClick={handleCreateRestOperation}>
+                      <button className="feat-btn" type="button" onClick={handleCreateRestOperation}>
                         Create rest operation
                       </button>
                       {operationActionMessage?.operationId === selectedOperation.id ? (
@@ -1538,17 +1552,24 @@ export function CAMPanel({
                   ) : null}
                   <label className="properties-field">
                     <span>Tool</span>
-                    <select
+                    <Select
                       value={selectedOperation.toolRef ?? ''}
-                      onChange={(event) => {
-                        const newToolId = event.target.value || null
-                        const newTool = newToolId ? project.tools.find((t) => t.id === newToolId) ?? null : null
+                      options={[
+                        { value: '', label: 'No Tool' },
+                        ...(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
+                          ? project.tools.filter((tool) => tool.type === 'v_bit')
+                          : project.tools
+                        ).map((tool) => ({ value: tool.id, label: tool.name })),
+                      ]}
+                      onChange={(newToolId) => {
+                        const id = newToolId || null
+                        const newTool = id ? project.tools.find((t) => t.id === id) ?? null : null
                         const toolInProjectUnits = newTool && newTool.units !== project.meta.units
                           ? convertToolUnits(newTool, project.meta.units)
                           : newTool
                         const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
                         updateOperation(selectedOperation.id, {
-                          toolRef: newToolId,
+                          toolRef: id,
                           ...(toolInProjectUnits ? {
                             feed: toolInProjectUnits.defaultFeed,
                             plungeFeed: toolInProjectUnits.defaultPlungeFeed,
@@ -1561,17 +1582,7 @@ export function CAMPanel({
                           } : {}),
                         })
                       }}
-                    >
-                      <option value="">No Tool</option>
-                      {(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
-                        ? project.tools.filter((tool) => tool.type === 'v_bit')
-                        : project.tools
-                      ).map((tool) => (
-                        <option key={tool.id} value={tool.id}>
-                          {tool.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </label>
                   <label className="properties-check">
                     <input
@@ -1581,7 +1592,7 @@ export function CAMPanel({
                     />
                     <span>Enabled</span>
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' ? (
+                  {showStepdown(selectedOperation) ? (
                     <label className="properties-field">
                       <span>Stepdown</span>
                       <DraftLengthInput
@@ -1834,31 +1845,30 @@ export function CAMPanel({
                       </label>
                       <label className="properties-field">
                         <span>Type</span>
-                        <select
+                        <Select
                           value={selectedTool.type}
-                          onChange={(event) => {
-                            const nextType = event.target.value as ToolType
-                            updateTool(selectedTool.id, {
-                              type: nextType,
-                              vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
-                            })
-                          }}
-                        >
-                          <option value="flat_endmill">Flat Endmill</option>
-                          <option value="ball_endmill">Ball Endmill</option>
-                          <option value="v_bit">V-Bit</option>
-                          <option value="drill">Drill</option>
-                        </select>
+                          options={[
+                            { value: 'flat_endmill', label: 'Flat Endmill' },
+                            { value: 'ball_endmill', label: 'Ball Endmill' },
+                            { value: 'v_bit', label: 'V-Bit' },
+                            { value: 'drill', label: 'Drill' },
+                          ]}
+                          onChange={(nextType) => updateTool(selectedTool.id, {
+                            type: nextType,
+                            vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
+                          })}
+                        />
                       </label>
                       <label className="properties-field">
                         <span>Units</span>
-                        <select
+                        <Select
                           value={selectedTool.units}
-                          onChange={(event) => updateTool(selectedTool.id, convertToolUnits(selectedTool, event.target.value as Tool['units']))}
-                        >
-                          <option value="mm">Millimeters</option>
-                          <option value="inch">Inches</option>
-                        </select>
+                          options={[
+                            { value: 'mm', label: 'Millimeters' },
+                            { value: 'inch', label: 'Inches' },
+                          ]}
+                          onChange={(value) => updateTool(selectedTool.id, convertToolUnits(selectedTool, value))}
+                        />
                       </label>
                       <label className="properties-field">
                         <span>Diameter</span>
@@ -1891,13 +1901,14 @@ export function CAMPanel({
                       </label>
                       <label className="properties-field">
                         <span>Material</span>
-                        <select
+                        <Select
                           value={selectedTool.material}
-                          onChange={(event) => updateTool(selectedTool.id, { material: event.target.value as Tool['material'] })}
-                        >
-                          <option value="carbide">Carbide</option>
-                          <option value="hss">HSS</option>
-                        </select>
+                          options={[
+                            { value: 'carbide', label: 'Carbide' },
+                            { value: 'hss', label: 'HSS' },
+                          ]}
+                          onChange={(value) => updateTool(selectedTool.id, { material: value })}
+                        />
                       </label>
                       <label className="properties-field">
                         <span>Default RPM</span>

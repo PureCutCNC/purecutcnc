@@ -811,7 +811,7 @@ function App() {
             playbackInput={simulationPlaybackInput}
           />
         }
-        featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} onEditTab={handleEditTab} onEditClamp={handleEditClamp} />}
+        featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}
         propertiesPanel={<PropertiesPanel />}
         camPanel={
           <CAMPanel
