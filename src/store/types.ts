@@ -130,6 +130,7 @@ export interface PendingTransformTool {
   entityIds: string[]
   referenceStart: Point | null
   referenceEnd: Point | null
+  keepOriginals: boolean
   session: number
 }
 
@@ -364,7 +365,8 @@ export interface ProjectStore {
   cancelPendingTransform: () => void
   setPendingTransformReferenceStart: (point: Point) => void
   setPendingTransformReferenceEnd: (point: Point) => void
-  completePendingTransform: (previewPoint: Point) => void
+  setPendingTransformKeepOriginals: (keepOriginals: boolean) => void
+  completePendingTransform: (previewPoint: Point, copyCount?: number) => void
 
   addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
   addCircleFeature: (name: string, cx: number, cy: number, r: number, depth: number) => void

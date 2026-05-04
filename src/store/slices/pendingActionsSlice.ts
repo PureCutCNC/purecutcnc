@@ -44,6 +44,7 @@ export type PendingActionsSlice = Pick<
   | 'cancelPendingTransform'
   | 'cancelPendingShapeAction'
   | 'setPendingShapeActionKeepOriginals'
+  | 'setPendingTransformKeepOriginals'
   | 'cancelPendingOffset'
   | 'setPendingMoveFrom'
   | 'setPendingMoveTo'
@@ -150,7 +151,7 @@ export function createPendingActionsSlice(
         return {
           pendingAdd: null,
           pendingMove: null,
-          pendingTransform: { mode: 'resize', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+          pendingTransform: { mode: 'resize', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
           pendingOffset: null,
           pendingShapeAction: null,
           sketchEditSession: null,
@@ -181,7 +182,7 @@ export function createPendingActionsSlice(
         return {
           pendingAdd: null,
           pendingMove: null,
-          pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+          pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
           pendingOffset: null,
           pendingShapeAction: null,
           sketchEditSession: null,
@@ -231,7 +232,7 @@ export function createPendingActionsSlice(
         return {
           pendingAdd: null,
           pendingMove: null,
-          pendingTransform: { mode: 'resize', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+          pendingTransform: { mode: 'resize', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
           pendingOffset: null,
           pendingShapeAction: null,
           sketchEditSession: null,
@@ -256,7 +257,7 @@ export function createPendingActionsSlice(
         return {
           pendingAdd: null,
           pendingMove: null,
-          pendingTransform: { mode: 'rotate', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, session: nextPlacementSession() },
+          pendingTransform: { mode: 'rotate', entityType: 'backdrop', entityIds: [], referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
           pendingOffset: null,
           pendingShapeAction: null,
           sketchEditSession: null,
@@ -440,6 +441,11 @@ export function createPendingActionsSlice(
     cancelPendingMove: () => set({ pendingMove: null }),
 
     cancelPendingTransform: () => set({ pendingTransform: null }),
+
+    setPendingTransformKeepOriginals: (keepOriginals) =>
+      set((s) => ({
+        pendingTransform: s.pendingTransform ? { ...s.pendingTransform, keepOriginals } : null,
+      })),
 
     cancelPendingShapeAction: () => set({ pendingShapeAction: null }),
 

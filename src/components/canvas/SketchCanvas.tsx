@@ -256,6 +256,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const drawFrameRef = useRef<number | null>(null)
   const drawRef = useRef<() => void>(() => {})
   const [copyCountDraft, setCopyCountDraft] = useState('1')
+  const [rotateCopyCountDraft, setRotateCopyCountDraft] = useState('1')
+  const [pendingRotateCopyPoint, setPendingRotateCopyPoint] = useState<Point | null>(null)
+  const rotateCopyCountInputRef = useRef<HTMLInputElement>(null)
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [stlImageRevision, setStlImageRevision] = useState(0)
@@ -338,6 +341,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformReferenceEnd,
     completePendingTransform,
     cancelPendingTransform,
+    setPendingTransformKeepOriginals,
     completePendingOffset,
     cancelPendingOffset,
     completePendingShapeAction,
@@ -352,6 +356,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     updateConstraintValue,
   } = useProjectStore()
   const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint
+  const rotateCopyCountPromptActive = !!pendingRotateCopyPoint
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
   const pendingAddRef = useRef(pendingAdd)
@@ -1495,6 +1500,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [copyCountPromptActive])
 
   useEffect(() => {
+    if (!rotateCopyCountPromptActive) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      rotateCopyCountInputRef.current?.focus({ preventScroll: true })
+      rotateCopyCountInputRef.current?.select()
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [rotateCopyCountPromptActive])
+
+  useEffect(() => {
     if (!dimensionEdit) return
     const inputRef =
       dimensionEdit.activeField === 'width' ? widthInputRef
@@ -1676,7 +1694,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [])
 
   useEffect(() => {
-    if (copyCountPromptActive) {
+    if (copyCountPromptActive || rotateCopyCountPromptActive) {
       return
     }
 
@@ -1693,7 +1711,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -1711,7 +1729,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => {
       canvas.removeEventListener('pointermove', handleNativePointerMove)
     }
-  }, [copyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length, zoomWindowActive])
+  }, [copyCountPromptActive, rotateCopyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length, zoomWindowActive])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -2674,6 +2692,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       } else if (!pendingTransform.referenceEnd) {
         setPendingTransformReferenceEnd(snapped)
         setPendingTransformPreviewPointRef({ point: snapped, session: pendingTransform.session })
+      } else if (pendingTransform.mode === 'rotate' && pendingTransform.keepOriginals) {
+        setPendingRotateCopyPoint(constrainedPoint)
       } else {
         completePendingTransform(constrainedPoint)
         setPendingTransformPreviewPointRef(null)
@@ -3478,6 +3498,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (event.key === 'Escape' && pendingTransform) {
       cancelPendingTransform()
       setPendingTransformPreviewPointRef(null)
+      setPendingRotateCopyPoint(null)
+      setRotateCopyCountDraft('1')
       setOperationDimEdit(null)
       return
     }
@@ -4220,8 +4242,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     pt.referenceEnd,
                     angleDegrees,
                   )
-                  completePendingTransform(previewPoint)
-                  setPendingTransformPreviewPointRef(null)
+                  if (pt.keepOriginals) {
+                    setPendingRotateCopyPoint(previewPoint)
+                  } else {
+                    completePendingTransform(previewPoint)
+                    setPendingTransformPreviewPointRef(null)
+                  }
                   setOperationDimEdit(null)
                 } else if (e.key === 'Escape') {
                   e.preventDefault()
@@ -4488,7 +4514,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           )}
         </div>
       )}
-      {pendingTransform && (
+      {pendingTransform && !rotateCopyCountPromptActive && (
         <div className="sketch-place-banner">
           <span>{pendingTransform.mode === 'resize'
             ? !pendingTransform.referenceStart
@@ -4500,12 +4526,63 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Click the rotation origin.'
               : !pendingTransform.referenceEnd
                 ? 'Click the reference direction point.'
-                : 'Move to preview the rotated feature, then click to commit.'}</span>
+                : pendingTransform.keepOriginals
+                  ? 'Move to preview the rotated copy, then click to set angle.'
+                  : 'Move to preview the rotated feature, then click to commit.'}</span>
+          {pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd && (
+            <label className="sketch-place-toggle">
+              <input
+                type="checkbox"
+                checked={pendingTransform.keepOriginals}
+                onChange={(event) => setPendingTransformKeepOriginals(event.target.checked)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelPendingTransform()
+                    setPendingTransformPreviewPointRef(null)
+                  }
+                }}
+              />
+              <span>Keep originals</span>
+            </label>
+          )}
           {((pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
             || (pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)) && (
             <> Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title={pendingTransform.mode === 'resize' ? 'Type scale factor' : 'Type exact angle'} onClick={triggerDimensionEdit} onKeyDown={(e) => { if (e.key === 'Enter') triggerDimensionEdit() }}>Tab</kbd> to type {pendingTransform.mode === 'resize' ? 'scale factor' : 'exact angle'}.</>
           )}
-          {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingTransform} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingTransform() }}>Esc</kbd> to cancel.
+          {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={() => { cancelPendingTransform(); setPendingTransformPreviewPointRef(null) }} onKeyDown={(e) => { if (e.key === 'Enter') { cancelPendingTransform(); setPendingTransformPreviewPointRef(null) } }}>Esc</kbd> to cancel.
+        </div>
+      )}
+      {rotateCopyCountPromptActive && pendingTransform && (
+        <div className="sketch-place-banner">
+          <span>Copies</span>
+          <input
+            ref={rotateCopyCountInputRef}
+            className="sketch-place-count"
+            type="text"
+            inputMode="numeric"
+            value={rotateCopyCountDraft}
+            onChange={(event) => setRotateCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
+            onFocus={(event) => event.currentTarget.select()}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Enter') {
+                const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1))
+                completePendingTransform(pendingRotateCopyPoint!, n)
+                setPendingTransformPreviewPointRef(null)
+                setPendingRotateCopyPoint(null)
+                setRotateCopyCountDraft('1')
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelPendingTransform()
+                setPendingTransformPreviewPointRef(null)
+                setPendingRotateCopyPoint(null)
+                setRotateCopyCountDraft('1')
+              }
+            }}
+            autoFocus
+          />
+          <span>Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm" onClick={() => { const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1)); completePendingTransform(pendingRotateCopyPoint!, n); setPendingTransformPreviewPointRef(null); setPendingRotateCopyPoint(null); setRotateCopyCountDraft('1') }} onKeyDown={(e) => { if (e.key === 'Enter') { const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1)); completePendingTransform(pendingRotateCopyPoint!, n); setPendingTransformPreviewPointRef(null); setPendingRotateCopyPoint(null); setRotateCopyCountDraft('1') } }}>Enter</kbd> to confirm, <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={() => { cancelPendingTransform(); setPendingTransformPreviewPointRef(null); setPendingRotateCopyPoint(null); setRotateCopyCountDraft('1') }} onKeyDown={(e) => { if (e.key === 'Enter') { cancelPendingTransform(); setPendingTransformPreviewPointRef(null); setPendingRotateCopyPoint(null); setRotateCopyCountDraft('1') } }}>Esc</kbd> to cancel.</span>
         </div>
       )}
     </div>
