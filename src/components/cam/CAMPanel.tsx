@@ -1387,8 +1387,6 @@ export function CAMPanel({
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
-                    || selectedOperation.kind === 'v_carve'
-                    || selectedOperation.kind === 'v_carve_recursive'
                     || selectedOperation.kind === 'edge_route_inside'
                     || selectedOperation.kind === 'edge_route_outside') ? (
                     <label className="properties-field">

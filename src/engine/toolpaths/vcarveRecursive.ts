@@ -2516,6 +2516,46 @@ function rotateClosedPath(path: Path3D, startIdx: number): Path3D {
 }
 
 // ---------------------------------------------------------------------------
+// Region ordering — nearest-neighbour sort to complete each region before
+// moving to the next, minimising long-distance rapids between letters.
+// ---------------------------------------------------------------------------
+
+function sortRegionsNearestNeighbor<T extends { outer: { x: number; y: number }[] }>(
+  regions: T[],
+  currentPosition: { x: number; y: number } | null,
+): T[] {
+  if (regions.length <= 1) return regions
+  const remaining = regions.slice()
+  const sorted: T[] = []
+  let curX = currentPosition?.x ?? 0
+  let curY = currentPosition?.y ?? 0
+
+  while (remaining.length > 0) {
+    let bestIdx = 0
+    let bestDist = Infinity
+    for (let i = 0; i < remaining.length; i++) {
+      const outer = remaining[i].outer
+      let sx = 0
+      let sy = 0
+      for (const p of outer) { sx += p.x; sy += p.y }
+      const n = outer.length || 1
+      const d = Math.hypot(sx / n - curX, sy / n - curY)
+      if (d < bestDist) { bestDist = d; bestIdx = i }
+    }
+    const chosen = remaining.splice(bestIdx, 1)[0]
+    const outer = chosen.outer
+    let sx = 0
+    let sy = 0
+    for (const p of outer) { sx += p.x; sy += p.y }
+    const n = outer.length || 1
+    curX = sx / n
+    curY = sy / n
+    sorted.push(chosen)
+  }
+  return sorted
+}
+
+// ---------------------------------------------------------------------------
 // Path ordering — nearest-neighbour sort to minimise rapid travel
 // ---------------------------------------------------------------------------
 
@@ -2539,9 +2579,20 @@ function rotateClosedPath(path: Path3D, startIdx: number): Path3D {
  * Only XY distance is used for cost: all rapids happen at safeZ so the Z
  * component of path endpoints does not contribute to air-travel time.
  */
+/**
+ * Sort cost: if this orientation can be entered without a retraction (same Z
+ * within noise tolerance, XY within link budget) the cost is the raw XY
+ * distance.  Otherwise a large fixed penalty is added, making every
+ * no-retraction candidate beat every retraction candidate regardless of
+ * XY distance — while still ordering among candidates of the same class by
+ * proximity.
+ */
+const RETRACT_SORT_PENALTY = 1e6
+
 function sortPathsNearestNeighbor(
   paths: Path3D[],
-  startXY: { x: number; y: number } | null,
+  startXY: { x: number; y: number; z?: number } | null,
+  maxLinkDistance = 0,
 ): Path3D[] {
   if (paths.length === 0) return []
 
@@ -2553,14 +2604,31 @@ function sortPathsNearestNeighbor(
     return Math.hypot(last.x - first.x, last.y - first.y) < 1e-6
   }
 
+  /** Cost of reaching `entry` from the current position.  A direct-link
+   *  (no retraction) transition costs just the XY distance; a retraction
+   *  transition gets a large penalty so that any directly-linkable path is
+   *  always preferred over any path requiring a retraction. */
+  function cost(xyDist: number, entryZ: number, curZ: number | undefined): number {
+    if (
+      maxLinkDistance > 0
+      && curZ !== undefined
+      && entryZ <= curZ + 2e-3   // same depth or going deeper — diagonal cut is safe
+      && xyDist <= maxLinkDistance
+    ) {
+      return xyDist                        // direct link — no retraction
+    }
+    return xyDist + RETRACT_SORT_PENALTY   // retraction required
+  }
+
   const remaining = paths.slice()
   const ordered: Path3D[] = []
   let curX = startXY?.x ?? 0
   let curY = startXY?.y ?? 0
+  let curZ = startXY?.z           // undefined until first path is chosen
 
   while (remaining.length > 0) {
     let bestIdx       = 0
-    let bestDist      = Infinity
+    let bestCost      = Infinity
     let bestReverse   = false
     let bestRotateIdx = -1  // -1 = no rotation; ≥0 = rotate so this vertex becomes path[0]
 
@@ -2581,30 +2649,36 @@ function sortPathsNearestNeighbor(
             closestIdx  = j
           }
         }
-        const d   = closestDist
-        const rev = false  // reversal meaningless for a closed loop
-        // Store rotateIdx only if rotation is needed (non-zero index)
-        const rotateIdx = closestIdx > 0 ? closestIdx : -1
-
-        if (d < bestDist) {
-          bestDist      = d
+        const c = cost(closestDist, path[closestIdx].z, curZ)
+        if (c < bestCost) {
+          bestCost      = c
           bestIdx       = i
-          bestReverse   = rev
-          bestRotateIdx = rotateIdx
+          bestReverse   = false
+          bestRotateIdx = closestIdx > 0 ? closestIdx : -1
         }
       } else {
-        // Open path — try both forward and reverse orientation
+        // Open path — try both orientations; prefer whichever can be entered
+        // without a retraction, and break ties by XY distance.
         const distToStart = Math.hypot(first.x - curX, first.y - curY)
-        const distToEnd   = Math.hypot(last.x - curX, last.y - curY)
+        const distToEnd   = Math.hypot(last.x - curX,  last.y - curY)
 
-        const d   = Math.min(distToStart, distToEnd)
-        const rev = distToEnd < distToStart
+        const costFwd = cost(distToStart, first.z, curZ)
+        const costRev = cost(distToEnd,   last.z,  curZ)
 
-        if (d < bestDist) {
-          bestDist      = d
-          bestIdx       = i
-          bestReverse   = rev
-          bestRotateIdx = -1  // no rotation for open paths
+        if (costFwd <= costRev) {
+          if (costFwd < bestCost) {
+            bestCost      = costFwd
+            bestIdx       = i
+            bestReverse   = false
+            bestRotateIdx = -1
+          }
+        } else {
+          if (costRev < bestCost) {
+            bestCost      = costRev
+            bestIdx       = i
+            bestReverse   = true
+            bestRotateIdx = -1
+          }
         }
       }
     }
@@ -2628,6 +2702,7 @@ function sortPathsNearestNeighbor(
     const tail = emitted[emitted.length - 1]
     curX = tail.x
     curY = tail.y
+    curZ = tail.z
   }
 
   return ordered
@@ -2647,7 +2722,8 @@ function pathsToMoves(
   const chainedPaths = chainPaths(paths)
   const chained = sortPathsNearestNeighbor(
     chainedPaths,
-    startPosition ? { x: startPosition.x, y: startPosition.y } : null,
+    startPosition ?? null,   // pass full XYZ so the sort can prefer no-retraction orientations
+    maxLinkDistance,
   )
 
   for (let pi = 0; pi < chained.length; pi++) {
@@ -2672,12 +2748,11 @@ function pathsToMoves(
         })
       }
       // If Z is identical, no transition move is needed
-    } else if (pos.z === entry.z && maxLinkDistance > 0) {
-      // Same Z, different XY — if the gap is short enough, cut directly
-      // instead of retracting.  The nearest-neighbour sort already places
-      // paths close together, so most gaps are within a few stepSizes.
-      // Using the same budget as the direct-connect heuristic (4 × stepSize)
-      // ensures we only link genuinely adjacent paths.
+    } else if (maxLinkDistance > 0 && entry.z <= pos.z + 2e-3) {
+      // Entry is at the same depth or going deeper (within 2 mil float noise),
+      // different XY — cut directly if the gap is within the link budget.
+      // Going deeper is always safe: the tool is cutting into already-grooved
+      // material.  Rising moves (entry.z > pos.z + 2e-3) require a retract.
       const dx = entry.x - pos.x
       const dy = entry.y - pos.y
       const dist = Math.hypot(dx, dy)
@@ -2688,9 +2763,7 @@ function pathsToMoves(
         pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
       }
     } else {
-      // Different Z or gap exceeds maxLinkDistance — retract and plunge.
-      // Direct-link cuts across disconnected XY were shown to produce
-      // spurious diagonal gouges across the interior of letter A (move [29]).
+      // Entry is shallower (rising Z) or gap exceeds maxLinkDistance — retract.
       pos = retractToSafe(moves, pos, safeZ)
       pos = pushRapidAndPlunge(moves, pos, entry, safeZ)
     }
@@ -2810,10 +2883,14 @@ function generateVCarveRecursiveToolpathSingle(project: Project, operation: Oper
       continue
     }
 
-    for (const region of band.regions) {
+    const sortedRegions = sortRegionsNearestNeighbor(band.regions, currentPosition)
+    for (const region of sortedRegions) {
       const paths: Path3D[] = []
       traceRegion(region, band.topZ, slope, maxBandDepth, stepSize, 0, 0, paths)
-      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize * 4)
+      // Link budget: 12 × stepSize covers same-Z adjacent arms that the NN
+      // sort places consecutively.  Per-region ordering (above) ensures these
+      // are locally adjacent skeleton arms, not cross-letter jumps.
+      currentPosition = pathsToMoves(paths, safeZ, moves, currentPosition, stepSize * 12)
     }
   }
 
