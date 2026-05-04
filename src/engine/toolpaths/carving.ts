@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import type { Operation, Point, Project } from '../../types/project'
 import { expandFeatureGeometry } from '../../text'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -26,6 +26,7 @@ import {
   resolveFeatureZSpan,
 } from './geometry'
 import { pushRapidAndPlunge, retractToSafe } from './pocket'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -160,9 +161,9 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
   }
 
-  const targetFeatures = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+  const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
+  const regionMask = buildRegionMask(splitTargets.regionFeatures)
+  const targetFeatures = splitTargets.machiningFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
 
   const warnings: string[] = []
@@ -171,7 +172,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     warnings.push(depthWarning)
   }
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
+  if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
     warnings.push('Some selected target features are missing')
   }
 
@@ -213,10 +214,11 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
   }
 
-  return {
+  const result = {
     operationId: operation.id,
     moves,
     warnings,
     bounds: computeBounds(moves),
   }
+  return clipToolpathResultToRegionMask(project, result, regionMask)
 }

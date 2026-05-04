@@ -303,11 +303,24 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
     return 'Stock'
   }
 
-  const names = target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId)?.name ?? null)
-    .filter((name): name is string => Boolean(name))
+  const features = target.featureIds
+    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+    .filter((feature): feature is Project['features'][number] => feature !== null)
+  const names = features
+    .filter((feature) => feature.operation !== 'region')
+    .map((feature) => feature.name)
+  const regionNames = features
+    .filter((feature) => feature.operation === 'region')
+    .map((feature) => feature.name)
 
-  return names.length > 0 ? names.join(', ') : 'No features'
+  if (names.length === 0 && regionNames.length === 0) {
+    return 'No features'
+  }
+
+  const machiningSummary = names.length > 0 ? names.join(', ') : 'No machining target'
+  return regionNames.length > 0
+    ? `${machiningSummary}; filters: ${regionNames.join(', ')}`
+    : machiningSummary
 }
 
 function pocketPatternLabel(pattern: PocketPattern): string {
@@ -337,7 +350,11 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => feature.kind === 'circle')
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    return machiningFeatures.length > 0
+      && machiningFeatures.every((feature) => feature.kind === 'circle')
+      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -351,7 +368,11 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
     return features.length === selection.selectedFeatureIds.length
+      && machiningFeatures.length > 0
+      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -369,7 +390,11 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    return machiningFeatures.length > 0
+      && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
+      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -387,7 +412,11 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    return features.every((feature) => (feature.operation === 'subtract' || feature.operation === 'region') && featureHasClosedGeometry(feature))
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    return machiningFeatures.length > 0
+      && machiningFeatures.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null
   }
@@ -405,8 +434,10 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
-    return hasModel
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
+    return hasModel && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((f) => f.id) }
       : null
   }
@@ -424,8 +455,10 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
-    return hasModel
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
+    return hasModel && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((f) => f.id) }
       : null
   }
@@ -444,7 +477,15 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  if (!features.every((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')) {
+  const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+  const regionFeatures = features.filter((feature) => feature.operation === 'region')
+  if (machiningFeatures.length === 0) {
+    return null
+  }
+  if (!machiningFeatures.every((feature) => feature.operation === expectedOperation || (!wantsSubtract && feature.operation === 'model'))) {
+    return null
+  }
+  if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
     return null
   }
 
@@ -465,32 +506,51 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    return features.every((feature) => feature.kind === 'circle')
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    return machiningFeatures.length > 0
+      && machiningFeatures.every((feature) => feature.kind === 'circle')
+      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? null
-      : 'Drilling only accepts circle features'
+      : 'Drilling requires circle features; closed regions are optional filters'
   }
 
   if (kind === 'follow_line') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more open or closed features first'
+      return 'Select one or more open or closed features first; closed regions are optional filters'
     }
-    return null
+    const features = selection.selectedFeatureIds
+      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
+      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    return machiningFeatures.length > 0 && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
+      ? null
+      : 'Engrave requires at least one path feature; closed regions are optional filters'
   }
 
   if (kind === 'surface_clean') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more add features first'
+      return 'Select one or more add/model features first; closed regions are optional filters'
     }
 
     const features = selection.selectedFeatureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    if (!features.every((feature) => feature.operation === 'add')) {
-      return 'Surface clean only accepts add features'
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    if (machiningFeatures.length === 0) {
+      return 'Surface clean requires at least one add/model feature; regions are only filters'
+    }
+    if (!machiningFeatures.every((feature) => feature.operation === 'add' || feature.operation === 'model')) {
+      return 'Surface clean only accepts add/model features plus optional closed regions'
+    }
+    if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
+      return 'Region filters must be closed profiles'
     }
 
-    return features.every((feature) => featureHasClosedGeometry(feature))
+    return machiningFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? null
       : 'Surface clean only accepts closed profiles'
   }
@@ -504,11 +564,19 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    if (!features.every((feature) => feature.operation === 'subtract')) {
-      return `${operationKindLabel(kind)} only accepts subtract features`
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    if (machiningFeatures.length === 0) {
+      return `${operationKindLabel(kind)} requires at least one subtract feature; regions are only filters`
+    }
+    if (!machiningFeatures.every((feature) => feature.operation === 'subtract')) {
+      return `${operationKindLabel(kind)} only accepts subtract features plus optional closed regions`
+    }
+    if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
+      return 'Region filters must be closed profiles'
     }
 
-    return features.every((feature) => featureHasClosedGeometry(feature))
+    return machiningFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? null
       : `${operationKindLabel(kind)} only accepts closed profiles`
   }
@@ -526,10 +594,15 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       return 'One or more selected features not found'
     }
 
-    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
 
     if (!hasModel) {
-      return 'Rough surface requires at least one model (STL) feature'
+      return 'Rough surface requires at least one model (STL) feature; closed regions are optional filters'
+    }
+    if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
+      return 'Region filters must be closed profiles'
     }
 
     return null
@@ -548,10 +621,15 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
       return 'One or more selected features not found'
     }
 
-    const hasModel = features.some((f) => f.operation === 'model' && f.kind === 'stl')
+    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
 
     if (!hasModel) {
-      return 'Finish surface requires at least one model (STL) feature'
+      return 'Finish surface requires at least one model (STL) feature; closed regions are optional filters'
+    }
+    if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
+      return 'Region filters must be closed profiles'
     }
 
     return null
@@ -571,15 +649,27 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
     feature.operation === expectedOperation
     || (kind === 'edge_route_outside' && feature.operation === 'model')
   )
-  if (!features.every(acceptsOperation)) {
+  const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
+  const regionFeatures = features.filter((feature) => feature.operation === 'region')
+  if (machiningFeatures.length === 0) {
     return wantsSubtract
-      ? 'This operation only accepts subtract features'
+      ? 'Select at least one subtract feature; closed regions are optional filters'
       : kind === 'edge_route_outside'
-        ? 'This operation only accepts add or model features'
-        : 'This operation only accepts add features'
+        ? 'Select at least one add/model feature; closed regions are optional filters'
+        : 'Select at least one add feature; closed regions are optional filters'
+  }
+  if (!machiningFeatures.every(acceptsOperation)) {
+    return wantsSubtract
+      ? 'This operation only accepts subtract features plus optional closed regions'
+      : kind === 'edge_route_outside'
+        ? 'This operation only accepts add/model features plus optional closed regions'
+        : 'This operation only accepts add features plus optional closed regions'
+  }
+  if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
+    return 'Region filters must be closed profiles'
   }
 
-  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {
+  if (operationRequiresClosedProfiles(kind) && !machiningFeatures.every((feature) => featureHasClosedGeometry(feature))) {
     return `${operationKindLabel(kind)} only accepts closed profiles`
   }
 
@@ -620,6 +710,10 @@ export function CAMPanel({
     selectionKey: string
     text: string
   } | null>(null)
+  const [operationActionMessage, setOperationActionMessage] = useState<{
+    operationId: string
+    text: string
+  } | null>(null)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
   const addOperationMenuRef = useRef<HTMLDivElement>(null)
   const dragOverOperationId = useRef<string | null>(null)
@@ -640,6 +734,7 @@ export function CAMPanel({
     duplicateOperation,
     reorderOperations,
     autoPlaceTabsForOperation,
+    createRestOperation,
   } = useProjectStore()
 
   const selectedToolId =
@@ -923,6 +1018,21 @@ export function CAMPanel({
     const fallback = project.operations[currentIndex - 1]?.id ?? project.operations[currentIndex + 1]?.id ?? null
     deleteOperation(operationId)
     onSelectedOperationIdChange(fallback)
+  }
+
+  function handleCreateRestOperation() {
+    if (!selectedOperation) {
+      return
+    }
+
+    const result = createRestOperation(selectedOperation.id)
+    const text = result.operationId
+      ? `Created rest operation with ${result.regionIds.length} region${result.regionIds.length === 1 ? '' : 's'}; choose a smaller tool`
+      : result.warnings[0] ?? 'No unreachable pocket areas found for this tool'
+    setOperationActionMessage({ operationId: result.operationId ?? selectedOperation.id, text })
+    if (result.operationId) {
+      onSelectedOperationIdChange(result.operationId)
+    }
   }
 
   function handleSelectOperation(operationId: string) {
@@ -1397,6 +1507,17 @@ export function CAMPanel({
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
+                    <div className="properties-field">
+                      <span>Rest Machining</span>
+                      <button className="feat-btn feat-btn--primary" type="button" onClick={handleCreateRestOperation}>
+                        Create rest operation
+                      </button>
+                      {operationActionMessage?.operationId === selectedOperation.id ? (
+                        <span className="cam-field-message">{operationActionMessage.text}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {(selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
                       <span>Tabs</span>

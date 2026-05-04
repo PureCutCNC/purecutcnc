@@ -15,6 +15,9 @@ import { generatePocketToolpath } from './pocket'
 import { generateEdgeRouteToolpath } from './edge'
 import { generateVCarveToolpath } from './vcarve'
 import { generateSurfaceCleanToolpath } from './surface'
+import { generateFollowLineToolpath } from './carving'
+import { generateDrillingToolpath } from './drilling'
+import { generatePocketRestRegionDrafts } from './restRegions'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -93,6 +96,52 @@ function makeModelFeature(
     },
     z_top: zTop,
     z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeRegionFeature(id: string, x: number, y: number, w: number, h: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeLineFeature(id: string, x1: number, y1: number, x2: number, y2: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: {
+        start: { x: x1, y: y1 },
+        segments: [{ type: 'line', to: { x: x2, y: y2 } }],
+        closed: false,
+      },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 4,
+    z_bottom: 0,
     visible: true,
     locked: false,
   }
@@ -237,6 +286,18 @@ function testPerFeatureOperations() {
 
   const stock = perFeatureOperations({ ...op, target: { source: 'stock' } })
   assert(stock.length === 1, 'stock target is not split')
+
+  const project = baseProject([], [
+    makePocketFeature('a', 0, 0, 10, 10, 4, 0),
+    makePocketFeature('b', 20, 0, 10, 10, 4, 0),
+    makeRegionFeature('r1', 0, 0, 5, 5),
+  ])
+  const splitWithRegion = perFeatureOperations({
+    ...op,
+    target: { source: 'features', featureIds: ['a', 'b', 'r1'] },
+  }, project)
+  assert(splitWithRegion.length === 2, 'feature-first split ignores region-only targets')
+  assert(splitWithRegion.every((entry) => entry.target.source === 'features' && entry.target.featureIds.includes('r1')), 'region target is preserved on each split op')
 
   console.log('perFeatureOperations: PASSED')
 }
@@ -389,6 +450,94 @@ function testPocketSingleFeatureParity() {
   console.log('pocket single-feature parity: PASSED')
 }
 
+function testPocketRejectsRegionOnlyTarget() {
+  console.log('Testing pocket rejects region-only target...')
+  const tool = makeFlatEndmill('t1', 1)
+  const region = makeRegionFeature('r1', 0, 0, 10, 10)
+  const project = baseProject([tool], [region])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['r1'] },
+    toolRef: 't1',
+  })
+  const result = generatePocketToolpath(project, op)
+
+  assert(cutMoves(result.moves).length === 0, 'region-only pocket should generate no cuts')
+  assert(result.warnings.some((warning) => warning.includes('No valid subtract features')), 'region-only pocket should warn about missing subtract targets')
+  console.log('pocket region-only rejection: PASSED')
+}
+
+function testPocketRegionClipsMachiningArea() {
+  console.log('Testing pocket region clips machining area...')
+  const tool = makeFlatEndmill('t1', 1)
+  const pocket = makePocketFeature('p1', 0, 0, 10, 10, 4, 0)
+  const region = makeRegionFeature('r1', 0, 0, 5, 10)
+  const project = baseProject([tool], [pocket, region])
+  const unrestricted = generatePocketToolpath(project, makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+  }))
+  const clipped = generatePocketToolpath(project, makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1', 'r1'] },
+    toolRef: 't1',
+  }))
+
+  const unrestrictedBounds = unrestricted.bounds
+  const clippedBounds = clipped.bounds
+  assert(unrestrictedBounds !== null && clippedBounds !== null, 'expected pocket bounds')
+  if (!unrestrictedBounds || !clippedBounds) throw new Error('expected pocket bounds')
+  assert(unrestrictedBounds.maxX > 8, `expected unrestricted pocket to reach right side, got ${unrestrictedBounds.maxX}`)
+  assert(clippedBounds.maxX <= 5 + 1e-6, `expected region-clipped pocket maxX <= 5, got ${clippedBounds.maxX}`)
+  assert(clippedBounds.maxX > 4.9, `expected region clipping to cut at region boundary instead of offsetting inward, got ${clippedBounds.maxX}`)
+  assert(cutMoves(clipped.moves).length > 0, 'expected clipped pocket cuts')
+  console.log('pocket region clipping: PASSED')
+}
+
+function testPocketRestRegionsFindUnreachableArea() {
+  console.log('Testing pocket rest-region generation finds unreachable area...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 10, 2, 4, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+  })
+  const result = generatePocketRestRegionDrafts(project, op)
+
+  assert(result.drafts.length > 0, 'expected rest-region drafts for pocket narrower than tool')
+  assert(result.drafts.every((draft) => draft.profile.closed), 'rest-region drafts should be closed')
+  assert(result.drafts.every((draft) => draft.profile.segments.length >= 3), 'rest-region drafts should have polygon geometry')
+  console.log('pocket rest-region generation: PASSED')
+}
+
+function testPocketRestRegionsFindCornerCusps() {
+  console.log('Testing pocket rest-region generation finds rectangular corner cusps...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 20, 12, 4, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+  })
+  const result = generatePocketRestRegionDrafts(project, op)
+  const restPoints = result.drafts.flatMap((draft) => [
+    draft.profile.start,
+    ...draft.profile.segments.map((segment) => segment.to),
+  ])
+
+  assert(result.drafts.length > 0, 'expected rest-region drafts for rectangular pocket corners')
+  assert(result.drafts.every((draft) => draft.profile.closed), 'corner rest-region drafts should be closed')
+  assert(restPoints.some((point) => point.x < 2.1 && point.y < 2.1), 'expected rest geometry near lower-left corner')
+  assert(restPoints.some((point) => point.x > 17.9 && point.y < 2.1), 'expected rest geometry near lower-right corner')
+  assert(restPoints.some((point) => point.x > 17.9 && point.y > 9.9), 'expected rest geometry near upper-right corner')
+  assert(restPoints.some((point) => point.x < 2.1 && point.y > 9.9), 'expected rest geometry near upper-left corner')
+  console.log('pocket corner rest-region generation: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // Inside edge-route ordering (same band-driven code path as pocket)
 // ---------------------------------------------------------------------------
@@ -420,6 +569,31 @@ function testEdgeInsideLevelFirstVsFeatureFirst() {
   assert(tFeature.length === 4, `feature_first: expected 4 Z transitions, got ${tFeature.length} (${tFeature.join(',')})`)
 
   console.log('edge_route_inside ordering: PASSED')
+}
+
+function testEdgeInsideRegionClipsAtBoundary() {
+  console.log('Testing edge_route_inside region clips at region boundary...')
+  const tool = makeFlatEndmill('t1', 2)
+  const pocket = makePocketFeature('p1', 0, 0, 10, 10, 4, 0)
+  const region = makeRegionFeature('r1', 0, 0, 5, 10)
+  const project = baseProject([tool], [pocket, region])
+  const result = generateEdgeRouteToolpath(project, makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['p1', 'r1'] },
+    toolRef: 't1',
+    machiningOrder: 'level_first',
+  }))
+
+  const bounds = result.bounds
+  assert(bounds !== null, 'expected edge inside bounds')
+  if (!bounds) throw new Error('expected edge inside bounds')
+  assert(bounds.maxX <= 5 + 1e-6, `expected edge route clipped to region maxX <= 5, got ${bounds.maxX}`)
+  assert(bounds.maxX > 4.9, `expected edge route to clip at region boundary, not offset inward, got ${bounds.maxX}`)
+  const lastMove = result.moves[result.moves.length - 1]
+  assert(lastMove !== undefined, 'expected edge route moves')
+  const safeZ = project.stock.thickness + project.meta.operationClearanceZ
+  assert(lastMove.to.z === safeZ, `expected clipped edge route to end at safe Z ${safeZ}, got ${lastMove.to.z}`)
+  console.log('edge_route_inside region boundary clipping: PASSED')
 }
 
 function testEdgeOutsideAcceptsModelSilhouette() {
@@ -645,6 +819,48 @@ function testSurfaceCleanMultiTargetProtectsTallerTarget() {
   console.log('surface_clean multi-target protects taller target: PASSED')
 }
 
+function testFollowLineRegionClipsOpenPath() {
+  console.log('Testing follow_line region clips open path...')
+  const tool = makeFlatEndmill('t1', 1)
+  const line = makeLineFeature('line1', 0, 5, 10, 5)
+  const region = makeRegionFeature('r1', 2, 0, 4, 10)
+  const project = baseProject([tool], [line, region])
+  const op = makePocketOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['line1', 'r1'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+  const result = generateFollowLineToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+
+  assert(cuts.length > 0, 'expected clipped follow-line cuts')
+  assert(cuts.every((move) => move.from.x >= 2 - 1e-6 && move.to.x <= 6 + 1e-6), 'expected follow-line cuts inside region X bounds')
+  assert(result.bounds !== null && result.bounds.minX >= 2 - 1e-6 && result.bounds.maxX <= 6 + 1e-6, 'expected clipped follow-line bounds')
+  console.log('follow_line region clipping: PASSED')
+}
+
+function testDrillingRegionFiltersHolePoints() {
+  console.log('Testing drilling region filters hole points...')
+  const tool = makeFlatEndmill('t1', 1)
+  const inside = makeCircleBoss('inside', 2, 2, 0.5, 4, 0)
+  const outside = makeCircleBoss('outside', 8, 2, 0.5, 4, 0)
+  const region = makeRegionFeature('r1', 0, 0, 4, 4)
+  const project = baseProject([tool], [inside, outside, region])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['inside', 'outside', 'r1'] },
+    toolRef: 't1',
+    stepdown: 1,
+  })
+  const result = generateDrillingToolpath(project, op)
+  const drillingMoves = result.moves.filter((move) => move.kind === 'plunge' || move.kind === 'cut')
+
+  assert(drillingMoves.length > 0, 'expected drilling moves for inside hole')
+  assert(drillingMoves.every((move) => move.from.x < 4 + 1e-6 && move.to.x < 4 + 1e-6), 'expected drilling moves only inside region')
+  console.log('drilling region filtering: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
@@ -655,12 +871,19 @@ try {
   testPocketLevelFirstOrder()
   testPocketFeatureFirstOrder()
   testPocketSingleFeatureParity()
+  testPocketRejectsRegionOnlyTarget()
+  testPocketRegionClipsMachiningArea()
+  testPocketRestRegionsFindUnreachableArea()
+  testPocketRestRegionsFindCornerCusps()
   testEdgeInsideLevelFirstVsFeatureFirst()
+  testEdgeInsideRegionClipsAtBoundary()
   testEdgeOutsideAcceptsModelSilhouette()
   testEdgeOutsideUsesStoredModelSilhouettePaths()
   testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()
   testVCarveFeatureFirstProducesSameMoveCount()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
+  testFollowLineRegionClipsOpenPath()
+  testDrillingRegionFiltersHolePoints()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
   console.error(e)

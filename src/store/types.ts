@@ -83,6 +83,7 @@ export type SelectedNode =
   | { type: 'origin' }
   | { type: 'backdrop' }
   | { type: 'features_root' }
+  | { type: 'regions_root' }
   | { type: 'tabs_root' }
   | { type: 'clamps_root' }
   | { type: 'folder'; folderId: string }
@@ -112,6 +113,7 @@ export type PendingAddTool =
     }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
+export type CreationTarget = 'feature' | 'region'
 
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
@@ -182,6 +184,7 @@ export interface PendingConstraint {
 export interface ProjectStore {
   project: Project
   selection: SelectionState
+  creationTarget: CreationTarget
   pendingAdd: PendingAddTool | null
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
@@ -233,15 +236,18 @@ export interface ProjectStore {
   setStock: (stock: Stock) => void
   setGrid: (grid: GridSettings) => void
   setUnits: (units: Project['meta']['units']) => void
+  setCreationTarget: (target: CreationTarget) => void
 
-  addFeatureFolder: () => string
+  addFeatureFolder: (section?: 'features' | 'regions') => string
   updateFeatureFolder: (id: string, patch: Partial<FeatureFolder>) => void
   deleteFeatureFolder: (id: string) => void
   assignFeaturesToFolder: (featureIds: string[], folderId: string | null) => void
   moveFeatureTreeFeature: (featureId: string, folderId: string | null, beforeFeatureId?: string | null) => void
   reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
   setAllFeaturesVisible: (visible: boolean) => void
+  setAllRegionsVisible: (visible: boolean) => void
   toggleFolderVisible: (folderId: string) => void
+  toggleRegionFolderVisible: (folderId: string) => void
   selectFolderFeatures: (folderId: string) => void
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
@@ -283,6 +289,7 @@ export interface ProjectStore {
 
   addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
+  createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
   setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
@@ -296,6 +303,7 @@ export interface ProjectStore {
   selectOrigin: () => void
   selectBackdrop: () => void
   selectFeaturesRoot: () => void
+  selectRegionsRoot: () => void
   selectTabsRoot: () => void
   selectClampsRoot: () => void
   selectFeatureFolder: (id: string) => void

@@ -36,6 +36,7 @@ export type SelectionSlice = Pick<
   | 'selectOrigin'
   | 'selectBackdrop'
   | 'selectFeaturesRoot'
+  | 'selectRegionsRoot'
   | 'selectTabsRoot'
   | 'selectClampsRoot'
   | 'selectFeatureFolder'
@@ -117,6 +118,8 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
           ? selectedNode
           : null
       : selectedNode?.type === 'features_root'
+        ? selectedNode
+      : selectedNode?.type === 'regions_root'
         ? selectedNode
       : selectedNode
 
@@ -450,6 +453,20 @@ export function createSelectionSlice(
           selectedFeatureId: null,
           selectedFeatureIds: [],
           selectedNode: { type: 'tabs_root' },
+          mode: 'feature',
+          activeControl: null,
+        },
+        sketchEditSession: null,
+      })),
+
+    selectRegionsRoot: () =>
+      set((s) => ({
+        pendingOffset: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'regions_root' },
           mode: 'feature',
           activeControl: null,
         },

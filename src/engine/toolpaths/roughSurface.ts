@@ -56,6 +56,7 @@ import {
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { buildRegionMask, splitFeatureTargets } from './regions'
 import { significantSilhouettePaths } from './silhouette'
 import {
   buildProtectedFootprintPaths,
@@ -137,11 +138,8 @@ export function generateRoughSurfaceToolpath(
 
   // ── Identify the model feature ─────────────────────────────────────────
 
-  const targetFeatures = target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
-
-  if (targetFeatures.length !== target.featureIds.length) {
+  const splitTargets = splitFeatureTargets(project, target.featureIds)
+  if (splitTargets.missingFeatureIds.length > 0) {
     return {
       operationId: operation.id,
       moves: [],
@@ -151,8 +149,9 @@ export function generateRoughSurfaceToolpath(
     }
   }
 
-  const modelFeature = targetFeatures.find((feature) => feature.operation === 'model' && feature.kind === 'stl') ?? null
-  const regionFeatures = targetFeatures.filter((feature) => feature.operation === 'region' && feature.sketch.profile.closed)
+  const modelFeature = splitTargets.machiningFeatures.find((feature) => feature.operation === 'model' && feature.kind === 'stl') ?? null
+  const regionFeatures = splitTargets.regionFeatures.filter((feature) => feature.sketch.profile.closed)
+  const regionMask = buildRegionMask(regionFeatures)
   if (!modelFeature?.stl?.fileData) {
     return {
       operationId: operation.id,
@@ -267,14 +266,8 @@ export function generateRoughSurfaceToolpath(
   const modelSilhouettePaths = modelSilhouetteClipperPaths(modelFeature)
   const silhouetteOffset = tool.diameter + 2 * radialLeave
   let outlinePaths = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
-  if (regionFeatures.length > 0) {
-    const regionPaths = unionClipperPaths(regionFeatures.flatMap((region) => {
-      const flattened = flattenProfile(region.sketch.profile)
-      return flattened.points.length >= 3
-        ? [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
-        : []
-    }))
-    outlinePaths = intersectClipperPaths(outlinePaths, regionPaths)
+  if (regionMask) {
+    outlinePaths = intersectClipperPaths(outlinePaths, regionMask.paths)
   }
 
   if (outlinePaths.length === 0) {

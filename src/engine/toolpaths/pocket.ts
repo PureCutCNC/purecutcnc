@@ -38,6 +38,7 @@ import {
 } from './geometry'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { resolvePocketRegions } from './resolver'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -1029,7 +1030,7 @@ function generateFinishBandMoves(
 
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
   if (isFeatureFirst(operation)) {
-    const parts = perFeatureOperations(operation).map((subOp) =>
+    const parts = perFeatureOperations(operation, project).map((subOp) =>
       generatePocketToolpathSingle(project, subOp),
     )
     return mergePocketToolpathResults(operation.id, parts)
@@ -1039,6 +1040,9 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
 
 function generatePocketToolpathSingle(project: Project, operation: Operation): PocketToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
+  const regionMask = operation.target.source === 'features'
+    ? buildRegionMask(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
+    : null
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
     : null
@@ -1184,11 +1188,12 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     bounds = updateBounds(bounds, move.to)
   }
 
-  return {
+  const result: PocketToolpathResult = {
     operationId: operation.id,
     moves: allMoves,
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
+  return clipToolpathResultToRegionMask(project, result, regionMask) as PocketToolpathResult
 }

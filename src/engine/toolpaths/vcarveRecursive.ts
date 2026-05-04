@@ -2721,7 +2721,7 @@ export function generateVCarveRecursiveToolpath(project: Project, operation: Ope
   }
 
   if (isFeatureFirst(operation)) {
-    const parts = perFeatureOperations(operation).map((subOp) =>
+    const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateVCarveRecursiveToolpathSingle(project, subOp),
     )
     return mergeToolpathResults(operation.id, parts)

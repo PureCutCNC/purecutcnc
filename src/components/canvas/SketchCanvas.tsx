@@ -293,6 +293,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingOffset,
     pendingShapeAction,
     pendingConstraint,
+    creationTarget,
     selection,
     selectFeature,
     selectFeatures,
@@ -354,6 +355,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
   const pendingAddRef = useRef(pendingAdd)
+  const creationTargetRef = useRef(creationTarget)
   const pendingMoveRef = useRef(pendingMove)
   const pendingTransformRef = useRef(pendingTransform)
   const pendingOffsetRef = useRef(pendingOffset)
@@ -371,6 +373,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   projectRef.current = project
   selectionRef.current = selection
   pendingAddRef.current = pendingAdd
+  creationTargetRef.current = creationTarget
   pendingMoveRef.current = pendingMove
   pendingTransformRef.current = pendingTransform
   pendingOffsetRef.current = pendingOffset
@@ -2782,6 +2785,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (pendingAdd) {
       if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 2) {
         event.preventDefault()
+        if (creationTargetRef.current === 'region') {
+          return
+        }
         completePendingOpenPath()
         setPendingPreviewPointRef(null)
       }
@@ -3414,6 +3420,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
       && pendingAdd.points.length >= 2
     ) {
+      if (creationTarget === 'region') {
+        return
+      }
       completePendingOpenPath()
       setPendingPreviewPointRef(null)
       return
@@ -3441,6 +3450,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         return
       }
       if (event.key === 'Enter' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd) {
+        if (creationTarget === 'region') {
+          return
+        }
         completePendingOpenComposite()
         setPendingPreviewPointRef(null)
         return
@@ -4361,7 +4373,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? `Click to place the first ${pendingAdd.shape} control point.`
                 : pendingAdd.points.length < 2
                   ? 'Click to add one more control point. Press Tab to type length/angle.'
-                  : 'Click to add control points. Press Tab to type length/angle. Click the first point to close, or press Enter / double-click to finish open.'
+                  : creationTarget === 'region'
+                    ? 'Click to add control points. Press Tab to type length/angle. Click the first point to close the region.'
+                    : 'Click to add control points. Press Tab to type length/angle. Click the first point to close, or press Enter / double-click to finish open.'
             : pendingAdd.shape === 'origin'
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
             : pendingAdd.shape === 'text'
@@ -4389,8 +4403,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                             ? 'Click a third point on the arc to define curvature. Press Tab to type position, Backspace to undo.'
                             : 'Click to place the arc end point, then click again to define the arc. Press Tab to type position, L or S to switch modes.'
                           : pendingAdd.currentMode === 'spline'
-                            ? 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'
-                            : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
+                            ? creationTarget === 'region'
+                              ? 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close the region.'
+                              : 'Click to add a spline segment endpoint. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'
+                            : creationTarget === 'region'
+                              ? 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close the region.'
+                              : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
             {(() => {
               const canType =
                 ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !!pendingAdd.anchor)

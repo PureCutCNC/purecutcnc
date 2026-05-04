@@ -32,6 +32,7 @@ import {
 } from './geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 
@@ -310,7 +311,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   }
 
   if (isFeatureFirst(operation)) {
-    const parts = perFeatureOperations(operation).map((subOp) =>
+    const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateEdgeRouteToolpathSingle(project, subOp),
     )
     return mergeToolpathResults(operation.id, parts)
@@ -369,9 +370,9 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     }
   }
 
-  const selectedFeatures = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+  const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
+  const selectedFeatures = splitTargets.machiningFeatures
+  const regionMask = buildRegionMask(splitTargets.regionFeatures)
 
   const targetFeatures = selectedFeatures
     .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
@@ -387,7 +388,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     warnings.push(depthWarning)
   }
 
-  if (selectedFeatures.length !== operation.target.featureIds.length || targetFeatures.length < selectedFeatures.length) {
+  if (splitTargets.missingFeatureIds.length > 0 || targetFeatures.length < selectedFeatures.length) {
     warnings.push(
       operation.kind === 'edge_route_inside'
         ? 'Some selected target features are missing or are not subtract/region features'
@@ -465,12 +466,13 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
       bounds = updateBounds(bounds, move.to)
     }
 
-    return {
+    const result = {
       operationId: operation.id,
       moves,
       warnings,
       bounds,
     }
+    return clipToolpathResultToRegionMask(project, result, regionMask)
   }
 
   const routableTargets = closedTargetFeatures
@@ -558,10 +560,11 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     bounds = updateBounds(bounds, move.to)
   }
 
-  return {
+  const result = {
     operationId: operation.id,
     moves,
     warnings,
     bounds,
   }
+  return clipToolpathResultToRegionMask(project, result, regionMask)
 }

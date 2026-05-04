@@ -42,7 +42,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
   }
 
   if (isFeatureFirst(operation)) {
-    const parts = perFeatureOperations(operation).map((subOp) =>
+    const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateVCarveToolpathSingle(project, subOp),
     )
     return mergeToolpathResults(operation.id, parts)

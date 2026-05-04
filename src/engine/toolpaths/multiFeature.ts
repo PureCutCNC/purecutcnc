@@ -14,15 +14,22 @@
  * limitations under the License.
  */
 
-import type { Operation } from '../../types/project'
+import type { Operation, Project } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathResult } from './types'
 
-export function perFeatureOperations(operation: Operation): Operation[] {
+export function perFeatureOperations(operation: Operation, project?: Project): Operation[] {
   if (operation.target.source !== 'features') return [operation]
   if (operation.target.featureIds.length <= 1) return [operation]
-  return operation.target.featureIds.map((featureId) => ({
+  const regionFeatureIds = project
+    ? operation.target.featureIds.filter((featureId) => (
+      project.features.find((feature) => feature.id === featureId)?.operation === 'region'
+    ))
+    : []
+  const machiningFeatureIds = operation.target.featureIds.filter((featureId) => !regionFeatureIds.includes(featureId))
+  if (machiningFeatureIds.length <= 1) return [operation]
+  return machiningFeatureIds.map((featureId) => ({
     ...operation,
-    target: { source: 'features', featureIds: [featureId] },
+    target: { source: 'features', featureIds: [featureId, ...regionFeatureIds] },
   }))
 }
 

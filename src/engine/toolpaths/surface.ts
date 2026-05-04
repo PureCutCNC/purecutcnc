@@ -56,6 +56,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
+import { buildRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 
 interface PolyTreeNode {
@@ -98,6 +99,29 @@ function executeClip(
     ClipperLib.PolyFillType.pftNonZero,
   )
   return polyTree as PolyTreeNode
+}
+
+function executeClipPaths(
+  subjectPaths: ClipperPath[],
+  clipPaths: ClipperPath[],
+  clipType: number,
+): ClipperPath[] {
+  const clipper = new ClipperLib.Clipper()
+  if (subjectPaths.length > 0) {
+    clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
+  }
+  if (clipPaths.length > 0) {
+    clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
+  }
+
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    clipType,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
 }
 
 function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
@@ -168,9 +192,9 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     }
   }
 
-  const selectedTargetFeatures = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+  const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
+  const regionMask = buildRegionMask(splitTargets.regionFeatures)
+  const selectedTargetFeatures = splitTargets.machiningFeatures
   const validTargetSourceFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'add' || feature.operation === 'model')
 
@@ -182,7 +206,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       return { feature, top: span.max }
     })
 
-  if (validTargetSourceFeatures.length !== operation.target.featureIds.length) {
+  if (validTargetSourceFeatures.length !== selectedTargetFeatures.length || splitTargets.missingFeatureIds.length > 0) {
     warnings.push('Some selected target features are missing or are not add/model features')
   }
 
@@ -224,14 +248,18 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       continue
     }
 
-    const subjectPaths = activeTargets.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
+    let subjectPaths = activeTargets.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
     // Protect any add feature whose top is above this band's floor — including
     // target features at higher levels that haven't been reached yet. Otherwise
     // the expanded subject of a lower target can sweep through a taller target.
     const activeTargetIdSet = new Set(activeTargets.map(({ feature }) => feature.id))
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
     const protectedPaths = protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
-    const polyTree = executeClip(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
+    subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
+    if (regionMask) {
+      subjectPaths = executeClipPaths(subjectPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
+    }
+    const polyTree = executeClip(subjectPaths, [], ClipperLib.ClipType.ctUnion)
     const regions = polyTreeToRegions(
       polyTree,
       activeTargets.map(({ feature }) => feature.id),

@@ -380,6 +380,7 @@ export function createPendingAddSlice(
     completePendingOpenPath: () => {
       const state = get()
       if (!state.pendingAdd || !('points' in state.pendingAdd)) return
+      if (state.creationTarget === 'region') return
 
       const depth = Math.min(state.project.stock.thickness, 10)
       if (state.pendingAdd.shape === 'spline') {
@@ -613,9 +614,12 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const id = nextUniqueGeneratedId(state.project, 'f')
+      const operation = state.creationTarget === 'region' ? 'region' : 'subtract'
       const feature: SketchFeature = {
         id,
-        name: `Composite ${state.project.features.length + 1}`,
+        name: operation === 'region'
+          ? `Region ${state.project.features.filter((feature) => feature.operation === 'region').length + 1}`
+          : `Composite ${state.project.features.length + 1}`,
         kind: 'composite',
         folderId: null,
         sketch: {
@@ -629,7 +633,7 @@ export function createPendingAddSlice(
           dimensions: [],
           constraints: [],
         },
-        operation: 'subtract',
+        operation,
         z_top: depth,
         z_bottom: 0,
         visible: true,
@@ -645,6 +649,7 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'composite' || !state.pendingAdd.start) {
         return
       }
+      if (state.creationTarget === 'region') return
 
       const openSegments = deps.resolveOpenCompositeDraftSegments(state.pendingAdd)
       if (!openSegments) {

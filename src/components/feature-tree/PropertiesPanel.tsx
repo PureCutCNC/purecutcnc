@@ -226,30 +226,32 @@ export function PropertiesPanel() {
     allSelectedFeatures.every((feature) => feature.operation === allSelectedFeatures[0]?.operation)
       ? allSelectedFeatures[0]?.operation ?? null
       : '__mixed__'
+  const selectedZEditableFeatures = allSelectedFeatures.filter((feature) => feature.operation !== 'region')
+  const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
   const commonSelectedZTop =
-    allSelectedFeatures.length > 0 &&
-    typeof allSelectedFeatures[0]?.z_top === 'number' &&
-    allSelectedFeatures.every((feature) => feature.z_top === allSelectedFeatures[0]?.z_top)
-      ? allSelectedFeatures[0]?.z_top ?? null
+    selectedZEditableFeatures.length > 0 &&
+    typeof selectedZEditableFeatures[0]?.z_top === 'number' &&
+    selectedZEditableFeatures.every((feature) => feature.z_top === selectedZEditableFeatures[0]?.z_top)
+      ? selectedZEditableFeatures[0]?.z_top ?? null
       : null
   const commonSelectedZBottom =
-    allSelectedFeatures.length > 0 &&
-    typeof allSelectedFeatures[0]?.z_bottom === 'number' &&
-    allSelectedFeatures.every((feature) => feature.z_bottom === allSelectedFeatures[0]?.z_bottom)
-      ? allSelectedFeatures[0]?.z_bottom ?? null
+    selectedZEditableFeatures.length > 0 &&
+    typeof selectedZEditableFeatures[0]?.z_bottom === 'number' &&
+    selectedZEditableFeatures.every((feature) => feature.z_bottom === selectedZEditableFeatures[0]?.z_bottom)
+      ? selectedZEditableFeatures[0]?.z_bottom ?? null
       : null
-  const selectedNumericZBottoms = allSelectedFeatures
+  const selectedNumericZBottoms = selectedZEditableFeatures
     .map((feature) => feature.z_bottom)
     .filter((value): value is number => typeof value === 'number')
-  const selectedNumericZTops = allSelectedFeatures
+  const selectedNumericZTops = selectedZEditableFeatures
     .map((feature) => feature.z_top)
     .filter((value): value is number => typeof value === 'number')
   const multiEditMinZTop =
-    selectedNumericZBottoms.length === allSelectedFeatures.length
+    selectedNumericZBottoms.length === selectedZEditableFeatures.length
       ? Math.max(...selectedNumericZBottoms)
       : null
   const multiEditMaxZBottom =
-    selectedNumericZTops.length === allSelectedFeatures.length
+    selectedNumericZTops.length === selectedZEditableFeatures.length
       ? Math.min(...selectedNumericZTops)
       : null
   const selectedMachine = project.meta.selectedMachineId
@@ -1030,9 +1032,9 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              {allSelectedFeatures.some((f) => f.operation === 'model') ? (
-                <div className="properties-locked-field" title="Model features cannot change operation type">
-                  <span>Contains model features</span>
+              {allSelectedFeatures.some((f) => f.operation === 'model' || f.operation === 'region') ? (
+                <div className="properties-locked-field" title="Model and region entries cannot change operation type here">
+                  <span>{allSelectedFeatures.some((f) => f.operation === 'region') ? 'Contains regions' : 'Contains model features'}</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
               ) : (
@@ -1048,34 +1050,45 @@ export function PropertiesPanel() {
                   ) : null}
                   <option value="subtract">Subtract</option>
                   <option value="add">Add</option>
-                  <option value="region">Region</option>
                 </select>
               )}
             </label>
-            <label className="properties-field">
-              <span>Z Top</span>
-              <DraftNumberInput
-                key={`multi-feature-ztop-${selectedFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
-                value={commonSelectedZTop}
-                units={units}
-                min={0}
-                placeholder="Mixed values"
-                validate={(next) => multiEditMinZTop === null || next >= multiEditMinZTop}
-                onCommit={(next) => updateFeatures(selectedFeatureIds, { z_top: next })}
-              />
-            </label>
-            <label className="properties-field">
-              <span>Z Bottom</span>
-              <DraftNumberInput
-                key={`multi-feature-zbottom-${selectedFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
-                value={commonSelectedZBottom}
-                units={units}
-                min={0}
-                placeholder="Mixed values"
-                validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
-                onCommit={(next) => updateFeatures(selectedFeatureIds, { z_bottom: next })}
-              />
-            </label>
+            {selectedZEditableFeatures.length > 0 ? (
+              <>
+                <label className="properties-field">
+                  <span>Z Top</span>
+                  <DraftNumberInput
+                    key={`multi-feature-ztop-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
+                    value={commonSelectedZTop}
+                    units={units}
+                    min={0}
+                    placeholder="Mixed values"
+                    validate={(next) => multiEditMinZTop === null || next >= multiEditMinZTop}
+                    onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_top: next })}
+                  />
+                </label>
+                <label className="properties-field">
+                  <span>Z Bottom</span>
+                  <DraftNumberInput
+                    key={`multi-feature-zbottom-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
+                    value={commonSelectedZBottom}
+                    units={units}
+                    min={0}
+                    placeholder="Mixed values"
+                    validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
+                    onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_bottom: next })}
+                  />
+                </label>
+              </>
+            ) : (
+              <label className="properties-field">
+                <span>Z Range</span>
+                <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
+                  <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+                  <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+                </div>
+              </label>
+            )}
           </div>
           <div className="properties-actions">
             <button className="feat-btn" type="button" disabled title="Edit Sketch is only available for a single feature">
@@ -1105,8 +1118,9 @@ export function PropertiesPanel() {
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
   // First 2.5D feature in the tree must be 'add'; imported STL models are locked as Model.
+  const firstMachiningFeature = project.features.find((feature) => feature.operation !== 'region') ?? null
   const isFirstFeature =
-    project.features.length > 0 && project.features[0].id === selectedFeature.id
+    firstMachiningFeature?.id === selectedFeature.id
   const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
   const operationLockedToAdd = isFirstFeature && !isImportedModelFeature
 
@@ -1123,13 +1137,15 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          {operationLockedToAdd || selectedFeature.operation === 'model' ? (
+          {operationLockedToAdd || selectedFeature.operation === 'model' || selectedFeature.operation === 'region' ? (
             <div className="properties-locked-field" title={
               selectedFeature.operation === 'model'
                 ? 'Model features are imported 3D objects and cannot change operation type'
+                : selectedFeature.operation === 'region'
+                  ? 'Regions are machining filters. Create regions from the toolbar.'
                 : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
             }>
-              <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
+              <span>{selectedFeature.operation === 'model' ? 'Model' : selectedFeature.operation === 'region' ? 'Region' : 'Add'}</span>
               <span className="properties-locked-hint" aria-hidden="true">🔒</span>
             </div>
           ) : (
@@ -1142,7 +1158,6 @@ export function PropertiesPanel() {
             >
               <option value="subtract">Subtract</option>
               <option value="add">Add</option>
-              <option value="region">Region</option>
             </select>
           )}
         </label>
@@ -1208,28 +1223,40 @@ export function PropertiesPanel() {
             </label>
           </>
         ) : null}
-        <label className="properties-field">
-          <span>Z Top</span>
-          <DraftNumberInput
-            key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
-              value={zTop}
-              units={units}
-              min={0}
-              validate={(next) => next >= zBottom}
-              onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-          />
-        </label>
-        <label className="properties-field">
-          <span>Z Bottom</span>
-          <DraftNumberInput
-            key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
-              value={zBottom}
-              units={units}
-              min={0}
-              validate={(next) => next <= zTop}
-              onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
-          />
-        </label>
+        {selectedFeature.operation === 'region' ? (
+          <label className="properties-field">
+            <span>Z Range</span>
+            <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
+              <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+            </div>
+          </label>
+        ) : (
+          <>
+            <label className="properties-field">
+              <span>Z Top</span>
+              <DraftNumberInput
+                key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
+                  value={zTop}
+                  units={units}
+                  min={0}
+                  validate={(next) => next >= zBottom}
+                  onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+              />
+            </label>
+            <label className="properties-field">
+              <span>Z Bottom</span>
+              <DraftNumberInput
+                key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
+                  value={zBottom}
+                  units={units}
+                  min={0}
+                  validate={(next) => next <= zTop}
+                  onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+              />
+            </label>
+          </>
+        )}
         <label className="properties-check">
           <input
             type="checkbox"

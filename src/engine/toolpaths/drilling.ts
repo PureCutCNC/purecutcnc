@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
+import type { DrillType, Operation, Point, Project, SketchProfile } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
@@ -22,6 +22,7 @@ import {
   normalizeToolForProject,
   resolveFeatureZSpan,
 } from './geometry'
+import { buildRegionMask, splitFeatureTargets } from './regions'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
 
@@ -176,9 +177,9 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     }
   }
 
-  const targetFeatures = operation.target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+  const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
+  const regionMask = buildRegionMask(splitTargets.regionFeatures)
+  const targetFeatures = splitTargets.machiningFeatures
     .filter((feature) => feature.kind === 'circle')
 
   const warnings: string[] = []
@@ -187,7 +188,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     warnings.push('Selected tool is not a drill bit — drilling cycles typically require a drill tool')
   }
 
-  if (targetFeatures.length !== operation.target.featureIds.length) {
+  if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
     warnings.push('Some selected target features are not circles and were skipped')
   }
 
@@ -224,6 +225,9 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     const center = getCircleCenter(feature.sketch.profile)
     if (!center) {
       warnings.push(`${feature.name} is marked as a circle but has no resolvable center`)
+      continue
+    }
+    if (regionMask && !regionMask.containsPoint(center)) {
       continue
     }
 
