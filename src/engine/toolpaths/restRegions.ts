@@ -16,16 +16,20 @@
 
 import ClipperLib from 'clipper-lib'
 import { polygonProfile, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
+import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import {
   DEFAULT_CLIPPER_SCALE,
+  flattenProfile,
   normalizeToolForProject,
   normalizeWinding,
   toClipperPath,
 } from './geometry'
 import { buildInsetRegions } from './pocket'
 import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
-import { resolvePocketRegions } from './resolver'
-import type { ClipperPath, ResolvedPocketRegion } from './types'
+import { buildRegionMask, splitFeatureTargets } from './regions'
+import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
+import { significantSilhouettePaths } from './silhouette'
+import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './types'
 
 export interface RestRegionDraft {
   profile: SketchFeature['sketch']['profile']
@@ -233,6 +237,61 @@ function convexHull(points: Point[]): Point[] {
   return [...lower.slice(0, -1), ...upper.slice(0, -1)]
 }
 
+function restPathsToDrafts(paths: ClipperPath[], toolDiameter: number, operation: Operation): RestRegionDraft[] {
+  const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolDiameter * toolDiameter * 0.0001)
+  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolDiameter * 0.4)
+  const contours = clipperPathsToPointContours(paths)
+    .filter((contour) => contour.length >= 3)
+    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
+    .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
+    .map(cleanClosedContour)
+    .map(convexHull)
+    .filter((contour) => contour.length >= 3)
+
+  return contours.map((contour) => ({
+    profile: polygonProfile(contour),
+    sourceOperationId: operation.id,
+  }))
+}
+
+function generateAreaRestRegionDrafts(
+  resolved: ResolvedPocketResult,
+  operation: Operation,
+  toolRadius: number,
+  sourceMaskPaths: ClipperPath[] | null = null,
+): RestRegionDraft[] {
+  const sourceAreaPaths: ClipperPath[] = []
+  const reachableAreaPaths: ClipperPath[] = []
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  const centerInset = toolRadius + radialLeave
+
+  for (const band of resolved.bands) {
+    for (const region of band.regions) {
+      sourceAreaPaths.push(...pocketRegionToAreaPaths(region))
+
+      const centerRegions = buildInsetRegions(region, centerInset)
+      const centerAreaPaths = centerRegions.flatMap(pocketRegionToAreaPaths)
+      reachableAreaPaths.push(...offsetClosedPaths(centerAreaPaths, toolRadius, ClipperLib.JoinType.jtRound))
+    }
+  }
+
+  let sourceUnion = unionClipperPaths(sourceAreaPaths)
+  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
+    sourceUnion = intersectClipperPaths(sourceUnion, sourceMaskPaths)
+  }
+  if (sourceUnion.length === 0) return []
+
+  let reachableUnion = unionClipperPaths(reachableAreaPaths)
+  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
+    reachableUnion = intersectClipperPaths(reachableUnion, sourceMaskPaths)
+  }
+  const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
+  const splitClearance = Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.08)
+  const splitRestPaths = splitNarrowConnections(restPaths, splitClearance)
+  const outputRestPaths = rebuildOriginalRestComponents(restPaths, splitRestPaths, Math.max(splitClearance * 2, toolRadius * 0.6))
+  return restPathsToDrafts(outputRestPaths, toolRadius * 2, operation)
+}
+
 export function generatePocketRestRegionDrafts(project: Project, operation: Operation): RestRegionDraftResult {
   if (operation.kind !== 'pocket') {
     return {
@@ -255,47 +314,105 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
     return { drafts: [], warnings: [...resolved.warnings, 'Tool diameter must be greater than zero'] }
   }
 
-  const sourceAreaPaths: ClipperPath[] = []
-  const reachableAreaPaths: ClipperPath[] = []
   const toolRadius = tool.radius
+  const drafts = generateAreaRestRegionDrafts(resolved, operation, toolRadius)
+
+  return {
+    drafts,
+    warnings: resolved.warnings,
+  }
+}
+
+function featureSilhouettePaths(feature: SketchFeature): Point[][] {
+  if (feature.kind === 'stl' && feature.stl?.silhouettePaths?.length) {
+    return significantSilhouettePaths(feature.stl.silhouettePaths)
+  }
+
+  return [flattenProfile(feature.sketch.profile).points]
+}
+
+function featureToAreaPaths(feature: SketchFeature): ClipperPath[] {
+  return featureSilhouettePaths(feature)
+    .filter((path) => path.length >= 3)
+    .map((path) => toClipperPath(normalizeWinding(path, false), DEFAULT_CLIPPER_SCALE))
+}
+
+function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operation, toolRadius: number): RestRegionDraftResult {
+  const splitTargets = operation.target.source === 'features'
+    ? splitFeatureTargets(project, operation.target.featureIds)
+    : null
+  const regionMask = splitTargets ? buildRegionMask(splitTargets.regionFeatures) : null
+  const sourceFeatures = splitTargets
+    ? splitTargets.machiningFeatures
+      .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+      .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
+    : []
+
+  if (sourceFeatures.length === 0) {
+    return { drafts: [], warnings: ['No valid add/model features were found for this outside edge-route operation'] }
+  }
+
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const centerInset = toolRadius + radialLeave
+  const sourcePaths = unionClipperPaths(sourceFeatures.flatMap(featureToAreaPaths))
+  const outerLimit = offsetClosedPaths(sourcePaths, toolRadius + radialLeave, ClipperLib.JoinType.jtMiter)
+  let sourceBand = differenceClipperPaths(outerLimit, sourcePaths)
+  const centerPaths = offsetClosedPaths(sourcePaths, toolRadius + radialLeave, ClipperLib.JoinType.jtMiter)
+  const sweptOuter = offsetClosedPaths(centerPaths, toolRadius, ClipperLib.JoinType.jtRound)
+  const sweptInner = offsetClosedPaths(centerPaths, -toolRadius, ClipperLib.JoinType.jtRound)
+  let reachableBand = differenceClipperPaths(sweptOuter, sweptInner)
 
-  for (const band of resolved.bands) {
-    for (const region of band.regions) {
-      sourceAreaPaths.push(...pocketRegionToAreaPaths(region))
-
-      const centerRegions = buildInsetRegions(region, centerInset)
-      const centerAreaPaths = centerRegions.flatMap(pocketRegionToAreaPaths)
-      reachableAreaPaths.push(...offsetClosedPaths(centerAreaPaths, toolRadius, ClipperLib.JoinType.jtRound))
-    }
+  if (regionMask) {
+    sourceBand = intersectClipperPaths(sourceBand, regionMask.paths)
+    reachableBand = intersectClipperPaths(reachableBand, regionMask.paths)
   }
 
-  const sourceUnion = unionClipperPaths(sourceAreaPaths)
-  if (sourceUnion.length === 0) {
-    return { drafts: [], warnings: [...resolved.warnings, 'No pocket area found for rest-region generation'] }
-  }
-
-  const reachableUnion = unionClipperPaths(reachableAreaPaths)
-  const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
+  const restPaths = unionClipperPaths(differenceClipperPaths(sourceBand, reachableBand))
   const splitClearance = Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.08)
   const splitRestPaths = splitNarrowConnections(restPaths, splitClearance)
   const outputRestPaths = rebuildOriginalRestComponents(restPaths, splitRestPaths, Math.max(splitClearance * 2, toolRadius * 0.6))
-  const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, tool.diameter * tool.diameter * 0.0001)
-  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.8)
-  const contours = clipperPathsToPointContours(outputRestPaths)
-    .filter((contour) => contour.length >= 3)
-    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
-    .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
-    .map(cleanClosedContour)
-    .map(convexHull)
-    .filter((contour) => contour.length >= 3)
 
   return {
-    drafts: contours.map((contour) => ({
-      profile: polygonProfile(contour),
-      sourceOperationId: operation.id,
-    })),
+    drafts: restPathsToDrafts(outputRestPaths, toolRadius * 2, operation),
+    warnings: splitTargets && splitTargets.missingFeatureIds.length > 0
+      ? ['Some selected target features are missing or are not add/model/region features']
+      : [],
+  }
+}
+
+export function generateEdgeRestRegionDrafts(project: Project, operation: Operation): RestRegionDraftResult {
+  if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
+    return {
+      drafts: [],
+      warnings: ['Rest regions can only be generated for edge-route operations'],
+    }
+  }
+
+  const toolRecord = operation.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+
+  if (!toolRecord) {
+    return { drafts: [], warnings: ['No tool assigned to this operation'] }
+  }
+
+  const tool = normalizeToolForProject(toolRecord, project)
+  if (!(tool.diameter > 0)) {
+    return { drafts: [], warnings: ['Tool diameter must be greater than zero'] }
+  }
+
+  if (operation.kind === 'edge_route_outside') {
+    return generateOutsideEdgeRestRegionDrafts(project, operation, tool.radius)
+  }
+
+  const resolved = resolveInsideEdgeRegions(project, operation)
+  const splitTargets = operation.target.source === 'features'
+    ? splitFeatureTargets(project, operation.target.featureIds)
+    : null
+  const regionMask = splitTargets ? buildRegionMask(splitTargets.regionFeatures) : null
+  const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask?.paths ?? null)
+
+  return {
+    drafts,
     warnings: resolved.warnings,
   }
 }

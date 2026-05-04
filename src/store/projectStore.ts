@@ -85,7 +85,7 @@ import {
   flattenFeatureToClipperPath,
   unionClipperPaths,
 } from './helpers/clipping'
-import { generatePocketRestRegionDrafts } from '../engine/toolpaths/restRegions'
+import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../engine/toolpaths/restRegions'
 import {
   cutFeaturesByCutterGrouped,
   insertDerivedFeaturesAfterSources,
@@ -3398,29 +3398,94 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     }
 
     if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
-      const nextOperationId = nextUniqueGeneratedId(state.project, 'op')
+      const result = generateEdgeRestRegionDrafts(state.project, operation)
+      if (result.drafts.length === 0) {
+        return { operationId: null, regionIds: [], warnings: result.warnings }
+      }
+
+      let nextProjectLike = state.project
+      const targetFeatures = operation.target.featureIds
+        .map((featureId) => state.project.features.find((item) => item.id === featureId) ?? null)
+        .filter((feature): feature is SketchFeature => feature !== null)
+      const machiningTargetIds = targetFeatures
+        .filter((feature) => feature.operation !== 'region')
+        .map((feature) => feature.id)
+      const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
+      const restFolder: FeatureFolder = {
+        id: restFolderId,
+        name: uniqueFolderName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest Regions`, state.project.featureFolders),
+        collapsed: false,
+        section: 'regions',
+      }
+      nextProjectLike = {
+        ...nextProjectLike,
+        featureFolders: [...nextProjectLike.featureFolders, restFolder],
+      }
+      const createdFeatures: SketchFeature[] = result.drafts.map((draft, index) => {
+        const id = nextUniqueGeneratedId(nextProjectLike, 'f')
+        const feature = normalizeFeatureZRange({
+          id,
+          name: uniqueName(
+            `${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest Region${result.drafts.length > 1 ? ` ${index + 1}` : ''}`,
+            nextProjectLike.features.map((feature) => feature.name),
+          ),
+          kind: inferFeatureKind(draft.profile),
+          folderId: restFolderId,
+          sketch: {
+            profile: draft.profile,
+            origin: { x: 0, y: 0 },
+            orientationAngle: 0,
+            dimensions: [],
+            constraints: [],
+          },
+          operation: 'region',
+          z_top: state.project.stock.thickness,
+          z_bottom: 0,
+          visible: true,
+          locked: false,
+        })
+        nextProjectLike = {
+          ...nextProjectLike,
+          features: [...nextProjectLike.features, feature],
+        }
+        return feature
+      })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const restTarget: OperationTarget = {
+        source: 'features',
+        featureIds: [...machiningTargetIds, ...createdIds],
+      }
+      const nextOperationId = nextUniqueGeneratedId(nextProjectLike, 'op')
       const restOperation: Operation = {
         ...operation,
         id: nextOperationId,
         name: uniqueName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest`, state.project.operations.map((item) => item.name)),
         showToolpath: true,
+        target: restTarget,
         toolRef: null,
       }
 
-      set((s) => ({
-        project: {
+      set((s) => {
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
+          featureFolders: [...s.project.featureFolders, restFolder],
+          features: [...s.project.features, ...createdFeatures],
           operations: [...s.project.operations, restOperation],
+          featureTree: [...s.project.featureTree, { type: 'folder', folderId: restFolder.id }],
           meta: { ...s.project.meta, modified: new Date().toISOString() },
-        },
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }))
+        })
 
-      return { operationId: nextOperationId, regionIds: [], warnings: [] }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      })
+
+      return { operationId: nextOperationId, regionIds: createdIds, warnings: result.warnings }
     }
 
     const result = generatePocketRestRegionDrafts(state.project, operation)

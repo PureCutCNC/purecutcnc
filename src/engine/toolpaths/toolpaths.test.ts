@@ -589,6 +589,10 @@ function testEdgeInsideRegionClipsAtBoundary() {
   if (!bounds) throw new Error('expected edge inside bounds')
   assert(bounds.maxX <= 5 + 1e-6, `expected edge route clipped to region maxX <= 5, got ${bounds.maxX}`)
   assert(bounds.maxX > 4.9, `expected edge route to clip at region boundary, not offset inward, got ${bounds.maxX}`)
+  const lastMove = result.moves[result.moves.length - 1]
+  assert(lastMove !== undefined, 'expected edge route moves')
+  const safeZ = project.stock.thickness + project.meta.operationClearanceZ
+  assert(lastMove.to.z === safeZ, `expected clipped edge route to end at safe Z ${safeZ}, got ${lastMove.to.z}`)
   console.log('edge_route_inside region boundary clipping: PASSED')
 }
 

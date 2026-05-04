@@ -329,6 +329,14 @@ export function clipToolpathResultToRegionMask(
     }
   }
 
+  if (current && Math.abs(current.z - safeZ) > 1e-9) {
+    clippedMoves.push({
+      kind: 'rapid',
+      from: current,
+      to: { x: current.x, y: current.y, z: safeZ },
+    })
+  }
+
   return {
     ...result,
     moves: clippedMoves,
