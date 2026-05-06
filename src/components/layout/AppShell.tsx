@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -71,6 +71,56 @@ export function AppShell({
   statusBarExtras,
 }: AppShellProps) {
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
+
+  const CR_STORAGE_KEY = 'panel-split:center-right'
+  const MIN_CENTER_WIDTH = 300
+  const MIN_RIGHT_WIDTH = 200
+
+  const [rightPanelRatio, setRightPanelRatio] = useState<number>(() => {
+    const stored = localStorage.getItem(CR_STORAGE_KEY)
+    if (stored !== null) {
+      const parsed = parseFloat(stored)
+      if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) return parsed
+    }
+    return 0.265
+  })
+
+  const centrePanelRef = useRef<HTMLElement>(null)
+  const rightPanelRef = useRef<HTMLElement>(null)
+
+  const showRight = workspaceLayout === 'lcr' || workspaceLayout === 'cr'
+
+  const handleDividerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }, [])
+
+  const handleDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+      const centreEl = centrePanelRef.current
+      const rightEl = rightPanelRef.current
+      if (!centreEl || !rightEl) return
+      const centreRect = centreEl.getBoundingClientRect()
+      const rightRect = rightEl.getBoundingClientRect()
+      const totalWidth = rightRect.right - centreRect.left
+      const offsetX = e.clientX - centreRect.left
+      const minRatio = MIN_RIGHT_WIDTH / totalWidth
+      const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
+      const newRatio = Math.max(minRatio, Math.min(maxRatio, 1 - offsetX / totalWidth))
+      setRightPanelRatio(newRatio)
+      localStorage.setItem(CR_STORAGE_KEY, String(newRatio))
+    },
+    [],
+  )
+
+  const bodyStyle: React.CSSProperties = {}
+  if (showRight) {
+    const railPrefix = toolbarOrientation === 'left' ? '32px ' : ''
+    const leftPrefix = workspaceLayout === 'lcr' ? 'minmax(200px, 17%) ' : ''
+    bodyStyle.gridTemplateColumns = `${railPrefix}${leftPrefix}minmax(${MIN_CENTER_WIDTH}px, ${1 - rightPanelRatio}fr) minmax(${MIN_RIGHT_WIDTH}px, ${rightPanelRatio}fr)`
+  }
+
   const { project } = useProjectStore()
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
@@ -109,7 +159,7 @@ export function AppShell({
       </header>
 
       {/* Main work area */}
-      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation}`}>
+      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation}`} style={bodyStyle}>
         {toolbarOrientation === 'left' ? (
           <aside className="app-left-rail" aria-label="Creation tools">
             {creationToolbar}
@@ -134,7 +184,7 @@ export function AppShell({
           </PanelSplit>
         </aside>
 
-        <main className="panel-centre">
+        <main className="panel-centre" ref={centrePanelRef}>
           <div className="panel centre-workspace">
             <div className="panel-tabs-header" role="tablist" aria-label="Workspace Views">
               <button
@@ -295,9 +345,18 @@ export function AppShell({
               </div>
             </div>
           </div>
+          {showRight && (
+            <div
+              className="panel-resize-divider"
+              role="separator"
+              aria-orientation="vertical"
+              onPointerDown={handleDividerPointerDown}
+              onPointerMove={handleDividerPointerMove}
+            />
+          )}
         </main>
 
-        <aside className="panel-right" aria-label="CAM panel">
+        <aside className="panel-right" ref={rightPanelRef} aria-label="CAM panel">
           <section className="panel panel-tabs">
             <div className="panel-tabs-header" role="tablist" aria-label="Right Sidebar">
               <button
