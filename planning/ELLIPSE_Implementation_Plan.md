@@ -60,3 +60,26 @@ No changes needed — ellipse is stored as 4 bezier segments, which `traceProfil
 - Ellipse-specific sketch-edit UX (rx/ry handle that preserves ellipse constraint while dragging).
 - Snapping to ellipse center or quadrant points.
 - DXF/SVG import of `<ellipse>` elements.
+
+---
+
+## Implementation Status
+
+**Implemented** — all 9 steps above are complete and merged on `feature/ellipse`.
+
+## Known Limitation — No Native Ellipse Segment Type
+
+The current implementation stores an ellipse as **4 cubic bezier segments** in a standard `SketchProfile`. `inferFeatureKind()` recognises the κ-pattern and returns `'ellipse'`, but the underlying storage is still bezier geometry. This means:
+
+- Once the user edits the ellipse in sketch-edit mode, the bezier handles move independently and the ellipse constraint is lost — it silently degrades to a generic spline (`kind` reverts to `'spline'`).
+- There is no lossless round-trip for `cx / cy / rx / ry` — those values are re-derived from the bezier anchors on every read.
+- Sketch-edit offers 4 anchor + 8 bezier handle controls rather than a clean center + rx + ry handle set.
+
+This is the same problem that existed with circles before the `CircleSegment` native type was introduced (see `planning/NATIVE_CIRCLE_Implementation_Plan.md`). The fix is to follow the same pattern:
+
+- Add a first-class `EllipseSegment` type to the `Segment` union in `project.ts`.
+- Store the ellipse as a single-segment profile: `start = { cx+rx, cy }`, segment carries `center`, `rx`, `ry`.
+- Update all consumers (`sampleProfilePoints`, `traceProfilePath`, `getProfileBounds`, sketch-edit controls, snapping) to handle the new segment type.
+- Add a migration in `normalizeProject()` to upgrade existing bezier-ellipse profiles on load.
+
+This work should be tracked as **NATIVE_ELLIPSE_Implementation_Plan.md** when prioritised.
