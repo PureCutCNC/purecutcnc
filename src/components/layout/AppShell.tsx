@@ -72,9 +72,20 @@ export function AppShell({
 }: AppShellProps) {
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
 
+  const LC_STORAGE_KEY = 'panel-split:left-center'
   const CR_STORAGE_KEY = 'panel-split:center-right'
+  const MIN_LEFT_WIDTH = 200
   const MIN_CENTER_WIDTH = 300
   const MIN_RIGHT_WIDTH = 200
+
+  const [leftPanelRatio, setLeftPanelRatio] = useState<number>(() => {
+    const stored = localStorage.getItem(LC_STORAGE_KEY)
+    if (stored !== null) {
+      const parsed = parseFloat(stored)
+      if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) return parsed
+    }
+    return 0.17
+  })
 
   const [rightPanelRatio, setRightPanelRatio] = useState<number>(() => {
     const stored = localStorage.getItem(CR_STORAGE_KEY)
@@ -85,9 +96,11 @@ export function AppShell({
     return 0.265
   })
 
+  const leftPanelRef = useRef<HTMLElement>(null)
   const centrePanelRef = useRef<HTMLElement>(null)
   const rightPanelRef = useRef<HTMLElement>(null)
 
+  const showLeft = workspaceLayout === 'lcr' || workspaceLayout === 'lc'
   const showRight = workspaceLayout === 'lcr' || workspaceLayout === 'cr'
 
   const handleDividerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -95,7 +108,26 @@ export function AppShell({
     e.currentTarget.setPointerCapture(e.pointerId)
   }, [])
 
-  const handleDividerPointerMove = useCallback(
+  const handleLeftDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+      const leftEl = leftPanelRef.current
+      const centreEl = centrePanelRef.current
+      if (!leftEl || !centreEl) return
+      const leftRect = leftEl.getBoundingClientRect()
+      const centreRect = centreEl.getBoundingClientRect()
+      const totalWidth = centreRect.right - leftRect.left
+      const offsetX = e.clientX - leftRect.left
+      const minRatio = MIN_LEFT_WIDTH / totalWidth
+      const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
+      const newRatio = Math.max(minRatio, Math.min(maxRatio, offsetX / totalWidth))
+      setLeftPanelRatio(newRatio)
+      localStorage.setItem(LC_STORAGE_KEY, String(newRatio))
+    },
+    [],
+  )
+
+  const handleRightDividerPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
       const centreEl = centrePanelRef.current
@@ -114,11 +146,18 @@ export function AppShell({
     [],
   )
 
+  // left=L/(L+C), right=R/(C+R) → express as fr with centre always 1fr:
+  //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
-  if (showRight) {
+  if (showLeft || showRight) {
     const railPrefix = toolbarOrientation === 'left' ? '32px ' : ''
-    const leftPrefix = workspaceLayout === 'lcr' ? 'minmax(200px, 17%) ' : ''
-    bodyStyle.gridTemplateColumns = `${railPrefix}${leftPrefix}minmax(${MIN_CENTER_WIDTH}px, ${1 - rightPanelRatio}fr) minmax(${MIN_RIGHT_WIDTH}px, ${rightPanelRatio}fr)`
+    const leftCol = showLeft
+      ? `minmax(${MIN_LEFT_WIDTH}px, ${leftPanelRatio / (1 - leftPanelRatio)}fr) `
+      : ''
+    const rightCol = showRight
+      ? ` minmax(${MIN_RIGHT_WIDTH}px, ${rightPanelRatio / (1 - rightPanelRatio)}fr)`
+      : ''
+    bodyStyle.gridTemplateColumns = `${railPrefix}${leftCol}minmax(${MIN_CENTER_WIDTH}px, 1fr)${rightCol}`
   }
 
   const { project } = useProjectStore()
@@ -166,7 +205,7 @@ export function AppShell({
           </aside>
         ) : null}
 
-        <aside className="panel-left">
+        <aside className="panel-left" ref={leftPanelRef}>
           <PanelSplit storageKey="project-tree" initialRatio={0.55} minFirst={160} minSecond={160}>
             <section className="panel panel-tree">
               <div className="panel-header">
@@ -182,6 +221,13 @@ export function AppShell({
               <div className="panel-content">{propertiesPanel}</div>
             </section>
           </PanelSplit>
+          <div
+            className="panel-resize-divider"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={handleDividerPointerDown}
+            onPointerMove={handleLeftDividerPointerMove}
+          />
         </aside>
 
         <main className="panel-centre" ref={centrePanelRef}>
@@ -351,7 +397,7 @@ export function AppShell({
               role="separator"
               aria-orientation="vertical"
               onPointerDown={handleDividerPointerDown}
-              onPointerMove={handleDividerPointerMove}
+              onPointerMove={handleRightDividerPointerMove}
             />
           )}
         </main>

@@ -445,6 +445,7 @@
 
 .panel-left {
   min-height: 0;
+  position: relative;
 }
 
 .panel {
@@ -2225,6 +2226,11 @@
 .panel-resize-divider:hover::before,
 .panel-resize-divider:active::before {
   background: var(--line-bright);
+}
+
+/* Left-toolbar layout uses gap: 4px — recenter: -(4+10)/2 = -7 */
+.app-body--toolbar-left .panel-resize-divider {
+  right: -7px;
 }
 
 .cam-section {
