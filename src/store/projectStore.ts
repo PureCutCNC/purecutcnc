@@ -82,6 +82,7 @@ import {
 } from './helpers/geometry'
 import {
   clipperContourToProfile,
+  collectKnownCircles,
   flattenFeatureToClipperPath,
   unionClipperPaths,
 } from './helpers/clipping'
@@ -4406,10 +4407,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     const anchorFeature = selectedFeatures[0]
     const baseFeature = anchorFeature
     const joinNameStem = normalizeDerivedFeatureNameStem(baseFeature.name)
+    const knownCircles = collectKnownCircles(selectedFeatures)
     const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
     const createdFeatures = unionPaths
       .map((path, index) => {
-        const profile = clipperContourToProfile(path)
+        const profile = clipperContourToProfile(path, undefined, knownCircles)
         if (!profile) {
           return null
         }
