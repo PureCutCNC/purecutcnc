@@ -445,6 +445,7 @@
 
 .panel-left {
   min-height: 0;
+  position: relative;
 }
 
 .panel {
@@ -494,6 +495,7 @@
 
 .panel-centre {
   min-height: 0;
+  position: relative;
 }
 
 .app-body--c .panel-left,
@@ -2197,6 +2199,40 @@
   background: var(--line-bright);
 }
 
+.panel-resize-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -10px;
+  width: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
+}
+
+.panel-resize-divider::before {
+  content: '';
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s;
+}
+
+.panel-resize-divider:hover::before,
+.panel-resize-divider:active::before {
+  background: var(--line-bright);
+}
+
+/* Left-toolbar layout uses gap: 4px — recenter: -(4+10)/2 = -7 */
+.app-body--toolbar-left .panel-resize-divider {
+  right: -7px;
+}
+
 .cam-section {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -2577,7 +2613,7 @@
 
 @media (max-width: 920px) {
   .app-body {
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: 220px 1fr !important;
     grid-template-areas:
       'left centre'
       'right right';
@@ -2599,7 +2635,7 @@
 
 @media (max-width: 760px) {
   .app-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
     grid-template-areas:
       'left'
       'centre'
