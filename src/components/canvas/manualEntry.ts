@@ -20,7 +20,7 @@ import type { Point, Segment } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
 
 export interface DimensionEditState {
-  shape: 'rect' | 'circle' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite'
+  shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite'
   anchor: Point
   arcStart?: Point
   arcEnd?: Point

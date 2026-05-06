@@ -183,7 +183,7 @@ export type TextFontId =
   | 'droid_serif_bold'
   | 'droid_serif_regular_italic'
   | 'droid_serif_bold_italic'
-export type FeatureKind = 'rect' | 'circle' | 'polygon' | 'spline' | 'composite' | 'text' | 'stl'
+export type FeatureKind = 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite' | 'text' | 'stl'
 
 export interface TextFeatureData {
   text: string
@@ -467,6 +467,29 @@ export function circleProfile(cx: number, cy: number, r: number): SketchProfile 
   }
 }
 
+// κ ≈ 0.5523 — standard cubic bezier approximation of a quarter-ellipse
+const KAPPA = 0.5523
+
+export function ellipseProfile(cx: number, cy: number, rx: number, ry: number): SketchProfile {
+  const kx = rx * KAPPA
+  const ky = ry * KAPPA
+  // Start at rightmost point, go clockwise (screen coords: +Y down)
+  const p0 = { x: cx + rx, y: cy }
+  const p1 = { x: cx, y: cy + ry }
+  const p2 = { x: cx - rx, y: cy }
+  const p3 = { x: cx, y: cy - ry }
+  return {
+    start: p0,
+    segments: [
+      { type: 'bezier', control1: { x: cx + rx, y: cy + ky }, control2: { x: cx + kx, y: cy + ry }, to: p1 },
+      { type: 'bezier', control1: { x: cx - kx, y: cy + ry }, control2: { x: cx - rx, y: cy + ky }, to: p2 },
+      { type: 'bezier', control1: { x: cx - rx, y: cy - ky }, control2: { x: cx - kx, y: cy - ry }, to: p3 },
+      { type: 'bezier', control1: { x: cx + kx, y: cy - ry }, control2: { x: cx + rx, y: cy - ky }, to: p0 },
+    ],
+    closed: true,
+  }
+}
+
 export function polygonProfile(points: Point[]): SketchProfile {
   const vertices = points.length >= 3 ? points : [...points]
   const start = vertices[0] ?? { x: 0, y: 0 }
@@ -540,7 +563,29 @@ export function inferFeatureKind(profile: SketchProfile): FeatureKind {
     return 'polygon'
   }
 
-  if (segments.every((segment) => segment.type === 'bezier')) {
+  if (segments.length === 4 && segments.every((segment) => segment.type === 'bezier')) {
+    // Detect ellipse: 4 bezier segments whose anchors are axis-aligned quadrant points
+    // and whose control points follow the κ pattern.
+    const anchors = [start, ...segments.map((s) => s.to)]
+    // anchors[4] should equal anchors[0] (closed)
+    if (pointsEqual(anchors[4] ?? anchors[0], anchors[0])) {
+      const cx = (anchors[0].x + anchors[2].x) / 2
+      const cy = (anchors[1].y + anchors[3].y) / 2
+      const rx = Math.abs(anchors[0].x - cx)
+      const ry = Math.abs(anchors[1].y - cy)
+      if (rx > 1e-9 && ry > 1e-9) {
+        const expected = ellipseProfile(cx, cy, rx, ry)
+        const isEllipse = segments.every((seg, i) => {
+          const exp = expected.segments[i] as BezierSegment
+          return (
+            seg.type === 'bezier' &&
+            pointsEqual(seg.control1, exp.control1, 1e-4) &&
+            pointsEqual(seg.control2, exp.control2, 1e-4)
+          )
+        })
+        if (isEllipse) return 'ellipse'
+      }
+    }
     return 'spline'
   }
 
@@ -808,6 +853,15 @@ export function sampleProfilePoints(
 }
 
 export function getProfileBounds(profile: SketchProfile): Bounds2D {
+  if (inferFeatureKind(profile) === 'ellipse') {
+    const anchors = [profile.start, ...profile.segments.map((s) => s.to)]
+    const cx = (anchors[0].x + anchors[2].x) / 2
+    const cy = (anchors[1].y + anchors[3].y) / 2
+    const rx = Math.abs(anchors[0].x - cx)
+    const ry = Math.abs(anchors[1].y - cy)
+    return { minX: cx - rx, maxX: cx + rx, minY: cy - ry, maxY: cy + ry }
+  }
+
   if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
     const seg = profile.segments[0]
     const r = Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y)

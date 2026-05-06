@@ -40,6 +40,7 @@ export type PendingAddSlice = Pick<
   | 'startAddTabPlacement'
   | 'startAddRectPlacement'
   | 'startAddCirclePlacement'
+  | 'startAddEllipsePlacement'
   | 'startAddPolygonPlacement'
   | 'startAddSplinePlacement'
   | 'startAddCompositePlacement'
@@ -118,6 +119,16 @@ export function createPendingAddSlice(
     startAddCirclePlacement: () =>
       set((s) => ({
         pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddEllipsePlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'ellipse', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
         pendingOffset: null,
@@ -285,6 +296,10 @@ export function createPendingAddSlice(
         }
 
         state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
+      } else if (state.pendingAdd.shape === 'ellipse') {
+        const rx = Math.max(minSize, Math.abs(point.x - anchor.x))
+        const ry = Math.max(minSize, Math.abs(point.y - anchor.y))
+        state.addEllipseFeature(`Ellipse ${state.project.features.length + 1}`, anchor.x, anchor.y, rx, ry, depth)
       } else {
         const radius = Math.max(minSize, Math.hypot(point.x - anchor.x, point.y - anchor.y))
         state.addCircleFeature(`Circle ${state.project.features.length + 1}`, anchor.x, anchor.y, radius, depth)

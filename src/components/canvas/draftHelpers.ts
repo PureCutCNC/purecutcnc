@@ -16,7 +16,7 @@
 
 import { convertLength } from '../../utils/units'
 import type { Point, Segment, SketchProfile } from '../../types/project'
-import { circleProfile, polygonProfile, profileVertices, rectProfile, splineProfile } from '../../types/project'
+import { circleProfile, ellipseProfile, polygonProfile, profileVertices, rectProfile, splineProfile } from '../../types/project'
 import type { PendingAddTool, SketchControlRef } from '../../store/types'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawArcRadiusMeasurement, drawLineLengthMeasurement } from './measurements'
@@ -38,7 +38,7 @@ export type EditDimStep =
   | { kind: 'endpoint'; control: SketchControlRef; fromAnchorIndex: number }
   | { kind: 'arc_radius'; control: SketchControlRef; arcStartAnchorIndex: number }
 
-type ClosedPendingAddShape = Extract<NonNullable<PendingAddTool>, { shape: 'rect' | 'circle' | 'tab' | 'clamp' }>
+type ClosedPendingAddShape = Extract<NonNullable<PendingAddTool>, { shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' }>
 type CompositePendingAdd = Extract<NonNullable<PendingAddTool>, { shape: 'composite' }>
 
 function drawDiamond(
@@ -144,6 +144,12 @@ export function buildPendingProfile(
       Math.max(Math.abs(current.x - anchor.x), minSize),
       Math.max(Math.abs(current.y - anchor.y), minSize),
     )
+  }
+
+  if (pendingAdd.shape === 'ellipse') {
+    const rx = Math.max(Math.abs(current.x - anchor.x), minSize)
+    const ry = Math.max(Math.abs(current.y - anchor.y), minSize)
+    return ellipseProfile(anchor.x, anchor.y, rx, ry)
   }
 
   const radius = Math.max(Math.hypot(current.x - anchor.x, current.y - anchor.y), minSize)

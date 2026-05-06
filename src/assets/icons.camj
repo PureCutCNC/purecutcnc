@@ -2920,6 +2920,125 @@
       "text": null
     },
     {
+      "id": "icon_ellipse",
+      "name": "ellipse_shape_0",
+      "kind": "composite",
+      "folderId": "folder_ellipse",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_ellipse_1",
+      "name": "ellipse_shape_0_1",
+      "kind": "composite",
+      "folderId": "folder_ellipse",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 22,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 22,
+                "y": 15.3138
+              },
+              "control2": {
+                "x": 17.523,
+                "y": 18
+              },
+              "to": {
+                "x": 12,
+                "y": 18
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 6.477,
+                "y": 18
+              },
+              "control2": {
+                "x": 2,
+                "y": 15.3138
+              },
+              "to": {
+                "x": 2,
+                "y": 12
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 2,
+                "y": 8.6862
+              },
+              "control2": {
+                "x": 6.477,
+                "y": 6
+              },
+              "to": {
+                "x": 12,
+                "y": 6
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 17.523,
+                "y": 6
+              },
+              "control2": {
+                "x": 22,
+                "y": 8.6862
+              },
+              "to": {
+                "x": 22,
+                "y": 12
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
       "id": "icon_polygon",
       "name": "polygon_shape_0",
       "kind": "composite",
@@ -22019,6 +22138,11 @@
       "collapsed": true
     },
     {
+      "id": "folder_ellipse",
+      "name": "ellipse",
+      "collapsed": true
+    },
+    {
       "id": "folder_polygon",
       "name": "polygon",
       "collapsed": true
@@ -22403,6 +22527,10 @@
     {
       "type": "folder",
       "folderId": "folder_circle"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_ellipse"
     },
     {
       "type": "folder",

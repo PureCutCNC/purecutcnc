@@ -96,6 +96,7 @@ export type PendingAddTool =
   | { shape: 'origin'; session: number }
   | { shape: 'rect'; anchor: Point | null; session: number }
   | { shape: 'circle'; anchor: Point | null; session: number }
+  | { shape: 'ellipse'; anchor: Point | null; session: number }
   | { shape: 'tab'; anchor: Point | null; session: number }
   | { shape: 'clamp'; anchor: Point | null; session: number }
   | { shape: 'text'; config: TextToolConfig; session: number }
@@ -325,6 +326,7 @@ export interface ProjectStore {
 
   startAddRectPlacement: () => void
   startAddCirclePlacement: () => void
+  startAddEllipsePlacement: () => void
   startAddPolygonPlacement: () => void
   startAddSplinePlacement: () => void
   startAddCompositePlacement: () => void
@@ -370,6 +372,7 @@ export interface ProjectStore {
 
   addRectFeature: (name: string, x: number, y: number, w: number, h: number, depth: number) => void
   addCircleFeature: (name: string, cx: number, cy: number, r: number, depth: number) => void
+  addEllipseFeature: (name: string, cx: number, cy: number, rx: number, ry: number, depth: number) => void
   addPolygonFeature: (name: string, points: Point[], depth: number) => void
   addSplineFeature: (name: string, points: Point[], depth: number) => void
 
