@@ -36,6 +36,7 @@ import {
   profileVertices,
   rectProfile,
   circleProfile,
+  ellipseProfile,
   polygonProfile,
   splineProfile,
   type TextFeatureData,
@@ -5914,6 +5915,31 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         folderId: null,
         sketch: {
         profile: circleProfile(cx, cy, r),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 90,
+        dimensions: [],
+        constraints: [],
+      },
+      operation,
+      z_top: depth,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    }
+    get().addFeature(feature)
+  },
+
+  addEllipseFeature: (name, cx, cy, rx, ry, depth) => {
+    const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
+    const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
+    const id = nextUniqueGeneratedId(get().project, 'f')
+    const feature: SketchFeature = {
+      id,
+      name: baseName,
+      kind: 'ellipse',
+      folderId: null,
+      sketch: {
+        profile: ellipseProfile(cx, cy, rx, ry),
         origin: { x: 0, y: 0 },
         orientationAngle: 90,
         dimensions: [],

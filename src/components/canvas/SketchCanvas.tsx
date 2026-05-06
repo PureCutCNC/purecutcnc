@@ -464,7 +464,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return pendingTransform.referenceStart
     }
 
-    if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
+    if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       return pendingAdd.anchor
     }
 
@@ -1025,7 +1025,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     } else if (pendingAdd?.shape === 'composite') {
       drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
         pendingAdd.shape === 'rect'
@@ -1034,6 +1034,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             ? 'Pending tab'
           : pendingAdd.shape === 'clamp'
             ? 'Pending clamp'
+          : pendingAdd.shape === 'ellipse'
+            ? 'Pending ellipse'
             : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
       drawPendingPoint(ctx, pendingAdd.anchor, vt)
@@ -1043,6 +1045,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawRadiusMeasurement(ctx, pendingAdd.anchor, currentPreviewPoint, vt, project.meta.units)
       } else {
         drawProfileLineMeasurements(ctx, previewProfile, vt, project.meta.units)
+      }
+      if (pendingAdd.shape === 'ellipse') {
+        drawMoveGuide(ctx, pendingAdd.anchor, currentPreviewPoint, vt)
       }
     } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
       const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
@@ -2410,7 +2415,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     } else if (pendingAdd?.shape === 'origin') {
       originPreviewPointRef.current = null
       scheduleDraw()
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
+    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       setPendingPreviewPointRef({ point: pendingAdd.anchor, session: pendingAdd.session })
     } else {
       setPendingPreviewPointRef(null)
@@ -2621,10 +2626,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           addPendingPolygonPoint(lockedSnapped)
         }
         setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
         placePendingAddAt(snapped)
         setPendingPreviewPointRef(null)
       } else if (pendingAdd.shape === 'text') {
@@ -3010,7 +3015,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingAdd) {
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
         && pendingAdd.anchor
       ) {
         const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
@@ -3118,7 +3123,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const units = projectRef.current.meta.units
 
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
         && pendingAdd.anchor
       ) {
         event.preventDefault()
@@ -3791,6 +3796,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
         if (
           pendingAdd.shape !== 'rect' && pendingAdd.shape !== 'circle'
+          && pendingAdd.shape !== 'ellipse'
           && pendingAdd.shape !== 'tab' && pendingAdd.shape !== 'clamp'
           && pendingAdd.shape !== 'composite'
         ) return null
@@ -4406,13 +4412,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
             : pendingAdd.shape === 'text'
               ? 'Move the mouse to preview the text, then click to place it.'
-            : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
+            : (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && pendingAdd.anchor
               ? pendingAdd.shape === 'rect'
                 ? 'Move the mouse to size the rectangle, then click the opposite corner. Press Tab to type dimensions.'
                 : pendingAdd.shape === 'tab'
                   ? 'Move the mouse to size the tab footprint, then click the opposite corner. Press Tab to type dimensions.'
                 : pendingAdd.shape === 'clamp'
                   ? 'Move the mouse to size the clamp footprint, then click the opposite corner. Press Tab to type dimensions.'
+                : pendingAdd.shape === 'ellipse'
+                  ? 'Move the mouse to set the radii, then click to confirm the ellipse. Press Tab to type dimensions.'
                 : 'Move the mouse to set the radius, then click again to confirm the circle. Press Tab to type the radius.'
               : pendingAdd.shape === 'rect'
                 ? 'Click the sketch to set the rectangle corner, then click again to size it.'
@@ -4420,6 +4428,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   ? 'Click the sketch to set the tab corner, then click again to size it.'
                 : pendingAdd.shape === 'clamp'
                   ? 'Click the sketch to set the clamp corner, then click again to size it.'
+                : pendingAdd.shape === 'ellipse'
+                  ? 'Click the sketch to set the ellipse center, then click again to set the radii.'
                 : pendingAdd.shape === 'circle'
                   ? 'Click the sketch to set the circle center, then click again to set the radius.'
                     : !pendingAdd.start
@@ -4437,7 +4447,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                               : 'Click to add connected line segments. Press Tab to type length/angle. Click the first point to close, or press Enter to finish open.'}
             {(() => {
               const canType =
-                ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !!pendingAdd.anchor)
+                ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !!pendingAdd.anchor)
                 || ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 1)
                 || (pendingAdd.shape === 'composite' && !!pendingAdd.start && !pendingAdd.closed)
               return canType ? (

@@ -97,6 +97,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     redo,
     startAddRectPlacement,
     startAddCirclePlacement,
+    startAddEllipsePlacement,
     startAddPolygonPlacement,
     startAddSplinePlacement,
     startAddCompositePlacement,
@@ -162,7 +163,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     setShowImportDialog(true)
   }
 
-  function togglePlacement(shape: 'rect' | 'circle' | 'polygon' | 'spline' | 'composite', start: () => void) {
+  function togglePlacement(shape: 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite', start: () => void) {
     if (pendingAdd?.shape === shape) {
       cancelPendingAdd()
       return
@@ -395,6 +396,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleRedo: redo,
     handleRect: () => togglePlacement('rect', startAddRectPlacement),
     handleCircle: () => togglePlacement('circle', startAddCirclePlacement),
+    handleEllipse: () => togglePlacement('ellipse', startAddEllipsePlacement),
     handlePolygon: () => togglePlacement('polygon', startAddPolygonPlacement),
     handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
     handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
@@ -548,6 +550,7 @@ function CreationActions({
   onCreationTargetChange,
   onRect,
   onCircle,
+  onEllipse,
   onPolygon,
   onSpline,
   onComposite,
@@ -559,6 +562,7 @@ function CreationActions({
   onCreationTargetChange: (target: CreationTarget) => void
   onRect: () => void
   onCircle: () => void
+  onEllipse: () => void
   onPolygon: () => void
   onSpline: () => void
   onComposite: () => void
@@ -610,6 +614,13 @@ function CreationActions({
           active={pendingShape === 'circle'}
           tooltipSide={tooltipSide}
           onClick={onCircle}
+        />
+        <ToolbarActionButton
+          icon="ellipse"
+          label={pendingShape === 'ellipse' ? 'Cancel ellipse tool' : `Add ${creationTarget} ellipse`}
+          active={pendingShape === 'ellipse'}
+          tooltipSide={tooltipSide}
+          onClick={onEllipse}
         />
         <ToolbarActionButton
           icon="polygon"
@@ -1202,6 +1213,7 @@ export function CreationToolbar({
           onCreationTargetChange={toolbar.setCreationTarget}
           onRect={toolbar.handleRect}
           onCircle={toolbar.handleCircle}
+          onEllipse={toolbar.handleEllipse}
           onPolygon={toolbar.handlePolygon}
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
@@ -1325,6 +1337,7 @@ export function Toolbar({
           onCreationTargetChange={toolbar.setCreationTarget}
           onRect={toolbar.handleRect}
           onCircle={toolbar.handleCircle}
+          onEllipse={toolbar.handleEllipse}
           onPolygon={toolbar.handlePolygon}
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
