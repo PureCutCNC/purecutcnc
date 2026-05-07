@@ -24,12 +24,15 @@ import type {
   SketchProfile,
 } from '../../types/project'
 import {
+  buildSegmentAnnotations,
   clipperContourToProfile,
+  clipperContourToProfilePreserving,
   executeClipTree,
   flattenFeatureToClipperPath,
   getClipperChildren,
   offsetClipperPaths,
   type ClipperPolyNode,
+  type SegmentAnnotation,
   unionClipperPaths,
 } from './clipping'
 
@@ -61,6 +64,8 @@ function collectDerivedFeaturesFromPolyTree(
   baseOperation: FeatureOperation,
   baseName: string,
   createDerivedFeature: DerivedFeatureFactory,
+  sourceFeatures: SketchFeature[],
+  segAnnotations: Map<string, SegmentAnnotation>,
   contourDepth = 0,
 ): SketchFeature[] {
   const created: SketchFeature[] = []
@@ -68,7 +73,8 @@ function collectDerivedFeaturesFromPolyTree(
   const nextContourDepth = contour.length > 0 ? contourDepth + 1 : contourDepth
 
   if (contour.length > 0) {
-    const profile = clipperContourToProfile(contour)
+    const profile = clipperContourToProfilePreserving(contour, sourceFeatures, segAnnotations)
+      ?? clipperContourToProfile(contour)
     if (profile) {
       const logicalDepth = nextContourDepth - 1
       const operation = logicalDepth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
@@ -89,6 +95,8 @@ function collectDerivedFeaturesFromPolyTree(
       baseOperation,
       baseName,
       createDerivedFeature,
+      sourceFeatures,
+      segAnnotations,
       nextContourDepth,
     ))
   }
@@ -107,6 +115,8 @@ export function cutFeaturesByCutterGrouped(
   const groups: DerivedFeatureGroup[] = []
 
   for (const target of targets) {
+    const sourceFeatures = [cutter, target]
+    const segAnnotations = buildSegmentAnnotations(sourceFeatures)
     const subjectPaths = [flattenFeatureToClipperPath(target)]
     const polyTree = executeClipTree(subjectPaths, clipPaths, 2)
     const cutNameStem = normalizeDerivedFeatureNameStem(target.name)
@@ -117,6 +127,8 @@ export function cutFeaturesByCutterGrouped(
       target.operation,
       `${cutNameStem} Cut`,
       createDerivedFeature,
+      sourceFeatures,
+      segAnnotations,
     )
 
     const groupedFeatures: SketchFeature[] = []
