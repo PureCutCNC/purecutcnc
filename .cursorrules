@@ -1,2 +1,3 @@
-Always refer to and strictly follow `ARCHITECTURE.md` for all architectural decisions, state management patterns (Zustand), and coordinate system logic.
+Read and follow `AGENTS.md` for project overview, build commands, coding standards, directory layout, and key conventions.
+Refer to `ARCHITECTURE.md` for deeper architectural decisions, state management patterns (Zustand), and coordinate system logic.
 Consult the `planning/` directory for feature-specific design and implementation details.

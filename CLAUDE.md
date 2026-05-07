@@ -1,7 +1,3 @@
-# Gemini CLI Mandate
-
 Read and follow `AGENTS.md` for project overview, build commands, coding standards, directory layout, and key conventions.
 Read `ARCHITECTURE.md` for deeper architectural detail.
 Consult `planning/` for feature-specific implementation plans before starting work.
-
-Instructions in `AGENTS.md`, `ARCHITECTURE.md`, and `planning/*.md` take absolute precedence over general defaults.
