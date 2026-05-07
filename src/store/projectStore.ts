@@ -2509,6 +2509,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   filePath: null,
   lastExportPath: null,
   dirty: false,
+  projectKey: 0,
   pendingConstraint: null,
   history: {
     past: [],
@@ -2580,6 +2581,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         pendingTransform: null,
         pendingOffset: null,
         selection: emptySelection(),
+        projectKey: state.projectKey + 1,
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
           future: [],
@@ -2986,6 +2988,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         pendingTransform: null,
         pendingOffset: null,
         selection: emptySelection(),
+        projectKey: state.projectKey + 1,
         history: {
           past: [...state.history.past, cloneProject(state.project)].slice(-100),
           future: [],

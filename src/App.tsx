@@ -112,6 +112,7 @@ function App() {
   const menuRef = useRef<HTMLDivElement>(null)
   const {
     project,
+    projectKey,
     selection,
     selectFeature,
     enterSketchEdit,
@@ -809,6 +810,7 @@ function App() {
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
             playbackInput={simulationPlaybackInput}
+            projectKey={projectKey}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}
@@ -842,7 +844,18 @@ function App() {
       )}
 
       {showNewProjectDialog && (
-        <NewProjectDialog onClose={() => setShowNewProjectDialog(false)} />
+        <NewProjectDialog
+          onClose={() => setShowNewProjectDialog(false)}
+          onCreated={() => {
+            hasAutoFramed3DRef.current = false
+            setCenterTab('sketch')
+            window.requestAnimationFrame(() => {
+              window.requestAnimationFrame(() => {
+                sketchCanvasRef.current?.zoomToModel()
+              })
+            })
+          }}
+        />
       )}
 
       {treeContextMenu && menuPosition && (menuFeature || menuTab || menuClamp) ? (

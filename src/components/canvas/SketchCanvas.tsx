@@ -290,6 +290,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const {
     project,
+    projectKey,
     pendingAdd,
     pendingMove,
     pendingTransform,
@@ -1676,9 +1677,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     zoomToModel: () => {
       const canvas = canvasRef.current
       if (!canvas) return
-      setViewState(computeFitViewState(project, canvas.width, canvas.height))
+      setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
     },
-  }), [project])
+  }), [])
+
+  useEffect(() => {
+    if (projectKey === 0) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectKey])
 
   useEffect(() => {
     const container = containerRef.current
