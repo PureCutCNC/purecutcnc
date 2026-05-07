@@ -346,6 +346,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingOffset,
     completePendingShapeAction,
     cancelPendingShapeAction,
+    confirmCutCutters,
     setPendingShapeActionKeepOriginals,
     setBackdropImageLoading,
     beginConstraint,
@@ -3517,6 +3518,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (event.key === 'Tab' && pendingShapeAction?.kind === 'cut' && pendingShapeAction.phase === 'cutters' && pendingShapeAction.cutterIds.length > 0) {
+      event.preventDefault()
+      confirmCutCutters()
+      return
+    }
+
     if (event.key === 'Escape' && pendingShapeAction) {
       cancelPendingShapeAction()
       return
@@ -4370,11 +4377,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? pendingShapeAction.entityIds.length < 2
                 ? 'Join mode. Shift-click closed features to select at least two.'
                 : `Join mode. ${pendingShapeAction.entityIds.length} closed features selected.`
-              : !pendingShapeAction.cutterId
-                ? 'Cut mode. Click one closed feature to use as the cutter.'
+              : pendingShapeAction.phase === 'cutters'
+                ? pendingShapeAction.cutterIds.length === 0
+                  ? <>Cut mode. Click closed features to select cutters. Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm cutters" onClick={confirmCutCutters} onKeyDown={(e) => { if (e.key === 'Enter') confirmCutCutters() }}>Tab</kbd> to confirm cutters.</>
+                  : <>Cut mode. {pendingShapeAction.cutterIds.length} cutter{pendingShapeAction.cutterIds.length === 1 ? '' : 's'} selected. Shift-click to add more, or press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm cutters" onClick={confirmCutCutters} onKeyDown={(e) => { if (e.key === 'Enter') confirmCutCutters() }}>Tab</kbd> to confirm cutters.</>
                 : pendingShapeAction.targetIds.length === 0
-                  ? 'Cut mode. Shift-click closed features that intersect the cutter to select targets.'
-                  : `Cut mode. 1 cutter and ${pendingShapeAction.targetIds.length} target${pendingShapeAction.targetIds.length === 1 ? '' : 's'} selected.`}
+                  ? `Cut mode. ${pendingShapeAction.cutterIds.length} cutter${pendingShapeAction.cutterIds.length === 1 ? '' : 's'} confirmed. Shift-click closed features that intersect a cutter to select targets.`
+                  : `Cut mode. ${pendingShapeAction.cutterIds.length} cutter${pendingShapeAction.cutterIds.length === 1 ? '' : 's'} and ${pendingShapeAction.targetIds.length} target${pendingShapeAction.targetIds.length === 1 ? '' : 's'} selected. Shift-click to add or remove targets.`}
             {' '}
           </span>
           <label className="sketch-place-toggle">

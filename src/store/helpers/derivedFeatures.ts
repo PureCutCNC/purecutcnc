@@ -106,16 +106,16 @@ function collectDerivedFeaturesFromPolyTree(
 
 export function cutFeaturesByCutterGrouped(
   project: Project,
-  cutter: SketchFeature,
+  cutters: SketchFeature[],
   targets: SketchFeature[],
   createDerivedFeature: DerivedFeatureFactory,
 ): DerivedFeatureGroup[] {
-  const clipPaths = [flattenFeatureToClipperPath(cutter)]
+  const clipPaths = cutters.map((cutter) => flattenFeatureToClipperPath(cutter))
   const existingNames = [...project.features.map((feature) => feature.name)]
   const groups: DerivedFeatureGroup[] = []
 
   for (const target of targets) {
-    const sourceFeatures = [cutter, target]
+    const sourceFeatures = [...cutters, target]
     const segAnnotations = buildSegmentAnnotations(sourceFeatures)
     const subjectPaths = [flattenFeatureToClipperPath(target)]
     const polyTree = executeClipTree(subjectPaths, clipPaths, 2)

@@ -150,6 +150,45 @@ export function featuresFormConnectedOverlapGroup(features: SketchFeature[]): bo
   return visited.size === features.length
 }
 
+export function largestConnectedOverlapGroup(features: SketchFeature[]): SketchFeature[] {
+  if (features.length <= 1) {
+    return features
+  }
+
+  let bestGroup: number[] = []
+  const assigned = new Set<number>()
+
+  for (let start = 0; start < features.length; start += 1) {
+    if (assigned.has(start)) {
+      continue
+    }
+    const visited = new Set<number>([start])
+    const stack = [start]
+
+    while (stack.length > 0) {
+      const currentIndex = stack.pop()!
+      for (let index = 0; index < features.length; index += 1) {
+        if (visited.has(index)) {
+          continue
+        }
+        if (featuresOverlap(features[currentIndex], features[index])) {
+          visited.add(index)
+          stack.push(index)
+        }
+      }
+    }
+
+    for (const index of visited) {
+      assigned.add(index)
+    }
+    if (visited.size > bestGroup.length) {
+      bestGroup = [...visited]
+    }
+  }
+
+  return bestGroup.map((index) => features[index])
+}
+
 export function offsetClipperPaths(paths: ReturnType<typeof flattenFeatureToClipperPath>[], delta: number) {
   if (paths.length === 0) {
     return []
@@ -612,5 +651,11 @@ export function clipperContourToProfilePreserving(
   }
 
   if (segments.length < 2) return null
+
+  const lastTo = segments[segments.length - 1].to
+  if (Math.abs(lastTo.x - startVertex.x) > 1e-9 || Math.abs(lastTo.y - startVertex.y) > 1e-9) {
+    segments.push({ type: 'line', to: startVertex })
+  }
+
   return { start: startVertex, segments, closed: true }
 }

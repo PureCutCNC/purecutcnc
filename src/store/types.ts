@@ -149,8 +149,9 @@ export type PendingShapeActionTool =
     }
   | {
       kind: 'cut'
-      cutterId: string | null
+      cutterIds: string[]
       targetIds: string[]
+      phase: 'cutters' | 'targets'
       keepOriginals: boolean
       session: number
     }
@@ -355,6 +356,7 @@ export interface ProjectStore {
   startJoinSelectedFeatures: () => void
   startCutSelectedFeatures: () => void
   cancelPendingShapeAction: () => void
+  confirmCutCutters: () => void
   setPendingShapeActionKeepOriginals: (keepOriginals: boolean) => void
   completePendingShapeAction: () => string[]
   startOffsetSelectedFeatures: () => void

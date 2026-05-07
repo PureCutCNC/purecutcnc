@@ -567,22 +567,25 @@ export function createPendingCompletionSlice(
         return result
       }
 
-      if (!pendingShapeAction.cutterId || pendingShapeAction.targetIds.length === 0) {
+      if (pendingShapeAction.cutterIds.length === 0 || pendingShapeAction.targetIds.length === 0) {
         return []
       }
 
-      const cutter = featureById(state.project, pendingShapeAction.cutterId)
+      const cutters = pendingShapeAction.cutterIds
+        .map((cId) => featureById(state.project, cId))
+        .filter((feature): feature is SketchFeature => feature !== null)
+        .filter((feature) => feature.sketch.profile.closed)
       const targets = pendingShapeAction.targetIds
         .map((featureId) => featureById(state.project, featureId))
         .filter((feature): feature is SketchFeature => feature !== null)
         .filter((feature) => feature.sketch.profile.closed)
-      if (!cutter || !cutter.sketch.profile.closed || targets.length !== pendingShapeAction.targetIds.length) {
+      if (cutters.length !== pendingShapeAction.cutterIds.length || targets.length !== pendingShapeAction.targetIds.length) {
         return []
       }
 
       const createdGroups: DerivedFeatureGroup[] = cutFeaturesByCutterGrouped(
         state.project,
-        cutter,
+        cutters,
         targets,
         deps.createDerivedFeature,
       )

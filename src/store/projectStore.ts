@@ -4480,7 +4480,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
     const cutter = selectedFeatures[selectedFeatures.length - 1]
     const targets = selectedFeatures.filter((feature) => feature.id !== cutter.id)
-    const createdGroups = cutFeaturesByCutterGrouped(state.project, cutter, targets, createDerivedFeature)
+    const createdGroups = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
     const createdFeatures = createdGroups.flatMap((group) => group.features)
 
     if (createdFeatures.length === 0) {
