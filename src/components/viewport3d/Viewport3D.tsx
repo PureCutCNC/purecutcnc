@@ -619,7 +619,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
-  const { project, selection } = useProjectStore()
+  const { project, selection, projectKey } = useProjectStore()
   zoomWindowActiveRef.current = zoomWindowActive
   zoomWindowBoxRef.current = zoomWindowBox
 
@@ -979,10 +979,37 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       clearOriginObject(scene)
     }
   }, [clearOriginObject, originVisible, project.origin, project.stock])
+// Reset to default isometric view when a new project is created/loaded
+useEffect(() => {
+  if (projectKey === 0) return
+  const controls = controlsRef.current
+  if (!controls) return
 
-  useImperativeHandle(ref, () => ({
-    zoomToModel,
-  }), [zoomToModel])
+  // Scene objects are rebuilt in a separate effect with a 150ms timeout.
+  // Wait for them to be available before fitting to bounds.
+  const timer = setTimeout(() => {
+    const bounds = new THREE.Box3()
+    let hasRenderableObject = false
+    for (const object of objectsRef.current) {
+      if (!object.visible) continue
+      bounds.expandByObject(object)
+      hasRenderableObject = true
+    }
+    if (!hasRenderableObject || bounds.isEmpty()) {
+      controls.reset()
+      return
+    }
+    controls.fitToBounds(bounds, true)
+  }, 250)
+
+  return () => clearTimeout(timer)
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [projectKey])
+
+useImperativeHandle(ref, () => ({
+  zoomToModel,
+}), [zoomToModel])
+
 
   useEffect(() => {
     if (!zoomWindowActive) {

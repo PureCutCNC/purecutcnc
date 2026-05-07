@@ -113,6 +113,8 @@ interface SimulationViewportProps {
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
   playbackInput: SimulationPlaybackInput | null
+  /** Incremented each time the project changes so the viewport can reset its camera. */
+  projectKey?: number
 }
 
 export interface SimulationViewportHandle {
@@ -442,6 +444,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowActive = false,
   onZoomWindowComplete,
   playbackInput,
+  projectKey,
 }, ref) {
   const playbackUnits = playbackInput?.units ?? 'mm'
   const fallbackFeed = playbackUnits === 'in' ? PLAYBACK_FALLBACK_FEED_IN : PLAYBACK_FALLBACK_FEED_MM
@@ -940,6 +943,30 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeOriginMesh(scene)
     }
   }, [disposeOriginMesh, origin, simulation])
+
+  // Reset camera on project change so the viewport doesn't keep the previous
+  // project's camera position/orientation when a new project is created.
+  useEffect(() => {
+    if (!projectKey) return
+    hasAutoFramedRef.current = false
+    const controls = controlsRef.current
+    if (!controls) return
+    controls.setPreset('iso')
+    // Wait for any pending simulation build (debounced 150ms) to complete,
+    // then auto-frame if a mesh exists.
+    const timer = setTimeout(() => {
+      const object = objectRef.current
+      if (object instanceof THREE.Mesh) {
+        const bounds = new THREE.Box3().setFromObject(object)
+        if (!bounds.isEmpty()) {
+          controls.fitToBounds(bounds, true)
+          hasAutoFramedRef.current = true
+        }
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectKey])
 
   useImperativeHandle(ref, () => ({
     zoomToModel,

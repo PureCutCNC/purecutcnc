@@ -25,6 +25,7 @@ type TemplateKind = 'blank_metric' | 'blank_imperial' | 'current' | 'file'
 
 interface NewProjectDialogProps {
   onClose: () => void
+  onCreated?: () => void
 }
 
 function suggestedProjectName(kind: TemplateKind, currentProject: Project, fileTemplate: Project | null): string {
@@ -71,7 +72,7 @@ function setupOnlyTemplate(template: Project): Project {
   }
 }
 
-export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
+export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) {
   const { project, createNewProject } = useProjectStore()
   const [templateKind, setTemplateKind] = useState<TemplateKind>('blank_metric')
   const [fileTemplate, setFileTemplate] = useState<Project | null>(null)
@@ -145,6 +146,7 @@ export function NewProjectDialog({ onClose }: NewProjectDialogProps) {
 
     createNewProject(activeTemplate, projectName.trim() || suggestedProjectName(templateKind, project, fileTemplate))
     onClose()
+    onCreated?.()
   }
 
   function handleTemplateFileChange(event: ChangeEvent<HTMLInputElement>) {
