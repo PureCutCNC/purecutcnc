@@ -18,7 +18,7 @@
  * A 3D finishing operation that cleans the walls of a 3D model by following
  * its true surface contour at each step-down level.
  *
- * A single parallel-strategy path is used:
+ * Two strategies are available:
  *
  *   Parallel (pocketPattern === 'parallel'):
  *     1. Use the model's projected silhouette, clipped by selected regions
@@ -27,12 +27,24 @@
  *     4. At each scanline Y, find X-intervals inside the coverage contours
  *     5. Sample the top height map along each interval
  *     6. Emit each interval as its own 3D cut segment
+ *
+ *   Waterline (pocketPattern === 'waterline'):
+ *     1. Step down in Z from model top to bottom at coarse stepdown intervals
+ *     2. At each Z, slice the mesh to get the cross-section contour
+ *     3. Compare consecutive contours — if XY gap exceeds stepover × diameter,
+ *        subdivide the Z interval (adaptive refinement for sloped walls)
+ *     4. Offset each contour outward by tool.radius + stockToLeaveRadial
+ *     5. Clip to region features and subtract protected footprints
+ *     6. Emit as closed contour cuts at each Z level
  */
 
-import { getProfileBounds, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
+import ClipperLib from 'clipper-lib'
+import { getProfileBounds, type CutDirection, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
+  applyContourDirection,
+  checkMaxCutDepthWarning,
   flattenProfile,
   getOperationSafeZ,
   normalizeToolForProject,
@@ -40,18 +52,23 @@ import {
   toClipperPath,
 } from './geometry'
 import {
+  contourStartPoint,
   generateStepLevels,
   retractToSafe,
+  toClosedCutMoves,
   transitionToCutEntry,
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
+import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 import { buildRegionMask, clipTupleContoursToRegionMask, splitFeatureTargets } from './regions'
 import { significantSilhouettePaths } from './silhouette'
 import {
   buildProtectedFootprintPaths,
+  clipperPathsToPointContours,
   clipperPathsToTupleContours,
   differenceClipperPaths,
+  intersectClipperPaths,
   offsetClipperPaths,
   relatedSubtractFeatures,
   safeSubtractBottomZAtPoint,
@@ -675,6 +692,234 @@ function generateFinishSurfaceParallel(
   return { moves: allMoves, stepLevels: allStepLevels }
 }
 
+// ── Waterline strategy helpers ──────────────────────────────────────────
+
+const MIN_Z_STEP = 0.01
+const MAX_SUBDIVISION_DEPTH = 8
+
+function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
+  return slicePolygons
+    .filter((poly) => poly.length >= 3)
+    .map((poly) => toClipperPath(
+      normalizeWinding(poly.map(([x, y]) => ({ x, y })), false),
+      DEFAULT_CLIPPER_SCALE,
+    ))
+}
+
+/**
+ * Measure the maximum XY gap between two contour sets using Clipper XOR.
+ * The gap represents the worst-case stair-step width between Z levels.
+ *
+ * Returns the approximate maximum "thickness" of the XOR region by
+ * computing max(area / perimeter) across XOR polygons — a proxy for
+ * the widest band between the two contour sets.
+ */
+export function maxContourGap(pathsA: ClipperPath[], pathsB: ClipperPath[]): number {
+  if (pathsA.length === 0 || pathsB.length === 0) return Infinity
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(pathsA, ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(pathsB, ClipperLib.PolyType.ptClip, true)
+  const xorResult = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctXor,
+    xorResult,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+
+  if (xorResult.length === 0) return 0
+
+  let maxWidth = 0
+  for (const path of xorResult as ClipperPath[]) {
+    if (path.length < 3) continue
+    const area = Math.abs(ClipperLib.Clipper.Area(path))
+    const perimeter = ClipperLib.JS.PerimeterOfPath(path, true, 1)
+    if (perimeter > 0) {
+      const width = (2 * area) / perimeter / DEFAULT_CLIPPER_SCALE
+      if (width > maxWidth) maxWidth = width
+    }
+  }
+
+  return maxWidth
+}
+
+interface WaterlineLevel {
+  z: number
+  shadowPaths: ClipperPath[]
+  contourPaths: ClipperPath[]
+}
+
+/**
+ * Waterline strategy for finish surface.
+ *
+ * Uses a cumulative shadow (union of all mesh slices from the top down to
+ * the current Z) — the same approach as the rough surface operation.
+ * This ensures each waterline contour follows the outermost model wall at
+ * that depth rather than just the local cross-section, preventing the tool
+ * from cutting into material that belongs to wider upper cross-sections.
+ *
+ * Adaptive refinement: after building contours at the coarse step levels,
+ * compares consecutive contours and inserts midpoints where the XY gap
+ * exceeds stepover × diameter. Iterates until converged.
+ */
+function generateFinishSurfaceWaterline(
+  project: Project,
+  operation: Operation,
+  regionFeatures: SketchFeature[],
+  tool: ReturnType<typeof normalizeToolForProject>,
+  stepLevels: number[],
+  stlData: { positions: Float32Array; index: Uint32Array; sliceIndex?: unknown },
+  safeZ: number,
+  effectiveBottom: number,
+  modelTopZ: number,
+  warnings: string[],
+): { moves: ToolpathMove[]; stepLevels: Set<number> } {
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  const toolOffset = tool.radius + radialLeave
+  const direction: CutDirection = operation.cutDirection ?? 'conventional'
+  const stepoverRatio = operation.stepover ?? 0.5
+  const maxGap = Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP)
+  const minZStep = MIN_Z_STEP
+
+  const regionMask = buildRegionMask(regionFeatures)
+  const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
+  const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - effectiveBottom) * 1e-6, 1e-6)
+
+  const targetFeatureIds = new Set(
+    operation.target.source === 'features' ? operation.target.featureIds : [],
+  )
+  const protectedPaths = buildProtectedFootprintPaths(project, {
+    targetFeatureIds,
+    featureExpansion: toolOffset,
+    tabExpansion: tool.radius,
+    clampExpansion: tool.radius,
+  })
+
+  if (operation.debugToolpath) {
+    warnings.push(
+      `Debug: waterline mode, maxGap=${maxGap.toFixed(4)}, toolOffset=${toolOffset.toFixed(4)}`,
+    )
+  }
+
+  const sliceAtZ = (z: number): ClipperPath[] => {
+    const clampedZ = z >= modelTopZ - sliceSampleEpsilon
+      ? Math.max(effectiveBottom + sliceSampleEpsilon, modelTopZ - sliceSampleEpsilon)
+      : z
+    const polygons = sliceMeshAtZ(sliceIndex, clampedZ)
+    if (polygons.length === 0) return []
+    return unionClipperPaths(slicePolygonsToClipperPaths(polygons))
+  }
+
+  // ═══ Phase 1: Build initial waterline levels with cumulative shadow ════
+  //     The shadow at each Z is the union of all mesh slices from the top
+  //     down to that Z — identical to how rough surface builds its
+  //     protected model shadow.
+
+  let levels: WaterlineLevel[] = []
+  {
+    let shadow: ClipperPath[] = []
+    for (const z of stepLevels) {
+      const slice = sliceAtZ(z)
+      if (slice.length > 0) {
+        shadow = unionClipperPaths([...shadow, ...slice])
+      }
+      levels.push({
+        z,
+        shadowPaths: shadow,
+        contourPaths: shadow.length > 0 ? offsetClipperPaths(shadow, toolOffset) : [],
+      })
+    }
+  }
+
+  // ═══ Phase 2: Iterative adaptive refinement ════════════════════════════
+  //     Compare consecutive contours; where the XY gap exceeds maxGap,
+  //     insert a midpoint. The midpoint's shadow is the upper level's
+  //     shadow unioned with the slice at the midpoint Z.
+
+  for (let iter = 0; iter < MAX_SUBDIVISION_DEPTH; iter += 1) {
+    const refined: WaterlineLevel[] = [levels[0]]
+    let changed = false
+
+    for (let i = 0; i < levels.length - 1; i += 1) {
+      const upper = levels[i]
+      const lower = levels[i + 1]
+      const gap = maxContourGap(upper.contourPaths, lower.contourPaths)
+
+      if (gap > maxGap && (upper.z - lower.z) > minZStep) {
+        const zMid = (upper.z + lower.z) / 2
+        const midSlice = sliceAtZ(zMid)
+        const midShadow = midSlice.length > 0
+          ? unionClipperPaths([...upper.shadowPaths, ...midSlice])
+          : upper.shadowPaths
+        refined.push({
+          z: zMid,
+          shadowPaths: midShadow,
+          contourPaths: midShadow.length > 0 ? offsetClipperPaths(midShadow, toolOffset) : [],
+        })
+        changed = true
+      }
+
+      refined.push(lower)
+    }
+
+    if (!changed) break
+    levels = refined
+  }
+
+  if (operation.debugToolpath) {
+    warnings.push(
+      `Debug: ${stepLevels.length} coarse levels → ${levels.length} waterline levels after adaptive refinement`,
+    )
+  }
+
+  // ═══ Phase 3: Emit contours at each waterline level ════════════════════
+
+  const allMoves: ToolpathMove[] = []
+  const allStepLevels = new Set<number>()
+  let currentPosition: ToolpathPoint | null = null
+
+  const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(modelTopZ - effectiveBottom))
+  if (depthWarning) warnings.push(depthWarning)
+
+  for (const level of levels) {
+    allStepLevels.add(level.z)
+
+    let contourPaths = level.contourPaths
+    if (contourPaths.length === 0) {
+      currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
+      continue
+    }
+
+    if (regionMask) {
+      contourPaths = intersectClipperPaths(contourPaths, regionMask.paths)
+    }
+
+    if (protectedPaths.length > 0) {
+      contourPaths = differenceClipperPaths(contourPaths, protectedPaths)
+    }
+
+    if (contourPaths.length === 0) {
+      currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
+      continue
+    }
+
+    const pointContours = clipperPathsToPointContours(contourPaths)
+    const directedContours = applyContourDirection(pointContours, direction)
+
+    for (const contour of directedContours) {
+      if (contour.length < 3) continue
+
+      const entry = contourStartPoint(contour, level.z)
+      currentPosition = transitionToCutEntry(allMoves, currentPosition, entry, safeZ, 0)
+      allMoves.push(...toClosedCutMoves(contour, level.z))
+      currentPosition = { x: contour[0].x, y: contour[0].y, z: level.z }
+    }
+  }
+
+  return { moves: allMoves, stepLevels: allStepLevels }
+}
+
 // ── Main entry point ────────────────────────────────────────────────────
 
 export function generateFinishSurfaceToolpath(
@@ -814,8 +1059,18 @@ export function generateFinishSurfaceToolpath(
   }
 
   // ── Step levels ────────────────────────────────────────────────────────
+  //     For ball end mills in waterline mode, use finer initial Z steps.
+  //     A ball end mill at offset R from a vertical wall only contacts at
+  //     a single point per Z level, so coarse steps leave stair-steps.
+  //     The adaptive refinement won't trigger on vertical walls (XY gap = 0)
+  //     so we must start with dense levels matching the scallop tolerance.
 
-  const stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
+  const stepoverRatio = operation.stepover ?? 0.5
+  const isWaterlineBall = operation.pocketPattern === 'waterline' && tool.type === 'ball_endmill'
+  const waterlineStepdown = isWaterlineBall
+    ? Math.min(operation.stepdown, Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP))
+    : operation.stepdown
+  const stepLevels = generateStepLevels(modelTopZ, effectiveBottom, waterlineStepdown)
   if (stepLevels.length === 0) {
     return {
       operationId: operation.id,
@@ -836,35 +1091,48 @@ export function generateFinishSurfaceToolpath(
     safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
   )
 
-  // ── Generate parallel finish toolpath ─────────────────────────────────
+  // ── Dispatch to strategy ──────────────────────────────────────────────
 
-  const parallelResult = generateFinishSurfaceParallel(
-    project,
-    operation,
-    modelFeature,
-    regionFeatures,
-    tool,
-    stepLevels,
-    transformedPos,
-    index,
-    stlData as HeightMapCacheHost,
-    safeZ,
-    maxLinkDistance,
-    minCutZAtPoint,
-    warnings,
-  )
+  const strategyResult = operation.pocketPattern === 'waterline'
+    ? generateFinishSurfaceWaterline(
+      project,
+      operation,
+      regionFeatures,
+      tool,
+      stepLevels,
+      stlData,
+      safeZ,
+      effectiveBottom,
+      modelTopZ,
+      warnings,
+    )
+    : generateFinishSurfaceParallel(
+      project,
+      operation,
+      modelFeature,
+      regionFeatures,
+      tool,
+      stepLevels,
+      transformedPos,
+      index,
+      stlData as HeightMapCacheHost,
+      safeZ,
+      maxLinkDistance,
+      minCutZAtPoint,
+      warnings,
+    )
 
   let bounds: ToolpathBounds | null = null
-  for (const move of parallelResult.moves) {
+  for (const move of strategyResult.moves) {
     bounds = updateBounds(bounds, move.from)
     bounds = updateBounds(bounds, move.to)
   }
 
   return {
     operationId: operation.id,
-    moves: parallelResult.moves,
+    moves: strategyResult.moves,
     warnings,
     bounds,
-    stepLevels: [...parallelResult.stepLevels].sort((a, b) => b - a),
+    stepLevels: [...strategyResult.stepLevels].sort((a, b) => b - a),
   }
 }

@@ -1729,7 +1729,7 @@ function defaultOperationForTarget(
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
-    pocketPattern: kind === 'finish_surface' ? 'parallel' : 'offset',
+    pocketPattern: kind === 'finish_surface' ? 'waterline' : 'offset',
     pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,

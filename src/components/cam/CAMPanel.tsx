@@ -328,6 +328,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return 'Offset'
     case 'parallel':
       return 'Parallel'
+    case 'waterline':
+      return 'Waterline'
   }
 }
 
@@ -1376,6 +1378,19 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
+                  {selectedOperation.kind === 'finish_surface' ? (
+                    <label className="properties-field">
+                      <span>Pattern</span>
+                      <Select
+                        value={selectedOperation.pocketPattern}
+                        options={[
+                          { value: 'parallel', label: pocketPatternLabel('parallel') },
+                          { value: 'waterline', label: pocketPatternLabel('waterline') },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
+                      />
+                    </label>
+                  ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface') && selectedOperation.pocketPattern === 'parallel' ? (
                     <label className="properties-field">
                       <span>Angle</span>
@@ -1672,15 +1687,28 @@ export function CAMPanel({
                     </>
                   ) : null}
                   {selectedOperation.kind === 'finish_surface' ? (
-                    <label className="properties-field">
-                      <span>Stock To Leave Axial</span>
-                      <DraftLengthInput
-                        value={selectedOperation.stockToLeaveAxial}
-                        units={project.meta.units}
-                        min={0}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
-                      />
-                    </label>
+                    <>
+                      {selectedOperation.pocketPattern === 'waterline' ? (
+                        <label className="properties-field">
+                          <span>Stock To Leave Radial</span>
+                          <DraftLengthInput
+                            value={selectedOperation.stockToLeaveRadial}
+                            units={project.meta.units}
+                            min={0}
+                            onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="properties-field">
+                        <span>Stock To Leave Axial</span>
+                        <DraftLengthInput
+                          value={selectedOperation.stockToLeaveAxial}
+                          units={project.meta.units}
+                          min={0}
+                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
+                        />
+                      </label>
+                    </>
                   ) : null}
                     </div>
                   </div>

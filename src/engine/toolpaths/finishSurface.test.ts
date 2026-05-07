@@ -5,8 +5,9 @@
  */
 
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
-import { generateFinishSurfaceToolpath } from './finishSurface'
-import type { ToolpathMove } from './types'
+import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
+import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE } from './geometry'
+import type { ClipperPath, ToolpathMove } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -291,10 +292,170 @@ function testFinishSurfaceRespectsSplitPocketDepths(): void {
   assert(leftCutsBelowShallow.length === 0, `expected no finish cuts below shallow pocket bottom on left side, got ${leftCutsBelowShallow.length}`)
 }
 
+// ── Waterline tests ──────────────────────────────────────────────────────
+
+function makeSquareContour(cx: number, cy: number, halfSize: number): ClipperPath {
+  const points = [
+    { x: cx - halfSize, y: cy - halfSize },
+    { x: cx + halfSize, y: cy - halfSize },
+    { x: cx + halfSize, y: cy + halfSize },
+    { x: cx - halfSize, y: cy + halfSize },
+  ]
+  return toClipperPath(normalizeWinding(points, false), DEFAULT_CLIPPER_SCALE)
+}
+
+function testMaxContourGapIdenticalContours(): void {
+  console.log('Testing maxContourGap with identical contours...')
+  const contour = makeSquareContour(10, 10, 5)
+  const gap = maxContourGap([contour], [contour])
+  assert(gap < 0.01, `expected near-zero gap for identical contours, got ${gap}`)
+}
+
+function testMaxContourGapDifferentContours(): void {
+  console.log('Testing maxContourGap with offset contours...')
+  const contourA = makeSquareContour(10, 10, 5)
+  const contourB = makeSquareContour(10, 10, 3)
+  const gap = maxContourGap([contourA], [contourB])
+  assert(gap > 1, `expected significant gap for different-size contours, got ${gap}`)
+}
+
+function testMaxContourGapEmptyReturnsInfinity(): void {
+  console.log('Testing maxContourGap with empty paths...')
+  const contour = makeSquareContour(10, 10, 5)
+  const gap = maxContourGap([], [contour])
+  assert(gap === Infinity, `expected Infinity for empty paths, got ${gap}`)
+}
+
+function testWaterlineCumulativeShadowProtectsUpperLevels(): void {
+  console.log('Testing waterline cumulative shadow protects upper levels...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+
+  assert(cuts.length > 0, 'expected waterline cut moves')
+
+  for (const move of cuts) {
+    const minX = Math.min(move.from.x, move.to.x)
+    const maxX = Math.max(move.from.x, move.to.x)
+    const minY = Math.min(move.from.y, move.to.y)
+    const maxY = Math.max(move.from.y, move.to.y)
+    const z = move.to.z
+
+    if (z < 1 - 1e-9) {
+      const insideHighBoss = minX > 7.5 && maxX < 12.5 && minY > 2.5 && maxY < 7.5
+      assert(!insideHighBoss,
+        `waterline at z=${z.toFixed(3)} cuts inside the high boss area — cumulative shadow should prevent this`)
+    }
+  }
+}
+
+function makeWaterlineOperation(): Operation {
+  return {
+    ...makeOperation(),
+    pocketPattern: 'waterline',
+    stepover: 0.5,
+  }
+}
+
+function testWaterlineGeneratesContourMoves(): void {
+  console.log('Testing waterline generates contour cut moves...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected waterline contour cut moves')
+}
+
+function testWaterlineStepLevelsDescend(): void {
+  console.log('Testing waterline step levels are descending...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  assert(result.stepLevels.length > 0, 'expected step levels')
+  for (let i = 1; i < result.stepLevels.length; i += 1) {
+    assert(result.stepLevels[i] <= result.stepLevels[i - 1],
+      `expected descending step levels, got ${result.stepLevels[i - 1]} -> ${result.stepLevels[i]}`)
+  }
+}
+
+function testWaterlineRepeatIsStable(): void {
+  console.log('Testing waterline repeat generation is stable...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const first = generateFinishSurfaceToolpath(project, operation)
+  const second = generateFinishSurfaceToolpath(project, operation)
+  assert(first.moves.length === second.moves.length,
+    `expected stable move count, first=${first.moves.length}, second=${second.moves.length}`)
+}
+
+function testWaterlineRespectsContainingPocketDepth(): void {
+  console.log('Testing waterline respects containing subtract pocket depth...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.features = [makeContainingSubtractFeature(), ...project.features]
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const minCutZ = Math.min(...cuts.map((move) => Math.min(move.from.z, move.to.z)))
+  assert(cuts.length > 0, 'expected waterline cut moves')
+  assert(minCutZ >= 2 - 1e-9, `expected no waterline cuts below pocket bottom, got min Z ${minCutZ}`)
+}
+
+function testWaterlineBallEndmillDenserLevels(): void {
+  console.log('Testing waterline ball endmill produces denser Z levels than stepdown...')
+  const { project } = makeProject()
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const stepLevels = result.stepLevels
+  assert(stepLevels.length > 0, 'expected step levels')
+  const coarseLevelCount = Math.ceil((4 - 0) / operation.stepdown!) + 1
+  assert(stepLevels.length > coarseLevelCount,
+    `ball endmill waterline should produce more levels (${stepLevels.length}) than coarse stepdown would (${coarseLevelCount})`)
+}
+
+function testWaterlineFlatEndmillUsesCoarseSteps(): void {
+  console.log('Testing waterline flat endmill uses coarse stepdown levels...')
+  const { project } = makeProject()
+  project.tools = [{
+    ...makeTool(),
+    type: 'flat_endmill',
+    name: '1 mm flat endmill',
+  }]
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const stepLevels = result.stepLevels
+  assert(stepLevels.length > 0, 'expected step levels')
+  const coarseLevelCount = Math.ceil((4 - 0) / operation.stepdown!) + 1
+  assert(stepLevels.length <= coarseLevelCount + 2,
+    `flat endmill waterline should use roughly coarse stepdown levels (${stepLevels.length} vs ~${coarseLevelCount})`)
+}
+
+// ── Run all tests ────────────────────────────────────────────────────────
+
 testFinishSurfaceCoversLowerTopPlateau()
 testFinishSurfaceRepeatGenerationIsStable()
 testFinishSurfaceAvoidsSurroundingAddFeature()
 testFinishSurfaceRespectsContainingPocketDepth()
 testFinishSurfaceRespectsSplitPocketDepths()
+
+testMaxContourGapIdenticalContours()
+testMaxContourGapDifferentContours()
+testMaxContourGapEmptyReturnsInfinity()
+testWaterlineCumulativeShadowProtectsUpperLevels()
+
+testWaterlineGeneratesContourMoves()
+testWaterlineStepLevelsDescend()
+testWaterlineRepeatIsStable()
+testWaterlineRespectsContainingPocketDepth()
+testWaterlineBallEndmillDenserLevels()
+testWaterlineFlatEndmillUsesCoarseSteps()
 
 console.log('finishSurface tests passed')
