@@ -572,12 +572,10 @@ export function clipperContourToProfilePreserving(
     } else if (seg.type === 'arc' || seg.type === 'circle') {
       const center = seg.center
       // Determine clockwise from actual vertex traversal direction (normalizeWinding may have reversed)
-      let clockwise = seg.clockwise
-      if (run.endIdx > run.startIdx) {
-        const v0 = vertices[run.startIdx % n]
-        const v1 = vertices[(run.startIdx + 1) % n]
-        clockwise = arcIsClockwise(center, v0, v1)
-      }
+      const prevEnd = r > 0 ? vertices[runs[r - 1].endIdx % n] : startVertex
+      const clockwise = run.endIdx > run.startIdx
+        ? arcIsClockwise(center, vertices[run.startIdx % n], vertices[(run.startIdx + 1) % n])
+        : arcIsClockwise(center, prevEnd, vertices[run.startIdx % n])
       if (isComplete && seg.type === 'circle') {
         segments.push({ type: 'circle', to: runEndPoint, center: { x: center.x, y: center.y }, clockwise })
       } else {
