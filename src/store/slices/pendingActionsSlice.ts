@@ -16,6 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { Clamp, Project, SketchFeature, Tab } from '../../types/project'
+import { largestConnectedOverlapGroup } from '../helpers/clipping'
 import { selectedClosedFeaturesFromIds } from '../helpers/derivedFeatures'
 import { nextPlacementSession } from '../helpers/ids'
 import type { ProjectStore } from '../types'
@@ -43,6 +44,7 @@ export type PendingActionsSlice = Pick<
   | 'cancelPendingMove'
   | 'cancelPendingTransform'
   | 'cancelPendingShapeAction'
+  | 'confirmCutCutters'
   | 'setPendingShapeActionKeepOriginals'
   | 'setPendingTransformKeepOriginals'
   | 'cancelPendingOffset'
@@ -275,7 +277,9 @@ export function createPendingActionsSlice(
 
     startJoinSelectedFeatures: () =>
       set((s) => {
-        const featureIds = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds).map((feature) => feature.id)
+        const allClosed = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds)
+        const connectedGroup = largestConnectedOverlapGroup(allClosed)
+        const featureIds = connectedGroup.map((feature) => feature.id)
 
         return {
           pendingAdd: null,
@@ -297,23 +301,27 @@ export function createPendingActionsSlice(
       }),
 
     startCutSelectedFeatures: () =>
-      set((s) => ({
-        pendingAdd: null,
-        pendingMove: null,
-        pendingTransform: null,
-        pendingOffset: null,
-        pendingShapeAction: { kind: 'cut', cutterId: null, targetIds: [], keepOriginals: false, session: nextPlacementSession() },
-        sketchEditSession: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedNode: null,
-          mode: 'feature',
-          hoveredFeatureId: null,
-          activeControl: null,
-        },
-      })),
+      set((s) => {
+        const cutterIds = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds).map((feature) => feature.id)
+
+        return {
+          pendingAdd: null,
+          pendingMove: null,
+          pendingTransform: null,
+          pendingOffset: null,
+          pendingShapeAction: { kind: 'cut', cutterIds, targetIds: [], phase: 'cutters', keepOriginals: false, session: nextPlacementSession() },
+          sketchEditSession: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: cutterIds.at(-1) ?? null,
+            selectedFeatureIds: cutterIds,
+            selectedNode: cutterIds.at(-1) ? { type: 'feature', featureId: cutterIds.at(-1)! } : null,
+            mode: 'feature',
+            hoveredFeatureId: null,
+            activeControl: null,
+          },
+        }
+      }),
 
     startOffsetSelectedFeatures: () =>
       set((s) => {
@@ -448,6 +456,16 @@ export function createPendingActionsSlice(
       })),
 
     cancelPendingShapeAction: () => set({ pendingShapeAction: null }),
+
+    confirmCutCutters: () =>
+      set((s) => {
+        if (!s.pendingShapeAction || s.pendingShapeAction.kind !== 'cut' || s.pendingShapeAction.cutterIds.length === 0) {
+          return {}
+        }
+        return {
+          pendingShapeAction: { ...s.pendingShapeAction, phase: 'targets' },
+        }
+      }),
 
     setPendingShapeActionKeepOriginals: (keepOriginals) =>
       set((s) => ({

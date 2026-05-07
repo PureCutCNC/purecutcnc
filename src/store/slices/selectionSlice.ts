@@ -167,20 +167,25 @@ export function createSelectionSlice(
             return {}
           }
 
+          const existingIds = s.pendingShapeAction?.kind === 'join' ? s.pendingShapeAction.entityIds : []
           const proposedIds =
             !id
               ? []
               : additive
-                ? s.selection.selectedFeatureIds.includes(id)
-                  ? s.selection.selectedFeatureIds.filter((featureId) => featureId !== id)
-                  : [...s.selection.selectedFeatureIds, id]
-                : [id]
+                ? existingIds.includes(id)
+                  ? existingIds.filter((featureId) => featureId !== id)
+                  : [...existingIds, id]
+                : existingIds.length === 0
+                  ? [id]
+                  : existingIds.includes(id)
+                    ? existingIds
+                    : [...existingIds, id]
           const proposedFeatures = proposedIds
             .map((featureId) => featureById(s.project, featureId))
             .filter((feature): feature is SketchFeature => feature !== null)
           const nextIds = featuresFormConnectedOverlapGroup(proposedFeatures)
             ? proposedIds
-            : s.selection.selectedFeatureIds
+            : existingIds
           const nextPrimaryId = nextIds.at(-1) ?? null
 
           return {
@@ -208,13 +213,27 @@ export function createSelectionSlice(
           }
 
           if (!id) {
+            if (pendingShapeAction.phase === 'cutters') {
+              return {
+                pendingOffset: null,
+                pendingShapeAction: { ...pendingShapeAction, cutterIds: [], targetIds: [] },
+                selection: {
+                  ...s.selection,
+                  selectedFeatureId: null,
+                  selectedFeatureIds: [],
+                  selectedNode: null,
+                  mode: 'feature',
+                  activeControl: null,
+                },
+              }
+            }
             return {
               pendingOffset: null,
-              pendingShapeAction: { ...pendingShapeAction, cutterId: null, targetIds: [] },
+              pendingShapeAction: { ...pendingShapeAction, targetIds: [] },
               selection: {
                 ...s.selection,
                 selectedFeatureId: null,
-                selectedFeatureIds: [],
+                selectedFeatureIds: [...pendingShapeAction.cutterIds],
                 selectedNode: null,
                 mode: 'feature',
                 activeControl: null,
@@ -222,14 +241,19 @@ export function createSelectionSlice(
             }
           }
 
-          if (!pendingShapeAction.cutterId) {
+          if (pendingShapeAction.phase === 'cutters') {
+            const nextCutterIds = additive
+              ? pendingShapeAction.cutterIds.includes(id)
+                ? pendingShapeAction.cutterIds.filter((cId) => cId !== id)
+                : [...pendingShapeAction.cutterIds, id]
+              : [id]
             return {
               pendingOffset: null,
-              pendingShapeAction: { ...pendingShapeAction, cutterId: id, targetIds: [] },
+              pendingShapeAction: { ...pendingShapeAction, cutterIds: nextCutterIds, targetIds: [] },
               selection: {
                 ...s.selection,
                 selectedFeatureId: id,
-                selectedFeatureIds: [id],
+                selectedFeatureIds: nextCutterIds,
                 selectedNode: { type: 'feature', featureId: id },
                 mode: 'feature',
                 activeControl: null,
@@ -237,26 +261,14 @@ export function createSelectionSlice(
             }
           }
 
-          if (id === pendingShapeAction.cutterId) {
-            if (additive) {
-              return {}
-            }
-            return {
-              pendingOffset: null,
-              pendingShapeAction: { ...pendingShapeAction, cutterId: id, targetIds: [] },
-              selection: {
-                ...s.selection,
-                selectedFeatureId: id,
-                selectedFeatureIds: [id],
-                selectedNode: { type: 'feature', featureId: id },
-                mode: 'feature',
-                activeControl: null,
-              },
-            }
+          if (pendingShapeAction.cutterIds.includes(id)) {
+            return {}
           }
 
-          const cutter = featureById(s.project, pendingShapeAction.cutterId)
-          if (!cutter || !selectedFeature || !featuresOverlap(cutter, selectedFeature)) {
+          const cutters = pendingShapeAction.cutterIds
+            .map((cId) => featureById(s.project, cId))
+            .filter((f): f is SketchFeature => f !== null)
+          if (!selectedFeature || !cutters.some((cutter) => featuresOverlap(cutter, selectedFeature))) {
             return {}
           }
 
@@ -265,8 +277,8 @@ export function createSelectionSlice(
               ? pendingShapeAction.targetIds.filter((featureId) => featureId !== id)
               : [...pendingShapeAction.targetIds, id]
             : [id]
-          const nextSelectedIds = [pendingShapeAction.cutterId, ...nextTargetIds]
-          const nextPrimaryId = nextTargetIds.at(-1) ?? pendingShapeAction.cutterId
+          const nextSelectedIds = [...pendingShapeAction.cutterIds, ...nextTargetIds]
+          const nextPrimaryId = nextTargetIds.at(-1) ?? pendingShapeAction.cutterIds.at(-1) ?? null
 
           return {
             pendingOffset: null,
