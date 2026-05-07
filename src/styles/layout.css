@@ -1292,17 +1292,11 @@
   position: relative;
   display: grid;
   gap: 2px;
-  padding-left: 6px;
+  padding-left: 10px;
 }
 
 .tree-children::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 5px;
-  width: 1px;
-  background: linear-gradient(180deg, rgba(84, 108, 128, 0.55), rgba(60, 82, 101, 0.15));
+  display: none;
 }
 
 .tree-list::before {
@@ -1336,6 +1330,15 @@
   width: 7px;
   height: 1px;
   background: var(--line-strong);
+}
+
+.tree-row--nested,
+.tree-row--deep {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+}
+
+.tree-row--folder.tree-row--nested {
+  grid-template-columns: 16px minmax(0, 1fr) auto;
 }
 
 .tree-row--nested::before {
@@ -1446,15 +1449,30 @@
   display: none;
 }
 
+.tree-row--nested .tree-branch:not(.tree-branch--folder),
+.tree-row--deep .tree-branch:not(.tree-branch--folder) {
+  width: 0;
+  height: 0;
+  border: none;
+  background: transparent;
+  overflow: hidden;
+}
+
+.tree-row--nested .tree-branch:not(.tree-branch--folder)::before,
+.tree-row--deep .tree-branch:not(.tree-branch--folder)::before {
+  display: none;
+}
+
 .tree-icon {
   display: block;
 }
 
 .tree-icon--folder {
   width: 16px;
-  height: 12px;
-  fill: rgba(214, 226, 236, 0.78);
-  transform: translateX(-1px);
+  height: 16px;
+  color: rgba(214, 226, 236, 0.78);
+  fill: currentColor;
+  stroke: none;
 }
 
 .tree-label {
@@ -1521,13 +1539,13 @@
 }
 
 .feature-tree-empty {
-  padding: 8px 0 0 26px;
+  padding: 8px 0 0 14px;
   color: var(--text-dim);
   font-size: 13px;
 }
 
 .tree-children .feature-tree-empty {
-  padding-left: 36px;
+  padding-left: 22px;
 }
 
 .properties-panel {

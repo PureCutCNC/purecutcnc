@@ -18,6 +18,7 @@ import { useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { Icon } from '../Icon'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -281,12 +282,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={0}
           isSelected={selection.selectedNode?.type === 'features_root'}
           isDragging={false}
-          collapsed={featuresCollapsed}
-          onClick={selectFeaturesRoot}
+
+          onClick={() => { selectFeaturesRoot(); setFeaturesCollapsed((value) => !value) }}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddFolder={() => addFeatureFolder('features')}
-          onToggleCollapse={() => setFeaturesCollapsed((value) => !value)}
           onShowAll={() => setAllFeaturesVisible(true)}
           onHideAll={() => setAllFeaturesVisible(false)}
           onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
@@ -321,12 +321,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     depth={1}
                     isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
-                    collapsed={folder.collapsed}
+
                     visible={folderVisible}
-                    onClick={() => selectFeatureFolder(folder.id)}
+                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
-                    onToggleCollapse={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
                     draggable
@@ -355,12 +354,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={0}
           isSelected={selection.selectedNode?.type === 'regions_root'}
           isDragging={false}
-          collapsed={regionsCollapsed}
-          onClick={selectRegionsRoot}
+
+          onClick={() => { selectRegionsRoot(); setRegionsCollapsed((value) => !value) }}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddFolder={() => addFeatureFolder('regions')}
-          onToggleCollapse={() => setRegionsCollapsed((value) => !value)}
           onShowAll={() => setAllRegionsVisible(true)}
           onHideAll={() => setAllRegionsVisible(false)}
         />
@@ -394,12 +392,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     depth={1}
                     isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
-                    collapsed={folder.collapsed}
+
                     visible={folderVisible}
-                    onClick={() => selectFeatureFolder(folder.id)}
+                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
-                    onToggleCollapse={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleRegionFolderVisible(folder.id) : undefined}
                     draggable
@@ -428,12 +425,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={0}
           isSelected={selection.selectedNode?.type === 'tabs_root'}
           isDragging={false}
-          collapsed={tabsCollapsed}
-          onClick={selectTabsRoot}
+
+          onClick={() => { selectTabsRoot(); setTabsCollapsed((value) => !value) }}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddTab={() => startAddTabPlacement()}
-          onToggleCollapse={() => setTabsCollapsed((value) => !value)}
           onShowAll={() => setAllTabsVisible(true)}
           onHideAll={() => setAllTabsVisible(false)}
         />
@@ -474,12 +470,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           depth={0}
           isSelected={selection.selectedNode?.type === 'clamps_root'}
           isDragging={false}
-          collapsed={clampsCollapsed}
-          onClick={selectClampsRoot}
+
+          onClick={() => { selectClampsRoot(); setClampsCollapsed((value) => !value) }}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddClamp={() => startAddClampPlacement()}
-          onToggleCollapse={() => setClampsCollapsed((value) => !value)}
           onShowAll={() => setAllClampsVisible(true)}
           onHideAll={() => setAllClampsVisible(false)}
         />
@@ -528,14 +523,12 @@ interface TreeRowProps {
   visible?: boolean
   operation?: FeatureOperation
   isFirstFeature?: boolean
-  collapsed?: boolean
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
   onSelectAllFeatures?: () => void
   onToggleOperation?: (operation: FeatureOperation) => void
-  onToggleCollapse?: () => void
   onAddFolder?: () => void
   onAddTab?: () => void
   onAddClamp?: () => void
@@ -560,14 +553,12 @@ function TreeRow({
   visible,
   operation,
   isFirstFeature = false,
-  collapsed = false,
   onClick,
   onMouseEnter,
   onMouseLeave,
   onToggleVisible,
   onSelectAllFeatures,
   onToggleOperation,
-  onToggleCollapse,
   onAddFolder,
   onAddTab,
   onAddClamp,
@@ -613,13 +604,11 @@ function TreeRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onContextMenu={onContextMenu}
-      style={{ paddingLeft: `${depth * 12}px` }}
+      style={{ paddingLeft: `${depth * 8}px` }}
     >
       <span className={`tree-branch tree-branch--${kind}`} aria-hidden="true">
         {kind === 'folder' ? (
-          <svg viewBox="0 0 16 12" className="tree-icon tree-icon--folder" focusable="false" aria-hidden="true">
-            <path d="M1.5 3.25h3.2l1-1.35h2.15c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v.32h3.05c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v4.97c0 .43-.15.8-.44 1.09-.29.29-.66.44-1.09.44H1.75c-.43 0-.8-.15-1.09-.44-.29-.29-.44-.66-.44-1.09V4.78c0-.43.15-.8.44-1.09.29-.29.66-.44 1.09-.44Z" />
-          </svg>
+          <Icon id="open" size={16} className="tree-icon--folder" />
         ) : (
           kind === 'project'
             ? 'proj'
@@ -687,9 +676,7 @@ function TreeRow({
             title={kind === 'regions' ? 'Add region folder' : 'Add folder'}
             aria-label={kind === 'regions' ? 'Add region folder' : 'Add folder'}
           >
-            <svg viewBox="0 0 16 12" width="14" height="11" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
-              <path fill="currentColor" d="M1.5 3.25h3.2l1-1.35h2.15c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v.32h3.05c.43 0 .8.15 1.09.44.29.29.44.66.44 1.09v4.97c0 .43-.15.8-.44 1.09-.29.29-.66.44-1.09.44H1.75c-.43 0-.8-.15-1.09-.44-.29-.29-.44-.66-.44-1.09V4.78c0-.43.15-.8.44-1.09.29-.29.66-.44 1.09-.44Z" />
-            </svg>
+            <Icon id="open" size={14} />
           </button>
         ) : null}
         {kind === 'tabs' && onAddTab ? (
@@ -718,20 +705,6 @@ function TreeRow({
             aria-label="Add clamp"
           >
             +
-          </button>
-        ) : null}
-        {(kind === 'folder' || kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onToggleCollapse ? (
-          <button
-            type="button"
-            className="tree-action-btn"
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleCollapse()
-            }}
-            title={collapsed ? 'Expand section' : 'Collapse section'}
-            aria-label={collapsed ? 'Expand section' : 'Collapse section'}
-          >
-            {collapsed ? '▸' : '▾'}
           </button>
         ) : null}
         {kind === 'feature' && onToggleOperation ? (

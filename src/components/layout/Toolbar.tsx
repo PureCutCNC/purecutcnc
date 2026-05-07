@@ -688,6 +688,8 @@ function FeatureEditActions({
   onConstraint: () => void
   constraintActive: boolean
 }) {
+  if (!enabled) return null
+
   return (
     <>
       <div className="toolbar-group">
@@ -695,7 +697,6 @@ function FeatureEditActions({
           icon="copy"
           label={pendingMoveMode === 'copy' ? 'Cancel copy' : 'Copy selected features'}
           active={pendingMoveMode === 'copy'}
-          disabled={!enabled}
           tooltipSide={tooltipSide}
           onClick={onCopy}
         />
@@ -703,14 +704,13 @@ function FeatureEditActions({
           icon="move"
           label={pendingMoveMode === 'move' ? 'Cancel move' : 'Move selected features'}
           active={pendingMoveMode === 'move'}
-          disabled={!enabled || hasLockedSelection}
+          disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onMove}
         />
         <ToolbarActionButton
           icon="trash"
           label="Delete selected features"
-          disabled={!enabled}
           tooltipSide={tooltipSide}
           onClick={onDelete}
         />
@@ -718,7 +718,7 @@ function FeatureEditActions({
           icon="resize"
           label={pendingTransformMode === 'resize' ? 'Cancel resize' : 'Resize selected features'}
           active={pendingTransformMode === 'resize'}
-          disabled={!enabled || hasLockedSelection}
+          disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onResize}
         />
@@ -726,7 +726,7 @@ function FeatureEditActions({
           icon="rotate"
           label={pendingTransformMode === 'rotate' ? 'Cancel rotate' : 'Rotate selected features'}
           active={pendingTransformMode === 'rotate'}
-          disabled={!enabled || hasLockedSelection}
+          disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onRotate}
         />
@@ -734,7 +734,7 @@ function FeatureEditActions({
           icon="offset"
           label={pendingOffset ? 'Cancel offset' : 'Create offset feature'}
           active={pendingOffset}
-          disabled={!enabled || hasLockedSelection || !hasClosedSelection}
+          disabled={hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
           onClick={onOffset}
         />
@@ -742,7 +742,7 @@ function FeatureEditActions({
           icon="constraint"
           label={constraintActive ? 'Cancel constraint' : 'Add constraint'}
           active={constraintActive}
-          disabled={!enabled || hasLockedSelection}
+          disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onConstraint}
         />
@@ -864,6 +864,8 @@ function AlignmentActions({
   tooltipSide?: 'bottom' | 'right'
   onAlign: (alignment: FeatureAlignment) => void
 }) {
+  if (!enabled) return null
+
   return (
     <ToolbarPopoverMenu
       triggerIcon="align"
@@ -887,6 +889,8 @@ function DistributionActions({
   tooltipSide?: 'bottom' | 'right'
   onDistribute: (distribution: FeatureDistribution) => void
 }) {
+  if (!enabled) return null
+
   return (
     <ToolbarPopoverMenu
       triggerIcon="distribute"
@@ -947,13 +951,14 @@ function SketchEditActions({
   onDeletePoint: () => void
   onFillet: () => void
 }) {
+  if (!enabled) return null
+
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="point-add"
         label={activeTool === 'add_point' ? 'Cancel add point' : 'Add point'}
         active={activeTool === 'add_point'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onAddPoint}
       />
@@ -961,7 +966,6 @@ function SketchEditActions({
         icon="point-delete"
         label={activeTool === 'delete_point' ? 'Cancel delete point' : 'Delete point'}
         active={activeTool === 'delete_point'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onDeletePoint}
       />
@@ -969,7 +973,6 @@ function SketchEditActions({
         icon="fillet"
         label={activeTool === 'fillet' ? 'Cancel fillet' : 'Round corner / fillet'}
         active={activeTool === 'fillet'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onFillet}
       />
@@ -996,20 +999,20 @@ function BackdropEditActions({
   onResize: () => void
   onRotate: () => void
 }) {
+  if (!enabled) return null
+
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="move"
         label={pendingMoveMode === 'move' ? 'Cancel move backdrop' : 'Move backdrop'}
         active={pendingMoveMode === 'move'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onMove}
       />
       <ToolbarActionButton
         icon="trash"
         label="Delete backdrop"
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onDelete}
       />
@@ -1017,7 +1020,6 @@ function BackdropEditActions({
         icon="resize"
         label={pendingTransformMode === 'resize' ? 'Cancel resize backdrop' : 'Resize backdrop'}
         active={pendingTransformMode === 'resize'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onResize}
       />
@@ -1025,7 +1027,6 @@ function BackdropEditActions({
         icon="rotate"
         label={pendingTransformMode === 'rotate' ? 'Cancel rotate backdrop' : 'Rotate backdrop'}
         active={pendingTransformMode === 'rotate'}
-        disabled={!enabled}
         tooltipSide={tooltipSide}
         onClick={onRotate}
       />
