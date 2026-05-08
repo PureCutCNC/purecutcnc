@@ -61,6 +61,41 @@ function makeSteppedStlDataUrl(): string {
   return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
 }
 
+function makeTaperedStlDataUrl(): string {
+  const lines = ['solid tapered']
+  const vertices = {
+    b0: [0, 0, 0],
+    b1: [20, 0, 0],
+    b2: [20, 10, 0],
+    b3: [0, 10, 0],
+    t0: [8, 3, 4],
+    t1: [12, 3, 4],
+    t2: [12, 7, 4],
+    t3: [8, 7, 4],
+  } as const
+  const faces: Array<[keyof typeof vertices, keyof typeof vertices, keyof typeof vertices]> = [
+    ['b0', 'b2', 'b1'], ['b0', 'b3', 'b2'],
+    ['t0', 't1', 't2'], ['t0', 't2', 't3'],
+    ['b0', 'b1', 't1'], ['b0', 't1', 't0'],
+    ['b1', 'b2', 't2'], ['b1', 't2', 't1'],
+    ['b2', 'b3', 't3'], ['b2', 't3', 't2'],
+    ['b3', 'b0', 't0'], ['b3', 't0', 't3'],
+  ]
+
+  for (const face of faces) {
+    lines.push('  facet normal 0 0 0')
+    lines.push('    outer loop')
+    for (const key of face) {
+      lines.push(`      vertex ${vertices[key].join(' ')}`)
+    }
+    lines.push('    endloop')
+    lines.push('  endfacet')
+  }
+
+  lines.push('endsolid tapered')
+  return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
+}
+
 function makeTool(): Tool {
   return {
     ...defaultTool('mm', 1),
@@ -104,6 +139,26 @@ function makeModelFeature(): SketchFeature {
     z_bottom: 0,
     visible: true,
     locked: false,
+  }
+}
+
+function makeTaperedModelFeature(): SketchFeature {
+  return {
+    ...makeModelFeature(),
+    id: 'model1',
+    name: 'Tapered STL',
+    stl: {
+      format: 'stl',
+      fileData: makeTaperedStlDataUrl(),
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 10 },
+        { x: 0, y: 10 },
+      ]],
+    },
   }
 }
 
@@ -319,11 +374,12 @@ function testMaxContourGapDifferentContours(): void {
   assert(gap > 1, `expected significant gap for different-size contours, got ${gap}`)
 }
 
-function testMaxContourGapEmptyReturnsInfinity(): void {
-  console.log('Testing maxContourGap with empty paths...')
+function testMaxContourGapEmptyReturnsThickness(): void {
+  console.log('Testing maxContourGap with one empty path set...')
   const contour = makeSquareContour(10, 10, 5)
   const gap = maxContourGap([], [contour])
-  assert(gap === Infinity, `expected Infinity for empty paths, got ${gap}`)
+  // area = 10*10=100, perimeter = 40. gap = 2*100/40 = 5.
+  assert(Math.abs(gap - 5) < 0.1, `expected thickness (~5) for one empty path, got ${gap}`)
 }
 
 function testWaterlineCumulativeShadowProtectsUpperLevels(): void {
@@ -404,38 +460,71 @@ function testWaterlineRespectsContainingPocketDepth(): void {
   const cuts = cutMoves(result.moves)
   const minCutZ = Math.min(...cuts.map((move) => Math.min(move.from.z, move.to.z)))
   assert(cuts.length > 0, 'expected waterline cut moves')
-  assert(minCutZ >= 2 - 1e-9, `expected no waterline cuts below pocket bottom, got min Z ${minCutZ}`)
+  assert(minCutZ >= 1.5 - 1e-9, `expected ball-endmill centerline no lower than pocket bottom minus radius, got min Z ${minCutZ}`)
 }
 
-function testWaterlineBallEndmillDenserLevels(): void {
-  console.log('Testing waterline ball endmill produces denser Z levels than stepdown...')
+function testWaterlineProjectedOffsetsProduceIntermediateRings(): void {
+  console.log('Testing waterline projected offsets produce intermediate rings on sloped model...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.3,
+    debugToolpath: true,
+  }
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const coarseLevelCount = 4
+  assert(result.stepLevels.length > coarseLevelCount,
+    `projected offsets should produce more levels (${result.stepLevels.length}) than coarse Z levels (${coarseLevelCount}) — debug: ${result.warnings.join('; ')}`)
+}
+
+function testWaterlineIntermediateRingsHaveInterpolatedZ(): void {
+  console.log('Testing waterline intermediate rings have Z values between coarse levels...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  const operation = makeWaterlineOperation()
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const coarseZs = new Set([2.5, 1.5, 0.5, -0.5])
+  const intermediateZs = result.stepLevels.filter((z) => !coarseZs.has(z))
+  assert(intermediateZs.length > 0, 'expected intermediate Z levels between coarse levels')
+  for (const z of intermediateZs) {
+    assert(z > -0.5 - 1e-9 && z < 3.5 + 1e-9,
+      `intermediate centerline Z ${z} should be between bottom and top contact levels minus ball radius`)
+  }
+}
+
+function testWaterlineBallEndmillUsesSideContactZ(): void {
+  console.log('Testing waterline ball-endmill centerline Z is below waterline contact Z...')
   const { project } = makeProject()
   const operation = makeWaterlineOperation()
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
-  const stepLevels = result.stepLevels
-  assert(stepLevels.length > 0, 'expected step levels')
-  const coarseLevelCount = Math.ceil((4 - 0) / operation.stepdown!) + 1
-  assert(stepLevels.length > coarseLevelCount,
-    `ball endmill waterline should produce more levels (${stepLevels.length}) than coarse stepdown would (${coarseLevelCount})`)
+  const cuts = cutMoves(result.moves)
+  const cutZs = cuts.map((move) => move.to.z)
+  const maxCutZ = Math.max(...cutZs)
+  const minCutZ = Math.min(...cutZs)
+
+  assert(cuts.length > 0, 'expected waterline cut moves')
+  assert(Math.abs(maxCutZ - 2.5) < 1e-9, `expected top emitted centerline Z 2.5 for 3.0 contact Z and 0.5 radius, got ${maxCutZ}`)
+  assert(Math.abs(minCutZ - -0.5) < 1e-9, `expected bottom emitted centerline Z -0.5 for 0.0 contact Z and 0.5 radius, got ${minCutZ}`)
 }
 
-function testWaterlineFlatEndmillUsesCoarseSteps(): void {
-  console.log('Testing waterline flat endmill uses coarse stepdown levels...')
+function testWaterlineReachesModelTop(): void {
+  console.log('Testing waterline reaches model top...')
   const { project } = makeProject()
-  project.tools = [{
-    ...makeTool(),
-    type: 'flat_endmill',
-    name: '1 mm flat endmill',
-  }]
   const operation = makeWaterlineOperation()
+  operation.stepdown = 1
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
-  const stepLevels = result.stepLevels
-  assert(stepLevels.length > 0, 'expected step levels')
-  const coarseLevelCount = Math.ceil((4 - 0) / operation.stepdown!) + 1
-  assert(stepLevels.length <= coarseLevelCount + 2,
-    `flat endmill waterline should use roughly coarse stepdown levels (${stepLevels.length} vs ~${coarseLevelCount})`)
+  const maxZ = Math.max(...result.stepLevels)
+  const modelTopZ = 4.0
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  // With R=0.5, if we slice at 3.0, cutZ is 2.5.
+  // If we don't slice at 4.0, the highest cut is 2.5.
+  assert(maxZ >= modelTopZ - 0.1, `expected waterline to reach near model top ${modelTopZ}, got ${maxZ}`)
 }
 
 // ── Run all tests ────────────────────────────────────────────────────────
@@ -448,14 +537,16 @@ testFinishSurfaceRespectsSplitPocketDepths()
 
 testMaxContourGapIdenticalContours()
 testMaxContourGapDifferentContours()
-testMaxContourGapEmptyReturnsInfinity()
+testMaxContourGapEmptyReturnsThickness()
 testWaterlineCumulativeShadowProtectsUpperLevels()
 
 testWaterlineGeneratesContourMoves()
 testWaterlineStepLevelsDescend()
 testWaterlineRepeatIsStable()
 testWaterlineRespectsContainingPocketDepth()
-testWaterlineBallEndmillDenserLevels()
-testWaterlineFlatEndmillUsesCoarseSteps()
+testWaterlineProjectedOffsetsProduceIntermediateRings()
+testWaterlineIntermediateRingsHaveInterpolatedZ()
+testWaterlineBallEndmillUsesSideContactZ()
+testWaterlineReachesModelTop()
 
 console.log('finishSurface tests passed')

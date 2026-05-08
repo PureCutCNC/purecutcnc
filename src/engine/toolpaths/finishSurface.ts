@@ -643,7 +643,7 @@ function generateFinishSurfaceParallel(
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
   let currentPosition: ToolpathPoint | null = null
-  let scanIndex = 0
+  const scanIndex = 0
   const baseContours = modelSilhouetteContours(modelFeature)
   const baseCoveragePaths = unionClipperPaths(coverageContoursToClipperPaths(baseContours))
   const protectedPaths = buildProtectedFootprintPaths(project, {
@@ -695,7 +695,6 @@ function generateFinishSurfaceParallel(
 // ── Waterline strategy helpers ──────────────────────────────────────────
 
 const MIN_Z_STEP = 0.01
-const MAX_SUBDIVISION_DEPTH = 8
 
 function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
   return slicePolygons
@@ -713,13 +712,15 @@ function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]
  * Returns the approximate maximum "thickness" of the XOR region by
  * computing max(area / perimeter) across XOR polygons — a proxy for
  * the widest band between the two contour sets.
+ *
+ * If one path set is empty, returns the thickness of the other set.
  */
 export function maxContourGap(pathsA: ClipperPath[], pathsB: ClipperPath[]): number {
-  if (pathsA.length === 0 || pathsB.length === 0) return Infinity
+  if (pathsA.length === 0 && pathsB.length === 0) return 0
 
   const clipper = new ClipperLib.Clipper()
-  clipper.AddPaths(pathsA, ClipperLib.PolyType.ptSubject, true)
-  clipper.AddPaths(pathsB, ClipperLib.PolyType.ptClip, true)
+  if (pathsA.length > 0) clipper.AddPaths(pathsA, ClipperLib.PolyType.ptSubject, true)
+  if (pathsB.length > 0) clipper.AddPaths(pathsB, ClipperLib.PolyType.ptClip, true)
   const xorResult = new ClipperLib.Paths()
   clipper.Execute(
     ClipperLib.ClipType.ctXor,
@@ -750,18 +751,39 @@ interface WaterlineLevel {
   contourPaths: ClipperPath[]
 }
 
+function waterlineCutterSideHeight(tool: ReturnType<typeof normalizeToolForProject>): number {
+  switch (tool.type) {
+    case 'ball_endmill':
+      return tool.radius
+    case 'v_bit': {
+      const includedAngle = Math.max(1, Math.min(179, tool.vBitAngle ?? 60))
+      const halfAngleRadians = (includedAngle * Math.PI) / 360
+      const slope = Math.tan(halfAngleRadians)
+      return slope > 1e-9 ? tool.radius / slope : 0
+    }
+    case 'flat_endmill':
+    case 'drill':
+      return 0
+  }
+}
+
 /**
  * Waterline strategy for finish surface.
  *
- * Uses a cumulative shadow (union of all mesh slices from the top down to
- * the current Z) — the same approach as the rough surface operation.
- * This ensures each waterline contour follows the outermost model wall at
- * that depth rather than just the local cross-section, preventing the tool
- * from cutting into material that belongs to wider upper cross-sections.
+ * Instead of horizontal slicing at many Z levels (which over-concentrates
+ * passes on steep walls and under-concentrates on gentle slopes), this
+ * strategy fills the XY band between consecutive coarse Z-level contours
+ * with inward offset rings, interpolating Z for each ring based on its
+ * distance between the two boundaries.
  *
- * Adaptive refinement: after building contours at the coarse step levels,
- * compares consecutive contours and inserts midpoints where the XY gap
- * exceeds stepover × diameter. Iterates until converged.
+ * It also identifies "newly exposed" XY areas at each Z level (plateaus or
+ * local peaks) and fills them with inward rings to ensure top surfaces are
+ * fully machined.
+ *
+ * Phase 1: Build coarse Z levels with cumulative shadow.
+ * Phase 2: At each level, fill "new" top areas. Between levels, fill sloped
+ *          bands with interpolated Z and slope-dependent shift.
+ * Phase 3: Emit all rings, sorted by Z descending.
  */
 function generateFinishSurfaceWaterline(
   project: Project,
@@ -779,8 +801,7 @@ function generateFinishSurfaceWaterline(
   const toolOffset = tool.radius + radialLeave
   const direction: CutDirection = operation.cutDirection ?? 'conventional'
   const stepoverRatio = operation.stepover ?? 0.5
-  const maxGap = Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP)
-  const minZStep = MIN_Z_STEP
+  const stepoverDistance = Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP)
 
   const regionMask = buildRegionMask(regionFeatures)
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
@@ -798,11 +819,13 @@ function generateFinishSurfaceWaterline(
 
   if (operation.debugToolpath) {
     warnings.push(
-      `Debug: waterline mode, maxGap=${maxGap.toFixed(4)}, toolOffset=${toolOffset.toFixed(4)}`,
+      `Debug: waterline mode, stepover=${stepoverDistance.toFixed(4)}, toolOffset=${toolOffset.toFixed(4)}`,
     )
   }
 
   const sliceAtZ = (z: number): ClipperPath[] => {
+    // Slice slightly below the requested Z to ensure we get a valid cross-section
+    // even for flat surfaces or peaks exactly at that Z.
     const clampedZ = z >= modelTopZ - sliceSampleEpsilon
       ? Math.max(effectiveBottom + sliceSampleEpsilon, modelTopZ - sliceSampleEpsilon)
       : z
@@ -811,12 +834,9 @@ function generateFinishSurfaceWaterline(
     return unionClipperPaths(slicePolygonsToClipperPaths(polygons))
   }
 
-  // ═══ Phase 1: Build initial waterline levels with cumulative shadow ════
-  //     The shadow at each Z is the union of all mesh slices from the top
-  //     down to that Z — identical to how rough surface builds its
-  //     protected model shadow.
+  // ═══ Phase 1: Build coarse Z levels with cumulative shadow ═════════════
 
-  let levels: WaterlineLevel[] = []
+  const coarseLevels: WaterlineLevel[] = []
   {
     let shadow: ClipperPath[] = []
     for (const z of stepLevels) {
@@ -824,7 +844,7 @@ function generateFinishSurfaceWaterline(
       if (slice.length > 0) {
         shadow = unionClipperPaths([...shadow, ...slice])
       }
-      levels.push({
+      coarseLevels.push({
         z,
         shadowPaths: shadow,
         contourPaths: shadow.length > 0 ? offsetClipperPaths(shadow, toolOffset) : [],
@@ -832,48 +852,102 @@ function generateFinishSurfaceWaterline(
     }
   }
 
-  // ═══ Phase 2: Iterative adaptive refinement ════════════════════════════
-  //     Compare consecutive contours; where the XY gap exceeds maxGap,
-  //     insert a midpoint. The midpoint's shadow is the upper level's
-  //     shadow unioned with the slice at the midpoint Z.
+  // ═══ Phase 2: Fill XY bands and Tops ═══════════════════════════════════
 
-  for (let iter = 0; iter < MAX_SUBDIVISION_DEPTH; iter += 1) {
-    const refined: WaterlineLevel[] = [levels[0]]
-    let changed = false
+  interface WaterlineRing {
+    z: number
+    contourPaths: ClipperPath[]
+  }
 
-    for (let i = 0; i < levels.length - 1; i += 1) {
-      const upper = levels[i]
-      const lower = levels[i + 1]
-      const gap = maxContourGap(upper.contourPaths, lower.contourPaths)
+  const allRings: WaterlineRing[] = []
 
-      if (gap > maxGap && (upper.z - lower.z) > minZStep) {
-        const zMid = (upper.z + lower.z) / 2
-        const midSlice = sliceAtZ(zMid)
-        const midShadow = midSlice.length > 0
-          ? unionClipperPaths([...upper.shadowPaths, ...midSlice])
-          : upper.shadowPaths
-        refined.push({
-          z: zMid,
-          shadowPaths: midShadow,
-          contourPaths: midShadow.length > 0 ? offsetClipperPaths(midShadow, toolOffset) : [],
-        })
-        changed = true
+  /**
+   * Compute slope-dependent Z shift for a ball endmill.
+   * Ensures tip contact on floors and side contact on vertical walls.
+   */
+  function computeSlopeShift(zSpan: number, totalGap: number): number {
+    if (tool.type !== 'ball_endmill') {
+      return waterlineCutterSideHeight(tool)
+    }
+    const tanTheta = Math.abs(zSpan) / Math.max(totalGap, 1e-6)
+    const cosTheta = 1 / Math.sqrt(1 + tanTheta * tanTheta)
+    return tool.radius * (1 - cosTheta)
+  }
+
+  for (let i = 0; i < coarseLevels.length; i += 1) {
+    const current = coarseLevels[i]
+    const above = i > 0 ? coarseLevels[i - 1] : null
+
+    // 1. TOP SURFACES: newly exposed area at this level (plateaus/peaks)
+    const newlyExposed = above
+      ? differenceClipperPaths(current.contourPaths, above.contourPaths)
+      : current.contourPaths
+    
+    if (newlyExposed.length > 0) {
+      // Machine tops at current.z with tip contact (shift = 0)
+      allRings.push({ z: current.z, contourPaths: newlyExposed })
+      
+      let ring = newlyExposed
+      for (let step = 1; step < 1000; step += 1) {
+        ring = offsetClipperPaths(ring, -stepoverDistance)
+        if (ring.length === 0) break
+        allRings.push({ z: current.z, contourPaths: ring })
       }
-
-      refined.push(lower)
     }
 
-    if (!changed) break
-    levels = refined
+    // 2. WALL SURFACES: bands between level boundaries
+    if (i < coarseLevels.length - 1) {
+      const next = coarseLevels[i + 1]
+      const outerBoundary = next.contourPaths
+      const innerIsland = current.contourPaths
+      
+      if (outerBoundary.length > 0 && innerIsland.length > 0) {
+        const totalGap = maxContourGap(innerIsland, outerBoundary)
+        const zSpan = current.z - next.z
+        const shift = computeSlopeShift(zSpan, totalGap)
+
+        // Add boundary rings with slope-dependent shift
+        allRings.push({ z: current.z - shift, contourPaths: innerIsland })
+        allRings.push({ z: next.z - shift, contourPaths: outerBoundary })
+
+        if (totalGap > stepoverDistance) {
+          let ring = outerBoundary
+          for (let step = 1; step < 1000; step += 1) {
+            ring = offsetClipperPaths(ring, -stepoverDistance)
+            if (ring.length === 0) break
+            ring = intersectClipperPaths(ring, outerBoundary)
+            if (ring.length === 0) break
+            ring = differenceClipperPaths(ring, innerIsland)
+            if (ring.length === 0) break
+
+            const t = Math.min(1, (step * stepoverDistance) / totalGap)
+            const zRing = next.z + t * zSpan
+            allRings.push({ z: zRing - shift, contourPaths: ring })
+          }
+        }
+      }
+    }
   }
+
+  // Ensure coarse levels are preserved if no bands/tops were found (unlikely)
+  if (allRings.length === 0) {
+    const shift = waterlineCutterSideHeight(tool)
+    for (const level of coarseLevels) {
+      if (level.contourPaths.length > 0) {
+        allRings.push({ z: level.z - shift, contourPaths: level.contourPaths })
+      }
+    }
+  }
+
+  allRings.sort((a, b) => b.z - a.z)
 
   if (operation.debugToolpath) {
     warnings.push(
-      `Debug: ${stepLevels.length} coarse levels → ${levels.length} waterline levels after adaptive refinement`,
+      `Debug: ${coarseLevels.length} coarse levels → ${allRings.length} total rings`,
     )
   }
 
-  // ═══ Phase 3: Emit contours at each waterline level ════════════════════
+  // ═══ Phase 3: Emit all rings ═══════════════════════════════════════════
 
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
@@ -882,14 +956,12 @@ function generateFinishSurfaceWaterline(
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(modelTopZ - effectiveBottom))
   if (depthWarning) warnings.push(depthWarning)
 
-  for (const level of levels) {
-    allStepLevels.add(level.z)
+  for (const ring of allRings) {
+    const cutZ = ring.z
+    allStepLevels.add(cutZ)
 
-    let contourPaths = level.contourPaths
-    if (contourPaths.length === 0) {
-      currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
-      continue
-    }
+    let contourPaths = ring.contourPaths
+    if (contourPaths.length === 0) continue
 
     if (regionMask) {
       contourPaths = intersectClipperPaths(contourPaths, regionMask.paths)
@@ -899,10 +971,7 @@ function generateFinishSurfaceWaterline(
       contourPaths = differenceClipperPaths(contourPaths, protectedPaths)
     }
 
-    if (contourPaths.length === 0) {
-      currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
-      continue
-    }
+    if (contourPaths.length === 0) continue
 
     const pointContours = clipperPathsToPointContours(contourPaths)
     const directedContours = applyContourDirection(pointContours, direction)
@@ -910,10 +979,10 @@ function generateFinishSurfaceWaterline(
     for (const contour of directedContours) {
       if (contour.length < 3) continue
 
-      const entry = contourStartPoint(contour, level.z)
+      const entry = contourStartPoint(contour, cutZ)
       currentPosition = transitionToCutEntry(allMoves, currentPosition, entry, safeZ, 0)
-      allMoves.push(...toClosedCutMoves(contour, level.z))
-      currentPosition = { x: contour[0].x, y: contour[0].y, z: level.z }
+      allMoves.push(...toClosedCutMoves(contour, cutZ))
+      currentPosition = { x: contour[0].x, y: contour[0].y, z: cutZ }
     }
   }
 
@@ -1059,18 +1128,16 @@ export function generateFinishSurfaceToolpath(
   }
 
   // ── Step levels ────────────────────────────────────────────────────────
-  //     For ball end mills in waterline mode, use finer initial Z steps.
-  //     A ball end mill at offset R from a vertical wall only contacts at
-  //     a single point per Z level, so coarse steps leave stair-steps.
-  //     The adaptive refinement won't trigger on vertical walls (XY gap = 0)
-  //     so we must start with dense levels matching the scallop tolerance.
 
-  const stepoverRatio = operation.stepover ?? 0.5
-  const isWaterlineBall = operation.pocketPattern === 'waterline' && tool.type === 'ball_endmill'
-  const waterlineStepdown = isWaterlineBall
-    ? Math.min(operation.stepdown, Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP))
-    : operation.stepdown
-  const stepLevels = generateStepLevels(modelTopZ, effectiveBottom, waterlineStepdown)
+  let stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
+  if (operation.pocketPattern === 'waterline') {
+    // Waterline finish needs to reach the model top to ensure the top-most
+    // features are finished correctly.
+    if (stepLevels.length === 0 || stepLevels[0] < modelTopZ - 1e-9) {
+      stepLevels = [modelTopZ, ...stepLevels]
+    }
+  }
+
   if (stepLevels.length === 0) {
     return {
       operationId: operation.id,
