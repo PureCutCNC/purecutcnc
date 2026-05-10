@@ -200,7 +200,10 @@ function obstacleOverlapsToolpathBounds(obstacle: PreservedObstacle, bounds: Too
 }
 
 function isSupportedTabOperation(kind: Operation['kind']): boolean {
-  return kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'pocket'
+  return kind === 'edge_route_inside'
+    || kind === 'edge_route_outside'
+    || kind === 'pocket'
+    || kind === 'finish_surface'
 }
 
 function pointAt(move: ToolpathMove, t: number, z: number): ToolpathPoint {

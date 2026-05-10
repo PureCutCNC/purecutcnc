@@ -34,6 +34,7 @@ declare module 'clipper-lib' {
 
   interface ClipperStatic {
     new (): ClipperLike
+    Area(poly: IntPoint[]): number
   }
 
   interface ClipperOffsetLike {
@@ -53,11 +54,17 @@ declare module 'clipper-lib' {
     new (): IntPoint[][]
   }
 
+  interface ClipperJS {
+    PerimeterOfPath(path: IntPoint[], closed: boolean, scale: number): number
+    PerimeterOfPaths(paths: IntPoint[][], closed: boolean, scale: number): number
+  }
+
   interface ClipperLibShape {
     Clipper: ClipperStatic
     ClipperOffset: ClipperOffsetStatic
     PolyTree: PolyTreeStatic
     Paths: PathsStatic
+    JS: ClipperJS
     PolyType: {
       ptSubject: number
       ptClip: number
@@ -66,6 +73,7 @@ declare module 'clipper-lib' {
       ctUnion: number
       ctIntersection: number
       ctDifference: number
+      ctXor: number
     }
     PolyFillType: {
       pftNonZero: number

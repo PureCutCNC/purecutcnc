@@ -296,7 +296,7 @@ export type OperationKind =
   | 'drilling'
 
 export type OperationPass = 'rough' | 'finish'
-export type PocketPattern = 'offset' | 'parallel'
+export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking'
 export type MachiningOrder = 'level_first' | 'feature_first'

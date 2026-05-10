@@ -15,6 +15,7 @@
  */
 
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -509,21 +510,35 @@ export function drawToolpath(
   toolpath: ToolpathResult,
   vt: ViewTransform,
   emphasized: boolean,
+  visibility: ToolpathVisibility,
 ): void {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
     stroke: string
     lineWidth: number
     dash: number[]
+    visible: boolean
+    horizontalOnly?: boolean
+    retractOnly?: boolean
   }> = [
-    { kinds: ['rapid'], stroke: 'rgba(124, 184, 222, 0.8)', lineWidth: 1.3, dash: [8, 6] },
-    { kinds: ['plunge'], stroke: 'rgba(213, 131, 223, 0.95)', lineWidth: 1.5, dash: [3, 4] },
-    { kinds: ['lead_in', 'lead_out'], stroke: 'rgba(255, 177, 92, 0.95)', lineWidth: 1.7, dash: [6, 4] },
-    { kinds: ['cut'], stroke: 'rgba(255, 115, 92, 0.96)', lineWidth: 2.1, dash: [] },
+    { kinds: ['cut', 'lead_in', 'lead_out'], stroke: 'rgba(255, 115, 92, 0.96)', lineWidth: 2.1, dash: [], visible: visibility.cuts },
+    { kinds: ['rapid'], stroke: 'rgba(124, 184, 222, 0.8)', lineWidth: 1.3, dash: [8, 6], visible: visibility.rapids, horizontalOnly: true },
+    { kinds: ['plunge'], stroke: 'rgba(213, 131, 223, 0.95)', lineWidth: 1.5, dash: [3, 4], visible: visibility.plunges },
+    { kinds: ['rapid'], stroke: 'rgba(124, 184, 222, 0.8)', lineWidth: 1.3, dash: [8, 6], visible: visibility.retractions, retractOnly: true },
   ]
 
   for (const layer of layers) {
-    const moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+    if (!layer.visible) continue
+
+    let moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+
+    if (layer.horizontalOnly) {
+      moves = moves.filter((move) => Math.abs(move.from.z - move.to.z) < 1e-9)
+    }
+    if (layer.retractOnly) {
+      moves = moves.filter((move) => move.to.z > move.from.z + 1e-9)
+    }
+
     if (moves.length === 0) {
       continue
     }
@@ -544,7 +559,7 @@ export function drawToolpath(
     ctx.globalAlpha = 1
   }
 
-  if (!emphasized || !toolpath.bounds) {
+  if (!emphasized || !toolpath.bounds || !visibility.directions) {
     return
   }
 
@@ -631,6 +646,14 @@ export function drawToolpath(
     const move = toolpath.moves[moveIndex]
     if (move.kind !== 'cut' && move.kind !== 'rapid') {
       continue
+    }
+
+    // Respect visibility toggles
+    if (move.kind === 'cut' && !visibility.cuts) continue
+    if (move.kind === 'rapid') {
+      const isRetraction = move.to.z > move.from.z + 1e-9
+      if (isRetraction && !visibility.retractions) continue
+      if (!isRetraction && !visibility.rapids) continue
     }
 
     const delta = moveCanvasDelta(move)

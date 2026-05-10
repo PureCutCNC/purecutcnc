@@ -17,6 +17,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Icon } from '../Icon'
+import { ToolpathVisibilityPanel, type ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { buildOriginTriad, buildScene } from '../../engine/csg'
@@ -94,6 +95,8 @@ interface Viewport3DProps {
   originVisible?: boolean
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
+  toolpathVisibility: ToolpathVisibility
+  onToolpathVisibilityChange: (visibility: ToolpathVisibility) => void
 }
 
 function disposeObject3D(object: THREE.Object3D) {
@@ -168,7 +171,11 @@ function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: bool
   return markers
 }
 
-function buildToolpathDirectionMarkers(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
+function buildToolpathDirectionMarkers(
+  toolpath: ToolpathResult,
+  emphasized: boolean,
+  visibility: ToolpathVisibility,
+): THREE.Object3D[] {
   if (!emphasized || toolpath.moves.length === 0) {
     return []
   }
@@ -205,6 +212,14 @@ function buildToolpathDirectionMarkers(toolpath: ToolpathResult, emphasized: boo
     const move = toolpath.moves[moveIndex]
     if (move.kind !== 'cut' && move.kind !== 'rapid') {
       continue
+    }
+
+    // Respect visibility toggles
+    if (move.kind === 'cut' && !visibility.cuts) continue
+    if (move.kind === 'rapid') {
+      const isRetraction = move.to.z > move.from.z + 1e-9
+      if (isRetraction && !visibility.retractions) continue
+      if (!isRetraction && !visibility.rapids) continue
     }
 
     const from = toolpathPointToWorld(move.from)
@@ -283,21 +298,38 @@ function buildToolpathDirectionMarkers(toolpath: ToolpathResult, emphasized: boo
 // Only rendered when operation.debugToolpath is enabled.
 // ---------------------------------------------------------------------------
 
-function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): THREE.Object3D[] {
+function buildToolpathOverlay(
+  toolpath: ToolpathResult,
+  emphasized: boolean,
+  visibility: ToolpathVisibility,
+): THREE.Object3D[] {
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
     color: number
     opacity: number
+    visible: boolean
+    horizontalOnly?: boolean
+    retractOnly?: boolean
   }> = [
-    { kinds: ['rapid'], color: 0x78b8de, opacity: 0.75 },
-    { kinds: ['plunge'], color: 0xd583df, opacity: 0.9 },
-    { kinds: ['lead_in', 'lead_out'], color: 0xffb15c, opacity: 0.92 },
-    { kinds: ['cut'], color: 0xff735c, opacity: 0.98 },
+    { kinds: ['cut', 'lead_in', 'lead_out'], color: 0xff735c, opacity: 0.98, visible: visibility.cuts },
+    { kinds: ['rapid'], color: 0x78b8de, opacity: 0.75, visible: visibility.rapids, horizontalOnly: true },
+    { kinds: ['plunge'], color: 0xd583df, opacity: 0.9, visible: visibility.plunges },
+    { kinds: ['rapid'], color: 0x78b8de, opacity: 0.75, visible: visibility.retractions, retractOnly: true },
   ]
 
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
-    const moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+    if (!layer.visible) continue
+
+    let moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
+
+    if (layer.horizontalOnly) {
+      moves = moves.filter((move) => Math.abs(move.from.z - move.to.z) < 1e-9)
+    }
+    if (layer.retractOnly) {
+      moves = moves.filter((move) => move.to.z > move.from.z + 1e-9)
+    }
+
     if (moves.length === 0) {
       continue
     }
@@ -331,8 +363,8 @@ function buildToolpathOverlay(toolpath: ToolpathResult, emphasized: boolean): TH
     objects.push(new THREE.LineSegments(geometry, material))
   }
 
-  if (emphasized) {
-    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized))
+  if (emphasized && visibility.directions) {
+    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized, visibility))
     objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized))
   }
 
@@ -602,6 +634,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   originVisible = true,
   zoomWindowActive = false,
   onZoomWindowComplete,
+  toolpathVisibility,
+  onToolpathVisibilityChange,
 }, ref) {
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -941,7 +975,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     clearToolpathObjects(scene)
 
     const nextObjects = toolpaths.flatMap((toolpath) => (
-      toolpath.moves.length > 0 ? buildToolpathOverlay(toolpath, toolpath.operationId === selectedOperationId) : []
+      toolpath.moves.length > 0 ? buildToolpathOverlay(toolpath, toolpath.operationId === selectedOperationId, toolpathVisibility) : []
     ))
     if (nextObjects.length === 0) {
       return
@@ -954,7 +988,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     return () => {
       clearToolpathObjects(scene)
     }
-  }, [clearToolpathObjects, selectedOperationId, toolpaths])
+  }, [clearToolpathObjects, selectedOperationId, toolpaths, toolpathVisibility])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1078,6 +1112,12 @@ useImperativeHandle(ref, () => ({
         >
           {zoomBoxStyle && <div className="viewport-zoom-select-box" style={zoomBoxStyle} />}
         </div>
+      )}
+      {toolpaths.length > 0 && (
+        <ToolpathVisibilityPanel
+          visibility={toolpathVisibility}
+          onChange={onToolpathVisibilityChange}
+        />
       )}
       <div className="viewport-presets">
         <div className="preset-btn-panel">
