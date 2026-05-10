@@ -39,6 +39,7 @@ import {
   ellipseProfile,
   polygonProfile,
   splineProfile,
+  stockFromFeature,
   type TextFeatureData,
 } from '../types/project'
 import type {
@@ -2046,6 +2047,46 @@ function syncFeatureTreeProject(project: Project): Project {
   }
 }
 
+/**
+ * When a feature that serves as the stock source is modified, sync the stock
+ * profile and thickness to match. Returns the updated project, or the original
+ * if the featureId does not match the stock source.
+ */
+function syncStockFromSourceFeature(project: Project, featureId: string): Project {
+  const stock = project.stock
+  if (!stock.sourceFeature || stock.sourceFeatureId !== featureId) {
+    return project
+  }
+
+  // Find the updated source feature (it may be in features temporarily during sketch edit)
+  const updatedFeature = project.features.find((f) => f.id === featureId)
+  if (updatedFeature) {
+    // Feature was temporarily restored for editing; update sourceFeature copy.
+    // Use the feature's profile directly — it's already in world coordinates.
+    const syncedStock = {
+      ...stock,
+      sourceFeature: updatedFeature,
+      profile: updatedFeature.sketch.profile,
+      thickness: typeof updatedFeature.z_top === 'number' ? updatedFeature.z_top : stock.thickness,
+    }
+    return {
+      ...project,
+      stock: syncedStock,
+    }
+  }
+
+  // Feature is not in features array — sync from stock.sourceFeature directly
+  const source = stock.sourceFeature
+  return {
+    ...project,
+    stock: {
+      ...stock,
+      profile: source.sketch.profile,
+      thickness: typeof source.z_top === 'number' ? source.z_top : stock.thickness,
+    },
+  }
+}
+
 function dedupeProjectIds(project: Project): Project {
   let localCounter = [
     ...project.features.map((feature) => idNumericSuffix(feature.id)),
@@ -3175,6 +3216,159 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
+  /**
+   * Set a feature as the stock source. The feature is removed from project.features
+   * and its geometry is used as the stock profile/thickness.
+   * Pass null to reset to rectangle stock (restores the feature to the tree).
+   *
+   * This is a single undo-able action that captures full before/after state.
+   */
+  setStockSourceFeature: (featureId: string | null) =>
+    set((s) => {
+      if (featureId === null) {
+        // Reset to rectangle stock
+        if (!s.project.stock.sourceFeatureId && !s.project.stock.sourceFeature) {
+          return {} // Already rectangle stock, no-op
+        }
+
+        const restoredFeature = s.project.stock.sourceFeature
+        if (!restoredFeature) return {}
+
+        const stockBounds = getStockBounds(s.project.stock)
+        const width = stockBounds.maxX - stockBounds.minX
+        const height = stockBounds.maxY - stockBounds.minY
+        const rectW = Math.max(width, 1)
+        const rectH = Math.max(height, 1)
+
+        const nextStock = {
+          ...s.project.stock,
+          profile: rectProfile(stockBounds.minX, stockBounds.minY, rectW, rectH),
+          sourceFeatureId: null as string | null | undefined,
+          sourceFeature: null as SketchFeature | null | undefined,
+        }
+
+        const nextProject = syncFeatureTreeProject({
+          ...s.project,
+          stock: nextStock,
+          features: [...s.project.features, restoredFeature],
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        })
+
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        if (s.history.transactionStart) {
+          return { project: nextProject }
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }
+
+      // Set a feature as stock source
+      const feature = s.project.features.find((f) => f.id === featureId)
+      if (!feature) return {}
+      if (!feature.sketch.profile.closed) return {} // Only closed profiles can be stock
+
+      // If another feature is already the stock source, restore it first
+      let features = s.project.features
+      let stock = { ...s.project.stock }
+
+      if (stock.sourceFeature && stock.sourceFeatureId) {
+        // Restore old source feature to features array
+        features = [...features, stock.sourceFeature]
+      }
+
+      // Remove the new source feature from features and tree
+      features = features.filter((f) => f.id !== featureId)
+      const featureTree = s.project.featureTree.filter(
+        (entry) => !(entry.type === 'feature' && entry.featureId === featureId)
+      )
+
+      // Build stock from feature
+      const newStock = stockFromFeature(feature)
+      stock = {
+        ...stock,
+        profile: newStock.profile,
+        thickness: newStock.thickness,
+        sourceFeatureId: feature.id,
+        sourceFeature: feature,
+      }
+
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        stock,
+        features,
+        featureTree,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  /**
+   * Enter sketch edit mode for the stock source feature.
+   * Temporarily adds the source feature back to project.features and project.featureTree
+   * so that mutation actions (moveFeatureControl, insertFeaturePoint, etc.) can find and edit it.
+   * The feature is removed from features/tree on applySketchEdit (handled in selectionSlice).
+   */
+  enterStockSketchEdit: (featureId: string) =>
+    set((s) => {
+      const stock = s.project.stock
+      if (stock.sourceFeatureId !== featureId || !stock.sourceFeature) {
+        return {}
+      }
+
+      const feature = stock.sourceFeature
+
+      // Temporarily add the feature to features array and feature tree for editing
+      const nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: [...s.project.features, feature],
+        featureTree: [...s.project.featureTree, { type: 'feature' as const, featureId: feature.id }],
+      })
+
+      return {
+        project: nextProject,
+        pendingTransform: null,
+        pendingOffset: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: [featureId],
+          selectedNode: { type: 'feature', featureId },
+          mode: 'sketch_edit',
+          sketchEditTool: null,
+          activeControl: null,
+        },
+        sketchEditSession: {
+          entityType: 'feature',
+          entityId: featureId,
+          snapshot: cloneProject(s.project),
+          pastLength: s.history.past.length,
+        },
+        pendingConstraint: null,
+      }
+    }),
+
   setGrid: (grid) =>
     set((s) => {
       const nextProject = {
@@ -4263,7 +4457,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           ? { ...zSafePatch, operation: 'add' }
           : zSafePatch
       const safeOperation = safePatch.operation ?? existingFeature?.operation
-      const nextProject = {
+      let nextProject: Project = {
         ...s.project,
         features: features.map((f) =>
           f.id === id
@@ -4276,6 +4470,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
+      // Sync stock if the updated feature is the stock source
+      nextProject = syncStockFromSourceFeature(nextProject, id)
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -4366,8 +4562,24 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           }
           return feature
         })
+
+      // If deleting the stock source feature, reset stock to rectangular
+      let stock = s.project.stock
+      if (stock.sourceFeatureId && idsToDelete.has(stock.sourceFeatureId)) {
+        const stockBounds = getStockBounds(stock)
+        const width = Math.max(stockBounds.maxX - stockBounds.minX, 1)
+        const height = Math.max(stockBounds.maxY - stockBounds.minY, 1)
+        stock = {
+          ...stock,
+          profile: rectProfile(stockBounds.minX, stockBounds.minY, width, height),
+          sourceFeatureId: null as string | null | undefined,
+          sourceFeature: null as SketchFeature | null | undefined,
+        }
+      }
+
       const nextProject = syncFeatureTreeProject({
         ...s.project,
+        stock,
         features: featuresWithInvalidatedConstraints,
         featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idsToDelete.has(entry.featureId))),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -4997,7 +5209,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   moveFeatureControl: (featureId, control, point) =>
     set((s) => {
-      const nextProject = {
+      let nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) return feature
@@ -5208,6 +5420,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
         return validateConstraintsOnFeature(f, featureByIdMap)
       })
+      // Sync stock if the edited feature is the stock source
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -5227,7 +5441,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   insertFeaturePoint: (featureId, target) =>
     set((s) => {
       let changed = false
-      const nextProject = {
+      let nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
@@ -5256,6 +5470,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         return {}
       }
 
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+
       return {
         project: nextProject,
         selection: {
@@ -5273,7 +5489,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   deleteFeaturePoint: (featureId, anchorIndex) =>
     set((s) => {
       let changed = false
-      const nextProject = {
+      let nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
@@ -5303,6 +5519,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         return {}
       }
 
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+
       return {
         project: nextProject,
         selection: {
@@ -5320,7 +5538,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   filletFeaturePoint: (featureId, anchorIndex, radius) =>
     set((s) => {
       let changed = false
-      const nextProject = {
+      let nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
@@ -5348,6 +5566,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       if (!changed || projectsEqual(nextProject, s.project)) {
         return {}
       }
+
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
         project: nextProject,

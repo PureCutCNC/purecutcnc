@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { Project } from '../../types/project'
-import { getStockBounds } from '../../types/project'
+import type { Project, Point } from '../../types/project'
+import { getStockBounds, getEffectiveStockProfile, profileVertices } from '../../types/project'
 import type { SimulationBuildOptions, SimulationGrid } from './types'
 
 const DEFAULT_LONG_AXIS_CELLS = 180
@@ -46,6 +46,18 @@ export function resolveSimulationGridSpec(
   }
 }
 
+function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y
+    const xj = polygon[j].x, yj = polygon[j].y
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 export function createSimulationGrid(
   project: Project,
   options: SimulationBuildOptions = {},
@@ -54,6 +66,24 @@ export function createSimulationGrid(
   const cellCount = spec.cols * spec.rows
   const topZ = new Float32Array(cellCount)
   topZ.fill(spec.stockTopZ)
+
+  // If stock has a non-rectangular profile (from a source feature), mask cells outside the profile
+  const effectiveProfile = getEffectiveStockProfile(project.stock)
+  if (effectiveProfile && project.stock.sourceFeatureId) {
+    const vertices = profileVertices(effectiveProfile)
+    if (vertices.length >= 3) {
+      const halfCell = spec.cellSize / 2
+      for (let row = 0; row < spec.rows; row++) {
+        for (let col = 0; col < spec.cols; col++) {
+          const cx = spec.originX + col * spec.cellSize + halfCell
+          const cy = spec.originY + row * spec.cellSize + halfCell
+          if (!pointInPolygon(cx, cy, vertices)) {
+            topZ[row * spec.cols + col] = 0
+          }
+        }
+      }
+    }
+  }
 
   return {
     ...spec,

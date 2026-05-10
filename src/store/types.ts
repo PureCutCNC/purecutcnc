@@ -239,6 +239,8 @@ export interface ProjectStore {
   cancelHistoryTransaction: () => void
 
   setStock: (stock: Stock) => void
+  setStockSourceFeature: (featureId: string | null) => void
+  enterStockSketchEdit: (featureId: string) => void
   setGrid: (grid: GridSettings) => void
   setUnits: (units: Project['meta']['units']) => void
   setCreationTarget: (target: CreationTarget) => void
