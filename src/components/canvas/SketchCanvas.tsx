@@ -17,6 +17,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import { ToolpathVisibilityPanel, type ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { SketchControlRef, SketchEditTool } from '../../store/types'
 import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
@@ -144,6 +145,8 @@ interface SketchCanvasProps {
   onActiveSnapModeChange?: (mode: SnapMode | null) => void
   depthLegendCollapsed?: boolean
   onToggleDepthLegend?: () => void
+  toolpathVisibility?: ToolpathVisibility
+  onToolpathVisibilityChange?: (visibility: ToolpathVisibility) => void
 }
 
 function drawStlTopViewImage(
@@ -227,6 +230,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     onActiveSnapModeChange,
     depthLegendCollapsed = false,
     onToggleDepthLegend,
+    toolpathVisibility,
+    onToolpathVisibilityChange,
   },
   ref
 ) {
@@ -952,7 +957,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (const toolpath of toolpaths) {
       if (toolpath.moves.length > 0) {
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId)
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, rapids: true, plunges: true, retractions: true, directions: true })
       }
     }
 
@@ -3724,6 +3729,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </div>
         </div>
       ) : null}
+      {(toolpaths && toolpaths.some((tp) => tp.moves.length > 0)) && toolpathVisibility && onToolpathVisibilityChange && (
+        <ToolpathVisibilityPanel
+          visibility={toolpathVisibility}
+          onChange={onToolpathVisibilityChange}
+          className="sketch-toolpath-vis"
+        />
+      )}
       {dimensionEdit && pendingAdd && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null

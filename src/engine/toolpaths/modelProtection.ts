@@ -32,6 +32,7 @@ export interface ProtectedFootprintOptions {
   featureExpansion?: number
   clampExpansion?: number
   tabExpansion?: number
+  includeTabs?: boolean
   machiningEnvelopePaths?: ClipperPath[]
 }
 
@@ -257,19 +258,21 @@ export function buildProtectedFootprintPaths(
     protectedPaths.push(...expandedFootprints)
   }
 
-  for (const tab of project.tabs) {
-    if (!tab.visible) continue
-    if (options.z !== undefined) {
-      const minZ = Math.min(tab.z_bottom, tab.z_top)
-      const maxZ = Math.max(tab.z_bottom, tab.z_top)
-      if (options.z < minZ - 1e-9 || options.z > maxZ + 1e-9) continue
+  if (options.includeTabs !== false) {
+    for (const tab of project.tabs) {
+      if (!tab.visible) continue
+      if (options.z !== undefined) {
+        const minZ = Math.min(tab.z_bottom, tab.z_top)
+        const maxZ = Math.max(tab.z_bottom, tab.z_top)
+        if (options.z < minZ - 1e-9 || options.z > maxZ + 1e-9) continue
+      }
+      const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
+      appendExpanded(
+        protectedPaths,
+        [toClipperPath(normalizeWinding(flattenProfile(profile).points, false), DEFAULT_CLIPPER_SCALE)],
+        tabExpansion,
+      )
     }
-    const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
-    appendExpanded(
-      protectedPaths,
-      [toClipperPath(normalizeWinding(flattenProfile(profile).points, false), DEFAULT_CLIPPER_SCALE)],
-      tabExpansion,
-    )
   }
 
   const clampBaseExpansion = Math.max(0, project.meta.clampClearanceXY)

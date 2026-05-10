@@ -28,6 +28,7 @@ import { AppShell } from './components/layout/AppShell'
 import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Toolbar'
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
+import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './components/ToolpathVisibilityPanel'
 import { ExportDialog } from './components/export/ExportDialog'
 import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
@@ -70,6 +71,7 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
+  const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
 
   // Native menu "New" dispatches this after the dirty check — handled once here
   // rather than in each toolbar variant (GlobalToolbar / CreationToolbar / Toolbar).
@@ -213,7 +215,8 @@ function App() {
       }
 
       if (operation.kind === 'finish_surface') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generateFinishSurfaceToolpath(project, operation)), operation)
+        const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceToolpath(project, operation))
+        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
       }
 
       if (operation.kind === 'follow_line') {
@@ -779,6 +782,8 @@ function App() {
             onActiveSnapModeChange={setActiveSnapMode}
             depthLegendCollapsed={depthLegendCollapsed}
             onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
+            toolpathVisibility={toolpathVisibility}
+            onToolpathVisibilityChange={setToolpathVisibility}
           />
         }
         viewport3d={
@@ -790,6 +795,8 @@ function App() {
             originVisible={project.origin.visible}
             zoomWindowActive={zoomWindowActive && centerTab === 'preview3d'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
+            toolpathVisibility={toolpathVisibility}
+            onToolpathVisibilityChange={setToolpathVisibility}
           />
         }
         simulationViewport={

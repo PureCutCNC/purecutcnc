@@ -2023,6 +2023,82 @@
   z-index: 1;
 }
 
+/* ------------------------------------------------------------------ */
+/* Toolpath visibility toggles (3D viewport)                          */
+/* ------------------------------------------------------------------ */
+
+.viewport-toolpath-vis {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: rgba(10, 18, 27, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-size: 12px;
+  z-index: 10;
+}
+
+.viewport-toolpath-vis__label {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.viewport-toolpath-vis__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viewport-toolpath-vis__item input[type="checkbox"] {
+  accent-color: var(--accent);
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+}
+
+.viewport-toolpath-vis__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.viewport-toolpath-vis__swatch--cuts {
+  background: #ff735c;
+}
+
+.viewport-toolpath-vis__swatch--rapids {
+  background: #78b8de;
+}
+
+.viewport-toolpath-vis__swatch--plunges {
+  background: #d583df;
+}
+
+.viewport-toolpath-vis__swatch--retractions {
+  background: #78b8de;
+}
+
+.viewport-toolpath-vis__swatch--directions {
+  background: #ffb15c;
+}
+
 .feature-context-menu {
   position: fixed;
   z-index: 1000;

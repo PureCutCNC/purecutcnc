@@ -231,12 +231,13 @@ export function previewOffsetFeatures(
       continue
     }
 
+    const operation: FeatureOperation = baseFeature.operation === 'model' ? 'add' : baseFeature.operation
     const nextProject = { ...project, features: [...project.features, ...createdFeatures] }
     createdFeatures.push(createDerivedFeature(
       nextProject,
       baseFeature,
       profile,
-      baseFeature.operation,
+      operation,
       uniqueName(index === 0 ? `${baseFeature.name} Offset` : `${baseFeature.name} Offset ${index + 1}`, [
         ...project.features.map((feature) => feature.name),
         ...createdFeatures.map((feature) => feature.name),
