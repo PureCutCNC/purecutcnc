@@ -1778,7 +1778,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selection.mode !== 'sketch_edit') return null
     if (selection.selectedFeatureIds.length !== 1) return null
     if (!selection.selectedFeatureId) return null
-    return project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
+    // Check features array first, then stock source feature
+    return (
+      project.features.find((feature) => feature.id === selection.selectedFeatureId) ??
+      (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature
+        ? project.stock.sourceFeature
+        : null)
+    )
   }
 
   function editableClamp(): Clamp | null {
@@ -3644,7 +3650,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const editingFeature =
     selection.mode === 'sketch_edit' && selection.selectedFeatureId
-      ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
+      ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ??
+        (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature
+          ? project.stock.sourceFeature
+          : null)
       : null
   const editingClamp = (() => {
     if (selection.mode !== 'sketch_edit') return null
