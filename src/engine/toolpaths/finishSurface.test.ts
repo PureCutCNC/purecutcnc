@@ -5,6 +5,7 @@
  */
 
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
+import { normalizeProject } from '../../store/projectStore'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE } from './geometry'
@@ -319,7 +320,11 @@ function makeProject(): { project: Project; operation: Operation } {
     tools: [makeTool()],
     features: [makeModelFeature()],
   }
-  return { project, operation: makeOperation() }
+  return { project: normalizeProject(project), operation: makeOperation() }
+}
+
+function normalizeProjectFeatures(project: Project): void {
+  project.features = normalizeProject(project).features
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -736,6 +741,7 @@ function testWaterlineRegionActsAsFilterNotBoundaryContour(): void {
   console.log('Testing waterline region is a filter (no boundary contour cuts)...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature(), makeRegionFeatureRect('region1', 9, 0, 4, 10)]
+  normalizeProjectFeatures(project)
   const operation: Operation = {
     ...makeWaterlineOperation(),
     target: { source: 'features', featureIds: ['model1', 'region1'] },
@@ -761,6 +767,7 @@ function testWaterlineUsesCoarseZLevelsOnly(): void {
   console.log('Testing waterline uses coarse constant-Z levels only...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
   const operation: Operation = {
     ...makeWaterlineOperation(),
     stepover: 0.3,
@@ -777,6 +784,7 @@ function testWaterlineLevelsAreConstantBands(): void {
   console.log('Testing waterline levels are constant Z bands...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
   const operation = makeWaterlineOperation()
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
@@ -791,6 +799,7 @@ function testWaterlineEmitsBandBoundaryLevels(): void {
   console.log('Testing waterline emits current band boundary levels...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
   const operation: Operation = {
     ...makeWaterlineOperation(),
     stepover: 0.3,
@@ -810,6 +819,7 @@ function testWaterlineBallEndmillUsesSideContactZ(): void {
   console.log('Testing waterline ball-endmill stays on constant slice Z levels...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
   const operation = makeWaterlineOperation()
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
@@ -841,6 +851,7 @@ function testWaterlineBlendsWithRoughInCombinedSimulation(): void {
   console.log('Testing rough + waterline combined replay remains stable...')
   const { project } = makeProject()
   project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
   project.stock = {
     ...project.stock,
     profile: rectProfile(0, 0, 20, 10),
@@ -899,6 +910,7 @@ function testWaterlinePocketBlockSimplification(): void {
   console.log('Testing waterline simplification on steep pocket block...')
   const { project } = makeProject()
   project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
   const operation: Operation = {
     ...makeWaterlineOperation(),
     stepdown: 0.5,
@@ -918,6 +930,7 @@ function testWaterlineRespectsTabZRange(): void {
   console.log('Testing waterline respects tab Z range...')
   const { project } = makeProject()
   project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
   const tabRect = { x: 0, y: 0, w: 3, h: 3 }
   project.tabs = [{
     id: 'tab1',
@@ -970,6 +983,7 @@ function testWaterlineRespectsClampFootprint(): void {
   console.log('Testing waterline respects clamp footprint...')
   const { project } = makeProject()
   project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
   const clampRect = { x: 0, y: 0, w: 3, h: 3 }
   project.clamps = [{
     id: 'clamp1',

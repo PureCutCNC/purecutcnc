@@ -4,8 +4,8 @@
  * Run with: npx tsx src/store/projectStoreTransform.test.ts
  */
 
-import { getProfileBounds, rectProfile, type SketchFeature } from '../types/project'
-import { resizeFeatureFromReference } from './projectStore'
+import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type SketchFeature } from '../types/project'
+import { normalizeProject, resizeFeatureFromReference } from './projectStore'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -87,7 +87,66 @@ function testStlFeatureResizeIsUniform(): void {
   assert(approx(path![2].y, 10), `expected silhouette path y scaled to 10, got ${path![2].y}`)
 }
 
+function testLegacyModelMovesToAssetTable(): void {
+  console.log('Testing legacy STL model migrates to project asset table...')
+  const stl = `solid tri
+  facet normal 0 0 1
+    outer loop
+      vertex 0 0 0
+      vertex 2 0 0
+      vertex 0 3 4
+    endloop
+  endfacet
+endsolid tri
+`
+  const project = normalizeProject({
+    version: '1.0',
+    meta: {
+      name: 'legacy-model',
+      created: '2026-01-01T00:00:00.000Z',
+      modified: '2026-01-01T00:00:00.000Z',
+      units: 'mm',
+      showFeatureInfo: true,
+      maxTravelZ: 10,
+      operationClearanceZ: 3,
+      clampClearanceXY: 2,
+      clampClearanceZ: 2,
+      machineDefinitions: [],
+      selectedMachineId: null,
+    },
+    grid: defaultGrid('mm'),
+    stock: defaultStock(10, 10, 5, 'mm'),
+    origin: { name: 'Origin', x: 0, y: 0, z: 5, visible: true },
+    backdrop: null,
+    dimensions: {},
+    modelAssets: {},
+    features: [makeFeature('stl')].map((feature) => ({
+      ...feature,
+      stl: {
+        ...feature.stl!,
+        fileData: `data:model/stl;base64,${btoa(stl)}`,
+      },
+    })),
+    featureFolders: [],
+    featureTree: [],
+    global_constraints: [],
+    tools: [],
+    operations: [],
+    tabs: [],
+    clamps: [],
+    ai_history: [],
+  })
+
+  const model = project.features[0]
+  assert(model.stl?.meshAssetId !== undefined, 'legacy model should reference a model asset')
+  assert(model.stl?.fileData === undefined, 'legacy source file should be removed after migration')
+  assert(model.stl?.mesh === undefined, 'transient inline mesh should not be retained')
+  assert(Object.keys(project.modelAssets).length === 1, 'model asset should be stored once at project level')
+  assert(project.modelAssets[model.stl!.meshAssetId!] !== undefined, 'referenced model asset should exist')
+}
+
 testRegularFeatureCanResizeOneAxis()
 testStlFeatureResizeIsUniform()
+testLegacyModelMovesToAssetTable()
 
 console.log('projectStore transform tests passed')

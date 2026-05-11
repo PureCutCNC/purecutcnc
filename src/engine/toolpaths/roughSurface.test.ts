@@ -5,6 +5,8 @@
  */
 
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
+import { normalizeProject } from '../../store/projectStore'
+import { serializeImportedMesh } from '../importedMesh'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import type { ToolpathMove } from './types'
 
@@ -240,7 +242,7 @@ function makeProject(featureIds: string[]): { project: Project; operation: Opera
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
 function makeLegacyProject(featureIds: string[]): { project: Project; operation: Operation } {
@@ -251,7 +253,7 @@ function makeLegacyProject(featureIds: string[]): { project: Project; operation:
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
 function makeInvertedProject(featureIds: string[]): { project: Project; operation: Operation } {
@@ -262,7 +264,113 @@ function makeInvertedProject(featureIds: string[]): { project: Project; operatio
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
+}
+
+function appendMeshBox(
+  vertices: number[],
+  indices: number[],
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+): void {
+  const offset = vertices.length / 3
+  vertices.push(
+    minX, minY, minZ,
+    maxX, minY, minZ,
+    maxX, maxY, minZ,
+    minX, maxY, minZ,
+    minX, minY, maxZ,
+    maxX, minY, maxZ,
+    maxX, maxY, maxZ,
+    minX, maxY, maxZ,
+  )
+  const faces = [
+    [0, 1, 2], [0, 2, 3],
+    [4, 6, 5], [4, 7, 6],
+    [0, 4, 5], [0, 5, 1],
+    [1, 5, 6], [1, 6, 2],
+    [2, 6, 7], [2, 7, 3],
+    [3, 7, 4], [3, 4, 0],
+  ]
+  for (const face of faces) {
+    indices.push(offset + face[0], offset + face[1], offset + face[2])
+  }
+}
+
+function appendVerticalQuad(
+  vertices: number[],
+  indices: number[],
+  a: [number, number],
+  b: [number, number],
+  minZ: number,
+  maxZ: number,
+): void {
+  const offset = vertices.length / 3
+  vertices.push(
+    a[0], a[1], minZ,
+    b[0], b[1], minZ,
+    b[0], b[1], maxZ,
+    a[0], a[1], maxZ,
+  )
+  indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3)
+}
+
+function makeOpenSliceProject(): { project: Project; operation: Operation } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  appendMeshBox(vertices, indices, 4, 8, 2, 6, 3, 6)
+
+  // A non-watertight lower shell: this produces open horizontal slice chains.
+  appendVerticalQuad(vertices, indices, [0, 0], [12, 0], 0, 3)
+  appendVerticalQuad(vertices, indices, [12, 0], [12, 8], 0, 3)
+  appendVerticalQuad(vertices, indices, [12, 8], [0, 8], 0, 3)
+
+  const positions = new Float32Array(vertices)
+  const index = new Uint32Array(indices)
+  const mesh = serializeImportedMesh({
+    positions,
+    index,
+    bounds: {
+      minX: 0,
+      maxX: 12,
+      minY: 0,
+      maxY: 8,
+      minZ: 0,
+      maxZ: 6,
+    },
+  }, 'stl')
+
+  const model: SketchFeature = {
+    ...makeModelFeature(),
+    stl: {
+      format: 'stl',
+      meshAssetId: 'open-shell',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 8 },
+        { x: 0, y: 8 },
+        { x: 0, y: 0 },
+      ]],
+    },
+  }
+  const project = {
+    ...newProject('rough-surface-open-shell-test', 'mm'),
+    tools: [makeTool()],
+    modelAssets: { 'open-shell': mesh },
+    features: [model],
+  }
+  const operation = {
+    ...makeRoughOperation(['model1']),
+    stepdown: 2,
+  }
+  return { project: normalizeProject(project), operation }
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -291,7 +399,7 @@ function testRoughSurfaceFindsModelWhenRegionIsFirst(): void {
   const { project, operation } = makeProject(['region1', 'model1'])
   const result = generateRoughSurfaceToolpath(project, operation)
 
-  assert(!result.warnings.includes('Model feature must be an imported STL model'), 'model lookup should not depend on first target feature')
+  assert(!result.warnings.includes('Model feature must be an imported mesh model'), 'model lookup should not depend on first target feature')
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves with region-first target order')
 }
 
@@ -320,6 +428,27 @@ function testRoughSurfaceProtectsOverhangingModelShadow(): void {
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves for inverted taper')
   assert(destructiveCuts.length === 0, `expected no lower-level cuts inside upper model shadow, got ${destructiveCuts.length}`)
+}
+
+function testRoughSurfaceProtectsOpenMeshSlicesConservatively(): void {
+  console.log('Testing rough_surface protects open mesh slices conservatively...')
+  const { project, operation } = makeOpenSliceProject()
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const destructiveCuts = cutMoves(result.moves).filter((move) => {
+    if (move.to.z > 2 + 1e-9) return false
+    const endpoints = [move.from, move.to]
+    return endpoints.some((point) => (
+      point.x > 0.25 && point.x < 11.75 &&
+      point.y > 0.25 && point.y < 7.75
+    ))
+  })
+
+  assert(
+    result.warnings.some((warning) => warning.includes('open/non-watertight slices')),
+    `expected open-slice warning, got: ${result.warnings.join(', ')}`,
+  )
+  assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')
+  assert(destructiveCuts.length === 0, `expected no rough cuts inside open-slice silhouette, got ${destructiveCuts.length}`)
 }
 
 function testRoughSurfaceAvoidsSurroundingAddFeature(): void {
@@ -385,6 +514,7 @@ testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
 testRoughSurfaceDefaultsLegacyModelFormatToStl()
 testRoughSurfaceProtectsOverhangingModelShadow()
+testRoughSurfaceProtectsOpenMeshSlicesConservatively()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
 testRoughSurfaceRespectsContainingPocketDepth()

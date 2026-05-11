@@ -69,7 +69,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Finish surface requires a model feature (imported STL)'],
+      warnings: ['Finish surface requires an imported mesh model feature'],
       bounds: null,
       stepLevels: [],
     }
@@ -111,7 +111,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Failed to load STL geometry'],
+      warnings: ['Failed to load model geometry'],
       bounds: null,
       stepLevels: [],
     }

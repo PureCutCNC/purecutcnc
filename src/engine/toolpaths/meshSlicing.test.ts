@@ -4,7 +4,7 @@
  * Run with: npx tsx src/engine/toolpaths/meshSlicing.test.ts
  */
 
-import { buildMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { buildMeshSliceIndex, sliceMeshAtZ, sliceMeshAtZDetailed } from './meshSlicing'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -86,6 +86,24 @@ function makeBoxes(boxes: Array<[number, number, number, number, number, number]
   }
 }
 
+function appendVerticalQuad(
+  vertices: number[],
+  indices: number[],
+  a: [number, number],
+  b: [number, number],
+  minZ = -1,
+  maxZ = 1,
+): void {
+  const offset = vertices.length / 3
+  vertices.push(
+    a[0], a[1], minZ,
+    b[0], b[1], minZ,
+    b[0], b[1], maxZ,
+    a[0], a[1], maxZ,
+  )
+  indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3)
+}
+
 function testCubeMidSlice(): void {
   console.log('Testing cube mid-slice...')
 
@@ -133,8 +151,80 @@ function testSeparatedIslands(): void {
   assert(approx(areas[1], 100), `expected larger area 100, got ${areas[1]}`)
 }
 
+function testSmallOpenGapsAreStitched(): void {
+  console.log('Testing small open gaps are stitched...')
+
+  const gap = 1e-5
+  const vertices: number[] = []
+  const indices: number[] = []
+  appendVerticalQuad(vertices, indices, [0, 0], [10, 0])
+  appendVerticalQuad(vertices, indices, [10 + gap, 0], [10 + gap, 10])
+  appendVerticalQuad(vertices, indices, [10, 10 + gap], [0, 10 + gap])
+  appendVerticalQuad(vertices, indices, [-gap, 10], [-gap, 0])
+
+  const sliceIndex = buildMeshSliceIndex(new Float32Array(vertices), new Uint32Array(indices))
+  const result = sliceMeshAtZDetailed(sliceIndex, 0)
+
+  assert(result.polygons.length === 1, `expected stitched polygon, got ${result.polygons.length}`)
+  assert(result.openChainCount === 0, `expected no remaining open chains, got ${result.openChainCount}`)
+  assert(approx(polygonArea(result.polygons[0]), 100, 1e-3), `expected area near 100, got ${polygonArea(result.polygons[0])}`)
+}
+
+function testMultipleSmallGapLoopsStaySeparate(): void {
+  console.log('Testing multiple small-gap loops stay separate...')
+
+  const gap = 1e-5
+  const vertices: number[] = []
+  const indices: number[] = []
+  appendVerticalQuad(vertices, indices, [0, 0], [10, 0])
+  appendVerticalQuad(vertices, indices, [10 + gap, 0], [10 + gap, 10])
+  appendVerticalQuad(vertices, indices, [10, 10 + gap], [0, 10 + gap])
+  appendVerticalQuad(vertices, indices, [-gap, 10], [-gap, 0])
+  appendVerticalQuad(vertices, indices, [20, 20], [25, 20])
+  appendVerticalQuad(vertices, indices, [25 + gap, 20], [25 + gap, 25])
+  appendVerticalQuad(vertices, indices, [25, 25 + gap], [20, 25 + gap])
+  appendVerticalQuad(vertices, indices, [20 - gap, 25], [20 - gap, 20])
+
+  const sliceIndex = buildMeshSliceIndex(new Float32Array(vertices), new Uint32Array(indices))
+  const result = sliceMeshAtZDetailed(sliceIndex, 0)
+  const areas = result.polygons.map(polygonArea).sort((a, b) => a - b)
+
+  assert(result.polygons.length === 2, `expected two separate stitched polygons, got ${result.polygons.length}`)
+  assert(result.openChainCount === 0, `expected no remaining open chains, got ${result.openChainCount}`)
+  assert(approx(areas[0], 25, 1e-3), `expected smaller area near 25, got ${areas[0]}`)
+  assert(approx(areas[1], 100, 1e-3), `expected larger area near 100, got ${areas[1]}`)
+}
+
+function testOpenSliceIsNotClosedWithShortcut(): void {
+  console.log('Testing open slice is not closed with shortcut...')
+
+  const positions = new Float32Array([
+    0, 0, -1,
+    10, 0, -1,
+    10, 5, -1,
+    0, 0, 1,
+    10, 0, 1,
+    10, 5, 1,
+  ])
+  const index = new Uint32Array([
+    0, 1, 4,
+    0, 4, 3,
+    1, 2, 5,
+    1, 5, 4,
+  ])
+  const sliceIndex = buildMeshSliceIndex(positions, index)
+  const result = sliceMeshAtZDetailed(sliceIndex, 0)
+  const polygons = result.polygons
+
+  assert(polygons.length === 0, `expected no closed polygons from open sliced wall, got ${polygons.length}`)
+  assert(result.openChainCount > 0, 'expected open chains to be reported')
+}
+
 testCubeMidSlice()
 testSliceCacheReuse()
 testSeparatedIslands()
+testSmallOpenGapsAreStitched()
+testMultipleSmallGapLoopsStaySeparate()
+testOpenSliceIsNotClosedWithShortcut()
 
 console.log('meshSlicing tests passed')
