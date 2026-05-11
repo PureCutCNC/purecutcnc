@@ -192,10 +192,36 @@ export interface TextFeatureData {
   size: number
 }
 
+export type ImportedModelSourceFormat = 'stl' | 'obj'
+
+export interface PersistedImportedMeshBounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
+}
+
+export interface PersistedImportedMesh {
+  storage: 'mesh-v1'
+  sourceFormat?: ImportedModelSourceFormat
+  vertexCount: number
+  triangleCount: number
+  positions: string // base64 Float32Array bytes
+  indices: string // base64 Uint32Array bytes
+  bounds: PersistedImportedMeshBounds
+}
+
 export interface STLFeatureData {
   /** Imported model file format. Missing means legacy STL. */
-  format?: 'stl'
+  format?: ImportedModelSourceFormat
   filePath?: string
+  /** Project modelAssets key. Preferred persisted representation for imported models. */
+  meshAssetId?: string
+  /** Transient/import migration mesh. Normalization moves this into Project.modelAssets. */
+  mesh?: PersistedImportedMesh
+  /** Legacy embedded source file. New imports should not write this field. */
   fileData?: string // base64
   scale: number
   axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
@@ -423,6 +449,7 @@ export interface Project {
   origin: MachineOrigin
   backdrop: BackdropImage | null
   dimensions: Record<string, NamedDimension>
+  modelAssets: Record<string, PersistedImportedMesh>
   features: SketchFeature[]
   featureFolders: FeatureFolder[]
   featureTree: FeatureTreeEntry[]
@@ -990,6 +1017,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
     origin: defaultOrigin(stock),
     backdrop: null,
     dimensions: {},
+    modelAssets: {},
     features: [],
     featureFolders: [],
     featureTree: [],

@@ -5,6 +5,7 @@
  */
 
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
+import { normalizeProject } from '../../store/projectStore'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import type { ToolpathMove } from './types'
 
@@ -240,7 +241,7 @@ function makeProject(featureIds: string[]): { project: Project; operation: Opera
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
 function makeLegacyProject(featureIds: string[]): { project: Project; operation: Operation } {
@@ -251,7 +252,7 @@ function makeLegacyProject(featureIds: string[]): { project: Project; operation:
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
 function makeInvertedProject(featureIds: string[]): { project: Project; operation: Operation } {
@@ -262,7 +263,7 @@ function makeInvertedProject(featureIds: string[]): { project: Project; operatio
     tools: [makeTool()],
     features: [model, region],
   }
-  return { project, operation: makeRoughOperation(featureIds) }
+  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -291,7 +292,7 @@ function testRoughSurfaceFindsModelWhenRegionIsFirst(): void {
   const { project, operation } = makeProject(['region1', 'model1'])
   const result = generateRoughSurfaceToolpath(project, operation)
 
-  assert(!result.warnings.includes('Model feature must be an imported STL model'), 'model lookup should not depend on first target feature')
+  assert(!result.warnings.includes('Model feature must be an imported mesh model'), 'model lookup should not depend on first target feature')
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves with region-first target order')
 }
 

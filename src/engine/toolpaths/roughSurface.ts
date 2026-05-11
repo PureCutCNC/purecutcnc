@@ -152,11 +152,11 @@ export function generateRoughSurfaceToolpath(
   const modelFeature = splitTargets.machiningFeatures.find((feature) => feature.operation === 'model' && feature.kind === 'stl') ?? null
   const regionFeatures = splitTargets.regionFeatures.filter((feature) => feature.sketch.profile.closed)
   const regionMask = buildRegionMask(regionFeatures)
-  if (!modelFeature?.stl?.fileData) {
+  if (!modelFeature?.stl?.meshAssetId || !project.modelAssets?.[modelFeature.stl.meshAssetId]) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Model feature must be an imported STL model'],
+      warnings: ['Model feature must be an imported mesh model'],
       bounds: null,
       stepLevels: [],
     }
@@ -202,7 +202,7 @@ export function generateRoughSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Failed to load STL geometry'],
+      warnings: ['Failed to load model geometry'],
       bounds: null,
       stepLevels: [],
     }

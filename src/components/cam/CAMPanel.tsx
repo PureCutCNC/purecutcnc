@@ -594,7 +594,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
   if (kind === 'rough_surface') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select a model (STL) feature first'
+      return 'Select an imported model feature first'
     }
 
     const features = selection.selectedFeatureIds
@@ -610,7 +610,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
     const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
 
     if (!hasModel) {
-      return 'Rough surface requires at least one model (STL) feature; closed regions are optional filters'
+      return 'Rough surface requires at least one imported model feature; closed regions are optional filters'
     }
     if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
       return 'Region filters must be closed profiles'
@@ -621,7 +621,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
 
   if (kind === 'finish_surface') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select a model (STL) feature first'
+      return 'Select an imported model feature first'
     }
 
     const features = selection.selectedFeatureIds
@@ -637,7 +637,7 @@ function getOperationAddHint(project: Project, selection: SelectionState, kind: 
     const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
 
     if (!hasModel) {
-      return 'Finish surface requires at least one model (STL) feature; closed regions are optional filters'
+      return 'Finish surface requires at least one imported model feature; closed regions are optional filters'
     }
     if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
       return 'Region filters must be closed profiles'

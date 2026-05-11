@@ -133,8 +133,32 @@ function testSeparatedIslands(): void {
   assert(approx(areas[1], 100), `expected larger area 100, got ${areas[1]}`)
 }
 
+function testOpenSliceIsNotClosedWithShortcut(): void {
+  console.log('Testing open slice is not closed with shortcut...')
+
+  const positions = new Float32Array([
+    0, 0, -1,
+    10, 0, -1,
+    10, 5, -1,
+    0, 0, 1,
+    10, 0, 1,
+    10, 5, 1,
+  ])
+  const index = new Uint32Array([
+    0, 1, 4,
+    0, 4, 3,
+    1, 2, 5,
+    1, 5, 4,
+  ])
+  const sliceIndex = buildMeshSliceIndex(positions, index)
+  const polygons = sliceMeshAtZ(sliceIndex, 0)
+
+  assert(polygons.length === 0, `expected no closed polygons from open sliced wall, got ${polygons.length}`)
+}
+
 testCubeMidSlice()
 testSliceCacheReuse()
 testSeparatedIslands()
+testOpenSliceIsNotClosedWithShortcut()
 
 console.log('meshSlicing tests passed')

@@ -219,6 +219,7 @@ function chainSegments(
     const poly: Array<[number, number]> = []
     let currentKey = startKey
     let prevKey: string | null = null
+    let closed = false
 
     while (true) {
       if (visited.has(currentKey)) break
@@ -237,7 +238,10 @@ function chainSegments(
         }
       }
       if (!next) break
-      if (next.key === startKey) break
+      if (next.key === startKey) {
+        closed = true
+        break
+      }
 
       poly.push(next.pt)
       prevKey = currentKey
@@ -245,7 +249,7 @@ function chainSegments(
       if (poly.length > segments.length * 2) break
     }
 
-    if (poly.length >= 3) {
+    if (closed && poly.length >= 3) {
       const first = poly[0]
       const last = poly[poly.length - 1]
       if (

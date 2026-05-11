@@ -17,9 +17,9 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
-import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, STLFeatureData, Tab } from '../types/project'
+import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
-import { loadImportedBufferGeometry, type ImportedModelFormat } from './importedMesh'
+import { loadPersistedBufferGeometry, loadPersistedTriangleMesh } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 
 const ARC_STEP_RADIANS = Math.PI / 18
@@ -244,14 +244,20 @@ export interface STLTransformedData {
 const STL_TRANSFORM_CACHE_LIMIT = 6
 
 interface STLTransformedCacheEntry {
-  fileData: string
+  positionsData: string
+  indicesData: string
   data: STLTransformedData
 }
 
 const stlTransformedGeometryCache = new Map<string, STLTransformedCacheEntry>()
 
-function importedModelFormat(stl: STLFeatureData): ImportedModelFormat {
-  return stl.format ?? 'stl'
+export function clearSTLTransformedGeometryCache(): void {
+  stlTransformedGeometryCache.clear()
+}
+
+function featureModelAsset(project: Project, feature: SketchFeature) {
+  const assetId = feature.stl?.meshAssetId
+  return assetId ? project.modelAssets?.[assetId] ?? null : null
 }
 
 function stlTransformedGeometryCacheKey(
@@ -259,6 +265,7 @@ function stlTransformedGeometryCacheKey(
   project: Project,
 ): string {
   const stl = feature.stl
+  const asset = featureModelAsset(project, feature)
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
   return [
@@ -271,16 +278,23 @@ function stlTransformedGeometryCacheKey(
     feature.sketch.orientationAngle ?? 0,
     zTop,
     zBottom,
-    stl?.fileData?.length ?? 0,
+    stl?.meshAssetId ?? 'missing',
+    asset?.storage ?? 'missing',
+    asset?.sourceFormat ?? 'unknown',
+    asset?.vertexCount ?? 0,
+    asset?.triangleCount ?? 0,
+    asset?.positions.length ?? 0,
+    asset?.indices.length ?? 0,
   ].join('|')
 }
 
 function getCachedSTLTransformedGeometry(
   key: string,
-  fileData: string,
+  positionsData: string,
+  indicesData: string,
 ): STLTransformedData | null {
   const entry = stlTransformedGeometryCache.get(key)
-  if (!entry || entry.fileData !== fileData) {
+  if (!entry || entry.positionsData !== positionsData || entry.indicesData !== indicesData) {
     return null
   }
 
@@ -292,10 +306,11 @@ function getCachedSTLTransformedGeometry(
 
 function setCachedSTLTransformedGeometry(
   key: string,
-  fileData: string,
+  positionsData: string,
+  indicesData: string,
   data: STLTransformedData,
 ): void {
-  stlTransformedGeometryCache.set(key, { fileData, data })
+  stlTransformedGeometryCache.set(key, { positionsData, indicesData, data })
   while (stlTransformedGeometryCache.size > STL_TRANSFORM_CACHE_LIMIT) {
     const oldestKey = stlTransformedGeometryCache.keys().next().value
     if (!oldestKey) break
@@ -317,32 +332,29 @@ export function loadSTLTransformedGeometry(
   feature: SketchFeature,
   project: Project
 ): STLTransformedData | null {
-  if (feature.kind !== 'stl' || !feature.stl?.fileData) return null
+  const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
+  if (!asset) return null
 
   const cacheKey = stlTransformedGeometryCacheKey(feature, project)
-  const cached = getCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData)
+  const cached = getCachedSTLTransformedGeometry(cacheKey, asset.positions, asset.indices)
   if (cached) return cached
 
-  const geometry = loadImportedBufferGeometry(importedModelFormat(feature.stl), feature.stl.fileData, feature.stl.axisSwap || 'none', true)
-  if (!geometry) return null
+  const sourceMesh = loadPersistedTriangleMesh(asset)
+  if (!sourceMesh) return null
+  const stl = feature.stl
 
-  const rawPos = geometry.attributes.position.array as Float32Array
+  const rawPos = sourceMesh.positions
   const numVerts = rawPos.length / 3
 
   // Compute raw Z bounds
-  let rawMinZ = Infinity
-  let rawMaxZ = -Infinity
-  for (let i = 0; i < rawPos.length; i += 3) {
-    const z = rawPos[i + 2]
-    if (z < rawMinZ) rawMinZ = z
-    if (z > rawMaxZ) rawMaxZ = z
-  }
+  const rawMinZ = sourceMesh.bounds.minZ
+  const rawMaxZ = sourceMesh.bounds.maxZ
 
   const meshHeight = rawMaxZ - rawMinZ
   if (meshHeight < 0.001) return null
 
   // BuildFeatureSolid-style transformations (same as buildFeatureMesh)
-  const scale = feature.stl.scale ?? 1
+  const scale = stl?.scale ?? 1
   const angleDeg = feature.sketch.orientationAngle ?? 0
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
@@ -387,23 +399,24 @@ export function loadSTLTransformedGeometry(
     positions[iz] = z
   }
 
-  const index = geometry.index
-    ? new Uint32Array(geometry.index.array)
-    : new Uint32Array(numVerts).map((_, i) => i)
+  const index = new Uint32Array(sourceMesh.index)
 
   const data = { positions, index, rawMinZ: rawMinZ * scale, meshHeight: meshHeight * scale }
-  setCachedSTLTransformedGeometry(cacheKey, feature.stl.fileData, data)
+  setCachedSTLTransformedGeometry(cacheKey, asset.positions, asset.indices, data)
   return data
 }
 
 export function buildFeatureMesh(
+  project: Project,
   feature: SketchFeature,
   selected = false,
   hovered = false,
   stockThickness?: number,
 ): THREE.Mesh {
-  if (feature.kind === 'stl' && feature.stl?.fileData) {
-    const geometry = loadImportedBufferGeometry(importedModelFormat(feature.stl), feature.stl.fileData, feature.stl.axisSwap || 'none', false)
+  const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
+  if (asset) {
+    const stl = feature.stl
+    const geometry = loadPersistedBufferGeometry(asset, false)
     const material = new THREE.MeshStandardMaterial({
       color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
       roughness: 0.82,
@@ -411,10 +424,8 @@ export function buildFeatureMesh(
       side: THREE.DoubleSide,
     })
     if (!geometry) return new THREE.Mesh(new THREE.BufferGeometry(), material)
-    
-    geometry.computeVertexNormals()
-    
-    const scale = feature.stl.scale ?? 1
+
+    const scale = stl?.scale ?? 1
     const angleRad = (feature.sketch.orientationAngle ?? 0) * (Math.PI / 180)
     
     // Initial uniform scale
@@ -633,37 +644,26 @@ export function buildFeatureSolid(
   project: Project,
   feature: SketchFeature
 ): ManifoldSolid | null {
-  if (feature.kind === 'stl' && feature.stl?.fileData) {
+  const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
+  if (asset) {
     try {
-      const geometry = loadImportedBufferGeometry(importedModelFormat(feature.stl), feature.stl.fileData, feature.stl.axisSwap || 'none', true)
-      if (!geometry) return null
-      
-      const positions = geometry.attributes.position.array
-      const numVerts = positions.length / 3
-      let triVerts: Uint32Array
-      
-      if (geometry.index) {
-        triVerts = new Uint32Array(geometry.index.array)
-      } else {
-        triVerts = new Uint32Array(numVerts)
-        for (let i = 0; i < numVerts; i++) {
-          triVerts[i] = i
-        }
-      }
+      const mesh = loadPersistedTriangleMesh(asset)
+      if (!mesh) return null
+      const stl = feature.stl
       
       const manifoldMesh = new module.Mesh({
         numProp: 3,
-        vertProperties: new Float32Array(positions),
-        triVerts: triVerts,
+        vertProperties: new Float32Array(mesh.positions),
+        triVerts: new Uint32Array(mesh.index),
         halfedgeTangent: new Float32Array(0),
         runIndex: new Uint32Array([0]),
         runOriginalID: new Uint32Array([0]),
         runTransform: new Float32Array(12).fill(0),
-        faceID: new Uint32Array(triVerts.length / 3).fill(0),
+        faceID: new Uint32Array(mesh.index.length / 3).fill(0),
       })
       
       const solid = new module.Manifold(manifoldMesh)
-      const scale = feature.stl.scale ?? 1
+      const scale = stl?.scale ?? 1
       const angleDeg = feature.sketch.orientationAngle ?? 0
       
       // Resolve z dimensions (DimensionRef → number)
@@ -859,14 +859,14 @@ export async function buildScene(
     // Region features also get their own mesh since they are visual-only (not part of boolean model).
     for (const feature of visibleFeatures) {
       if (feature.kind === 'stl' || feature.operation === 'region') {
-        featureMeshes.set(feature.id, buildFeatureMesh(feature, false, false, project.stock.thickness))
+        featureMeshes.set(feature.id, buildFeatureMesh(project, feature, false, false, project.stock.thickness))
       }
       
       // If buildBooleanModel failed, we need the rest of the meshes too
       if (!modelMesh) {
         for (const expanded of expandFeatureGeometry(feature)) {
           if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
-            featureMeshes.set(expanded.id, buildFeatureMesh(expanded, false, false, project.stock.thickness))
+            featureMeshes.set(expanded.id, buildFeatureMesh(project, expanded, false, false, project.stock.thickness))
           }
         }
       }

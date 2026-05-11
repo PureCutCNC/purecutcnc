@@ -18,6 +18,14 @@ import { create } from 'zustand'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
+import {
+  clearImportedModelCaches,
+  loadImportedTriangleMesh,
+  normalizeImportedMeshForStorage,
+  serializeImportedMesh,
+  type ImportedModelFormat,
+} from '../engine/importedMesh'
+import { clearSTLTransformedGeometryCache } from '../engine/csg'
 import { createImportedFeature, isProfileDegenerate, uniqueName } from '../import'
 import {
   type Segment,
@@ -56,6 +64,7 @@ import type {
   Project,
   SketchProfile,
   SketchFeature,
+  PersistedImportedMesh,
   STLFeatureData,
   Tab,
   Tool,
@@ -836,6 +845,73 @@ function transformStlFeatureData(
     ...stl,
     silhouettePaths: stl.silhouettePaths.map((path) => path.map(transformPoint)),
   }
+}
+
+function modelAssetIdForFeature(featureId: string): string {
+  return `model-asset-${featureId}`
+}
+
+function normalizeImportedModelStorage(
+  featureId: string,
+  stl: STLFeatureData | null | undefined,
+  modelAssets: Record<string, PersistedImportedMesh>,
+): STLFeatureData | null | undefined {
+  if (!stl) return stl
+  if (stl.meshAssetId && modelAssets[stl.meshAssetId]) {
+    const { mesh: _mesh, fileData: _fileData, filePath: _filePath, ...rest } = stl
+    return rest
+  }
+
+  const transientMesh = stl.mesh
+  if (transientMesh) {
+    const meshAssetId = stl.meshAssetId ?? modelAssetIdForFeature(featureId)
+    modelAssets[meshAssetId] = transientMesh
+    const { mesh: _mesh, fileData: _fileData, filePath: _filePath, ...rest } = stl
+    return {
+      ...rest,
+      meshAssetId,
+      scale: stl.scale ?? 1,
+      axisSwap: 'none',
+    }
+  }
+
+  if (!stl.fileData) return stl
+
+  const format: ImportedModelFormat = stl.format ?? 'stl'
+  const mesh = loadImportedTriangleMesh(format, stl.fileData, stl.axisSwap ?? 'none')
+  if (!mesh) return stl
+
+  const normalizedMesh = normalizeImportedMeshForStorage(mesh, stl.scale ?? 1)
+  const meshAssetId = stl.meshAssetId ?? modelAssetIdForFeature(featureId)
+  modelAssets[meshAssetId] = serializeImportedMesh(normalizedMesh, format)
+  return {
+    ...stl,
+    format,
+    meshAssetId,
+    filePath: undefined,
+    fileData: undefined,
+    mesh: undefined,
+    scale: 1,
+    axisSwap: 'none',
+  }
+}
+
+function pruneUnusedModelAssets(project: Project): Project {
+  const usedAssetIds = new Set(
+    project.features
+      .map((feature) => feature.stl?.meshAssetId ?? null)
+      .filter((id): id is string => id !== null),
+  )
+  const nextAssets: Record<string, PersistedImportedMesh> = {}
+  for (const [id, asset] of Object.entries(project.modelAssets ?? {})) {
+    if (usedAssetIds.has(id)) {
+      nextAssets[id] = asset
+    }
+  }
+  if (Object.keys(nextAssets).length === Object.keys(project.modelAssets ?? {}).length) {
+    return project
+  }
+  return { ...project, modelAssets: nextAssets }
 }
 
 function arcToBezierSegments(start: Point, segment: Extract<Segment, { type: 'arc' }>): Array<Extract<Segment, { type: 'bezier' }>> {
@@ -1729,7 +1805,7 @@ function defaultOperationForTarget(
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
-    pocketPattern: kind === 'finish_surface' ? 'waterline' : 'offset',
+    pocketPattern: kind === 'finish_surface' ? 'parallel' : 'offset',
     pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
@@ -2341,8 +2417,10 @@ function normalizeMachineDefinitions(project: Project): {
 }
 
 export function normalizeProject(project: Project): Project {
+  const modelAssets: Record<string, PersistedImportedMesh> = { ...(project.modelAssets ?? {}) }
   // Migration: convert 4-arc circles to native circle segments
   const upgradedFeatures = project.features.map((feature) => {
+    let upgradedFeature = feature
     if (feature.kind === 'circle' && feature.sketch.profile.segments.length === 4) {
       const { profile } = feature.sketch
       const firstArc = profile.segments[0]
@@ -2350,7 +2428,7 @@ export function normalizeProject(project: Project): Project {
         const cx = firstArc.center.x
         const cy = firstArc.center.y
         const r = Math.hypot(profile.start.x - cx, profile.start.y - cy)
-        return {
+        upgradedFeature = {
           ...feature,
           sketch: {
             ...feature.sketch,
@@ -2359,7 +2437,10 @@ export function normalizeProject(project: Project): Project {
         }
       }
     }
-    return feature
+    return {
+      ...upgradedFeature,
+      stl: normalizeImportedModelStorage(upgradedFeature.id, upgradedFeature.stl, modelAssets),
+    }
   })
 
   const normalizedMachines = normalizeMachineDefinitions(project)
@@ -2385,6 +2466,7 @@ export function normalizeProject(project: Project): Project {
   const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
     ...project,
     meta,
+    modelAssets,
     stock: {
       ...project.stock,
       profile: {
@@ -2403,18 +2485,20 @@ export function normalizeProject(project: Project): Project {
       : defaultOrigin(project.stock),
   }))
 
-  const normalizedProject = {
+  const normalizedProject = pruneUnusedModelAssets({
     ...normalizedBase,
     backdrop: normalizeBackdrop(project.backdrop, normalizedBase),
     operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
-  }
+  })
 
   syncIdCounter(normalizedProject)
   return normalizedProject
 }
 
 function cloneProject(project: Project): Project {
-  return structuredClone(project)
+  const cloned = structuredClone(project)
+  cloned.modelAssets = project.modelAssets
+  return cloned
 }
 
 function instantiateProjectTemplate(template?: Project, name?: string): Project {
@@ -2435,6 +2519,7 @@ function instantiateProjectTemplate(template?: Project, name?: string): Project 
     },
     backdrop: null,
     dimensions: {},
+    modelAssets: {},
     features: [],
     featureFolders: [],
     featureTree: [],
@@ -2445,6 +2530,11 @@ function instantiateProjectTemplate(template?: Project, name?: string): Project 
     clamps: [],
     ai_history: [],
   }
+}
+
+function clearProjectMemoryCaches(): void {
+  clearImportedModelCaches()
+  clearSTLTransformedGeometryCache()
 }
 
 function projectsEqual(a: Project, b: Project): boolean {
@@ -2571,6 +2661,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   createNewProject: (template, name) =>
     set((state) => {
+      clearProjectMemoryCaches()
       const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
       return {
         project: nextProject,
@@ -2583,7 +2674,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         selection: emptySelection(),
         projectKey: state.projectKey + 1,
         history: {
-          past: [...state.history.past, cloneProject(state.project)].slice(-100),
+          past: [],
           future: [],
           transactionStart: null,
         },
@@ -2964,6 +3055,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   loadProject: (p) =>
     set((state) => {
+      clearProjectMemoryCaches()
       const normalizedProject = normalizeProject(p)
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
       const gridDefaults = defaultGrid(normalizedProject.meta.units)
@@ -2981,6 +3073,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         },
         origin: normalizedProject.origin ?? defaultOrigin(normalizedProject.stock ?? stockDefaults),
       }
+      clearProjectMemoryCaches()
       return {
         project: nextProject,
         pendingAdd: null,
@@ -2990,7 +3083,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         selection: emptySelection(),
         projectKey: state.projectKey + 1,
         history: {
-          past: [...state.history.past, cloneProject(state.project)].slice(-100),
+          past: [],
           future: [],
           transactionStart: null,
         },
@@ -2998,7 +3091,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     }),
 
   saveProject: () => {
-    const p = get().project
+    const p = pruneUnusedModelAssets(get().project)
     const updated = {
       ...p,
       meta: { ...p.meta, modified: new Date().toISOString() },
@@ -3016,6 +3109,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     const normalized = normalizeProject(parsed as ReturnType<typeof normalizeProject>)
     const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
     const gridDefaults = defaultGrid(normalized.meta.units)
+    clearProjectMemoryCaches()
     set((state) => ({
       project: {
         ...normalized,
@@ -3035,8 +3129,9 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       pendingTransform: null,
       pendingOffset: null,
       selection: emptySelection(),
+      projectKey: state.projectKey + 1,
       history: {
-        past: [...state.history.past, cloneProject(state.project)].slice(-100),
+        past: [],
         future: [],
         transactionStart: null,
       },
@@ -4094,9 +4189,14 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       if (feature.operation !== 'region' && effectiveFolderSection === 'regions') {
         effectiveFolderId = null
       }
-      const safeFeature: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
+      const safeFeatureBase: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
         ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
         : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
+      const nextModelAssets = { ...s.project.modelAssets }
+      const safeFeature: SketchFeature = {
+        ...safeFeatureBase,
+        stl: normalizeImportedModelStorage(safeFeatureBase.id, safeFeatureBase.stl, nextModelAssets),
+      }
       // Build features and featureTree arrays with correct insertion position.
       let nextFeatures: SketchFeature[]
       let nextTree: FeatureTreeEntry[]
@@ -4123,6 +4223,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
       const nextProject = syncFeatureTreeProject({
         ...s.project,
+        modelAssets: nextModelAssets,
         features: nextFeatures,
         featureTree: nextTree,
         meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -4366,12 +4467,12 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           }
           return feature
         })
-      const nextProject = syncFeatureTreeProject({
+      const nextProject = pruneUnusedModelAssets(syncFeatureTreeProject({
         ...s.project,
         features: featuresWithInvalidatedConstraints,
         featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idsToDelete.has(entry.featureId))),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      })
+      }))
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }

@@ -17,8 +17,9 @@
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import type { PersistedImportedMesh } from '../types/project'
 
-export type ImportedModelFormat = 'stl'
+export type ImportedModelFormat = 'stl' | 'obj'
 export type ModelAxisOrientation = 'none' | 'yz' | 'xz' | 'xy'
 
 export interface ImportedMeshBounds {
@@ -36,20 +37,53 @@ export interface ImportedTriangleMesh {
   bounds: ImportedMeshBounds
 }
 
+export type ImportedSourceData = string | ArrayBuffer
+
 interface CachedGeometryEntry {
-  fileData: string
+  sourceData: ImportedSourceData
   geometry: THREE.BufferGeometry
 }
 
 interface CachedTriangleMeshEntry {
-  fileData: string
+  sourceData: ImportedSourceData
   mesh: ImportedTriangleMesh
+}
+
+interface CachedPersistedTriangleMeshEntry {
+  positionsData: string
+  indicesData: string
+  mesh: ImportedTriangleMesh
+}
+
+interface CachedPersistedGeometryEntry {
+  positionsData: string
+  indicesData: string
+  geometry: THREE.BufferGeometry
 }
 
 const GEOMETRY_CACHE_LIMIT = 6
 const TRIANGLE_MESH_CACHE_LIMIT = 6
 const geometryCache = new Map<string, CachedGeometryEntry>()
 const triangleMeshCache = new Map<string, CachedTriangleMeshEntry>()
+const persistedTriangleMeshCache = new Map<string, CachedPersistedTriangleMeshEntry>()
+const persistedGeometryCache = new Map<string, CachedPersistedGeometryEntry>()
+
+export function clearImportedSourceCaches(): void {
+  for (const entry of geometryCache.values()) {
+    entry.geometry.dispose()
+  }
+  geometryCache.clear()
+  triangleMeshCache.clear()
+}
+
+export function clearImportedModelCaches(): void {
+  clearImportedSourceCaches()
+  persistedTriangleMeshCache.clear()
+  for (const entry of persistedGeometryCache.values()) {
+    entry.geometry.dispose()
+  }
+  persistedGeometryCache.clear()
+}
 
 function decodeBase64Data(data: string): ArrayBuffer | null {
   const base64 = data.includes(',') ? data.split(',')[1] : data
@@ -81,9 +115,99 @@ function decodeBase64Data(data: string): ArrayBuffer | null {
   return new Uint8Array(bytes).buffer
 }
 
+function encodeBytesToBase64(bytes: Uint8Array): string {
+  if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+    const CHUNK_SIZE = 0x8000
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+      const chunk = bytes.subarray(i, i + CHUNK_SIZE)
+      for (let j = 0; j < chunk.length; j += 1) {
+        binary += String.fromCharCode(chunk[j])
+      }
+    }
+    return window.btoa(binary)
+  }
+
+  const maybeBuffer = (globalThis as {
+    Buffer?: { from: (data: Uint8Array) => { toString: (encoding: 'base64') => string } }
+  }).Buffer
+  if (maybeBuffer) {
+    return maybeBuffer.from(bytes).toString('base64')
+  }
+
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let output = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i]
+    const b = i + 1 < bytes.length ? bytes[i + 1] : 0
+    const c = i + 2 < bytes.length ? bytes[i + 2] : 0
+    output += chars[a >> 2]
+    output += chars[((a & 3) << 4) | (b >> 4)]
+    output += i + 1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '='
+    output += i + 2 < bytes.length ? chars[c & 63] : '='
+  }
+  return output
+}
+
+function decodeSourceData(data: ImportedSourceData): ArrayBuffer | null {
+  if (data instanceof ArrayBuffer) return data
+  return decodeBase64Data(data)
+}
+
+function decodeSourceText(data: ImportedSourceData): string | null {
+  const buffer = decodeSourceData(data)
+  if (!buffer) return null
+
+  try {
+    return new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+  } catch {
+    return null
+  }
+}
+
+export function normalizeImportedMeshForStorage(mesh: ImportedTriangleMesh, scale: number): ImportedTriangleMesh {
+  const positions = new Float32Array(mesh.positions.length)
+  for (let i = 0; i < mesh.positions.length; i += 1) {
+    positions[i] = mesh.positions[i] * scale
+  }
+  const index = new Uint32Array(mesh.index)
+  return { positions, index, bounds: computeMeshBounds(positions) }
+}
+
+export function serializeImportedMesh(
+  mesh: ImportedTriangleMesh,
+  sourceFormat?: ImportedModelFormat,
+): PersistedImportedMesh {
+  return {
+    storage: 'mesh-v1',
+    sourceFormat,
+    vertexCount: mesh.positions.length / 3,
+    triangleCount: mesh.index.length / 3,
+    positions: encodeBytesToBase64(new Uint8Array(mesh.positions.buffer, mesh.positions.byteOffset, mesh.positions.byteLength)),
+    indices: encodeBytesToBase64(new Uint8Array(mesh.index.buffer, mesh.index.byteOffset, mesh.index.byteLength)),
+    bounds: { ...mesh.bounds },
+  }
+}
+
+export function deserializeImportedMesh(mesh: PersistedImportedMesh): ImportedTriangleMesh | null {
+  if (mesh.storage !== 'mesh-v1') return null
+
+  const positionBuffer = decodeBase64Data(mesh.positions)
+  const indexBuffer = decodeBase64Data(mesh.indices)
+  if (!positionBuffer || !indexBuffer) return null
+  if (positionBuffer.byteLength !== mesh.vertexCount * 3 * Float32Array.BYTES_PER_ELEMENT) return null
+  if (indexBuffer.byteLength !== mesh.triangleCount * 3 * Uint32Array.BYTES_PER_ELEMENT) return null
+
+  return {
+    positions: new Float32Array(positionBuffer),
+    index: new Uint32Array(indexBuffer),
+    bounds: { ...mesh.bounds },
+  }
+}
+
 function cacheKey(
-  format: 'stl',
-  fileData: string,
+  format: ImportedModelFormat,
+  sourceData: ImportedSourceData,
   axisOrientation: ModelAxisOrientation,
   mergeVertices: boolean,
 ): string {
@@ -91,8 +215,16 @@ function cacheKey(
     format,
     axisOrientation,
     mergeVertices ? 'merged' : 'raw',
-    fileData.length,
+    sourceDataLength(sourceData),
   ].join('|')
+}
+
+function sourceDataLength(sourceData: ImportedSourceData): number {
+  return typeof sourceData === 'string' ? sourceData.length : sourceData.byteLength
+}
+
+function sameSourceData(a: ImportedSourceData, b: ImportedSourceData): boolean {
+  return a === b
 }
 
 export function applyAxisOrientationToPositions(
@@ -118,17 +250,17 @@ export function applyAxisOrientationToPositions(
   }
 }
 
-function getCachedGeometry(key: string, fileData: string): THREE.BufferGeometry | null {
+function getCachedGeometry(key: string, sourceData: ImportedSourceData): THREE.BufferGeometry | null {
   const entry = geometryCache.get(key)
-  if (!entry || entry.fileData !== fileData) return null
+  if (!entry || !sameSourceData(entry.sourceData, sourceData)) return null
 
   geometryCache.delete(key)
   geometryCache.set(key, entry)
   return entry.geometry.clone()
 }
 
-function setCachedGeometry(key: string, fileData: string, geometry: THREE.BufferGeometry): void {
-  geometryCache.set(key, { fileData, geometry: geometry.clone() })
+function setCachedGeometry(key: string, sourceData: ImportedSourceData, geometry: THREE.BufferGeometry): void {
+  geometryCache.set(key, { sourceData, geometry: geometry.clone() })
   while (geometryCache.size > GEOMETRY_CACHE_LIMIT) {
     const oldestKey = geometryCache.keys().next().value
     if (!oldestKey) break
@@ -138,8 +270,110 @@ function setCachedGeometry(key: string, fileData: string, geometry: THREE.Buffer
   }
 }
 
+function persistedMeshCacheKey(mesh: PersistedImportedMesh, mergeVertices?: boolean): string {
+  return [
+    mesh.storage,
+    mesh.sourceFormat ?? 'unknown',
+    mesh.vertexCount,
+    mesh.triangleCount,
+    mesh.positions.length,
+    mesh.indices.length,
+    mergeVertices ? 'merged' : 'raw',
+  ].join('|')
+}
+
+function getCachedPersistedTriangleMesh(key: string, mesh: PersistedImportedMesh): ImportedTriangleMesh | null {
+  const entry = persistedTriangleMeshCache.get(key)
+  if (!entry || entry.positionsData !== mesh.positions || entry.indicesData !== mesh.indices) return null
+
+  persistedTriangleMeshCache.delete(key)
+  persistedTriangleMeshCache.set(key, entry)
+  return entry.mesh
+}
+
+function setCachedPersistedTriangleMesh(key: string, persisted: PersistedImportedMesh, mesh: ImportedTriangleMesh): void {
+  persistedTriangleMeshCache.set(key, {
+    positionsData: persisted.positions,
+    indicesData: persisted.indices,
+    mesh,
+  })
+  while (persistedTriangleMeshCache.size > TRIANGLE_MESH_CACHE_LIMIT) {
+    const oldestKey = persistedTriangleMeshCache.keys().next().value
+    if (!oldestKey) break
+    persistedTriangleMeshCache.delete(oldestKey)
+  }
+}
+
+function getCachedPersistedGeometry(key: string, mesh: PersistedImportedMesh): THREE.BufferGeometry | null {
+  const entry = persistedGeometryCache.get(key)
+  if (!entry || entry.positionsData !== mesh.positions || entry.indicesData !== mesh.indices) return null
+
+  persistedGeometryCache.delete(key)
+  persistedGeometryCache.set(key, entry)
+  return entry.geometry.clone()
+}
+
+function setCachedPersistedGeometry(key: string, persisted: PersistedImportedMesh, geometry: THREE.BufferGeometry): void {
+  persistedGeometryCache.set(key, {
+    positionsData: persisted.positions,
+    indicesData: persisted.indices,
+    geometry: geometry.clone(),
+  })
+  while (persistedGeometryCache.size > GEOMETRY_CACHE_LIMIT) {
+    const oldestKey = persistedGeometryCache.keys().next().value
+    if (!oldestKey) break
+    const entry = persistedGeometryCache.get(oldestKey)
+    entry?.geometry.dispose()
+    persistedGeometryCache.delete(oldestKey)
+  }
+}
+
+export function loadPersistedTriangleMesh(mesh: PersistedImportedMesh): ImportedTriangleMesh | null {
+  const key = persistedMeshCacheKey(mesh)
+  const cached = getCachedPersistedTriangleMesh(key, mesh)
+  if (cached) return cached
+
+  const decoded = deserializeImportedMesh(mesh)
+  if (!decoded) return null
+
+  setCachedPersistedTriangleMesh(key, mesh, decoded)
+  return decoded
+}
+
+export function triangleMeshToBufferGeometry(
+  mesh: ImportedTriangleMesh,
+  mergeVertices: boolean,
+): THREE.BufferGeometry {
+  let geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.positions), 3))
+  geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.index), 1))
+
+  if (mergeVertices) {
+    geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-5)
+  }
+
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+export function loadPersistedBufferGeometry(
+  mesh: PersistedImportedMesh,
+  mergeVertices: boolean,
+): THREE.BufferGeometry | null {
+  const key = persistedMeshCacheKey(mesh, mergeVertices)
+  const cached = getCachedPersistedGeometry(key, mesh)
+  if (cached) return cached
+
+  const triangleMesh = loadPersistedTriangleMesh(mesh)
+  if (!triangleMesh) return null
+
+  const geometry = triangleMeshToBufferGeometry(triangleMesh, mergeVertices)
+  setCachedPersistedGeometry(key, mesh, geometry)
+  return geometry
+}
+
 export function loadStlBufferGeometry(
-  fileData: string,
+  fileData: ImportedSourceData,
   axisOrientation: ModelAxisOrientation,
   mergeVertices: boolean,
 ): THREE.BufferGeometry | null {
@@ -147,7 +381,7 @@ export function loadStlBufferGeometry(
   const cached = getCachedGeometry(key, fileData)
   if (cached) return cached
 
-  const buffer = decodeBase64Data(fileData)
+  const buffer = decodeSourceData(fileData)
   if (!buffer) return null
 
   const loader = new STLLoader()
@@ -162,15 +396,194 @@ export function loadStlBufferGeometry(
   return geometry
 }
 
+function parseObjVertexIndex(token: string, vertexCount: number): number | null {
+  const slashIndex = token.indexOf('/')
+  const rawVertexIndex = slashIndex >= 0 ? token.slice(0, slashIndex) : token
+  if (!rawVertexIndex) return null
+
+  const parsedIndex = Number.parseInt(rawVertexIndex, 10)
+  if (!Number.isInteger(parsedIndex) || parsedIndex === 0) return null
+
+  const resolvedIndex = parsedIndex > 0 ? parsedIndex - 1 : vertexCount + parsedIndex
+  return resolvedIndex >= 0 && resolvedIndex < vertexCount ? resolvedIndex : null
+}
+
+function forEachObjLogicalLine(text: string, callback: (line: string) => boolean | void): boolean {
+  let start = 0
+  let continuedLine = ''
+
+  while (start <= text.length) {
+    const newlineIndex = text.indexOf('\n', start)
+    const end = newlineIndex >= 0 ? newlineIndex : text.length
+    let line = text.slice(start, end)
+    if (line.endsWith('\r')) line = line.slice(0, -1)
+
+    const trimmedRight = line.trimEnd()
+    if (trimmedRight.endsWith('\\')) {
+      continuedLine += `${trimmedRight.slice(0, -1)} `
+    } else {
+      const logicalLine = continuedLine ? continuedLine + line : line
+      continuedLine = ''
+      if (callback(logicalLine) === false) return false
+    }
+
+    if (newlineIndex < 0) break
+    start = newlineIndex + 1
+  }
+
+  if (continuedLine && callback(continuedLine) === false) return false
+  return true
+}
+
+function uncommentAndTrimObjLine(line: string): string {
+  const commentIndex = line.indexOf('#')
+  const uncommented = commentIndex >= 0 ? line.slice(0, commentIndex) : line
+  return uncommented.trim()
+}
+
+function countObjFaceTriangles(parts: string[], vertexCount: number): number {
+  if (parts.length < 4) return 0
+
+  let faceVertexCount = 0
+  for (let i = 1; i < parts.length; i += 1) {
+    const vertexIndex = parseObjVertexIndex(parts[i], vertexCount)
+    if (vertexIndex === null) return 0
+    faceVertexCount += 1
+  }
+
+  return faceVertexCount >= 3 ? faceVertexCount - 2 : 0
+}
+
+function parseObjTriangleMesh(objText: string): ImportedTriangleMesh | null {
+  let vertexCount = 0
+  let triangleCount = 0
+
+  const counted = forEachObjLogicalLine(objText, (line) => {
+    const uncommentedLine = uncommentAndTrimObjLine(line)
+    if (!uncommentedLine) return
+
+    const parts = uncommentedLine.split(/\s+/)
+    const keyword = parts[0]
+
+    if (keyword === 'v') {
+      vertexCount += 1
+      return
+    }
+
+    if (keyword !== 'f') return
+    triangleCount += countObjFaceTriangles(parts, vertexCount)
+  })
+
+  if (!counted || vertexCount === 0 || triangleCount === 0) return null
+
+  const positions = new Float32Array(vertexCount * 3)
+  const indices = new Uint32Array(triangleCount * 3)
+  const faceIndices: number[] = []
+  let positionOffset = 0
+  let indexOffset = 0
+  let currentVertexCount = 0
+
+  const filled = forEachObjLogicalLine(objText, (line) => {
+    const uncommentedLine = uncommentAndTrimObjLine(line)
+    if (!uncommentedLine) return
+
+    const parts = uncommentedLine.split(/\s+/)
+    const keyword = parts[0]
+
+    if (keyword === 'v') {
+      if (parts.length < 4) return false
+      const x = Number.parseFloat(parts[1])
+      const y = Number.parseFloat(parts[2])
+      const z = Number.parseFloat(parts[3])
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false
+      positions[positionOffset] = x
+      positions[positionOffset + 1] = y
+      positions[positionOffset + 2] = z
+      positionOffset += 3
+      currentVertexCount += 1
+      return
+    }
+
+    if (keyword !== 'f' || parts.length < 4) return
+
+    faceIndices.length = 0
+    for (let i = 1; i < parts.length; i += 1) {
+      const vertexIndex = parseObjVertexIndex(parts[i], currentVertexCount)
+      if (vertexIndex === null) {
+        faceIndices.length = 0
+        break
+      }
+      faceIndices.push(vertexIndex)
+    }
+
+    if (faceIndices.length < 3) return
+
+    const firstIndex = faceIndices[0]
+    for (let i = 1; i < faceIndices.length - 1; i += 1) {
+      indices[indexOffset] = firstIndex
+      indices[indexOffset + 1] = faceIndices[i]
+      indices[indexOffset + 2] = faceIndices[i + 1]
+      indexOffset += 3
+    }
+  })
+
+  if (!filled || positionOffset !== positions.length || indexOffset === 0) return null
+
+  return {
+    positions,
+    index: indexOffset === indices.length ? indices : indices.slice(0, indexOffset),
+    bounds: computeMeshBounds(positions),
+  }
+}
+
+export function loadObjTriangleMesh(
+  fileData: ImportedSourceData,
+  axisOrientation: ModelAxisOrientation,
+): ImportedTriangleMesh | null {
+  const key = cacheKey('obj', fileData, axisOrientation, true)
+  const cached = getCachedTriangleMesh(key, fileData)
+  if (cached) return cached
+
+  const text = decodeSourceText(fileData)
+  if (!text) return null
+
+  const mesh = parseObjTriangleMesh(text)
+  if (!mesh) return null
+
+  applyAxisOrientationToPositions(mesh.positions, axisOrientation)
+  mesh.bounds = computeMeshBounds(mesh.positions)
+  setCachedTriangleMesh(key, fileData, mesh)
+  return mesh
+}
+
+export function loadObjBufferGeometry(
+  fileData: ImportedSourceData,
+  axisOrientation: ModelAxisOrientation,
+  mergeVertices: boolean,
+): THREE.BufferGeometry | null {
+  const key = cacheKey('obj', fileData, axisOrientation, mergeVertices)
+  const cached = getCachedGeometry(key, fileData)
+  if (cached) return cached
+
+  const mesh = loadObjTriangleMesh(fileData, axisOrientation)
+  if (!mesh) return null
+
+  const geometry = triangleMeshToBufferGeometry(mesh, mergeVertices)
+  setCachedGeometry(key, fileData, geometry)
+  return geometry
+}
+
 export function loadImportedBufferGeometry(
   format: ImportedModelFormat,
-  fileData: string,
+  fileData: ImportedSourceData,
   axisOrientation: ModelAxisOrientation,
   mergeVertices: boolean,
 ): THREE.BufferGeometry | null {
   switch (format) {
     case 'stl':
       return loadStlBufferGeometry(fileData, axisOrientation, mergeVertices)
+    case 'obj':
+      return loadObjBufferGeometry(fileData, axisOrientation, mergeVertices)
   }
 }
 
@@ -194,17 +607,17 @@ export function computeMeshBounds(positions: Float32Array): ImportedMeshBounds {
   return { minX, maxX, minY, maxY, minZ, maxZ }
 }
 
-function getCachedTriangleMesh(key: string, fileData: string): ImportedTriangleMesh | null {
+function getCachedTriangleMesh(key: string, fileData: ImportedSourceData): ImportedTriangleMesh | null {
   const entry = triangleMeshCache.get(key)
-  if (!entry || entry.fileData !== fileData) return null
+  if (!entry || !sameSourceData(entry.sourceData, fileData)) return null
 
   triangleMeshCache.delete(key)
   triangleMeshCache.set(key, entry)
   return entry.mesh
 }
 
-function setCachedTriangleMesh(key: string, fileData: string, mesh: ImportedTriangleMesh): void {
-  triangleMeshCache.set(key, { fileData, mesh })
+function setCachedTriangleMesh(key: string, fileData: ImportedSourceData, mesh: ImportedTriangleMesh): void {
+  triangleMeshCache.set(key, { sourceData: fileData, mesh })
   while (triangleMeshCache.size > TRIANGLE_MESH_CACHE_LIMIT) {
     const oldestKey = triangleMeshCache.keys().next().value
     if (!oldestKey) break
@@ -213,7 +626,7 @@ function setCachedTriangleMesh(key: string, fileData: string, mesh: ImportedTria
 }
 
 export function loadStlTriangleMesh(
-  fileData: string,
+  fileData: ImportedSourceData,
   axisOrientation: ModelAxisOrientation,
 ): ImportedTriangleMesh | null {
   const key = cacheKey('stl', fileData, axisOrientation, true)
@@ -247,11 +660,13 @@ export function loadStlTriangleMesh(
 
 export function loadImportedTriangleMesh(
   format: ImportedModelFormat,
-  fileData: string,
+  fileData: ImportedSourceData,
   axisOrientation: ModelAxisOrientation,
 ): ImportedTriangleMesh | null {
   switch (format) {
     case 'stl':
       return loadStlTriangleMesh(fileData, axisOrientation)
+    case 'obj':
+      return loadObjTriangleMesh(fileData, axisOrientation)
   }
 }
