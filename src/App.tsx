@@ -135,6 +135,7 @@ function App() {
     startCopyTab,
     startMoveClamp,
     startCopyClamp,
+    setStockSourceFeature,
   } = useProjectStore()
 
   const menuFeature = useMemo(
@@ -711,6 +712,14 @@ function App() {
     : null
 
   const menuHasMultipleSelection = treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.length ?? 0) > 1
+  const menuCanUseAsStock =
+    treeContextMenu?.entityType === 'feature' &&
+    !menuHasMultipleSelection &&
+    menuFeature !== null &&
+    menuFeature.operation === 'add' &&
+    menuFeature.sketch.profile.closed === true &&
+    menuFeature.kind !== 'text' &&
+    menuFeature.kind !== 'stl'
   const menuHasLockedSelection =
     treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.some((featureId) =>
       project.features.some((feature) => feature.id === featureId && feature.locked)
@@ -945,6 +954,16 @@ function App() {
                 disabled={menuHasLockedSelection}
               >
                 Cut
+              </button>
+              <div className="feature-context-menu__separator" />
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => setStockSourceFeature(treeContextMenu.primaryId)}
+                disabled={!menuCanUseAsStock}
+                title={!menuCanUseAsStock ? 'Feature must be an add operation with a closed profile' : undefined}
+              >
+                Use as Stock
               </button>
               <div className="feature-context-menu__separator" />
               <button

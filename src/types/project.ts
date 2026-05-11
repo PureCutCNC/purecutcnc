@@ -271,6 +271,10 @@ export interface Stock {
   color: string
   visible: boolean
   origin: Point               // machine coordinate of stock corner
+  /** When set, stock is derived from a feature. Feature is removed from features array and stored here. */
+  sourceFeatureId?: string | null
+  /** The full feature data when stock is sourced from a feature. Null/undefined when using rectangle stock. */
+  sourceFeature?: SketchFeature | null
 }
 
 export interface GridSettings {
@@ -694,6 +698,86 @@ export function defaultStock(
     visible: true,
     origin: { x: 0, y: 0 },
   }
+}
+
+/**
+ * Build a Stock object from a SketchFeature's geometry.
+ * The feature's profile (transformed by sketch.origin/orientationAngle) becomes the stock profile.
+ * The feature's z_top becomes the stock thickness (z_bottom is assumed 0).
+ */
+export function stockFromFeature(feature: SketchFeature): Stock {
+  // Use the feature's profile directly — it's already in project (world) coordinates.
+  // The sketch.origin and orientationAngle describe the feature's local axis alignment,
+  // not a rotation/translation to apply to the profile itself.
+  const profile = feature.sketch.profile
+  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 20
+  return {
+    profile,
+    thickness: zTop,
+    material: 'aluminum_6061',
+    color: '#b9a83c',
+    visible: true,
+    origin: { x: 0, y: 0 },
+    sourceFeatureId: feature.id,
+    sourceFeature: feature,
+  }
+}
+
+/**
+ * Transform a feature's sketch profile by applying sketch.origin translation and
+ * orientationAngle rotation, producing a profile in project coordinates.
+ */
+export function transformFeatureProfile(feature: SketchFeature): SketchProfile {
+  const { profile, origin, orientationAngle } = feature.sketch
+  if ((origin.x === 0 && origin.y === 0 && orientationAngle === 0)) {
+    return profile
+  }
+
+  const angleRad = (orientationAngle * Math.PI) / 180
+  const cosA = Math.cos(angleRad)
+  const sinA = Math.sin(angleRad)
+
+  function transformPoint(p: Point): Point {
+    const x = p.x * cosA - p.y * sinA + origin.x
+    const y = p.x * sinA + p.y * cosA + origin.y
+    return { x, y }
+  }
+
+  const newSegments = profile.segments.map((seg) => {
+    const transformedTo = transformPoint(seg.to)
+    if (seg.type === 'line') {
+      return { ...seg, to: transformedTo }
+    }
+    if (seg.type === 'arc') {
+      return { ...seg, to: transformedTo, center: transformPoint(seg.center) }
+    }
+    if (seg.type === 'bezier') {
+      return { ...seg, to: transformedTo, control1: transformPoint(seg.control1), control2: transformPoint(seg.control2) }
+    }
+    if (seg.type === 'circle') {
+      return { ...seg, to: transformedTo, center: transformPoint(seg.center) }
+    }
+    return seg
+  })
+
+  return {
+    start: transformPoint(profile.start),
+    segments: newSegments,
+    closed: profile.closed,
+  }
+}
+
+/**
+ * Returns the effective stock profile. When stock has a sourceFeatureId set,
+ * returns the profile derived from the source feature. Otherwise returns
+ * stock.profile directly (e.g. rectangle).
+ */
+export function getEffectiveStockProfile(stock: Stock): SketchProfile {
+  // Use the source feature's profile directly — it's already in project (world) coordinates.
+  if (stock.sourceFeature && stock.sourceFeatureId) {
+    return stock.sourceFeature.sketch.profile
+  }
+  return stock.profile
 }
 
 export function defaultGrid(units: ProjectMeta['units'] = 'mm'): GridSettings {

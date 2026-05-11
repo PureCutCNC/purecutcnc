@@ -178,6 +178,7 @@ export function PropertiesPanel() {
     startRotateBackdrop,
     setGrid,
     setStock,
+    setStockSourceFeature,
     setUnits,
     updateTab,
     updateClamp,
@@ -187,6 +188,7 @@ export function PropertiesPanel() {
     deleteFeature,
     deleteFeatures,
     enterSketchEdit,
+    enterStockSketchEdit,
     enterTabEdit,
     enterClampEdit,
     deleteConstraint,
@@ -508,9 +510,76 @@ export function PropertiesPanel() {
   }
 
   if (selection.selectedNode?.type === 'stock') {
+    const isFeatureStock = !!project.stock.sourceFeatureId && !!project.stock.sourceFeature
     const bounds = getStockBounds(project.stock)
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
+
+    if (isFeatureStock) {
+      const sourceFeature = project.stock.sourceFeature!
+      return (
+        <div className="properties-panel">
+          <div className="properties-group">
+            <label className="properties-field">
+              <span>Name</span>
+              <DraftTextInput value="Stock" disabled />
+            </label>
+            <label className="properties-field">
+              <span>Source Feature</span>
+              <DraftTextInput value={sourceFeature.name} disabled />
+            </label>
+            <label className="properties-field">
+              <span>Thickness</span>
+              <DraftNumberInput
+                key={`stock-thickness-${project.stock.thickness}`}
+                value={project.stock.thickness}
+                units={units}
+                min={minimumLength}
+                onCommit={(next) => {
+                  setStock({ ...project.stock, thickness: next })
+                }}
+              />
+            </label>
+            <label className="properties-field">
+              <span>Color</span>
+              <input
+                type="color"
+                value={project.stock.color}
+                onChange={(event) => {
+                  setStock({ ...project.stock, color: event.target.value })
+                }}
+              />
+            </label>
+            <label className="properties-check">
+              <input
+                type="checkbox"
+                checked={project.stock.visible}
+                onChange={(event) => {
+                  setStock({ ...project.stock, visible: event.target.checked })
+                }}
+              />
+              <span>Visible</span>
+            </label>
+            <div className="properties-actions" style={{ display: 'flex', gap: '8px', marginTop: '12px', flexDirection: 'column' }}>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => enterStockSketchEdit(sourceFeature.id)}
+              >
+                Edit Sketch
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => setStockSourceFeature(null)}
+              >
+                Reset to Rectangle
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
 
     return (
       <div className="properties-panel">

@@ -616,11 +616,49 @@ export function createSelectionSlice(
       })),
 
     applySketchEdit: () =>
-      set((s) => ({
-        selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
-        sketchEditSession: null,
-        pendingConstraint: null,
-      })),
+      set((s) => {
+        // Check if we were editing a stock source feature (feature temporarily in features)
+        const stock = s.project.stock
+        if (stock.sourceFeatureId && s.project.features.some((f) => f.id === stock.sourceFeatureId)) {
+          // Remove feature from features and featureTree, keep stock as-is (already synced each mutation)
+          const nextFeatures = s.project.features.filter((f) => f.id !== stock.sourceFeatureId)
+          const nextFeatureTree = s.project.featureTree.filter(
+            (entry) => !(entry.type === 'feature' && entry.featureId === stock.sourceFeatureId),
+          )
+
+          // Capture the pre-edit snapshot as the undo point so the entire edit session is one atomic step
+          const preEditSnapshot = s.sketchEditSession?.snapshot
+          const pastLength = s.sketchEditSession?.pastLength ?? s.history.past.length
+
+          return {
+            project: {
+              ...s.project,
+              features: nextFeatures,
+              featureTree: nextFeatureTree,
+              meta: { ...s.project.meta, modified: new Date().toISOString() },
+            },
+            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+            sketchEditSession: null,
+            pendingConstraint: null,
+            history: {
+              // Trim mutations during the edit session, push pre-edit state as the undo point
+              past: [
+                ...s.history.past.slice(0, pastLength),
+                ...(preEditSnapshot ? [preEditSnapshot] : []),
+              ].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+          }
+        }
+
+        // Normal case: not a stock source feature
+        return {
+          selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+          sketchEditSession: null,
+          pendingConstraint: null,
+        }
+      }),
 
     cancelSketchEdit: () =>
       set((s) => {
