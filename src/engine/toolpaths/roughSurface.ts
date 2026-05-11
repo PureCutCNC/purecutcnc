@@ -55,7 +55,7 @@ import {
   updateBounds,
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { getMeshSliceIndex, sliceMeshAtZDetailed } from './meshSlicing'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { significantSilhouettePaths } from './silhouette'
 import {
@@ -335,6 +335,7 @@ export function generateRoughSurfaceToolpath(
 
   let currentPosition: ToolpathPoint | null = null
   let protectedSlicePaths: ClipperPath[] = []
+  let usedOpenSliceFallback = false
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - modelBottomZ) * 1e-6, 1e-6)
 
   for (const z of stepLevels) {
@@ -344,12 +345,23 @@ export function generateRoughSurfaceToolpath(
     const sliceZ = z >= modelTopZ - sliceSampleEpsilon
       ? Math.max(modelBottomZ + sliceSampleEpsilon, modelTopZ - sliceSampleEpsilon)
       : z
-    const slicePolygons = sliceMeshAtZ(sliceIndex, sliceZ)
+    const sliceResult = sliceMeshAtZDetailed(sliceIndex, sliceZ)
+    const slicePolygons = sliceResult.polygons
     if (slicePolygons.length > 0) {
       protectedSlicePaths = unionClipperPaths([
         ...protectedSlicePaths,
         ...slicePolygonsToClipperPaths(slicePolygons),
       ])
+    }
+    if (sliceResult.openChainCount > 0) {
+      protectedSlicePaths = unionClipperPaths([
+        ...protectedSlicePaths,
+        ...modelFootprintPaths,
+      ])
+      if (!usedOpenSliceFallback) {
+        warnings.push('Model has open/non-watertight slices; roughing used conservative silhouette protection')
+        usedOpenSliceFallback = true
+      }
     }
 
     if (protectedSlicePaths.length === 0) {

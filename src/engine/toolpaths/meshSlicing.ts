@@ -34,13 +34,19 @@ export interface MeshSliceIndex {
   bucketStep: number
   buckets: SliceTriangle[][]
   wideTriangles: SliceTriangle[]
-  sliceCache: Map<number, Array<Array<[number, number]>>>
+  sliceCache: Map<number, MeshSliceResult>
 }
 
 export interface MeshSliceIndexHost {
   positions: Float32Array
   index: Uint32Array
   sliceIndex?: MeshSliceIndex
+}
+
+export interface MeshSliceResult {
+  polygons: Array<Array<[number, number]>>
+  segmentCount: number
+  openChainCount: number
 }
 
 function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
@@ -134,6 +140,13 @@ export function sliceMeshAtZ(
   mesh: MeshSliceIndex,
   z: number,
 ): Array<Array<[number, number]>> {
+  return sliceMeshAtZDetailed(mesh, z).polygons
+}
+
+export function sliceMeshAtZDetailed(
+  mesh: MeshSliceIndex,
+  z: number,
+): MeshSliceResult {
   const cacheKey = Math.round(z / Z_EPS)
   const cached = mesh.sliceCache.get(cacheKey)
   if (cached) return cached
@@ -176,9 +189,9 @@ export function sliceMeshAtZ(
     appendSegments(mesh.triangles)
   }
 
-  const polygons = chainSegments(segments)
-  mesh.sliceCache.set(cacheKey, polygons)
-  return polygons
+  const result = chainSegments(segments)
+  mesh.sliceCache.set(cacheKey, result)
+  return result
 }
 
 function ptKey(x: number, y: number): string {
@@ -187,8 +200,8 @@ function ptKey(x: number, y: number): string {
 
 function chainSegments(
   segments: Array<[[number, number], [number, number]]>,
-): Array<Array<[number, number]>> {
-  if (segments.length === 0) return []
+): MeshSliceResult {
+  if (segments.length === 0) return { polygons: [], segmentCount: 0, openChainCount: 0 }
 
   const graph = new Map<
     string,
@@ -212,6 +225,7 @@ function chainSegments(
 
   const visited = new Set<string>()
   const polygons: Array<Array<[number, number]>> = []
+  let openChainCount = 0
 
   for (const [startKey] of graph) {
     if (visited.has(startKey)) continue
@@ -259,8 +273,10 @@ function chainSegments(
         poly.push(first)
       }
       polygons.push(poly)
+    } else {
+      openChainCount += 1
     }
   }
 
-  return polygons
+  return { polygons, segmentCount: segments.length, openChainCount }
 }
