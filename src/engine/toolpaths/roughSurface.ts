@@ -251,7 +251,10 @@ export function generateRoughSurfaceToolpath(
 
   const safeZ = getOperationSafeZ(project)
   const stepoverDistance = tool.diameter * stepoverRatio
-  const maxLinkDistance = tool.diameter
+  // Surface roughing contours are derived from mesh slices, not from a simple
+  // 2D pocket floor. Keep contour-to-contour transitions at safe Z so noisy
+  // mesh offsets cannot create short diagonal cut links through the model.
+  const maxLinkDistance = 0
   const direction: CutDirection = operation.cutDirection ?? 'conventional'
   const initialInset = tool.radius + radialLeave
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
