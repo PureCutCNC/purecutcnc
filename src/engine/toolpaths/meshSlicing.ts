@@ -16,6 +16,7 @@
 
 const Z_EPS = 1e-8
 const PT_EPS = 1e-6
+const STITCH_TOLERANCE_SCALE = 1e-5
 
 interface Vec3 { x: number; y: number; z: number }
 
@@ -47,6 +48,28 @@ export interface MeshSliceResult {
   polygons: Array<Array<[number, number]>>
   segmentCount: number
   openChainCount: number
+}
+
+interface SliceSegment {
+  a: Vec3
+  b: Vec3
+}
+
+interface SegmentEdge {
+  a: string
+  b: string
+  visited: boolean
+}
+
+interface SegmentNode {
+  key: string
+  pt: Vec3
+  edges: number[]
+}
+
+interface SegmentChain {
+  points: Vec3[]
+  closed: boolean
 }
 
 function lerp(a: Vec3, b: Vec3, t: number): Vec3 {
@@ -151,7 +174,7 @@ export function sliceMeshAtZDetailed(
   const cached = mesh.sliceCache.get(cacheKey)
   if (cached) return cached
 
-  const segments: Array<[[number, number], [number, number]]> = []
+  const segments: SliceSegment[] = []
   const bucketIndex = mesh.bucketStep > 0
     ? Math.max(0, Math.min(mesh.buckets.length - 1, Math.floor((z - mesh.minZ) / mesh.bucketStep)))
     : -1
@@ -168,16 +191,16 @@ export function sliceMeshAtZDetailed(
       const below = (dz0 < -Z_EPS ? 1 : 0) + (dz1 < -Z_EPS ? 1 : 0) + (dz2 < -Z_EPS ? 1 : 0)
       if (above === 0 || below === 0) continue
 
-      const pts: Array<[number, number]> = []
+      const pts: Vec3[] = []
       const e01 = edgeCrossZ(p0, p1, z)
-      if (e01) pts.push([e01.x, e01.y])
+      if (e01) pts.push(e01)
       const e12 = edgeCrossZ(p1, p2, z)
-      if (e12) pts.push([e12.x, e12.y])
+      if (e12) pts.push(e12)
       const e20 = edgeCrossZ(p2, p0, z)
-      if (e20) pts.push([e20.x, e20.y])
+      if (e20) pts.push(e20)
 
       if (pts.length >= 2) {
-        segments.push([pts[0], pts[1]])
+        segments.push({ a: pts[0], b: pts[1] })
       }
     }
   }
@@ -194,89 +217,227 @@ export function sliceMeshAtZDetailed(
   return result
 }
 
-function ptKey(x: number, y: number): string {
-  return `${x.toFixed(6)},${y.toFixed(6)}`
+function ptKey(point: Vec3): string {
+  return `${point.x.toFixed(6)},${point.y.toFixed(6)},${point.z.toFixed(6)}`
+}
+
+function distance3D(a: Vec3, b: Vec3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+function computeStitchTolerance(segments: SliceSegment[]): number {
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+
+  for (const segment of segments) {
+    for (const point of [segment.a, segment.b]) {
+      minX = Math.min(minX, point.x)
+      maxX = Math.max(maxX, point.x)
+      minY = Math.min(minY, point.y)
+      maxY = Math.max(maxY, point.y)
+      minZ = Math.min(minZ, point.z)
+      maxZ = Math.max(maxZ, point.z)
+    }
+  }
+
+  const diagonal = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ)
+  return Math.max(diagonal * STITCH_TOLERANCE_SCALE, PT_EPS * 2)
+}
+
+function closeChain(points: Vec3[]): Vec3[] {
+  const first = points[0]
+  const last = points[points.length - 1]
+  if (distance3D(first, last) <= PT_EPS) {
+    return [...points.slice(0, -1), first]
+  }
+  return [...points, first]
+}
+
+function chainToPolygon(chain: SegmentChain): Array<[number, number]> | null {
+  if (!chain.closed || chain.points.length < 3) return null
+  return closeChain(chain.points).map((point) => [point.x, point.y])
+}
+
+function otherEdgeNode(edge: SegmentEdge, key: string): string {
+  return edge.a === key ? edge.b : edge.a
+}
+
+function chooseStartNode(nodes: Map<string, SegmentNode>, edge: SegmentEdge): string {
+  const aDegree = nodes.get(edge.a)?.edges.length ?? 0
+  const bDegree = nodes.get(edge.b)?.edges.length ?? 0
+  if (aDegree !== 2) return edge.a
+  if (bDegree !== 2) return edge.b
+  return edge.a
+}
+
+interface StitchCandidate {
+  aIndex: number
+  bIndex: number
+  distance: number
+  aEnd: 'start' | 'end'
+  bEnd: 'start' | 'end'
+}
+
+function endpoint(points: Vec3[], end: 'start' | 'end'): Vec3 {
+  return end === 'start' ? points[0] : points[points.length - 1]
+}
+
+function mergeChainPair(a: Vec3[], b: Vec3[], aEnd: 'start' | 'end', bEnd: 'start' | 'end'): Vec3[] {
+  if (aEnd === 'end' && bEnd === 'start') return [...a, ...b]
+  if (aEnd === 'end' && bEnd === 'end') return [...a, ...b.slice().reverse()]
+  if (aEnd === 'start' && bEnd === 'start') return [...a.slice().reverse(), ...b]
+  return [...b, ...a]
+}
+
+function findBestStitchCandidate(chains: SegmentChain[], stitchTolerance: number): StitchCandidate | null {
+  let best: StitchCandidate | null = null
+
+  function consider(candidate: StitchCandidate): void {
+    if (candidate.distance > stitchTolerance) return
+    if (!best || candidate.distance < best.distance) {
+      best = candidate
+    }
+  }
+
+  for (let i = 0; i < chains.length; i += 1) {
+    if (chains[i].closed) continue
+    const a = chains[i].points
+    if (a.length < 2) continue
+
+    const selfDistance = distance3D(endpoint(a, 'start'), endpoint(a, 'end'))
+    consider({ aIndex: i, bIndex: i, distance: selfDistance, aEnd: 'start', bEnd: 'end' })
+
+    for (let j = i + 1; j < chains.length; j += 1) {
+      if (chains[j].closed) continue
+      const b = chains[j].points
+      if (b.length < 2) continue
+
+      for (const aEnd of ['start', 'end'] as const) {
+        for (const bEnd of ['start', 'end'] as const) {
+          consider({
+            aIndex: i,
+            bIndex: j,
+            distance: distance3D(endpoint(a, aEnd), endpoint(b, bEnd)),
+            aEnd,
+            bEnd,
+          })
+        }
+      }
+    }
+  }
+
+  return best
+}
+
+function stitchOpenChains(chains: SegmentChain[], stitchTolerance: number): SegmentChain[] {
+  const stitched = chains.map((chain) => ({ points: [...chain.points], closed: chain.closed }))
+
+  while (true) {
+    const candidate = findBestStitchCandidate(stitched, stitchTolerance)
+    if (!candidate) break
+
+    const a = stitched[candidate.aIndex]
+    if (candidate.aIndex === candidate.bIndex) {
+      a.closed = true
+      a.points = closeChain(a.points).slice(0, -1)
+      continue
+    }
+
+    const b = stitched[candidate.bIndex]
+    const mergedPoints = mergeChainPair(a.points, b.points, candidate.aEnd, candidate.bEnd)
+    const closed = distance3D(mergedPoints[0], mergedPoints[mergedPoints.length - 1]) <= stitchTolerance
+    const merged: SegmentChain = {
+      points: closed ? closeChain(mergedPoints).slice(0, -1) : mergedPoints,
+      closed,
+    }
+
+    stitched[candidate.aIndex] = merged
+    stitched.splice(candidate.bIndex, 1)
+  }
+
+  return stitched
 }
 
 function chainSegments(
-  segments: Array<[[number, number], [number, number]]>,
+  segments: SliceSegment[],
 ): MeshSliceResult {
   if (segments.length === 0) return { polygons: [], segmentCount: 0, openChainCount: 0 }
 
-  const graph = new Map<
-    string,
-    { pt: [number, number]; neighbors: Array<{ key: string; pt: [number, number] }> }
-  >()
+  const nodes = new Map<string, SegmentNode>()
+  const edges: SegmentEdge[] = []
 
-  function ensureNode(x: number, y: number): string {
-    const key = ptKey(x, y)
-    if (!graph.has(key)) {
-      graph.set(key, { pt: [x, y], neighbors: [] })
+  function ensureNode(point: Vec3): string {
+    const key = ptKey(point)
+    if (!nodes.has(key)) {
+      nodes.set(key, { key, pt: point, edges: [] })
     }
     return key
   }
 
-  for (const [a, b] of segments) {
-    const ka = ensureNode(a[0], a[1])
-    const kb = ensureNode(b[0], b[1])
-    graph.get(ka)!.neighbors.push({ key: kb, pt: b })
-    graph.get(kb)!.neighbors.push({ key: ka, pt: a })
+  for (const segment of segments) {
+    const a = ensureNode(segment.a)
+    const b = ensureNode(segment.b)
+    if (a === b) continue
+    const edgeIndex = edges.length
+    edges.push({ a, b, visited: false })
+    nodes.get(a)!.edges.push(edgeIndex)
+    nodes.get(b)!.edges.push(edgeIndex)
   }
 
-  const visited = new Set<string>()
-  const polygons: Array<Array<[number, number]>> = []
-  let openChainCount = 0
+  const chains: SegmentChain[] = []
+  for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
+    const firstEdge = edges[edgeIndex]
+    if (firstEdge.visited) continue
 
-  for (const [startKey] of graph) {
-    if (visited.has(startKey)) continue
-
-    const poly: Array<[number, number]> = []
+    const startKey = chooseStartNode(nodes, firstEdge)
     let currentKey = startKey
     let prevKey: string | null = null
-    let closed = false
+    const points: Vec3[] = [nodes.get(startKey)!.pt]
 
     while (true) {
-      if (visited.has(currentKey)) break
-      visited.add(currentKey)
-
-      const node = graph.get(currentKey)!
-      if (poly.length === 0) {
-        poly.push(node.pt)
-      }
-
-      let next: { key: string; pt: [number, number] } | null = null
-      for (const n of node.neighbors) {
-        if (n.key !== prevKey) {
-          next = n
+      const node = nodes.get(currentKey)!
+      let nextEdgeIndex: number | null = null
+      for (const candidateEdgeIndex of node.edges) {
+        const candidateEdge = edges[candidateEdgeIndex]
+        if (candidateEdge.visited) continue
+        const nextKey = otherEdgeNode(candidateEdge, currentKey)
+        if (nextKey !== prevKey || node.edges.every((index) => edges[index].visited || index === candidateEdgeIndex)) {
+          nextEdgeIndex = candidateEdgeIndex
           break
         }
       }
-      if (!next) break
-      if (next.key === startKey) {
-        closed = true
+
+      if (nextEdgeIndex === null) break
+
+      const edge = edges[nextEdgeIndex]
+      edge.visited = true
+      const nextKey = otherEdgeNode(edge, currentKey)
+      if (nextKey === startKey) {
+        chains.push({ points, closed: true })
         break
       }
 
-      poly.push(next.pt)
+      points.push(nodes.get(nextKey)!.pt)
       prevKey = currentKey
-      currentKey = next.key
-      if (poly.length > segments.length * 2) break
+      currentKey = nextKey
+      if (points.length > segments.length * 2) break
     }
 
-    if (closed && poly.length >= 3) {
-      const first = poly[0]
-      const last = poly[poly.length - 1]
-      if (
-        Math.abs(last[0] - first[0]) > PT_EPS ||
-        Math.abs(last[1] - first[1]) > PT_EPS
-      ) {
-        poly.push(first)
-      }
-      polygons.push(poly)
-    } else {
-      openChainCount += 1
+    if (!chains.at(-1)?.closed || chains.at(-1)?.points !== points) {
+      chains.push({ points, closed: false })
     }
   }
+
+  const stitchTolerance = computeStitchTolerance(segments)
+  const stitchedChains = stitchOpenChains(chains, stitchTolerance)
+  const polygons = stitchedChains
+    .map(chainToPolygon)
+    .filter((polygon): polygon is Array<[number, number]> => polygon !== null)
+  const openChainCount = stitchedChains.filter((chain) => !chain.closed).length
 
   return { polygons, segmentCount: segments.length, openChainCount }
 }
