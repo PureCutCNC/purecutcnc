@@ -23,7 +23,7 @@ import { platform } from './index'
  * operating on the current state.
  */
 export function useFileActions() {
-  const { project, filePath, dirty, saveProject, openProjectFromText, markSaved } =
+  const { project, filePath, dirty, saveProject, markSaved } =
     useProjectStore()
 
   /** Save to the current path (desktop) or trigger a download (browser). */
@@ -60,12 +60,24 @@ export function useFileActions() {
     }
     const result = await platform.openProjectFile()
     if (!result) return false
+
+    const store = useProjectStore.getState()
+    useProjectStore.setState({ projectLoading: true })
+
+    // Yield so the browser can paint the loading overlay before the
+    // synchronous JSON parse + normalize blocks the main thread.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    )
+
     try {
-      openProjectFromText(result.content, result.path)
+      store.openProjectFromText(result.content, result.path)
       return true
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to open project file.')
       return false
+    } finally {
+      useProjectStore.setState({ projectLoading: false })
     }
   }
 

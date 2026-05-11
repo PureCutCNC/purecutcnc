@@ -2537,6 +2537,36 @@
   text-transform: uppercase;
 }
 
+.cam-operation-badge--generating {
+  padding: 0 4px;
+  border-color: rgba(220, 165, 106, 0.45);
+  min-height: 18px;
+}
+
+.cam-generating-spinner {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(220, 165, 106, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cam-spin 0.8s linear infinite;
+}
+
+@keyframes cam-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tree-branch--generating {
+  border-color: rgba(220, 165, 106, 0.45);
+  animation: cam-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes cam-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 .cam-tool-list {
   display: grid;
   gap: 8px;
@@ -2952,4 +2982,50 @@
 .properties-constraint-row--invalid .properties-constraint-type {
   color: rgba(220, 60, 60, 0.8);
   background: rgba(220, 60, 60, 0.12);
+}
+
+/* Toolpath loading overlay */
+
+.toolpath-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 16, 24, 0.55);
+  pointer-events: none;
+  animation: toolpath-overlay-in 0.15s ease-out;
+}
+
+@keyframes toolpath-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.toolpath-loading-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px;
+  border-radius: 12px;
+  background: rgba(19, 32, 44, 0.92);
+  border: 1px solid rgba(220, 165, 106, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.toolpath-loading-spinner {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(220, 165, 106, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cam-spin 0.8s linear infinite;
+}
+
+.toolpath-loading-text {
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }

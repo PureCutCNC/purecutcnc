@@ -40,6 +40,7 @@ interface CAMPanelProps {
   onSelectedOperationIdChange: (operationId: string | null) => void
   onExport: () => void
   toolpathWarnings?: string[] | null
+  generatingOperationIds?: Set<string>
 }
 
 interface DraftTextInputProps {
@@ -706,6 +707,7 @@ export function CAMPanel({
   onSelectedOperationIdChange,
   onExport,
   toolpathWarnings,
+  generatingOperationIds,
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
@@ -1272,11 +1274,16 @@ export function CAMPanel({
                           onDragOver={(event) => handleOperationDragOver(event, operation.id)}
                           onDrop={handleOperationDrop}
                         >
-                          <span className="tree-branch" aria-hidden="true" />
+                          <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
                           <span className="tree-label">
                             {operation.name}
                           </span>
                           <span className="tree-row-actions">
+                            {generatingOperationIds?.has(operation.id) ? (
+                              <span className="cam-operation-badge cam-operation-badge--generating">
+                                <span className="cam-generating-spinner" />
+                              </span>
+                            ) : null}
                             <button
                               className="tree-action-btn"
                               type="button"
