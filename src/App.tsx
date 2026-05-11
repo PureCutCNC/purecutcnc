@@ -20,6 +20,7 @@ import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/Sketc
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFinishSurfaceToolpath, generateFollowLineToolpath, generatePocketToolpath, generateRoughSurfaceToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
+import type { Clamp, Operation, Project, SketchFeature, Stock, Tab, Tool } from './types/project'
 import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield, type SimulationReplayItem } from './engine/simulation'
 import type { SimulationPlaybackInput } from './components/simulation/SimulationViewport'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
@@ -41,6 +42,31 @@ interface TreeContextMenuState {
   primaryId: string
   x: number
   y: number
+}
+
+interface ToolpathCacheEntry {
+  result: ToolpathResult
+  operation: Operation
+  stock: Stock
+  features: SketchFeature[]
+  tools: Tool[]
+  tabs: Tab[]
+  clamps: Clamp[]
+}
+
+function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, project: Project): boolean {
+  return (
+    entry.operation === operation
+    && entry.stock === project.stock
+    && entry.features === project.features
+    && entry.tools === project.tools
+    && entry.tabs === project.tabs
+    && entry.clamps === project.clamps
+  )
+}
+
+function scheduleAfterPaint(fn: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(fn))
 }
 
 type ToolbarOrientation = 'top' | 'left'
@@ -112,9 +138,12 @@ function App() {
   const simulationViewportRef = useRef<SimulationViewportHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const toolpathCacheRef = useRef<Map<string, ToolpathCacheEntry>>(new Map())
+  const [toolpathMap, setToolpathMap] = useState<Map<string, ToolpathResult>>(new Map())
   const {
     project,
     projectKey,
+    projectLoading,
     selection,
     selectFeature,
     enterSketchEdit,
@@ -190,52 +219,146 @@ function App() {
         return null
       }
 
+      const cached = toolpathCacheRef.current.get(operation.id)
+      if (cached && isCacheHit(cached, operation, project)) {
+        return cached.result
+      }
+
+      let result: ToolpathResult | null = null
+
       if (operation.kind === 'pocket') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)), operation)
-      }
-
-      if (operation.kind === 'v_carve') {
-        return applyClampWarnings(project, generateVCarveToolpath(project, operation), operation)
-      }
-
-      if (operation.kind === 'v_carve_recursive') {
-        return applyClampWarnings(project, generateVCarveRecursiveToolpath(project, operation), operation)
-      }
-
-      if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
+        result = applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)), operation)
+      } else if (operation.kind === 'v_carve') {
+        result = applyClampWarnings(project, generateVCarveToolpath(project, operation), operation)
+      } else if (operation.kind === 'v_carve_recursive') {
+        result = applyClampWarnings(project, generateVCarveRecursiveToolpath(project, operation), operation)
+      } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
-        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
-      }
-
-      if (operation.kind === 'surface_clean') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)), operation)
-      }
-
-      if (operation.kind === 'rough_surface') {
-        return applyClampWarnings(project, applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation)), operation)
-      }
-
-      if (operation.kind === 'finish_surface') {
+        result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+      } else if (operation.kind === 'surface_clean') {
+        result = applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)), operation)
+      } else if (operation.kind === 'rough_surface') {
+        result = applyClampWarnings(project, applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation)), operation)
+      } else if (operation.kind === 'finish_surface') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceToolpath(project, operation))
-        return applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+        result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+      } else if (operation.kind === 'follow_line') {
+        result = applyClampWarnings(project, generateFollowLineToolpath(project, operation), operation)
+      } else if (operation.kind === 'drilling') {
+        result = applyClampWarnings(project, generateDrillingToolpath(project, operation), operation)
       }
 
-      if (operation.kind === 'follow_line') {
-        return applyClampWarnings(project, generateFollowLineToolpath(project, operation), operation)
+      if (result) {
+        toolpathCacheRef.current.set(operation.id, {
+          result,
+          operation,
+          stock: project.stock,
+          features: project.features,
+          tools: project.tools,
+          tabs: project.tabs,
+          clamps: project.clamps,
+        })
       }
 
-      if (operation.kind === 'drilling') {
-        return applyClampWarnings(project, generateDrillingToolpath(project, operation), operation)
-      }
-
-      return null
+      return result
     },
     [project]
   )
 
-  const selectedToolpath = useMemo<ToolpathResult | null>(() => {
-    return generateToolpathForOperation(selectedOperation)
-  }, [generateToolpathForOperation, selectedOperation])
+  // Operations that need toolpath computation (selected first for priority)
+  const neededOperationIds = useMemo(() => {
+    const ids: string[] = []
+    const seen = new Set<string>()
+    if (selectedOperation) {
+      ids.push(selectedOperation.id)
+      seen.add(selectedOperation.id)
+    }
+    for (const op of project.operations) {
+      if (op.showToolpath && !seen.has(op.id)) {
+        ids.push(op.id)
+      }
+    }
+    return ids
+  }, [selectedOperation, project.operations])
+
+  // Derived during render by checking cache validity — the spinner shows on
+  // the very first render after a parameter change, not one frame late.
+  // toolpathMap is included as a dependency so the memo recomputes when the
+  // async pipeline finishes and updates the map (which also updates the cache).
+  const generatingOperationIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const id of neededOperationIds) {
+      const op = project.operations.find((o) => o.id === id)
+      if (!op) continue
+      const entry = toolpathCacheRef.current.get(id)
+      if (!entry || !isCacheHit(entry, op, project)) {
+        ids.add(id)
+      }
+    }
+    return ids
+  }, [neededOperationIds, project, toolpathMap])
+
+  // Async toolpath pipeline: resolves cached results immediately, defers
+  // uncached operations one-per-frame with a paint gap in between so the
+  // spinner (derived from cache staleness above) stays animated.
+  useEffect(() => {
+    const immediateResults = new Map<string, ToolpathResult>()
+    const toCompute: string[] = []
+
+    for (const id of neededOperationIds) {
+      const op = project.operations.find((o) => o.id === id)
+      if (!op) continue
+
+      const entry = toolpathCacheRef.current.get(id)
+      if (entry && isCacheHit(entry, op, project)) {
+        immediateResults.set(id, entry.result)
+      } else {
+        toCompute.push(id)
+      }
+    }
+
+    setToolpathMap(immediateResults)
+
+    if (toCompute.length === 0) {
+      return
+    }
+
+    let cancelled = false
+    let idx = 0
+
+    function computeNext() {
+      if (cancelled || idx >= toCompute.length) return
+
+      const op = project.operations.find((o) => o.id === toCompute[idx])
+      if (op && !cancelled) {
+        const result = generateToolpathForOperation(op)
+        if (!cancelled) {
+          setToolpathMap((prev) => {
+            const next = new Map(prev)
+            if (result) next.set(op.id, result)
+            return next
+          })
+        }
+      }
+
+      idx++
+      if (idx < toCompute.length && !cancelled) {
+        scheduleAfterPaint(computeNext)
+      }
+    }
+
+    // Double-rAF: the first rAF fires before the current paint, the second
+    // fires in the next frame — guaranteeing one browser paint in between.
+    // This ensures the spinner is visually rendered before computation blocks.
+    requestAnimationFrame(() => {
+      if (!cancelled) requestAnimationFrame(computeNext)
+    })
+    return () => { cancelled = true }
+  }, [neededOperationIds, generateToolpathForOperation, project])
+
+  const selectedToolpath = selectedOperation
+    ? toolpathMap.get(selectedOperation.id) ?? null
+    : null
 
   const simulationResult = useMemo(() => {
     if (centerTab !== 'simulation') {
@@ -398,9 +521,9 @@ function App() {
   const visibleToolpaths = useMemo<ToolpathResult[]>(() => {
     return project.operations
       .filter((operation) => operation.showToolpath)
-      .map((operation) => generateToolpathForOperation(operation))
-      .filter((toolpath): toolpath is ToolpathResult => toolpath !== null)
-  }, [generateToolpathForOperation, project.operations])
+      .map((operation) => toolpathMap.get(operation.id))
+      .filter((toolpath): toolpath is ToolpathResult => toolpath != null)
+  }, [project.operations, toolpathMap])
   const collidingClampIds = useMemo(
     () => [
       ...new Set([
@@ -838,6 +961,7 @@ function App() {
             onSelectedOperationIdChange={setSelectedOperationId}
             onExport={() => setShowExportDialog(true)}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
+            generatingOperationIds={generatingOperationIds}
           />
         }
         centerTab={centerTab}
@@ -872,6 +996,15 @@ function App() {
             })
           }}
         />
+      )}
+
+      {projectLoading && (
+        <div className="toolpath-loading-overlay">
+          <div className="toolpath-loading-content">
+            <span className="toolpath-loading-spinner" />
+            <span className="toolpath-loading-text">Opening project…</span>
+          </div>
+        </div>
       )}
 
       {treeContextMenu && menuPosition && (menuFeature || menuTab || menuClamp) ? (

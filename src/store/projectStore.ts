@@ -2640,6 +2640,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   filePath: null,
   lastExportPath: null,
   dirty: false,
+  projectLoading: false,
   projectKey: 0,
   pendingConstraint: null,
   history: {

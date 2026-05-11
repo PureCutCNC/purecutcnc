@@ -163,10 +163,16 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
             }
             const result = await platform.openProjectFile()
             if (result) {
+              useProjectStore.setState({ projectLoading: true })
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+              )
               try {
                 store.openProjectFromText(result.content, result.path)
               } catch (error) {
                 alert(error instanceof Error ? error.message : 'Failed to open project.')
+              } finally {
+                useProjectStore.setState({ projectLoading: false })
               }
             }
             break
@@ -233,9 +239,15 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
 
         try {
           const content = await readTextFile(camjPath)
+          useProjectStore.setState({ projectLoading: true })
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
           useProjectStore.getState().openProjectFromText(content, camjPath)
         } catch {
           alert('Failed to open dropped file.')
+        } finally {
+          useProjectStore.setState({ projectLoading: false })
         }
       })
       if (isCancelled) { unlistenDrop(); return }

@@ -199,6 +199,8 @@ export interface ProjectStore {
   history: ProjectHistory
 
   // ---- Session state (not persisted in .camj) ----
+  /** True while a project file is being parsed and loaded. */
+  projectLoading: boolean
   /** Incremented each time a new project is created or loaded. Used by viewports to reset their view state. */
   projectKey: number
   /** Filesystem path of the currently open file. Null in the browser or when no file is open. */
