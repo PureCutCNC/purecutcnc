@@ -18,7 +18,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
-import { buildSimulationGeometry } from '../../engine/simulation/mesh'
+import { createHeightfieldTexture, createStockPlaneGeometry, createStockBoundaryGeometry, createDynamicProfileBoundaryGeometry, updateHeightfieldTexture } from '../../engine/simulation/gpuMesh'
+import { createBoundaryMaterial, createDynamicBoundaryMaterial, createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
@@ -110,9 +111,12 @@ interface SimulationViewportProps {
   collidingClampIds: string[]
   origin: MachineOrigin
   stockColor?: string
+  stockHasProfile?: boolean
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
   playbackInput: SimulationPlaybackInput | null
+  /** True while a new simulation result is being computed (e.g. detail slider change). */
+  isComputing?: boolean
   /** Incremented each time the project changes so the viewport can reset its camera. */
   projectKey?: number
 }
@@ -122,7 +126,7 @@ export interface SimulationViewportHandle {
 }
 
 const SIMULATION_DETAIL_MIN = 240
-const SIMULATION_DETAIL_MAX = 720
+const SIMULATION_DETAIL_MAX = 1500
 const SIMULATION_DETAIL_STEP = 40
 
 /**
@@ -441,9 +445,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   collidingClampIds,
   origin,
   stockColor,
+  stockHasProfile = false,
   zoomWindowActive = false,
   onZoomWindowComplete,
   playbackInput,
+  isComputing = false,
   projectKey,
 }, ref) {
   const playbackUnits = playbackInput?.units ?? 'mm'
@@ -465,6 +471,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const playbackControllerRef = useRef<PlaybackController | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Mesh | null>(null)
+  const playbackBoundaryMeshRef = useRef<THREE.Mesh | null>(null)
+  const playbackHeightfieldTextureRef = useRef<THREE.DataTexture | null>(null)
+  const boundaryMeshRef = useRef<THREE.Mesh | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   const playbackLastRebuildRef = useRef<number>(0)
@@ -513,6 +522,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         objectRef.current.material.dispose()
       }
       objectRef.current = null
+    }
+    if (boundaryMeshRef.current) {
+      scene.remove(boundaryMeshRef.current)
+      boundaryMeshRef.current.geometry.dispose()
+      if (Array.isArray(boundaryMeshRef.current.material)) {
+        boundaryMeshRef.current.material.forEach((entry) => entry.dispose())
+      } else {
+        boundaryMeshRef.current.material.dispose()
+      }
+      boundaryMeshRef.current = null
     }
   }, [])
 
@@ -648,17 +667,24 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    const geometry = buildSimulationGeometry(simulation.grid)
-    const material = new THREE.MeshStandardMaterial({
-      color: stockColor ? new THREE.Color(stockColor) : 0xb5beca,
-      roughness: 0.86,
-      metalness: 0.05,
-      flatShading: true,
-      side: THREE.DoubleSide,
-    })
-    const mesh = new THREE.Mesh(geometry, material)
+    const grid = simulation.grid
+    const heightfieldTexture = createHeightfieldTexture(grid)
+    const planeGeometry = createStockPlaneGeometry(grid)
+    const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+    const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
+    const mesh = new THREE.Mesh(planeGeometry, material)
     scene.add(mesh)
     objectRef.current = mesh
+
+    const boundaryGeometry = stockHasProfile
+      ? createDynamicProfileBoundaryGeometry(grid)
+      : createStockBoundaryGeometry(grid)
+    const boundaryMaterial = stockHasProfile
+      ? createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
+      : createBoundaryMaterial(color)
+    const boundary = new THREE.Mesh(boundaryGeometry, boundaryMaterial)
+    scene.add(boundary)
+    boundaryMeshRef.current = boundary
 
     if (!hasAutoFramedRef.current) {
       const bounds = new THREE.Box3().setFromObject(mesh)
@@ -667,18 +693,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         hasAutoFramedRef.current = true
       }
     }
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, stockHasProfile])
 
   const rebuildPlaybackGeometry = useCallback(() => {
-    const mesh = playbackMaterialMeshRef.current
     const controller = playbackControllerRef.current
-    if (!mesh || !controller) {
+    const texture = playbackHeightfieldTextureRef.current
+    if (!controller || !texture) {
       return
     }
-    const nextGeometry = buildSimulationGeometry(controller.liveGrid)
-    mesh.geometry.dispose()
-    mesh.geometry = nextGeometry
+    const dirtyRegion = controller.getDirtyRegion()
+    updateHeightfieldTexture(texture, dirtyRegion)
+    controller.clearDirtyRegion()
   }, [])
+
 
   const updateToolMeshPose = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -701,13 +728,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       if (playbackMaterialMeshRef.current) {
         scene.remove(playbackMaterialMeshRef.current)
         playbackMaterialMeshRef.current.geometry.dispose()
-        const material = playbackMaterialMeshRef.current.material
-        if (Array.isArray(material)) {
-          material.forEach((entry) => entry.dispose())
-        } else {
-          material.dispose()
-        }
+        const mat = playbackMaterialMeshRef.current.material
+        if (Array.isArray(mat)) { mat.forEach((entry) => entry.dispose()) } else { mat.dispose() }
         playbackMaterialMeshRef.current = null
+      }
+      if (playbackBoundaryMeshRef.current) {
+        scene.remove(playbackBoundaryMeshRef.current)
+        playbackBoundaryMeshRef.current.geometry.dispose()
+        if (Array.isArray(playbackBoundaryMeshRef.current.material)) {
+          playbackBoundaryMeshRef.current.material.forEach((entry) => entry.dispose())
+        } else {
+          playbackBoundaryMeshRef.current.material.dispose()
+        }
+        playbackBoundaryMeshRef.current = null
+      }
+      if (playbackHeightfieldTextureRef.current) {
+        playbackHeightfieldTextureRef.current.dispose()
+        playbackHeightfieldTextureRef.current = null
       }
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
@@ -732,17 +769,27 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     )
     playbackControllerRef.current = controller
 
-    const geometry = buildSimulationGeometry(controller.liveGrid)
-    const material = new THREE.MeshStandardMaterial({
-      color: stockColor ? new THREE.Color(stockColor) : 0xb5beca,
-      roughness: 0.86,
-      metalness: 0.05,
-      flatShading: true,
-      side: THREE.DoubleSide,
-    })
-    const mesh = new THREE.Mesh(geometry, material)
+    const grid = controller.liveGrid
+    const heightfieldTexture = createHeightfieldTexture(grid)
+    playbackHeightfieldTextureRef.current = heightfieldTexture
+    const planeGeometry = createStockPlaneGeometry(grid)
+    const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+    const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
+    const mesh = new THREE.Mesh(planeGeometry, material)
     scene.add(mesh)
     playbackMaterialMeshRef.current = mesh
+
+    {
+      const boundaryGeometry = stockHasProfile
+        ? createDynamicProfileBoundaryGeometry(grid)
+        : createStockBoundaryGeometry(grid)
+      const boundaryMaterial = stockHasProfile
+        ? createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
+        : createBoundaryMaterial(color)
+      const boundary = new THREE.Mesh(boundaryGeometry, boundaryMaterial)
+      scene.add(boundary)
+      playbackBoundaryMeshRef.current = boundary
+    }
 
     const tool = buildToolMesh({
       toolType: playbackInput.toolType,
@@ -761,13 +808,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       if (playbackMaterialMeshRef.current) {
         scene.remove(playbackMaterialMeshRef.current)
         playbackMaterialMeshRef.current.geometry.dispose()
-        const material = playbackMaterialMeshRef.current.material
-        if (Array.isArray(material)) {
-          material.forEach((entry) => entry.dispose())
-        } else {
-          material.dispose()
-        }
+        const mat = playbackMaterialMeshRef.current.material
+        if (Array.isArray(mat)) { mat.forEach((entry) => entry.dispose()) } else { mat.dispose() }
         playbackMaterialMeshRef.current = null
+      }
+      if (playbackBoundaryMeshRef.current) {
+        scene.remove(playbackBoundaryMeshRef.current)
+        playbackBoundaryMeshRef.current.geometry.dispose()
+        if (Array.isArray(playbackBoundaryMeshRef.current.material)) {
+          playbackBoundaryMeshRef.current.material.forEach((entry) => entry.dispose())
+        } else {
+          playbackBoundaryMeshRef.current.material.dispose()
+        }
+        playbackBoundaryMeshRef.current = null
+      }
+      if (playbackHeightfieldTextureRef.current) {
+        playbackHeightfieldTextureRef.current.dispose()
+        playbackHeightfieldTextureRef.current = null
       }
       if (toolMeshRef.current) {
         scene.remove(toolMeshRef.current)
@@ -776,7 +833,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
       playbackControllerRef.current = null
     }
-  }, [playbackEnabled, playbackInput, stockColor, updateToolMeshPose])
+  }, [playbackEnabled, playbackInput, stockColor, stockHasProfile, updateToolMeshPose])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -825,6 +882,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
       if (controllerInner.isFinished()) {
         rebuildPlaybackGeometry()
+
         setIsPlaying(false)
         playbackFrameRef.current = 0
         return
@@ -991,6 +1049,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   return (
     <div className="simulation-viewport">
       <div ref={mountRef} className="simulation-viewport__canvas" />
+      {isComputing && (
+        <div className="simulation-viewport__computing-overlay">
+          <div className="simulation-viewport__spinner" />
+        </div>
+      )}
       {zoomWindowActive && (
         <div
           className="viewport-zoom-select-overlay"

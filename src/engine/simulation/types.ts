@@ -27,6 +27,13 @@ export interface SimulationGrid {
   topZ: Float32Array
 }
 
+export interface DirtyRegion {
+  colMin: number
+  colMax: number
+  rowMin: number
+  rowMax: number
+}
+
 export interface SimulationBuildOptions {
   targetLongAxisCells?: number
 }

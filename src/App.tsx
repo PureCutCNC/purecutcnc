@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFinishSurfaceToolpath, generateFollowLineToolpath, generatePocketToolpath, generateRoughSurfaceToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
@@ -93,6 +93,7 @@ function App() {
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
+  const [isSimulationPending, startSimulationTransition] = useTransition()
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
@@ -937,7 +938,8 @@ function App() {
             operation={selectedOperation}
             simulation={simulationResult}
             detailCells={simulationDetailCells}
-            onDetailCellsChange={setSimulationDetailCells}
+            onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
+            isComputing={isSimulationPending}
             mode={simulationMode}
             onModeChange={setSimulationMode}
             operationCount={simulationOperationCount}
@@ -946,6 +948,7 @@ function App() {
             collidingClampIds={collidingClampIds}
             origin={project.origin}
             stockColor={project.stock.color}
+            stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
             onZoomWindowComplete={() => setZoomWindowActive(false)}
             playbackInput={simulationPlaybackInput}

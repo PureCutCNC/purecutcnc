@@ -622,6 +622,30 @@
   line-height: 1.45;
 }
 
+.simulation-viewport__computing-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 20, 28, 0.45);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.simulation-viewport__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  animation: sim-spin 0.7s linear infinite;
+}
+
+@keyframes sim-spin {
+  to { transform: rotate(360deg); }
+}
+
 .simulation-detail-control {
   display: inline-flex;
   align-items: center;
