@@ -420,6 +420,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleDistributeSelectedFeatures,
     handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
     handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
+    handleSketchEditDeleteSegment: () => toggleSketchEditTool('delete_segment'),
+    handleSketchEditDisconnect: () => toggleSketchEditTool('disconnect'),
     handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
     handleFeatureConstraint: () => {
       if (pendingConstraint) {
@@ -942,6 +944,8 @@ function SketchEditActions({
   tooltipSide,
   onAddPoint,
   onDeletePoint,
+  onDeleteSegment,
+  onDisconnect,
   onFillet,
 }: {
   enabled: boolean
@@ -949,6 +953,8 @@ function SketchEditActions({
   tooltipSide?: 'bottom' | 'right'
   onAddPoint: () => void
   onDeletePoint: () => void
+  onDeleteSegment: () => void
+  onDisconnect: () => void
   onFillet: () => void
 }) {
   if (!enabled) return null
@@ -968,6 +974,20 @@ function SketchEditActions({
         active={activeTool === 'delete_point'}
         tooltipSide={tooltipSide}
         onClick={onDeletePoint}
+      />
+      <ToolbarActionButton
+        icon="segment-delete"
+        label={activeTool === 'delete_segment' ? 'Cancel delete segment' : 'Delete segment'}
+        active={activeTool === 'delete_segment'}
+        tooltipSide={tooltipSide}
+        onClick={onDeleteSegment}
+      />
+      <ToolbarActionButton
+        icon="disconnect"
+        label={activeTool === 'disconnect' ? 'Cancel disconnect' : 'Disconnect point'}
+        active={activeTool === 'disconnect'}
+        tooltipSide={tooltipSide}
+        onClick={onDisconnect}
       />
       <ToolbarActionButton
         icon="fillet"
@@ -1259,6 +1279,8 @@ export function CreationToolbar({
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
+          onDeleteSegment={toolbar.handleSketchEditDeleteSegment}
+          onDisconnect={toolbar.handleSketchEditDisconnect}
           onFillet={toolbar.handleSketchEditFillet}
         />
         <BackdropEditActions
@@ -1378,6 +1400,8 @@ export function Toolbar({
           activeTool={toolbar.sketchEditTool}
           onAddPoint={toolbar.handleSketchEditAddPoint}
           onDeletePoint={toolbar.handleSketchEditDeletePoint}
+          onDeleteSegment={toolbar.handleSketchEditDeleteSegment}
+          onDisconnect={toolbar.handleSketchEditDisconnect}
           onFillet={toolbar.handleSketchEditFillet}
         />
         <BackdropEditActions

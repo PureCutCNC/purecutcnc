@@ -197,15 +197,16 @@ export function drawSketchControls(
 
 export function drawSketchEditPreviewPoint(
   ctx: CanvasRenderingContext2D,
-  preview: { point: Point; mode: 'add_point' | 'delete_point' | 'fillet' },
+  preview: { point: Point; mode: 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' },
   vt: ViewTransform,
 ): void {
   const { cx, cy } = worldToCanvas(preview.point, vt)
   ctx.beginPath()
   ctx.arc(cx, cy, NODE_RADIUS + 2, 0, Math.PI * 2)
-  ctx.fillStyle = preview.mode === 'delete_point' ? '#d66c6c' : '#5daeea'
+  const destructive = preview.mode === 'delete_point' || preview.mode === 'delete_segment'
+  ctx.fillStyle = destructive ? '#d66c6c' : preview.mode === 'disconnect' ? '#d9945e' : '#5daeea'
   ctx.fill()
-  ctx.strokeStyle = preview.mode === 'delete_point' ? '#efb0b0' : '#a9d2f5'
+  ctx.strokeStyle = destructive ? '#efb0b0' : preview.mode === 'disconnect' ? '#f1c59d' : '#a9d2f5'
   ctx.lineWidth = 2
   ctx.stroke()
 }
