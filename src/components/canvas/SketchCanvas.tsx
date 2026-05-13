@@ -19,7 +19,7 @@ import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel, type ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
-import type { SketchControlRef, SketchEditTool } from '../../store/types'
+import type { OpenProfileEndpoint, SketchControlRef, SketchEditTool } from '../../store/types'
 import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   buildArcSegmentFromThreePoints,
@@ -75,7 +75,7 @@ import {
   worldToCanvas,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
-import { findSketchInsertTarget, isLoopCloseCandidate, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
+import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
   featureFullyInsideRect,
@@ -111,6 +111,7 @@ import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 const NODE_HIT_RADIUS = 9
 const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
+const OPEN_ENDPOINT_JOIN_HIT_RADIUS = 14
 const MIN_SKETCH_ZOOM = 0.02
 
 interface PendingPreviewPoint {
@@ -126,6 +127,17 @@ interface SketchEditPreviewPoint {
 interface PendingSketchFillet {
   anchorIndex: number
   corner: Point
+}
+
+interface OpenEndpointHit {
+  featureId: string
+  endpoint: OpenProfileEndpoint
+  anchor: Point
+}
+
+interface SegmentHit {
+  segmentIndex: number
+  point: Point
 }
 
 export interface SketchCanvasHandle {
@@ -321,7 +333,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelHistoryTransaction,
     moveFeatureControl,
     insertFeaturePoint,
+    joinOpenFeatureEndpoints,
     deleteFeaturePoint,
+    deleteFeatureSegment,
+    disconnectFeaturePoint,
     filletFeaturePoint,
     moveTabControl,
     moveClampControl,
@@ -700,8 +715,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'add_point') {
         pendingSketchFilletRef.current = null
         if (pendingSketchExtensionRef.current) {
+          const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
+          const targetEndpoint = findOpenEndpointHit(livePoint, vt, {
+            exclude: {
+              featureId: feature.id,
+              endpoint: sourceEndpoint,
+              anchor: pendingSketchExtensionRef.current.anchor,
+            },
+          })
           const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
-          sketchEditPreviewRef.current = { point: lockedSnapped, mode: 'add_point' }
+          sketchEditPreviewRef.current = { point: targetEndpoint?.anchor ?? lockedSnapped, mode: 'add_point' }
         } else {
           const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, livePoint, vt)
           if (endpoint) {
@@ -711,6 +734,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             sketchEditPreviewRef.current = target ? { point: target.point, mode: 'add_point' } : null
           }
         }
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'delete_segment') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
+        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'disconnect') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const control = hitEditableControl(worldToCanvas(livePoint, vt), { includeSegments: false })
+        sketchEditPreviewRef.current =
+          control?.kind === 'anchor'
+            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
+            : null
         scheduleDraw()
         return
       }
@@ -1787,6 +1831,100 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     )
   }
 
+  function openEndpointAnchor(feature: SketchFeature, endpoint: OpenProfileEndpoint): Point {
+    return endpoint === 'start'
+      ? feature.sketch.profile.start
+      : anchorPointForIndex(feature.sketch.profile, feature.sketch.profile.segments.length)
+  }
+
+  function endpointFromSketchExtension(kind: PendingSketchExtension['kind']): OpenProfileEndpoint {
+    return kind === 'extend_start' ? 'start' : 'end'
+  }
+
+  function openEndpointForAnchorControl(feature: SketchFeature, control: SketchControlRef): OpenProfileEndpoint | null {
+    if (control.kind !== 'anchor' || feature.sketch.profile.closed || feature.sketch.profile.segments.length === 0) {
+      return null
+    }
+
+    const lastAnchorIndex = profileVertices(feature.sketch.profile).length - 1
+    if (control.index === 0) {
+      return 'start'
+    }
+    if (control.index === lastAnchorIndex) {
+      return 'end'
+    }
+    return null
+  }
+
+  function findOpenEndpointHit(
+    rawPoint: Point,
+    vt: ViewTransform,
+    options?: {
+      featureIds?: Set<string>
+      exclude?: OpenEndpointHit | null
+    },
+  ): OpenEndpointHit | null {
+    const project = projectRef.current
+    const rawCanvas = worldToCanvas(rawPoint, vt)
+    let best: OpenEndpointHit | null = null
+    let bestDistance = OPEN_ENDPOINT_JOIN_HIT_RADIUS * OPEN_ENDPOINT_JOIN_HIT_RADIUS
+
+    for (let index = project.features.length - 1; index >= 0; index -= 1) {
+      const feature = project.features[index]
+      if (
+        !feature
+        || !feature.visible
+        || feature.locked
+        || feature.sketch.profile.closed
+        || feature.sketch.profile.segments.length === 0
+        || (options?.featureIds && !options.featureIds.has(feature.id))
+      ) {
+        continue
+      }
+
+      for (const endpoint of ['start', 'end'] as const) {
+        if (
+          options?.exclude
+          && options.exclude.featureId === feature.id
+          && options.exclude.endpoint === endpoint
+        ) {
+          continue
+        }
+
+        const anchor = openEndpointAnchor(feature, endpoint)
+        const anchorCanvas = worldToCanvas(anchor, vt)
+        const distance = distance2(rawCanvas, anchorCanvas)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = { featureId: feature.id, endpoint, anchor }
+        }
+      }
+    }
+
+    return best
+  }
+
+  function findSketchSegmentHit(profile: SketchFeature['sketch']['profile'], rawPoint: Point, vt: ViewTransform): SegmentHit | null {
+    let best: SegmentHit | null = null
+    let bestDistance = NODE_HIT_RADIUS * NODE_HIT_RADIUS
+
+    for (let index = 0; index < profile.segments.length; index += 1) {
+      const segment = profile.segments[index]
+      if (segment.type === 'circle') {
+        continue
+      }
+
+      const start = anchorPointForIndex(profile, index)
+      const candidate = nearestPointOnSegmentWithT(rawPoint, start, segment, vt)
+      if (candidate.distanceSqPx < bestDistance) {
+        bestDistance = candidate.distanceSqPx
+        best = { segmentIndex: index, point: candidate.point }
+      }
+    }
+
+    return best
+  }
+
   function editableClamp(): Clamp | null {
     const selection = selectionRef.current
     const project = projectRef.current
@@ -2277,11 +2415,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'delete_point') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
-          const control = hitEditableControl(point, { includeSegments: false })
-          sketchEditPreviewRef.current =
-            control?.kind === 'anchor'
-              ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
-              : null
+        const control = hitEditableControl(point, { includeSegments: false })
+        sketchEditPreviewRef.current =
+          control?.kind === 'anchor'
+            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
+            : null
+        scheduleDraw()
+        setHoveredEditControl(null)
+        hoverFeature(null)
+        return
+      }
+
+      if (feature && sketchEditTool === 'delete_segment') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const target = findSketchSegmentHit(feature.sketch.profile, world, vt)
+        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
+        scheduleDraw()
+        setHoveredEditControl(null)
+        hoverFeature(null)
+        return
+      }
+
+      if (feature && sketchEditTool === 'disconnect') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const control = hitEditableControl(point, { includeSegments: false })
+        sketchEditPreviewRef.current =
+          control?.kind === 'anchor'
+            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
+            : null
         scheduleDraw()
         setHoveredEditControl(null)
         hoverFeature(null)
@@ -2338,6 +2501,49 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     dragStartWorldRef.current = null
     setActiveControl(null)
     commitHistoryTransaction()
+  }
+
+  function tryJoinDraggedOpenEndpoint(): boolean {
+    const canvas = canvasRef.current
+    const rawPoint = livePointerWorldRef.current
+    const selection = selectionRef.current
+    const feature = editableFeature()
+    if (
+      !canvas
+      || !rawPoint
+      || !feature
+      || !isDraggingNodeRef.current
+      || selection.mode !== 'sketch_edit'
+      || selection.selectedNode?.type !== 'feature'
+      || !selection.selectedFeatureId
+      || !selection.activeControl
+    ) {
+      return false
+    }
+
+    const sourceEndpoint = openEndpointForAnchorControl(feature, selection.activeControl)
+    if (!sourceEndpoint) {
+      return false
+    }
+
+    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+    const targetEndpoint = findOpenEndpointHit(rawPoint, vt, {
+      exclude: {
+        featureId: selection.selectedFeatureId,
+        endpoint: sourceEndpoint,
+        anchor: openEndpointAnchor(feature, sourceEndpoint),
+      },
+    })
+    if (!targetEndpoint) {
+      return false
+    }
+
+    return joinOpenFeatureEndpoints(
+      selection.selectedFeatureId,
+      sourceEndpoint,
+      targetEndpoint.featureId,
+      targetEndpoint.endpoint,
+    )
   }
 
   function stopPan() {
@@ -2405,6 +2611,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
       marqueeStartRef.current = null
       marqueeCurrentRef.current = null
+      scheduleDraw()
+    }
+    if (tryJoinDraggedOpenEndpoint()) {
+      suppressClickRef.current = true
       scheduleDraw()
     }
     stopNodeDrag()
@@ -2536,6 +2746,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const feature = editableFeature()
         if (feature && selection.sketchEditTool === 'add_point') {
           if (pendingSketchExtensionRef.current) {
+            const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
+            const targetEndpoint = findOpenEndpointHit(world, vt, {
+              exclude: {
+                featureId: selection.selectedFeatureId,
+                endpoint: sourceEndpoint,
+                anchor: pendingSketchExtensionRef.current.anchor,
+              },
+            })
+            if (targetEndpoint) {
+              const joined = joinOpenFeatureEndpoints(
+                selection.selectedFeatureId,
+                sourceEndpoint,
+                targetEndpoint.featureId,
+                targetEndpoint.endpoint,
+              )
+              if (joined) {
+                pendingSketchExtensionRef.current = null
+                sketchEditPreviewRef.current = null
+                scheduleDraw()
+              }
+              return
+            }
+
             if (!pickedPoint) {
               return
             }
@@ -2573,6 +2806,26 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const control = hitEditableControl(point, { includeSegments: false })
           if (control?.kind === 'anchor') {
             deleteFeaturePoint(selection.selectedFeatureId, control.index)
+          }
+          return
+        }
+
+        if (feature && selection.sketchEditTool === 'delete_segment') {
+          const target = findSketchSegmentHit(feature.sketch.profile, world, vt)
+          if (target) {
+            deleteFeatureSegment(selection.selectedFeatureId, target.segmentIndex)
+            sketchEditPreviewRef.current = null
+            scheduleDraw()
+          }
+          return
+        }
+
+        if (feature && selection.sketchEditTool === 'disconnect') {
+          const control = hitEditableControl(point, { includeSegments: false })
+          if (control?.kind === 'anchor') {
+            disconnectFeaturePoint(selection.selectedFeatureId, control.index)
+            sketchEditPreviewRef.current = null
+            scheduleDraw()
           }
           return
         }
@@ -4380,6 +4633,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Add Point active. Click a segment to insert a point, or click an open-path end first to start an extension. Press '
               : selection.sketchEditTool === 'delete_point'
                 ? 'Delete Point active. Click anchors to remove them. Press '
+                : selection.sketchEditTool === 'delete_segment'
+                  ? 'Delete Segment active. Click a segment to remove it. Press '
+                  : selection.sketchEditTool === 'disconnect'
+                    ? 'Disconnect active. Click an anchor to split the path there. Press '
                 : selection.sketchEditTool === 'fillet'
                 ? pendingSketchFilletRef.current
                     ? 'Fillet active. Click a second point to define the corner round, or press Tab to type the radius. Press '

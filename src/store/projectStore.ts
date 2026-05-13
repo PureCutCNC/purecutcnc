@@ -70,6 +70,7 @@ import type {
   Tab,
   Tool,
 } from '../types/project'
+import type { OpenProfileEndpoint } from './types'
 import { convertProjectUnits } from '../utils/units'
 import { convertLength } from '../utils/units'
 import {
@@ -308,6 +309,126 @@ function extendOpenProfileAtEnd(profile: SketchProfile, point: Point): SketchPro
     ...profile,
     segments: nextSegments,
   }
+}
+
+function reverseOpenProfile(profile: SketchProfile): SketchProfile {
+  const anchors = [profile.start, ...profile.segments.map((segment) => segment.to)]
+  const lastAnchor = anchors[anchors.length - 1] ?? profile.start
+  const segments: Segment[] = []
+
+  for (let index = profile.segments.length - 1; index >= 0; index -= 1) {
+    const segment = profile.segments[index]
+    const previousAnchor = anchors[index]
+    if (!segment || !previousAnchor) {
+      continue
+    }
+
+    if (segment.type === 'line') {
+      segments.push({ type: 'line', to: clonePoint(previousAnchor) })
+      continue
+    }
+
+    if (segment.type === 'bezier') {
+      segments.push({
+        type: 'bezier',
+        control1: clonePoint(segment.control2),
+        control2: clonePoint(segment.control1),
+        to: clonePoint(previousAnchor),
+      })
+      continue
+    }
+
+    if (segment.type === 'arc') {
+      segments.push({
+        type: 'arc',
+        center: clonePoint(segment.center),
+        clockwise: !segment.clockwise,
+        to: clonePoint(previousAnchor),
+      })
+    }
+  }
+
+  return {
+    ...profile,
+    start: clonePoint(lastAnchor),
+    segments,
+    closed: false,
+  }
+}
+
+function endPointForOpenProfile(profile: SketchProfile): Point {
+  return anchorPointForIndex(profile, profile.segments.length)
+}
+
+function orientOpenProfileTowardEndpoint(profile: SketchProfile, endpoint: OpenProfileEndpoint): SketchProfile {
+  return endpoint === 'end'
+    ? {
+        ...profile,
+        start: clonePoint(profile.start),
+        segments: profile.segments.map(cloneSegment),
+        closed: false,
+      }
+    : reverseOpenProfile(profile)
+}
+
+function orientOpenProfileFromEndpoint(profile: SketchProfile, endpoint: OpenProfileEndpoint): SketchProfile {
+  return endpoint === 'start'
+    ? {
+        ...profile,
+        start: clonePoint(profile.start),
+        segments: profile.segments.map(cloneSegment),
+        closed: false,
+      }
+    : reverseOpenProfile(profile)
+}
+
+function closeOpenProfile(profile: SketchProfile): SketchProfile | null {
+  if (profile.closed || profile.segments.length === 0) {
+    return null
+  }
+
+  const endPoint = endPointForOpenProfile(profile)
+  const segments = profile.segments.map(cloneSegment)
+  if (!pointsEqual(endPoint, profile.start)) {
+    segments.push({ type: 'line', to: clonePoint(profile.start) })
+  }
+
+  return normalizeEditableProfileClosure({
+    ...profile,
+    start: clonePoint(profile.start),
+    segments,
+    closed: true,
+  })
+}
+
+export function joinOpenProfiles(
+  profile: SketchProfile,
+  endpoint: OpenProfileEndpoint,
+  targetProfile: SketchProfile,
+  targetEndpoint: OpenProfileEndpoint,
+): SketchProfile | null {
+  if (profile.closed || targetProfile.closed || profile.segments.length === 0 || targetProfile.segments.length === 0) {
+    return null
+  }
+
+  const leading = orientOpenProfileTowardEndpoint(profile, endpoint)
+  const trailing = orientOpenProfileFromEndpoint(targetProfile, targetEndpoint)
+  const leadingEnd = endPointForOpenProfile(leading)
+  const trailingStart = trailing.start
+  const segments = leading.segments.map(cloneSegment)
+
+  if (!pointsEqual(leadingEnd, trailingStart)) {
+    segments.push({ type: 'line', to: clonePoint(trailingStart) })
+  }
+
+  segments.push(...trailing.segments.map(cloneSegment))
+
+  return normalizeEditableProfileClosure({
+    ...profile,
+    start: clonePoint(leading.start),
+    segments,
+    closed: false,
+  })
 }
 
 function buildBridgeSegment(
@@ -550,6 +671,112 @@ function deleteAnchorFromProfile(profile: SketchProfile, anchorIndex: number): S
     ...profile,
     segments: nextSegments,
     closed: false,
+  }
+}
+
+interface ProfileBreakResult {
+  profile: SketchProfile
+  splitProfile: SketchProfile | null
+}
+
+function profileFromOpenSegments(start: Point, segments: Segment[]): SketchProfile | null {
+  if (segments.length === 0) {
+    return null
+  }
+
+  return {
+    start: clonePoint(start),
+    segments: segments.map(cloneSegment),
+    closed: false,
+  }
+}
+
+function deleteSegmentFromProfile(profile: SketchProfile, segmentIndex: number): ProfileBreakResult | null {
+  if (segmentIndex < 0 || segmentIndex >= profile.segments.length || profile.segments.length <= 1) {
+    return null
+  }
+
+  const segment = profile.segments[segmentIndex]
+  if (!segment || segment.type === 'circle') {
+    return null
+  }
+
+  if (profile.closed) {
+    const nextSegments: Segment[] = []
+    for (let offset = 1; offset < profile.segments.length; offset += 1) {
+      const nextSegment = profile.segments[(segmentIndex + offset) % profile.segments.length]
+      if (nextSegment) {
+        nextSegments.push(cloneSegment(nextSegment))
+      }
+    }
+
+    return {
+      profile: {
+        ...profile,
+        start: clonePoint(segment.to),
+        segments: nextSegments,
+        closed: false,
+      },
+      splitProfile: null,
+    }
+  }
+
+  const leading = profileFromOpenSegments(profile.start, profile.segments.slice(0, segmentIndex))
+  const trailing = profileFromOpenSegments(segment.to, profile.segments.slice(segmentIndex + 1))
+  const primaryProfile = leading ?? trailing
+  if (!primaryProfile) {
+    return null
+  }
+
+  return {
+    profile: primaryProfile,
+    splitProfile: leading && trailing ? trailing : null,
+  }
+}
+
+function disconnectProfileAtAnchor(profile: SketchProfile, anchorIndex: number): ProfileBreakResult | null {
+  const anchors = profileVertices(profile)
+  if (anchorIndex < 0 || anchorIndex >= anchors.length || profile.segments.length === 0) {
+    return null
+  }
+
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    return null
+  }
+
+  if (profile.closed) {
+    const nextSegments: Segment[] = []
+    for (let offset = 0; offset < profile.segments.length; offset += 1) {
+      const segment = profile.segments[(anchorIndex + offset) % profile.segments.length]
+      if (segment) {
+        nextSegments.push(cloneSegment(segment))
+      }
+    }
+
+    return {
+      profile: {
+        ...profile,
+        start: clonePoint(anchors[anchorIndex]),
+        segments: nextSegments,
+        closed: false,
+      },
+      splitProfile: null,
+    }
+  }
+
+  if (anchorIndex === 0 || anchorIndex === anchors.length - 1) {
+    return null
+  }
+
+  const leading = profileFromOpenSegments(profile.start, profile.segments.slice(0, anchorIndex))
+  const trailing = profileFromOpenSegments(anchors[anchorIndex], profile.segments.slice(anchorIndex))
+  if (!leading || !trailing) {
+    return null
+  }
+
+  return {
+    profile: leading,
+    splitProfile: trailing,
   }
 }
 
@@ -2633,6 +2860,80 @@ function withAutoDirty(rawSet: SetFn): SetFn {
 
 export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   const set = withAutoDirty(rawSet)
+  const applyProfileBreak = (
+    featureId: string,
+    resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,
+  ) => set((s) => {
+    const feature = s.project.features.find((entry) => entry.id === featureId) ?? null
+    if (!feature || feature.locked) {
+      return {}
+    }
+
+    const result = resolveBreak(feature.sketch.profile)
+    if (!result) {
+      return {}
+    }
+
+    const splitFeature = result.splitProfile
+      ? createDerivedFeature(
+          s.project,
+          feature,
+          result.splitProfile,
+          feature.operation,
+          uniqueName(`${normalizeDerivedFeatureNameStem(feature.name)} Split`, s.project.features.map((entry) => entry.name)),
+        )
+      : null
+
+    const baseFeatures = s.project.features.map((entry) => {
+      if (entry.id !== featureId) {
+        return entry
+      }
+
+      return {
+        ...entry,
+        kind: ['text', 'stl'].includes(entry.kind) ? entry.kind : inferFeatureKind(result.profile),
+        sketch: {
+          ...entry.sketch,
+          profile: result.profile,
+        },
+      }
+    })
+    const createdGroups: DerivedFeatureGroup[] = splitFeature ? [{ sourceId: featureId, features: [splitFeature] }] : []
+    let nextProject = syncFeatureTreeProject({
+      ...s.project,
+      features: splitFeature
+        ? insertDerivedFeaturesAfterSources(baseFeatures, createdGroups, new Set())
+        : baseFeatures,
+      featureTree: splitFeature
+        ? insertDerivedFeatureTreeEntries(s.project.featureTree, baseFeatures, createdGroups, new Set())
+        : s.project.featureTree,
+      meta: { ...s.project.meta, modified: new Date().toISOString() },
+    })
+
+    nextProject = syncStockFromSourceFeature(nextProject, featureId)
+    if (projectsEqual(nextProject, s.project)) {
+      return {}
+    }
+
+    return {
+      project: nextProject,
+      selection: {
+        ...s.selection,
+        selectedFeatureId: featureId,
+        selectedFeatureIds: [featureId],
+        selectedNode: { type: 'feature' as const, featureId },
+        activeControl: null,
+      },
+      history: s.history.transactionStart
+        ? s.history
+        : {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+    }
+  })
+
   return {
   project: normalizeProject(newProject()),
   creationTarget: 'feature',
@@ -5588,6 +5889,116 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
+  joinOpenFeatureEndpoints: (featureId, endpoint, targetFeatureId, targetEndpoint) => {
+    let didJoin = false
+    set((s) => {
+      const feature = s.project.features.find((entry) => entry.id === featureId) ?? null
+      const targetFeature = s.project.features.find((entry) => entry.id === targetFeatureId) ?? null
+      if (
+        !feature
+        || !targetFeature
+        || feature.locked
+        || targetFeature.locked
+        || feature.sketch.profile.closed
+        || targetFeature.sketch.profile.closed
+      ) {
+        return {}
+      }
+
+      const nextProfile =
+        featureId === targetFeatureId
+          ? endpoint === targetEndpoint
+            ? null
+            : closeOpenProfile(feature.sketch.profile)
+          : joinOpenProfiles(feature.sketch.profile, endpoint, targetFeature.sketch.profile, targetEndpoint)
+      if (!nextProfile) {
+        return {}
+      }
+
+      const removedFeatureIds = new Set(featureId === targetFeatureId ? [] : [targetFeatureId])
+      let nextProject = syncFeatureTreeProject({
+        ...s.project,
+        features: s.project.features
+          .filter((entry) => !removedFeatureIds.has(entry.id))
+          .map((entry) => {
+            if (entry.id === featureId) {
+              return {
+                ...entry,
+                kind: ['text', 'stl'].includes(entry.kind) ? entry.kind : inferFeatureKind(nextProfile),
+                sketch: {
+                  ...entry.sketch,
+                  profile: nextProfile,
+                  constraints: entry.sketch.constraints.map((constraint) => {
+                    const refId = constraint.reference_feature_id ?? constraint.segment_ids[0]
+                    if (constraint.type === 'fixed_distance' && refId && removedFeatureIds.has(refId)) {
+                      return {
+                        ...constraint,
+                        is_invalid: true,
+                        error_message: 'Reference feature was joined into another feature',
+                      }
+                    }
+                    return constraint
+                  }),
+                },
+              }
+            }
+
+            if (removedFeatureIds.size === 0 || entry.sketch.constraints.every((constraint) => constraint.type !== 'fixed_distance')) {
+              return entry
+            }
+
+            const constraints = entry.sketch.constraints.map((constraint) => {
+              const refId = constraint.reference_feature_id ?? constraint.segment_ids[0]
+              if (constraint.type === 'fixed_distance' && refId && removedFeatureIds.has(refId)) {
+                return {
+                  ...constraint,
+                  is_invalid: true,
+                  error_message: 'Reference feature was joined into another feature',
+                }
+              }
+              return constraint
+            })
+
+            return {
+              ...entry,
+              sketch: {
+                ...entry.sketch,
+                constraints,
+              },
+            }
+          }),
+        featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && removedFeatureIds.has(entry.featureId))),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      })
+
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      didJoin = true
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: featureId,
+          selectedFeatureIds: [featureId],
+          selectedNode: { type: 'feature', featureId },
+          activeControl: null,
+        },
+        history: s.history.transactionStart
+          ? s.history
+          : {
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+      }
+    })
+
+    return didJoin
+  },
+
   deleteFeaturePoint: (featureId, anchorIndex) =>
     set((s) => {
       let changed = false
@@ -5636,6 +6047,12 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         },
       }
     }),
+
+  deleteFeatureSegment: (featureId, segmentIndex) =>
+    applyProfileBreak(featureId, (profile) => deleteSegmentFromProfile(profile, segmentIndex)),
+
+  disconnectFeaturePoint: (featureId, anchorIndex) =>
+    applyProfileBreak(featureId, (profile) => disconnectProfileAtAnchor(profile, anchorIndex)),
 
   filletFeaturePoint: (featureId, anchorIndex, radius) =>
     set((s) => {

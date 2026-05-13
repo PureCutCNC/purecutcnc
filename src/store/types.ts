@@ -55,7 +55,8 @@ export interface SketchControlRef {
   t?: number
 }
 
-export type SketchEditTool = 'add_point' | 'delete_point' | 'fillet'
+export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet'
+export type OpenProfileEndpoint = 'start' | 'end'
 
 export type FeatureAlignment =
   | 'left'
@@ -327,7 +328,15 @@ export interface ProjectStore {
   setActiveControl: (control: SketchControlRef | null) => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
   insertFeaturePoint: (featureId: string, target: SketchInsertTarget) => void
+  joinOpenFeatureEndpoints: (
+    featureId: string,
+    endpoint: OpenProfileEndpoint,
+    targetFeatureId: string,
+    targetEndpoint: OpenProfileEndpoint,
+  ) => boolean
   deleteFeaturePoint: (featureId: string, anchorIndex: number) => void
+  deleteFeatureSegment: (featureId: string, segmentIndex: number) => void
+  disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 

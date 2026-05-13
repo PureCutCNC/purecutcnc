@@ -3,7 +3,7 @@
   "meta": {
     "name": "icons",
     "created": "2026-04-20T18:28:41.075Z",
-    "modified": "2026-04-23T02:08:17.744Z",
+    "modified": "2026-05-13T01:50:35.279Z",
     "units": "mm",
     "showFeatureInfo": false,
     "maxTravelZ": 50,
@@ -7564,7 +7564,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -7696,7 +7696,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -7754,7 +7754,65 @@
       "operation": "subtract",
       "z_top": 1,
       "z_bottom": 0,
-      "visible": true,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0095",
+      "name": "Rect 522 Copy",
+      "kind": "rect",
+      "folderId": "folder_snap",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 13,
+            "y": 14
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 14
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 14
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -13388,6 +13446,317 @@
       "z_top": 0,
       "z_bottom": -1,
       "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_segment-delete",
+      "name": "segment-delete_shape_0",
+      "kind": "polygon",
+      "folderId": "folder_segment-delete",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_segment-delete_1",
+      "name": "segment-delete_shape_1",
+      "kind": "composite",
+      "folderId": "folder_segment-delete",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 16
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_segment-delete_2",
+      "name": "segment-delete_shape_2",
+      "kind": "composite",
+      "folderId": "folder_segment-delete",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 15,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 16
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0096",
+      "name": "Circle 533",
+      "kind": "circle",
+      "folderId": "folder_segment-delete",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 23.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 21,
+                "y": 12
+              },
+              "to": {
+                "x": 23.5,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": -31.5,
+          "y": -3.552713678800501e-15
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_disconnect",
+      "name": "disconnect_shape_0",
+      "kind": "polygon",
+      "folderId": "folder_disconnect",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 1.3976747329573724,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 10,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": -4.739659979109978,
+          "y": 9.210056670148337
+        },
+        "orientationAngle": 324.4623222080256,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": true,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_disconnect_1",
+      "name": "disconnect_shape_1",
+      "kind": "polygon",
+      "folderId": "folder_disconnect",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 14,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 22.602325267042627,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 9.210056670148337,
+          "y": -4.739659979109978
+        },
+        "orientationAngle": 35.53767779197438,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": true,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0098",
+      "name": "Circle 533",
+      "kind": "circle",
+      "folderId": "folder_disconnect",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 11.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 9,
+                "y": 12
+              },
+              "to": {
+                "x": 11.5,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": -15,
+          "y": -1.7763568394002505e-15
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": true,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0099",
+      "name": "Circle 534",
+      "kind": "circle",
+      "folderId": "folder_disconnect",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 17.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 15,
+                "y": 12
+              },
+              "to": {
+                "x": 17.5,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": -21,
+          "y": -1.7763568394002505e-15
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -22023,51 +22392,35 @@
       "text": null
     },
     {
-      "id": "f0095",
-      "name": "Rect 522 Copy",
-      "kind": "rect",
-      "folderId": "folder_snap",
+      "id": "f0100",
+      "name": "Circle 533 Copy",
+      "kind": "circle",
+      "folderId": "folder_segment-delete",
       "sketch": {
         "profile": {
           "start": {
-            "x": 13,
-            "y": 14
+            "x": 5.5,
+            "y": 12
           },
           "segments": [
             {
-              "type": "line",
+              "type": "circle",
+              "center": {
+                "x": 3,
+                "y": 12
+              },
               "to": {
-                "x": 18,
-                "y": 14
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 18,
-                "y": 18
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 13,
-                "y": 18
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 13,
-                "y": 14
-              }
+                "x": 5.5,
+                "y": 12
+              },
+              "clockwise": true
             }
           ],
           "closed": true
         },
         "origin": {
-          "x": 0,
-          "y": 0
+          "x": -31.5,
+          "y": -3.552713678800501e-15
         },
         "orientationAngle": 90,
         "dimensions": [],
@@ -22076,7 +22429,7 @@
       "operation": "subtract",
       "z_top": 1,
       "z_bottom": 0,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     }
@@ -22225,7 +22578,7 @@
     {
       "id": "folder_snap",
       "name": "snap",
-      "collapsed": false
+      "collapsed": true
     },
     {
       "id": "folder_snap-grid",
@@ -22321,6 +22674,16 @@
       "id": "folder_point-delete",
       "name": "point-delete",
       "collapsed": true
+    },
+    {
+      "id": "folder_segment-delete",
+      "name": "segment-delete",
+      "collapsed": true
+    },
+    {
+      "id": "folder_disconnect",
+      "name": "disconnect",
+      "collapsed": false
     },
     {
       "id": "folder_merge",
@@ -22678,6 +23041,14 @@
     },
     {
       "type": "folder",
+      "folderId": "folder_segment-delete"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_disconnect"
+    },
+    {
+      "type": "folder",
       "folderId": "folder_merge"
     },
     {
@@ -22806,7 +23177,7 @@
     },
     {
       "type": "feature",
-      "featureId": "f0095"
+      "featureId": "f0100"
     }
   ],
   "global_constraints": [],
@@ -22814,5 +23185,6 @@
   "operations": [],
   "tabs": [],
   "clamps": [],
-  "ai_history": []
+  "ai_history": [],
+  "modelAssets": {}
 }
