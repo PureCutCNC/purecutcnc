@@ -19,7 +19,9 @@ export * from './grid'
 export * from './tools'
 export * from './replay'
 
-export * from './mesh'
+export * from './gpuMesh'
+
+export * from './heightfieldShader'
 
 export * from './playback'
 

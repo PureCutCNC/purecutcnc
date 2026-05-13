@@ -19,7 +19,7 @@ import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
 import { cutterSurfaceZ } from './tools'
-import type { SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
+import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -63,13 +63,18 @@ export function moveIsMaterialRemoving(move: ToolpathMove): boolean {
   return move.kind === 'cut' || move.kind === 'plunge' || move.kind === 'lead_in' || move.kind === 'lead_out'
 }
 
+export interface ApplyMoveResult {
+  changedCount: number
+  dirtyRegion: DirtyRegion | null
+}
+
 export function applyMoveToGrid(
   grid: SimulationGrid,
   move: ToolpathMove,
   toolRadius: number,
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
-): number {
+): ApplyMoveResult {
   const minX = Math.min(move.from.x, move.to.x) + -toolRadius
   const maxX = Math.max(move.from.x, move.to.x) + toolRadius
   const minY = Math.min(move.from.y, move.to.y) + -toolRadius
@@ -78,6 +83,10 @@ export function applyMoveToGrid(
   const [colStart, colEnd] = pointToCellRange(minX, maxX, grid.originX, grid.cellSize, grid.cols)
   const [rowStart, rowEnd] = pointToCellRange(minY, maxY, grid.originY, grid.cellSize, grid.rows)
   let changed = 0
+  let dirtyColMin = grid.cols
+  let dirtyColMax = -1
+  let dirtyRowMin = grid.rows
+  let dirtyRowMax = -1
 
   const xyDx = move.to.x - move.from.x
   const xyDy = move.to.y - move.from.y
@@ -88,8 +97,6 @@ export function applyMoveToGrid(
     for (let col = colStart; col <= colEnd; col += 1) {
       const x = grid.originX + (col + 0.5) * grid.cellSize
       const { distance, t } = pointSegmentDistanceAndT(x, y, move.from.x, move.from.y, move.to.x, move.to.y)
-      // For stationary-XY moves (plunges), the cutter sweeps every Z between
-      // from.z and to.z at this cell — record the deepest reach.
       const toolCenterZ = xyStationary
         ? Math.min(move.from.z, move.to.z)
         : move.from.z + (move.to.z - move.from.z) * t
@@ -110,11 +117,18 @@ export function applyMoveToGrid(
       if (nextZ < grid.topZ[idx] - 1e-9) {
         grid.topZ[idx] = nextZ
         changed += 1
+        if (col < dirtyColMin) dirtyColMin = col
+        if (col > dirtyColMax) dirtyColMax = col
+        if (row < dirtyRowMin) dirtyRowMin = row
+        if (row > dirtyRowMax) dirtyRowMax = row
       }
     }
   }
 
-  return changed
+  return {
+    changedCount: changed,
+    dirtyRegion: changed > 0 ? { colMin: dirtyColMin, colMax: dirtyColMax, rowMin: dirtyRowMin, rowMax: dirtyRowMax } : null,
+  }
 }
 
 function computeStats(grid: SimulationGrid, processedMoveCount: number): SimulationStats {

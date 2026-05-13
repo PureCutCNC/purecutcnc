@@ -17,7 +17,7 @@
 import type { ToolType } from '../../types/project'
 import type { ToolpathMove } from '../toolpaths/types'
 import { applyMoveToGrid } from './replay'
-import type { SimulationGrid } from './types'
+import type { DirtyRegion, SimulationGrid } from './types'
 
 export interface PlaybackToolInfo {
   toolType: ToolType
@@ -108,6 +108,7 @@ export class PlaybackController {
   private distanceTraveled = 0
   private finished = false
   private lastMoveApplied = -1
+  private frameDirtyRegion: DirtyRegion | null = null
 
   constructor(
     baseGrid: SimulationGrid,
@@ -134,6 +135,26 @@ export class PlaybackController {
     this.distanceTraveled = 0
     this.finished = this.moves.length === 0
     this.lastMoveApplied = -1
+    this.frameDirtyRegion = null
+  }
+
+  getDirtyRegion(): DirtyRegion | null {
+    return this.frameDirtyRegion
+  }
+
+  clearDirtyRegion(): void {
+    this.frameDirtyRegion = null
+  }
+
+  private expandDirtyRegion(region: DirtyRegion): void {
+    if (this.frameDirtyRegion === null) {
+      this.frameDirtyRegion = { ...region }
+    } else {
+      this.frameDirtyRegion.colMin = Math.min(this.frameDirtyRegion.colMin, region.colMin)
+      this.frameDirtyRegion.colMax = Math.max(this.frameDirtyRegion.colMax, region.colMax)
+      this.frameDirtyRegion.rowMin = Math.min(this.frameDirtyRegion.rowMin, region.rowMin)
+      this.frameDirtyRegion.rowMax = Math.max(this.frameDirtyRegion.rowMax, region.rowMax)
+    }
   }
 
   isFinished(): boolean {
@@ -179,6 +200,7 @@ export class PlaybackController {
       return false
     }
 
+    this.frameDirtyRegion = null
     let remaining = distance
     let gridChanged = false
 
@@ -188,15 +210,16 @@ export class PlaybackController {
 
       if (length <= 1e-9) {
         if (isCuttingMove(move) && this.lastMoveApplied !== this.moveIndex) {
-          const changed = applyMoveToGrid(
+          const result = applyMoveToGrid(
             this.liveGrid,
             move,
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
           )
-          if (changed > 0) {
+          if (result.changedCount > 0) {
             gridChanged = true
+            this.expandDirtyRegion(result.dirtyRegion!)
           }
           this.lastMoveApplied = this.moveIndex
         }
@@ -209,15 +232,16 @@ export class PlaybackController {
 
       if (remaining >= available) {
         if (isCuttingMove(move) && this.lastMoveApplied !== this.moveIndex) {
-          const changed = applyMoveToGrid(
+          const result = applyMoveToGrid(
             this.liveGrid,
             move,
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
           )
-          if (changed > 0) {
+          if (result.changedCount > 0) {
             gridChanged = true
+            this.expandDirtyRegion(result.dirtyRegion!)
           }
           this.lastMoveApplied = this.moveIndex
         }
@@ -236,15 +260,16 @@ export class PlaybackController {
             from: prevPoint,
             to: nextPoint,
           }
-          const changed = applyMoveToGrid(
+          const result = applyMoveToGrid(
             this.liveGrid,
             partial,
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
           )
-          if (changed > 0) {
+          if (result.changedCount > 0) {
             gridChanged = true
+            this.expandDirtyRegion(result.dirtyRegion!)
           }
         }
 
