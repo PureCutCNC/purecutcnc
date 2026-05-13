@@ -5090,14 +5090,18 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     const selectedFeatures = state.selection.selectedFeatureIds
       .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is SketchFeature => feature !== null)
-      .filter((feature) => feature.sketch.profile.closed)
 
     if (selectedFeatures.length < 2) {
       return []
     }
 
     const cutter = selectedFeatures[selectedFeatures.length - 1]
-    const targets = selectedFeatures.filter((feature) => feature.id !== cutter.id)
+    // Open targets are only valid when paired with a closed cutter.
+    const targets = selectedFeatures.filter((feature) => {
+      if (feature.id === cutter.id) return false
+      if (feature.sketch.profile.closed) return true
+      return cutter.sketch.profile.closed
+    })
     const createdGroups = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
     const createdFeatures = createdGroups.flatMap((group) => group.features)
 

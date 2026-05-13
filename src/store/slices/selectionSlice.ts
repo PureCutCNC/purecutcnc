@@ -17,7 +17,7 @@
 import type { StateCreator } from 'zustand'
 import type { Project, SketchFeature } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
-import { featuresFormConnectedOverlapGroup, featuresOverlap } from '../helpers/clipping'
+import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 
 export interface SelectionSliceDependencies {
   cloneProject: (project: Project) => Project
@@ -208,8 +208,19 @@ export function createSelectionSlice(
             return {}
           }
 
-          if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          if (selectedFeature && selectedFeature.locked) {
             return {}
+          }
+          // Open features as targets are only allowed when at least one
+          // selected cutter is closed (Clipper only supports trimming open
+          // paths against closed clips, and an open cutter intersecting an
+          // open target is geometrically degenerate).
+          if (selectedFeature && pendingShapeAction.phase !== 'cutters' && !selectedFeature.sketch.profile.closed) {
+            const hasClosedCutter = pendingShapeAction.cutterIds.some((cId) => {
+              const f = featureById(s.project, cId)
+              return f !== null && f.sketch.profile.closed
+            })
+            if (!hasClosedCutter) return {}
           }
 
           if (!id) {
@@ -268,7 +279,7 @@ export function createSelectionSlice(
           const cutters = pendingShapeAction.cutterIds
             .map((cId) => featureById(s.project, cId))
             .filter((f): f is SketchFeature => f !== null)
-          if (!selectedFeature || !cutters.some((cutter) => featuresOverlap(cutter, selectedFeature))) {
+          if (!selectedFeature || !cutters.some((cutter) => featuresOverlapForCut(selectedFeature, cutter))) {
             return {}
           }
 

@@ -893,6 +893,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           objectsRef.current.push(featureMesh)
         }
 
+        for (const openLine of nextSceneObjects.openFeatureLines.values()) {
+          scene.add(openLine)
+          objectsRef.current.push(openLine)
+        }
+
         for (const tabMesh of nextSceneObjects.tabMeshes.values()) {
           scene.add(tabMesh)
           objectsRef.current.push(tabMesh)

@@ -817,6 +817,63 @@
   font-size: 11px;
 }
 
+.simulation-playback-bar__xyz {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border-left: 1px solid var(--line-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-bar__xyz-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.simulation-playback-bar__xyz-value {
+  color: var(--text);
+  min-width: 4.5em;
+  text-align: right;
+}
+
+.simulation-playback-bar__xyz-value + .simulation-playback-bar__xyz-label {
+  margin-left: 6px;
+}
+
+.simulation-playback-bar__move-kind {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+}
+
+/* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
+ *   cut / lead_in / lead_out → #ff735c (red)
+ *   plunge                  → #d583df (purple)
+ *   rapid                   → #78b8de (blue)
+ *   idle                    → transparent
+ */
+.simulation-playback-bar__move-kind--cut,
+.simulation-playback-bar__move-kind--lead_in,
+.simulation-playback-bar__move-kind--lead_out {
+  background: #ff735c;
+}
+
+.simulation-playback-bar__move-kind--plunge {
+  background: #d583df;
+}
+
+.simulation-playback-bar__move-kind--rapid {
+  background: #78b8de;
+}
+
+.simulation-playback-bar__move-kind--none {
+  background: transparent;
+}
+
 .panel-right {
   min-height: 0;
 }

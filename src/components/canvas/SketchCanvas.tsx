@@ -4666,10 +4666,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 : `Join mode. ${pendingShapeAction.entityIds.length} closed features selected.`
               : pendingShapeAction.phase === 'cutters'
                 ? pendingShapeAction.cutterIds.length === 0
-                  ? <>Cut mode. Click closed features to select cutters. Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm cutters" onClick={confirmCutCutters} onKeyDown={(e) => { if (e.key === 'Enter') confirmCutCutters() }}>Tab</kbd> to confirm cutters.</>
+                  ? <>Cut mode. Click features to select cutters. Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm cutters" onClick={confirmCutCutters} onKeyDown={(e) => { if (e.key === 'Enter') confirmCutCutters() }}>Tab</kbd> to confirm cutters.</>
                   : <>Cut mode. {pendingShapeAction.cutterIds.length} cutter{pendingShapeAction.cutterIds.length === 1 ? '' : 's'} selected. Shift-click to add more, or press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Confirm cutters" onClick={confirmCutCutters} onKeyDown={(e) => { if (e.key === 'Enter') confirmCutCutters() }}>Tab</kbd> to confirm cutters.</>
                 : pendingShapeAction.targetIds.length === 0
-                  ? `Cut mode. ${pendingShapeAction.cutterIds.length} cutter${pendingShapeAction.cutterIds.length === 1 ? '' : 's'} confirmed. Shift-click closed features that intersect a cutter to select targets.`
+                  ? `Cut mode. ${pendingShapeAction.cutterIds.length} cutter${pendingShapeAction.cutterIds.length === 1 ? '' : 's'} confirmed. Shift-click features that intersect a cutter to select targets.`
                   : `Cut mode. ${pendingShapeAction.cutterIds.length} cutter${pendingShapeAction.cutterIds.length === 1 ? '' : 's'} and ${pendingShapeAction.targetIds.length} target${pendingShapeAction.targetIds.length === 1 ? '' : 's'} selected. Shift-click to add or remove targets.`}
             {' '}
           </span>

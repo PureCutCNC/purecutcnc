@@ -574,11 +574,9 @@ export function createPendingCompletionSlice(
       const cutters = pendingShapeAction.cutterIds
         .map((cId) => featureById(state.project, cId))
         .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.sketch.profile.closed)
       const targets = pendingShapeAction.targetIds
         .map((featureId) => featureById(state.project, featureId))
         .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.sketch.profile.closed)
       if (cutters.length !== pendingShapeAction.cutterIds.length || targets.length !== pendingShapeAction.targetIds.length) {
         return []
       }

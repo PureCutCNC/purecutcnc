@@ -231,6 +231,9 @@ export function PropertiesPanel() {
       : '__mixed__'
   const selectedZEditableFeatures = allSelectedFeatures.filter((feature) => feature.operation !== 'region')
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
+  const selectedClosedEditableFeatures = selectedZEditableFeatures.filter((feature) => feature.sketch.profile.closed)
+  const selectedOpenEditableFeatures = selectedZEditableFeatures.filter((feature) => !feature.sketch.profile.closed)
+  const hasOpenEditableFeatures = selectedOpenEditableFeatures.length > 0
   const commonSelectedZTop =
     selectedZEditableFeatures.length > 0 &&
     typeof selectedZEditableFeatures[0]?.z_top === 'number' &&
@@ -238,19 +241,19 @@ export function PropertiesPanel() {
       ? selectedZEditableFeatures[0]?.z_top ?? null
       : null
   const commonSelectedZBottom =
-    selectedZEditableFeatures.length > 0 &&
-    typeof selectedZEditableFeatures[0]?.z_bottom === 'number' &&
-    selectedZEditableFeatures.every((feature) => feature.z_bottom === selectedZEditableFeatures[0]?.z_bottom)
-      ? selectedZEditableFeatures[0]?.z_bottom ?? null
+    selectedClosedEditableFeatures.length > 0 &&
+    typeof selectedClosedEditableFeatures[0]?.z_bottom === 'number' &&
+    selectedClosedEditableFeatures.every((feature) => feature.z_bottom === selectedClosedEditableFeatures[0]?.z_bottom)
+      ? selectedClosedEditableFeatures[0]?.z_bottom ?? null
       : null
-  const selectedNumericZBottoms = selectedZEditableFeatures
+  const selectedNumericZBottoms = selectedClosedEditableFeatures
     .map((feature) => feature.z_bottom)
     .filter((value): value is number => typeof value === 'number')
   const selectedNumericZTops = selectedZEditableFeatures
     .map((feature) => feature.z_top)
     .filter((value): value is number => typeof value === 'number')
   const multiEditMinZTop =
-    selectedNumericZBottoms.length === selectedZEditableFeatures.length
+    selectedNumericZBottoms.length === selectedClosedEditableFeatures.length
       ? Math.max(...selectedNumericZBottoms)
       : null
   const multiEditMaxZBottom =
@@ -1128,18 +1131,45 @@ export function PropertiesPanel() {
                     onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_top: next })}
                   />
                 </label>
-                <label className="properties-field">
-                  <span>Z Bottom</span>
-                  <DraftNumberInput
-                    key={`multi-feature-zbottom-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
-                    value={commonSelectedZBottom}
-                    units={units}
-                    min={0}
-                    placeholder="Mixed values"
-                    validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
-                    onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_bottom: next })}
-                  />
-                </label>
+                {hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0 ? (
+                  <label className="properties-field">
+                    <span>Z Bottom</span>
+                    <DraftNumberInput
+                      key={`multi-feature-zbottom-open-${selectedZEditableFeatureIds.join(',')}`}
+                      value={0}
+                      units={units}
+                      min={0}
+                      max={0}
+                      onCommit={() => {}}
+                    />
+                  </label>
+                ) : hasOpenEditableFeatures ? (
+                  <label className="properties-field">
+                    <span>Z Bottom</span>
+                    <DraftNumberInput
+                      key={`multi-feature-zbottom-mixed-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZBottom ?? 'mixed'}`}
+                      value={commonSelectedZBottom}
+                      units={units}
+                      min={0}
+                      placeholder="Mixed values"
+                      validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
+                      onCommit={(next) => updateFeatures(selectedClosedEditableFeatures.map((f) => f.id), { z_bottom: next })}
+                    />
+                  </label>
+                ) : (
+                  <label className="properties-field">
+                    <span>Z Bottom</span>
+                    <DraftNumberInput
+                      key={`multi-feature-zbottom-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
+                      value={commonSelectedZBottom}
+                      units={units}
+                      min={0}
+                      placeholder="Mixed values"
+                      validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
+                      onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_bottom: next })}
+                    />
+                  </label>
+                )}
               </>
             ) : (
               <label className="properties-field">
@@ -1280,6 +1310,30 @@ export function PropertiesPanel() {
               <span className="properties-locked-hint" aria-hidden="true">🔒</span>
             </div>
           </label>
+        ) : !selectedFeature.sketch.profile.closed ? (
+          <>
+            <label className="properties-field">
+              <span>Z Top</span>
+              <DraftNumberInput
+                key={`feature-ztop-${selectedFeature.id}-${zTop}`}
+                  value={zTop}
+                  units={units}
+                  min={0}
+                  onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+              />
+            </label>
+            <label className="properties-field">
+              <span>Z Bottom</span>
+              <DraftNumberInput
+                key={`feature-zbottom-open-${selectedFeature.id}`}
+                  value={0}
+                  units={units}
+                  min={0}
+                  max={0}
+                  onCommit={() => {}}
+              />
+            </label>
+          </>
         ) : (
           <>
             <label className="properties-field">

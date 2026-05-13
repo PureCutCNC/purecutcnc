@@ -22,6 +22,7 @@ import { createHeightfieldTexture, createStockPlaneGeometry, createStockBoundary
 import { createBoundaryMaterial, createDynamicBoundaryMaterial, createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
+import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
@@ -180,6 +181,14 @@ const PLAYBACK_STEP_SIZES_IN = [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
 const PLAYBACK_DEFAULT_STEP_MM = 2.5
 const PLAYBACK_DEFAULT_STEP_IN = 0.1
 const PLAYBACK_REBUILD_INTERVAL_MS = 0
+
+function formatCoord(value: number, units: 'mm' | 'in'): string {
+  if (!Number.isFinite(value)) return '\u2014'
+  if (units === 'in') {
+    return value.toFixed(3)
+  }
+  return value.toFixed(2)
+}
 
 function formatSpeedLabel(perSecond: number, units: 'mm' | 'in'): string {
   // Internally the sim advances by distance-per-second (it's what RAF multiplies
@@ -468,6 +477,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const [playbackMultiplier, setPlaybackMultiplier] = useState<number>(PLAYBACK_DEFAULT_MULTIPLIER)
   const [playbackMaxStep, setPlaybackMaxStep] = useState(defaultStep)
   const [playbackProgress, setPlaybackProgress] = useState(0)
+  // Latest pose from the playback controller — written every RAF frame.
+  const latestPoseRef = useRef<PlaybackPose>({ x: 0, y: 0, z: 0, moveKind: null })
+  // Throttled state for the UI readout — updated at ~10 Hz to avoid re-render churn.
+  const [displayPose, setDisplayPose] = useState<PlaybackPose>({ x: 0, y: 0, z: 0, moveKind: null })
   const playbackControllerRef = useRef<PlaybackController | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Mesh | null>(null)
@@ -714,6 +727,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
     const pose = controller.getPose()
+    // Store latest pose for UI readout — read by throttled state updater
+    latestPoseRef.current = pose
     // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
     tool.position.set(pose.x, pose.z, pose.y)
   }, [])
@@ -898,6 +913,48 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackFrameRef.current = 0
     }
   }, [isPlaying, playbackEnabled, rebuildPlaybackGeometry, updateToolMeshPose])
+
+  // Convert a toolpath pose to machine-relative coordinates.
+  // X and Z follow the usual origin-relative subtraction.
+  // Y is inverted because project space increases downward on screen while
+  // machine space increases upward from the chosen origin.
+  // See src/engine/gcode/utils.ts projectToMachinePoint() for the same pattern.
+  const toOriginRelative = useCallback((pose: PlaybackPose): PlaybackPose => ({
+    x: pose.x - origin.x,
+    y: origin.y - pose.y,
+    z: pose.z - origin.z,
+    moveKind: pose.moveKind,
+  }), [origin.x, origin.y, origin.z])
+
+  // Throttled pose state update: write to ref every RAF frame, flush to React
+  // state at ~10 Hz so the UI readout stays responsive without triggering a
+  // React re-render on every animation frame.
+  useEffect(() => {
+    if (!playbackEnabled) {
+      return
+    }
+
+    // Immediately reflect the initial pose (handles seek while paused).
+    const initPose = latestPoseRef.current
+    setDisplayPose(toOriginRelative(initPose))
+
+    const interval = setInterval(() => {
+      const pose = latestPoseRef.current
+      setDisplayPose(toOriginRelative(pose))
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [playbackEnabled, toOriginRelative])
+
+  // Also sync the display pose when seeking/stopping (playbackProgress changes
+  // while playback may not be playing).
+  useEffect(() => {
+    if (!playbackEnabled) {
+      return
+    }
+    const pose = latestPoseRef.current
+    setDisplayPose(toOriginRelative(pose))
+  }, [playbackEnabled, playbackProgress, toOriginRelative])
 
   useEffect(() => {
     if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
@@ -1227,6 +1284,18 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               ))}
             </select>
           </label>
+          <div className="simulation-playback-bar__xyz">
+            <span className="simulation-playback-bar__xyz-label">X</span>
+            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.x, playbackUnits)}</span>
+            <span className="simulation-playback-bar__xyz-label">Y</span>
+            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.y, playbackUnits)}</span>
+            <span className="simulation-playback-bar__xyz-label">Z</span>
+            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+            <span
+              className={`simulation-playback-bar__move-kind simulation-playback-bar__move-kind--${displayPose.moveKind ?? 'none'}`}
+              title={displayPose.moveKind ?? 'Idle'}
+            />
+          </div>
         </div>
       )}
     </div>

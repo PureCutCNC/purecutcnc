@@ -24,6 +24,7 @@ import {
 } from '../../engine/toolpaths/geometry'
 import { bezierPoint, getProfileBounds, polygonProfile } from '../../types/project'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
+import { openCrossesClosedFully } from './polygonSplit'
 
 export interface KnownCircle {
   center: Point
@@ -44,6 +45,16 @@ export function getClipperChildren(node: ClipperPolyNode): ClipperPolyNode[] {
 export function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE) {
   const flattened = flattenProfile(feature.sketch.profile)
   return toClipperPath(normalizeWinding(flattened.points, false), scale)
+}
+
+// Convert an open profile to a Clipper path without auto-closing. Used
+// when feeding an open polyline to Clipper as an open subject.
+export function flattenOpenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE) {
+  const flattened = flattenProfile(feature.sketch.profile)
+  return flattened.points.map((p) => ({
+    X: Math.round(p.x * scale),
+    Y: Math.round(p.y * scale),
+  }))
 }
 
 export function executeClipPaths(
@@ -124,6 +135,59 @@ export function featuresOverlap(a: SketchFeature, b: SketchFeature): boolean {
   )
 
   return intersections.length > 0
+}
+
+// Overlap test used to validate cut-mode target selection. Unlike
+// `featuresOverlap`, this accepts open profiles on either side and uses
+// the appropriate semantics:
+//   - closed target × closed cutter: any area intersection
+//   - closed target × open cutter:   open cutter must fully cross target
+//   - open target × closed cutter:   any intersection (partial OK)
+//   - open target × open cutter:     not allowed (returns false)
+export function featuresOverlapForCut(target: SketchFeature, cutter: SketchFeature): boolean {
+  const tClosed = target.sketch.profile.closed
+  const cClosed = cutter.sketch.profile.closed
+
+  const boundsA = getProfileBounds(target.sketch.profile)
+  const boundsB = getProfileBounds(cutter.sketch.profile)
+  if (
+    !rangesOverlap(boundsA.minX, boundsA.maxX, boundsB.minX, boundsB.maxX)
+    || !rangesOverlap(boundsA.minY, boundsA.maxY, boundsB.minY, boundsB.maxY)
+  ) {
+    return false
+  }
+
+  if (tClosed && cClosed) {
+    const intersections = executeClipPaths(
+      [flattenFeatureToClipperPath(target)],
+      [flattenFeatureToClipperPath(cutter)],
+      0,
+    )
+    return intersections.length > 0
+  }
+
+  if (tClosed && !cClosed) {
+    return openCrossesClosedFully(cutter.sketch.profile, target.sketch.profile)
+  }
+
+  if (!tClosed && cClosed) {
+    // Trim semantics: any portion of the open target inside the closed cutter
+    // gets removed. Detect by clipping the open path as a Clipper subject.
+    const clipper = new ClipperLib.Clipper()
+    ;(clipper as any).AddPath(flattenOpenFeatureToClipperPath(target), ClipperLib.PolyType.ptSubject, false)
+    ;(clipper as any).AddPath(flattenFeatureToClipperPath(cutter), ClipperLib.PolyType.ptClip, true)
+    const polyTree = new ClipperLib.PolyTree()
+    clipper.Execute(
+      ClipperLib.ClipType.ctIntersection,
+      polyTree,
+      ClipperLib.PolyFillType.pftNonZero,
+      ClipperLib.PolyFillType.pftNonZero,
+    )
+    const openPaths = (ClipperLib.Clipper as any).OpenPathsFromPolyTree(polyTree)
+    return openPaths && openPaths.length > 0
+  }
+
+  return false
 }
 
 export function featuresFormConnectedOverlapGroup(features: SketchFeature[]): boolean {
@@ -270,7 +334,11 @@ function arcIsClockwise(center: Point, from: Point, to: Point): boolean {
   return ax * by - ay * bx < 0
 }
 
-function reconstructArcsInProfile(vertices: Point[], knownCircles: KnownCircle[]): SketchProfile {
+export function reconstructArcsInProfile(
+  vertices: Point[],
+  knownCircles: KnownCircle[],
+  maxSingleArcAngle?: number,
+): SketchProfile {
   const n = vertices.length
   const circleIndex = vertices.map((v) => findMatchingCircle(v, knownCircles))
 
@@ -282,6 +350,16 @@ function reconstructArcsInProfile(vertices: Point[], knownCircles: KnownCircle[]
     const ci = circleIndex[i]
     if (ci >= 0 && ci === circleIndex[nextIdx]) {
       const circle = knownCircles[ci]
+      if (maxSingleArcAngle !== undefined) {
+        const a1 = Math.atan2(vertices[i].y - circle.center.y, vertices[i].x - circle.center.x)
+        const a2 = Math.atan2(vertices[nextIdx].y - circle.center.y, vertices[nextIdx].x - circle.center.x)
+        let span = Math.abs(a2 - a1)
+        if (span > Math.PI) span = 2 * Math.PI - span
+        if (span > maxSingleArcAngle) {
+          segments.push({ type: 'line', to: vertices[nextIdx] })
+          continue
+        }
+      }
       const clockwise = arcIsClockwise(circle.center, vertices[i], vertices[nextIdx])
       segments.push({
         type: 'arc',
@@ -584,8 +662,12 @@ export function clipperContourToProfilePreserving(
     const run = runs[r]
 
     if (run.annotation === null) {
-      // Intersection point → emit line
-      segments.push({ type: 'line', to: vertices[run.startIdx % n] })
+      // Intersection point → emit line (skip if it would be zero-length)
+      const target = vertices[run.startIdx % n]
+      const prev = segments.length > 0 ? segments[segments.length - 1].to : startVertex
+      if (Math.abs(target.x - prev.x) > 1e-9 || Math.abs(target.y - prev.y) > 1e-9) {
+        segments.push({ type: 'line', to: target })
+      }
       continue
     }
 
@@ -607,18 +689,40 @@ export function clipperContourToProfilePreserving(
     const isComplete = (firstSample === 0 || firstSample === 1) && lastSample === totalSamples && runLen >= totalSamples
 
     if (seg.type === 'line') {
-      segments.push({ type: 'line', to: runEndPoint })
+      const prev = segments.length > 0 ? segments[segments.length - 1].to : startVertex
+      if (Math.abs(runEndPoint.x - prev.x) > 1e-9 || Math.abs(runEndPoint.y - prev.y) > 1e-9) {
+        segments.push({ type: 'line', to: runEndPoint })
+      }
     } else if (seg.type === 'arc' || seg.type === 'circle') {
       const center = seg.center
-      // Determine clockwise from actual vertex traversal direction (normalizeWinding may have reversed)
       const prevEnd = r > 0 ? vertices[runs[r - 1].endIdx % n] : startVertex
-      const clockwise = run.endIdx > run.startIdx
-        ? arcIsClockwise(center, vertices[run.startIdx % n], vertices[(run.startIdx + 1) % n])
-        : arcIsClockwise(center, prevEnd, vertices[run.startIdx % n])
-      if (isComplete && seg.type === 'circle') {
-        segments.push({ type: 'circle', to: runEndPoint, center: { x: center.x, y: center.y }, clockwise })
+      const arcStart = vertices[run.startIdx % n]
+      const originalRadius = Math.hypot(segStart.x - center.x, segStart.y - center.y)
+      const rStart = Math.hypot(arcStart.x - center.x, arcStart.y - center.y)
+      const rEnd = Math.hypot(runEndPoint.x - center.x, runEndPoint.y - center.y)
+      const radiusTolerance = Math.max(originalRadius * 0.02, 0.005)
+      const arcValid = Math.abs(rStart - originalRadius) <= radiusTolerance
+        && Math.abs(rEnd - originalRadius) <= radiusTolerance
+
+      if (!arcValid) {
+        // Arc endpoints are not on the claimed circle — emit line segments
+        for (let k = run.startIdx; k <= run.endIdx; k++) {
+          segments.push({ type: 'line', to: vertices[k % n] })
+        }
       } else {
-        segments.push({ type: 'arc', to: runEndPoint, center: { x: center.x, y: center.y }, clockwise })
+        // Bridge any gap between previous segment end and arc start
+        if (Math.abs(arcStart.x - prevEnd.x) > 1e-6 || Math.abs(arcStart.y - prevEnd.y) > 1e-6) {
+          segments.push({ type: 'line', to: arcStart })
+        }
+        // Determine clockwise from actual vertex traversal direction (normalizeWinding may have reversed)
+        const clockwise = run.endIdx > run.startIdx
+          ? arcIsClockwise(center, vertices[run.startIdx % n], vertices[(run.startIdx + 1) % n])
+          : arcIsClockwise(center, prevEnd, vertices[run.startIdx % n])
+        if (isComplete && seg.type === 'circle') {
+          segments.push({ type: 'circle', to: runEndPoint, center: { x: center.x, y: center.y }, clockwise })
+        } else {
+          segments.push({ type: 'arc', to: runEndPoint, center: { x: center.x, y: center.y }, clockwise })
+        }
       }
     } else if (seg.type === 'bezier') {
       const reversed = firstSample > lastSample
