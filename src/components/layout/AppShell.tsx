@@ -150,7 +150,7 @@ export function AppShell({
   //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
   if (showLeft || showRight) {
-    const railPrefix = toolbarOrientation === 'left' ? '32px ' : ''
+    const railPrefix = toolbarOrientation === 'left' ? 'var(--left-toolbar-width) ' : ''
     const leftCol = showLeft
       ? `minmax(${MIN_LEFT_WIDTH}px, ${leftPanelRatio / (1 - leftPanelRatio)}fr) `
       : ''
@@ -160,10 +160,23 @@ export function AppShell({
     bodyStyle.gridTemplateColumns = `${railPrefix}${leftCol}minmax(${MIN_CENTER_WIDTH}px, 1fr)${rightCol}`
   }
 
-  const { project } = useProjectStore()
+  const {
+    project,
+    setGrid,
+    setStock,
+    setOrigin,
+    updateBackdrop,
+    setAllRegionsVisible,
+    setAllTabsVisible,
+    setAllClampsVisible,
+  } = useProjectStore()
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
   const stockHeight = stockBounds.maxY - stockBounds.minY
+  const regionCount = project.features.filter((feature) => feature.operation === 'region').length
+  const anyRegionsVisible = project.features.some((feature) => feature.operation === 'region' && feature.visible)
+  const anyTabsVisible = project.tabs.some((tab) => tab.visible)
+  const anyClampsVisible = project.clamps.some((clamp) => clamp.visible)
   const centerTabs = ['sketch', 'preview3d', 'simulation'] as const
   const rightTabs = ['operations', 'tools'] as const
   const workspaceLayouts = [
@@ -495,8 +508,77 @@ export function AppShell({
         <span>
           Stock: {formatLength(stockWidth, project.meta.units)} × {formatLength(stockHeight, project.meta.units)} × {formatLength(project.stock.thickness, project.meta.units)} {project.meta.units}
         </span>
-        <span>{project.grid.visible ? 'Grid Visible' : 'Grid Hidden'}</span>
-        <span>{project.stock.visible ? 'Stock Visible' : 'Stock Hidden'}</span>
+        <div className="statusbar-visibility" aria-label="View visibility">
+          <button
+            className={`statusbar-toggle ${project.grid.visible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={project.grid.visible}
+            title={project.grid.visible ? 'Hide grid' : 'Show grid'}
+            onClick={() => setGrid({ ...project.grid, visible: !project.grid.visible })}
+          >
+            Grid
+          </button>
+          <button
+            className={`statusbar-toggle ${project.stock.visible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={project.stock.visible}
+            title={project.stock.visible ? 'Hide stock' : 'Show stock'}
+            onClick={() => setStock({ ...project.stock, visible: !project.stock.visible })}
+          >
+            Stock
+          </button>
+          <button
+            className={`statusbar-toggle ${project.backdrop?.visible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={project.backdrop?.visible ?? false}
+            disabled={!project.backdrop}
+            title={!project.backdrop ? 'No backdrop loaded' : project.backdrop.visible ? 'Hide backdrop' : 'Show backdrop'}
+            onClick={() => {
+              if (project.backdrop) updateBackdrop({ visible: !project.backdrop.visible })
+            }}
+          >
+            Backdrop
+          </button>
+          <button
+            className={`statusbar-toggle ${project.origin.visible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={project.origin.visible}
+            title={project.origin.visible ? 'Hide origin' : 'Show origin'}
+            onClick={() => setOrigin({ ...project.origin, visible: !project.origin.visible })}
+          >
+            Origin
+          </button>
+          <button
+            className={`statusbar-toggle ${anyRegionsVisible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={anyRegionsVisible}
+            disabled={regionCount === 0}
+            title={regionCount === 0 ? 'No regions in project' : anyRegionsVisible ? 'Hide regions' : 'Show regions'}
+            onClick={() => setAllRegionsVisible(!anyRegionsVisible)}
+          >
+            Regions
+          </button>
+          <button
+            className={`statusbar-toggle ${anyTabsVisible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={anyTabsVisible}
+            disabled={project.tabs.length === 0}
+            title={project.tabs.length === 0 ? 'No tabs in project' : anyTabsVisible ? 'Hide tabs' : 'Show tabs'}
+            onClick={() => setAllTabsVisible(!anyTabsVisible)}
+          >
+            Tabs
+          </button>
+          <button
+            className={`statusbar-toggle ${anyClampsVisible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={anyClampsVisible}
+            disabled={project.clamps.length === 0}
+            title={project.clamps.length === 0 ? 'No clamps in project' : anyClampsVisible ? 'Hide clamps' : 'Show clamps'}
+            onClick={() => setAllClampsVisible(!anyClampsVisible)}
+          >
+            Clamps
+          </button>
+        </div>
         {statusBarExtras}
       </footer>
     </div>

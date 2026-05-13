@@ -30,6 +30,11 @@
   :root {
     --touch-target: 44px;
   }
+
+  .app-shell {
+    --control-hit-target: var(--touch-target, 44px);
+    --left-toolbar-width: 48px;
+  }
 }
 
 /* ── Tablet layout: right panel becomes a slide-in drawer ─── */
@@ -144,6 +149,13 @@
   .tree-action-btn {
     width: var(--touch-target, 44px);
     height: var(--touch-target, 44px);
+    min-width: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+  }
+
+  .tree-action-btn .icon-sprite {
+    width: 24px;
+    height: 24px;
   }
 }
 

@@ -24,9 +24,9 @@ interface IconProps {
  * A reusable Icon component that references symbols in public/icons.svg
  * 
  * Usage:
- * <Icon id="rect" size={20} className="my-custom-icon" />
+ * <Icon id="rect" className="my-custom-icon" />
  */
-export function Icon({ id, className, size = 18 }: IconProps) {
+export function Icon({ id, className, size = 24 }: IconProps) {
   return (
     <svg
       className={`icon-sprite ${className ?? ''}`}

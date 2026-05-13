@@ -608,7 +608,7 @@ function TreeRow({
     >
       <span className={`tree-branch tree-branch--${kind}`} aria-hidden="true">
         {kind === 'folder' ? (
-          <Icon id="open" size={16} className="tree-icon--folder" />
+          <Icon id="folder" className="tree-icon--folder" />
         ) : (
           kind === 'project'
             ? 'proj'
@@ -648,7 +648,7 @@ function TreeRow({
             title={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
             aria-label={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
           >
-            ◉
+            <Icon id="eye" />
           </button>
         ) : null}
         {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onHideAll ? (
@@ -662,7 +662,7 @@ function TreeRow({
             title={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
             aria-label={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
           >
-            ○
+            <Icon id="eye-off" />
           </button>
         ) : null}
         {(kind === 'features' || kind === 'regions') && onAddFolder ? (
@@ -676,7 +676,7 @@ function TreeRow({
             title={kind === 'regions' ? 'Add region folder' : 'Add folder'}
             aria-label={kind === 'regions' ? 'Add region folder' : 'Add folder'}
           >
-            <Icon id="open" size={14} />
+            <Icon id="folder" />
           </button>
         ) : null}
         {kind === 'tabs' && onAddTab ? (
@@ -860,7 +860,7 @@ function TreeRow({
             title={visible ? 'Hide entry' : 'Show entry'}
             aria-label={visible ? 'Hide entry' : 'Show entry'}
           >
-            {visible ? '◉' : '○'}
+            <Icon id={visible ? 'eye' : 'eye-off'} />
           </button>
         ) : null}
       </div>

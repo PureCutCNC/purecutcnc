@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useState } from 'react'
+
 export interface ToolpathVisibility {
   cuts: boolean
   rapids: boolean
@@ -45,20 +47,35 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; label: string; swatch: strin
 ]
 
 export function ToolpathVisibilityPanel({ visibility, onChange, className }: ToolpathVisibilityPanelProps) {
+  const [expanded, setExpanded] = useState(true)
+
   return (
-    <div className={`viewport-toolpath-vis${className ? ` ${className}` : ''}`}>
-      <div className="viewport-toolpath-vis__label">Show</div>
-      {ITEMS.map(({ key, label, swatch }) => (
-        <label key={key} className="viewport-toolpath-vis__item">
-          <input
-            type="checkbox"
-            checked={visibility[key]}
-            onChange={() => onChange({ ...visibility, [key]: !visibility[key] })}
-          />
-          <span className={`viewport-toolpath-vis__swatch ${swatch}`} />
-          {label}
-        </label>
-      ))}
+    <div className={`viewport-toolpath-vis${expanded ? ' viewport-toolpath-vis--expanded' : ''}${className ? ` ${className}` : ''}`}>
+      <button
+        className="viewport-toolpath-vis__label"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        Show
+      </button>
+      {expanded ? (
+        ITEMS.map(({ key, label, swatch }) => {
+          const selected = visibility[key]
+          return (
+            <button
+              key={key}
+              className={`viewport-toolpath-vis__item ${selected ? 'viewport-toolpath-vis__item--selected' : ''}`}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onChange({ ...visibility, [key]: !selected })}
+            >
+              <span className={`viewport-toolpath-vis__swatch ${swatch}`} />
+              {label}
+            </button>
+          )
+        })
+      ) : null}
     </div>
   )
 }
