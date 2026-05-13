@@ -157,6 +157,7 @@ function App() {
     startCopyFeature,
     startResizeFeature,
     startRotateFeature,
+    startMirrorFeature,
     startOffsetSelectedFeatures,
     startJoinSelectedFeatures,
     startCutSelectedFeatures,
@@ -768,6 +769,12 @@ function App() {
     closeTreeContextMenu()
   }
 
+  function handleMirrorFeature(featureId: string) {
+    startMirrorFeature(featureId)
+    setCenterTab('sketch')
+    closeTreeContextMenu()
+  }
+
   function handleOffsetFeatures() {
     startOffsetSelectedFeatures()
     setCenterTab('sketch')
@@ -1064,6 +1071,14 @@ function App() {
                 disabled={menuHasLockedSelection}
               >
                 Rotate
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => handleMirrorFeature(menuFeature.id)}
+                disabled={menuHasLockedSelection}
+              >
+                Mirror
               </button>
               <button
                 className="feature-context-menu__item"

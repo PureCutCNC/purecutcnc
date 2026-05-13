@@ -108,6 +108,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     startCopyFeature,
     startResizeFeature,
     startRotateFeature,
+    startMirrorFeature,
     startJoinSelectedFeatures,
     startCutSelectedFeatures,
     startOffsetSelectedFeatures,
@@ -253,6 +254,19 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     }
 
     startRotateFeature(primarySelectedFeatureId)
+  }
+
+  function handleFeatureMirror() {
+    if (!primarySelectedFeatureId) {
+      return
+    }
+
+    if (pendingTransform?.mode === 'mirror') {
+      cancelPendingTransform()
+      return
+    }
+
+    startMirrorFeature(primarySelectedFeatureId)
   }
 
   function handleDeleteSelectedFeatures() {
@@ -408,6 +422,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleFeatureCopy,
     handleFeatureResize,
     handleFeatureRotate,
+    handleFeatureMirror,
     handleDeleteSelectedFeatures,
     handleBackdropMove,
     handleBackdropResize,
@@ -670,6 +685,7 @@ function FeatureEditActions({
   onDelete,
   onResize,
   onRotate,
+  onMirror,
   onOffset,
   onConstraint,
   constraintActive,
@@ -678,7 +694,7 @@ function FeatureEditActions({
   hasLockedSelection: boolean
   hasClosedSelection: boolean
   pendingMoveMode: 'move' | 'copy' | null
-  pendingTransformMode: 'resize' | 'rotate' | null
+  pendingTransformMode: 'resize' | 'rotate' | 'mirror' | null
   pendingOffset: boolean
   tooltipSide?: 'bottom' | 'right'
   onCopy: () => void
@@ -686,6 +702,7 @@ function FeatureEditActions({
   onDelete: () => void
   onResize: () => void
   onRotate: () => void
+  onMirror: () => void
   onOffset: () => void
   onConstraint: () => void
   constraintActive: boolean
@@ -731,6 +748,14 @@ function FeatureEditActions({
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
           onClick={onRotate}
+        />
+        <ToolbarActionButton
+          icon="mirror"
+          label={pendingTransformMode === 'mirror' ? 'Cancel mirror' : 'Mirror selected features'}
+          active={pendingTransformMode === 'mirror'}
+          disabled={hasLockedSelection}
+          tooltipSide={tooltipSide}
+          onClick={onMirror}
         />
         <ToolbarActionButton
           icon="offset"
@@ -1259,6 +1284,7 @@ export function CreationToolbar({
           onDelete={toolbar.handleDeleteSelectedFeatures}
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
+          onMirror={toolbar.handleFeatureMirror}
           onOffset={toolbar.handleOffsetSelectedFeatures}
           onConstraint={toolbar.handleFeatureConstraint}
           constraintActive={toolbar.constraintActive}
@@ -1286,7 +1312,7 @@ export function CreationToolbar({
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
           pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' && toolbar.pendingTransform.mode !== 'mirror' ? toolbar.pendingTransform.mode : null}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
           onMove={toolbar.handleBackdropMove}
           onDelete={toolbar.handleBackdropDelete}
@@ -1383,6 +1409,7 @@ export function Toolbar({
           onDelete={toolbar.handleDeleteSelectedFeatures}
           onResize={toolbar.handleFeatureResize}
           onRotate={toolbar.handleFeatureRotate}
+          onMirror={toolbar.handleFeatureMirror}
           onOffset={toolbar.handleOffsetSelectedFeatures}
           onConstraint={toolbar.handleFeatureConstraint}
           constraintActive={toolbar.constraintActive}
@@ -1407,7 +1434,7 @@ export function Toolbar({
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
           pendingMoveMode={toolbar.pendingMove?.entityType === 'backdrop' && toolbar.pendingMove.mode === 'move' ? 'move' : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' ? toolbar.pendingTransform.mode : null}
+          pendingTransformMode={toolbar.pendingTransform?.entityType === 'backdrop' && toolbar.pendingTransform.mode !== 'mirror' ? toolbar.pendingTransform.mode : null}
           onMove={toolbar.handleBackdropMove}
           onDelete={toolbar.handleBackdropDelete}
           onResize={toolbar.handleBackdropResize}

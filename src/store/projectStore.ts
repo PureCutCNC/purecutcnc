@@ -1242,6 +1242,55 @@ function rotatePointAround(point: Point, origin: Point, angle: number): Point {
   }
 }
 
+function mirrorDirectionAcrossAxis(direction: Point, axis: Point): Point {
+  const projected = scalePoint(axis, dotPoint(direction, axis))
+  return subtractPoint(scalePoint(projected, 2), direction)
+}
+
+function mirrorAngleAcrossLine(angleDegrees: number, lineStart: Point, lineEnd: Point): number | null {
+  const axis = normalizePoint(subtractPoint(lineEnd, lineStart))
+  if (!axis) {
+    return null
+  }
+
+  const mirrored = mirrorDirectionAcrossAxis(angleToPoint(angleDegrees), axis)
+  return normalizeAngleDegrees(Math.atan2(mirrored.y, mirrored.x) * (180 / Math.PI))
+}
+
+function mirrorProfile(
+  profile: SketchFeature['sketch']['profile'],
+  transformPoint: (point: Point) => Point,
+): SketchFeature['sketch']['profile'] {
+  return {
+    ...profile,
+    start: transformPoint(profile.start),
+    segments: profile.segments.map((segment) => {
+      if (segment.type === 'arc' || segment.type === 'circle') {
+        return {
+          ...segment,
+          to: transformPoint(segment.to),
+          center: transformPoint(segment.center),
+          clockwise: !segment.clockwise,
+        }
+      }
+
+      if (segment.type === 'bezier') {
+        return {
+          ...segment,
+          to: transformPoint(segment.to),
+          control1: transformPoint(segment.control1),
+          control2: transformPoint(segment.control2),
+        }
+      }
+
+      return {
+        ...segment,
+        to: transformPoint(segment.to),
+      }
+    }),
+  }
+}
+
 function featureResizeBasis(feature: SketchFeature): { u: Point; v: Point } {
   const orientationAngle = normalizeAngleDegrees(
     feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
@@ -1404,6 +1453,44 @@ export function rotateFeatureFromReference(
       orientationAngle: normalizeAngleDegrees(
         (feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile)) + angle * (180 / Math.PI),
       ),
+      profile,
+    },
+  }
+}
+
+export function mirrorFeatureFromReference(
+  feature: SketchFeature,
+  referenceStart: Point,
+  referenceEnd: Point,
+): SketchFeature | null {
+  const axis = normalizePoint(subtractPoint(referenceEnd, referenceStart))
+  if (!axis) {
+    return null
+  }
+
+  const mirrorPoint = (point: Point): Point => {
+    const local = subtractPoint(point, referenceStart)
+    const projected = scalePoint(axis, dotPoint(local, axis))
+    return addPoint(referenceStart, subtractPoint(scalePoint(projected, 2), local))
+  }
+  const profile = mirrorProfile(feature.sketch.profile, mirrorPoint)
+  const orientationAngle = mirrorAngleAcrossLine(
+    feature.sketch.orientationAngle ?? inferProfileOrientationAngle(feature.sketch.profile),
+    referenceStart,
+    referenceEnd,
+  )
+  if (orientationAngle === null) {
+    return null
+  }
+
+  return {
+    ...feature,
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
+    stl: transformStlFeatureData(feature.stl, mirrorPoint),
+    sketch: {
+      ...feature.sketch,
+      origin: mirrorPoint(feature.sketch.origin),
+      orientationAngle,
       profile,
     },
   }
@@ -2157,6 +2244,37 @@ function buildRotatedCopies(
         locked: false,
       })
     }
+  }
+
+  return created
+}
+
+function buildMirroredCopies(
+  sourceFeatures: SketchFeature[],
+  existingFeatures: SketchFeature[],
+  lineStart: Point,
+  lineEnd: Point,
+): SketchFeature[] {
+  const created: SketchFeature[] = []
+  const projectLike: Project = { ...newProject(), features: existingFeatures, tools: [], operations: [] }
+
+  for (const sourceFeature of sourceFeatures) {
+    const nextId = nextUniqueGeneratedId(
+      { ...projectLike, features: [...existingFeatures, ...created] },
+      'f',
+    )
+    const mirrored = mirrorFeatureFromReference(sourceFeature, lineStart, lineEnd)
+    if (!mirrored) {
+      continue
+    }
+
+    created.push({
+      ...mirrored,
+      id: nextId,
+      name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], 1, 1),
+      folderId: sourceFeature.folderId,
+      locked: false,
+    })
   }
 
   return created
@@ -2981,10 +3099,12 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     buildCopiedClamps,
     buildCopiedTabs,
     buildRotatedCopies,
+    buildMirroredCopies,
     resizeBackdropFromReference,
     rotateBackdropFromReference,
     resizeFeatureFromReference,
     rotateFeatureFromReference,
+    mirrorFeatureFromReference,
     previewOffsetFeatures,
     syncFeatureTreeProject,
     createDerivedFeature,

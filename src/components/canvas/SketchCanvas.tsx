@@ -20,7 +20,7 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel, type ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { OpenProfileEndpoint, SketchControlRef, SketchEditTool } from '../../store/types'
-import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
 import {
   buildArcSegmentFromThreePoints,
   buildPendingDraftProfile,
@@ -482,7 +482,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return pendingMove.fromPoint
     }
 
-    if (pendingTransform?.mode === 'rotate') {
+    if (pendingTransform?.mode === 'rotate' || pendingTransform?.mode === 'mirror') {
       return pendingTransform.referenceStart
     }
 
@@ -1369,14 +1369,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawPendingPoint(ctx, pendingTransform.referenceStart, vt)
       }
 
-      if (pendingTransform.referenceEnd) {
-        drawPendingPoint(ctx, pendingTransform.referenceEnd, vt)
-        drawMoveGuide(ctx, pendingTransform.referenceStart!, pendingTransform.referenceEnd, vt)
+      const mirrorPreviewEnd = pendingTransform.mode === 'mirror'
+        ? pendingTransform.referenceEnd ?? currentTransformPreviewPoint
+        : null
+      const visibleReferenceEnd = mirrorPreviewEnd ?? pendingTransform.referenceEnd
+
+      if (pendingTransform.referenceStart && visibleReferenceEnd) {
+        drawPendingPoint(ctx, visibleReferenceEnd, vt, isActiveSnapPoint(visibleReferenceEnd))
+        drawMoveGuide(ctx, pendingTransform.referenceStart, visibleReferenceEnd, vt)
         if (pendingTransform.mode === 'resize') {
           drawLineLengthMeasurement(
             ctx,
-            pendingTransform.referenceStart!,
-            pendingTransform.referenceEnd,
+            pendingTransform.referenceStart,
+            visibleReferenceEnd,
             vt,
             project.meta.units,
             { prefix: 'Ref' },
@@ -1384,7 +1389,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
       }
 
-      if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
+      if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint && pendingTransform.mode !== 'mirror') {
         drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
         drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
         if (pendingTransform.mode === 'resize') {
@@ -1417,6 +1422,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               vt,
               pendingTransform.mode === 'resize' ? 'Resize preview' : 'Rotate preview',
             )
+          }
+        }
+      } else if (pendingTransform.mode === 'mirror' && pendingTransform.referenceStart && visibleReferenceEnd) {
+        for (const feature of features) {
+          const previewFeature = mirrorFeatureFromReference(feature, pendingTransform.referenceStart, visibleReferenceEnd)
+          if (previewFeature) {
+            drawPreviewProfile(ctx, previewFeature.sketch.profile, vt, 'Mirror preview')
           }
         }
       } else if (currentTransformPreviewPoint) {
@@ -2971,6 +2983,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       } else if (!pendingTransform.referenceEnd) {
         setPendingTransformReferenceEnd(snapped)
         setPendingTransformPreviewPointRef({ point: snapped, session: pendingTransform.session })
+        if (pendingTransform.mode === 'mirror') {
+          completePendingTransform(snapped)
+          setPendingTransformPreviewPointRef(null)
+        }
       } else if (pendingTransform.mode === 'rotate' && pendingTransform.keepOriginals) {
         setPendingRotateCopyPoint(constrainedPoint)
       } else {
@@ -4828,14 +4844,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               : !pendingTransform.referenceEnd
                 ? 'Click the second resize reference point.'
                 : 'Move along the reference line to preview the resized feature, then click to commit.'
-            : !pendingTransform.referenceStart
-              ? 'Click the rotation origin.'
-              : !pendingTransform.referenceEnd
-                ? 'Click the reference direction point.'
-                : pendingTransform.keepOriginals
-                  ? 'Move to preview the rotated copy, then click to set angle.'
-                  : 'Move to preview the rotated feature, then click to commit.'}</span>
-          {pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd && (
+            : pendingTransform.mode === 'mirror'
+              ? !pendingTransform.referenceStart
+                ? 'Click the first mirror line point.'
+                : 'Move to preview the mirrored feature, then click the second mirror line point to commit.'
+              : !pendingTransform.referenceStart
+                ? 'Click the rotation origin.'
+                : !pendingTransform.referenceEnd
+                  ? 'Click the reference direction point.'
+                  : pendingTransform.keepOriginals
+                    ? 'Move to preview the rotated copy, then click to set angle.'
+                    : 'Move to preview the rotated feature, then click to commit.'}</span>
+          {((pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
+            || (pendingTransform.mode === 'mirror' && pendingTransform.referenceStart)) && (
             <label className="sketch-place-toggle">
               <input
                 type="checkbox"

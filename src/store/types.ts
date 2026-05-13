@@ -127,7 +127,7 @@ export interface PendingMoveTool {
 }
 
 export interface PendingTransformTool {
-  mode: 'resize' | 'rotate'
+  mode: 'resize' | 'rotate' | 'mirror'
   entityType: 'feature' | 'backdrop'
   entityIds: string[]
   referenceStart: Point | null
@@ -365,6 +365,7 @@ export interface ProjectStore {
   startCopyFeature: (featureId: string) => void
   startResizeFeature: (featureId: string) => void
   startRotateFeature: (featureId: string) => void
+  startMirrorFeature: (featureId: string) => void
   startMoveBackdrop: () => void
   startResizeBackdrop: () => void
   startRotateBackdrop: () => void
