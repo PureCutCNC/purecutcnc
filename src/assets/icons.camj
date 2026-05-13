@@ -3,7 +3,7 @@
   "meta": {
     "name": "icons",
     "created": "2026-04-20T18:28:41.075Z",
-    "modified": "2026-05-13T15:19:39.669Z",
+    "modified": "2026-05-13T17:39:09.440Z",
     "units": "mm",
     "showFeatureInfo": false,
     "maxTravelZ": 50,
@@ -10213,7 +10213,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -10242,7 +10242,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -10295,26 +10295,26 @@
                 "y": 3.9983387386641533
               },
               "control2": {
-                "x": 9.189560546875,
-                "y": 3.81856689453125
+                "x": 9.2636913904876,
+                "y": 3.854744402039261
               },
               "to": {
-                "x": 6,
-                "y": 6
+                "x": 6.074130843612593,
+                "y": 6.036177507508011
               }
             },
             {
               "type": "line",
               "to": {
-                "x": 6.059999999999993,
-                "y": 6.0600000000000005
+                "x": 5.9303713240071145,
+                "y": 6.15016696479299
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 3.9691354520768782,
-                "y": 7.656607406455075
+                "x": 3.8395067760839994,
+                "y": 7.746774371248065
               },
               "control2": {
                 "x": 2.24388989605133,
@@ -10376,7 +10376,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -10405,82 +10405,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
-      "locked": false,
-      "text": null
-    },
-    {
-      "id": "icon_eye-off_2_1",
-      "name": "eye-off_shape_2_1",
-      "kind": "composite",
-      "folderId": "folder_eye-off",
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 14.120000000000001,
-            "y": 14.12
-          },
-          "segments": [
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 13.372117678144061,
-                "y": 14.922612710448172
-              },
-              "control2": {
-                "x": 12.245777831364187,
-                "y": 15.252996726030078
-              },
-              "to": {
-                "x": 11.182844365445819,
-                "y": 14.98154216749705
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 10.11991089952745,
-                "y": 14.710087608964022
-              },
-              "control2": {
-                "x": 9.289912391035978,
-                "y": 13.88008910047255
-              },
-              "to": {
-                "x": 9.01845783250295,
-                "y": 12.817155634554181
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 8.747003273969922,
-                "y": 11.754222168635813
-              },
-              "control2": {
-                "x": 9.07738728955183,
-                "y": 10.627882321855939
-              },
-              "to": {
-                "x": 9.880000000000003,
-                "y": 9.879999999999999
-              }
-            }
-          ],
-          "closed": false
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 0,
-        "dimensions": [],
-        "constraints": []
-      },
-      "operation": "add",
-      "z_top": 0,
-      "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -10509,7 +10434,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -10546,7 +10471,49 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0101",
+      "name": "Circle 539",
+      "kind": "circle",
+      "folderId": "folder_eye-off",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 15.16227766016838,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 12,
+                "y": 12
+              },
+              "to": {
+                "x": 15.16227766016838,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -22834,12 +22801,12 @@
     {
       "id": "folder_eye",
       "name": "eye",
-      "collapsed": true
+      "collapsed": false
     },
     {
       "id": "folder_eye-off",
       "name": "eye-off",
-      "collapsed": true
+      "collapsed": false
     },
     {
       "id": "folder_lock",
@@ -22899,7 +22866,7 @@
     {
       "id": "folder_disconnect",
       "name": "disconnect",
-      "collapsed": false
+      "collapsed": true
     },
     {
       "id": "folder_merge",
@@ -23059,7 +23026,7 @@
     {
       "id": "fd0082",
       "name": "constraint",
-      "collapsed": false
+      "collapsed": true
     }
   ],
   "featureTree": [

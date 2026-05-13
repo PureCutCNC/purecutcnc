@@ -75,7 +75,7 @@ function ToolbarActionButton({
         type="button"
         disabled={disabled}
       >
-        <Icon id={icon} size={18} />
+        <Icon id={icon} />
       </button>
       <span className={`toolbar-tooltip toolbar-tooltip--${tooltipSide}`} role="tooltip">
         {label}
@@ -90,6 +90,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
 
   const {
     project,
+    dirty,
     pendingAdd,
     history,
     setProjectName,
@@ -374,6 +375,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
 
   return {
     project,
+    dirty,
     pendingAdd,
     pendingMove,
     pendingTransform,
@@ -456,6 +458,7 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
 
 function ProjectNameControl({
   projectName,
+  dirty,
   editingName,
   nameVal,
   setNameVal,
@@ -463,6 +466,7 @@ function ProjectNameControl({
   setProjectName,
 }: {
   projectName: string
+  dirty: boolean
   editingName: boolean
   nameVal: string
   setNameVal: (value: string) => void
@@ -506,6 +510,13 @@ function ProjectNameControl({
           {projectName}
         </button>
       )}
+      <span
+        className={`toolbar-save-state ${dirty ? 'toolbar-save-state--dirty' : 'toolbar-save-state--saved'}`}
+        aria-live="polite"
+        title={dirty ? 'Project has unsaved changes' : 'Project is saved'}
+      >
+        {dirty ? 'Unsaved' : 'Saved'}
+      </span>
     </div>
   )
 }
@@ -522,6 +533,7 @@ function GlobalActions({
   onZoomToModel,
   onZoomWindow,
   zoomWindowActive,
+  projectDirty,
 }: {
   historyLengthPast: number
   historyLengthFuture: number
@@ -534,6 +546,7 @@ function GlobalActions({
   onZoomToModel: () => void
   onZoomWindow: () => void
   zoomWindowActive: boolean
+  projectDirty: boolean
 }) {
   return (
     <>
@@ -541,7 +554,12 @@ function GlobalActions({
         <ToolbarActionButton icon="new" label="New project" onClick={onNew} />
         <ToolbarActionButton icon="open" label="Open project" onClick={onOpen} />
         <ToolbarActionButton icon="import" label="Import geometry" onClick={onImport} />
-        <ToolbarActionButton icon="save" label="Save project" onClick={onSave} />
+        <ToolbarActionButton
+          icon="save"
+          label={projectDirty ? 'Save project with unsaved changes' : 'Save project'}
+          emphasized={projectDirty}
+          onClick={onSave}
+        />
       </div>
       <div className="toolbar-group">
         <ToolbarActionButton icon="undo" label="Undo" onClick={onUndo} disabled={historyLengthPast === 0} />
@@ -602,7 +620,7 @@ function CreationActions({
           aria-label={label}
           aria-pressed={active}
         >
-          <Icon id={icon} size={18} />
+          <Icon id={icon} />
         </button>
         <span className={`toolbar-tooltip toolbar-tooltip--${tooltipSide ?? 'bottom'}`} role="tooltip">
           {label}
@@ -1198,6 +1216,7 @@ export function GlobalToolbar({
       <div className="toolbar toolbar--global">
         <ProjectNameControl
           projectName={toolbar.project.meta.name}
+          dirty={toolbar.dirty}
           editingName={toolbar.editingName}
           nameVal={toolbar.nameVal}
           setNameVal={toolbar.setNameVal}
@@ -1216,6 +1235,7 @@ export function GlobalToolbar({
           onZoomToModel={toolbar.handleZoomToModel}
           onZoomWindow={onZoomWindow}
           zoomWindowActive={zoomWindowActive}
+          projectDirty={toolbar.dirty}
         />
         <SnapActions
           snapSettings={snapSettings}
@@ -1355,6 +1375,7 @@ export function Toolbar({
       <div className="toolbar toolbar--combined">
         <ProjectNameControl
           projectName={toolbar.project.meta.name}
+          dirty={toolbar.dirty}
           editingName={toolbar.editingName}
           nameVal={toolbar.nameVal}
           setNameVal={toolbar.setNameVal}
@@ -1373,6 +1394,7 @@ export function Toolbar({
           onZoomToModel={toolbar.handleZoomToModel}
           onZoomWindow={onZoomWindow}
           zoomWindowActive={zoomWindowActive}
+          projectDirty={toolbar.dirty}
         />
         <SnapActions
           snapSettings={snapSettings}

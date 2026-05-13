@@ -32,6 +32,7 @@ import type {
 } from '../../types/project'
 import { featureHasClosedGeometry } from '../../text'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
+import { Icon } from '../Icon'
 import { PanelSplit } from './PanelSplit'
 
 interface CAMPanelProps {
@@ -1154,7 +1155,7 @@ export function CAMPanel({
                     disabled={project.operations.length === 0}
                     onClick={() => setAllOperationToolpathVisibility(true)}
                   >
-                    ◉
+                    <Icon id="eye" />
                   </button>
                   <button
                     className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
@@ -1164,7 +1165,7 @@ export function CAMPanel({
                     disabled={project.operations.length === 0}
                     onClick={() => setAllOperationToolpathVisibility(false)}
                   >
-                    ○
+                    <Icon id="eye-off" />
                   </button>
                   <button
                     className="cam-header-action"
@@ -1294,7 +1295,7 @@ export function CAMPanel({
                                 updateOperation(operation.id, { showToolpath: !operation.showToolpath })
                               }}
                             >
-                              {operation.showToolpath ? '◉' : '○'}
+                              <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
                             <button
