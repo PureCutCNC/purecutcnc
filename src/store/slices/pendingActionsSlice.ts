@@ -31,6 +31,7 @@ export type PendingActionsSlice = Pick<
   | 'startCopyFeature'
   | 'startResizeFeature'
   | 'startRotateFeature'
+  | 'startMirrorFeature'
   | 'startMoveBackdrop'
   | 'startResizeBackdrop'
   | 'startRotateBackdrop'
@@ -185,6 +186,37 @@ export function createPendingActionsSlice(
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
+          pendingOffset: null,
+          pendingShapeAction: null,
+          sketchEditSession: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: featureId,
+            selectedFeatureIds: featureIds,
+            selectedNode: { type: 'feature', featureId },
+            mode: 'feature',
+            hoveredFeatureId: null,
+            activeControl: null,
+          },
+        }
+      }),
+
+    startMirrorFeature: (featureId) =>
+      set((s) => {
+        const featureIds = s.selection.selectedFeatureIds.includes(featureId)
+          ? s.selection.selectedFeatureIds
+          : [featureId]
+        const features = featureIds
+          .map((id) => featureById(s.project, id))
+          .filter((feature): feature is SketchFeature => feature !== null)
+        if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+          return {}
+        }
+
+        return {
+          pendingAdd: null,
+          pendingMove: null,
+          pendingTransform: { mode: 'mirror', entityType: 'feature', entityIds: featureIds, referenceStart: null, referenceEnd: null, keepOriginals: false, session: nextPlacementSession() },
           pendingOffset: null,
           pendingShapeAction: null,
           sketchEditSession: null,

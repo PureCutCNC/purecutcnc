@@ -81,12 +81,23 @@ export interface PendingCompletionSliceDependencies {
     referenceEnd: Point,
     previewPoint: Point,
   ) => SketchFeature | null
+  mirrorFeatureFromReference: (
+    feature: SketchFeature,
+    referenceStart: Point,
+    referenceEnd: Point,
+  ) => SketchFeature | null
   buildRotatedCopies: (
     sourceFeatures: SketchFeature[],
     existingFeatures: SketchFeature[],
     pivot: Point,
     angle: number,
     copyCount: number,
+  ) => SketchFeature[]
+  buildMirroredCopies: (
+    sourceFeatures: SketchFeature[],
+    existingFeatures: SketchFeature[],
+    lineStart: Point,
+    lineEnd: Point,
   ) => SketchFeature[]
   previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
   syncFeatureTreeProject: (project: Project) => Project
@@ -360,6 +371,9 @@ export function createPendingCompletionSlice(
           if (!s.project.backdrop) {
             return { pendingTransform: null }
           }
+          if (pendingTransform.mode === 'mirror') {
+            return { pendingTransform: null }
+          }
 
           const nextBackdrop =
             pendingTransform.mode === 'resize'
@@ -453,12 +467,53 @@ export function createPendingCompletionSlice(
           }
         }
 
+        // Mirror+copy: keep originals and add one mirrored copy of each selected feature.
+        if (pendingTransform.mode === 'mirror' && pendingTransform.keepOriginals) {
+          const createdFeatures = deps.buildMirroredCopies(
+            sourceFeatures,
+            s.project.features,
+            pendingTransform.referenceStart,
+            pendingTransform.referenceEnd,
+          )
+          if (createdFeatures.length === 0) {
+            return { pendingTransform: null }
+          }
+          const nextProject = {
+            ...s.project,
+            features: [...s.project.features, ...createdFeatures],
+            featureTree: [
+              ...s.project.featureTree,
+              ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+            ],
+            meta: { ...s.project.meta, modified: new Date().toISOString() },
+          }
+          return {
+            project: nextProject,
+            pendingTransform: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+              selectedFeatureIds: createdFeatures.map((f) => f.id),
+              selectedNode: createdFeatures.at(-1)
+                ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                : s.selection.selectedNode,
+            },
+            history: {
+              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+          }
+        }
+
         const transformedFeatures = new Map<string, SketchFeature>()
         for (const feature of sourceFeatures) {
           const transformed =
             pendingTransform.mode === 'resize'
               ? deps.resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
-              : deps.rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              : pendingTransform.mode === 'rotate'
+                ? deps.rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+                : deps.mirrorFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd)
           if (!transformed) {
             return { pendingTransform: null }
           }

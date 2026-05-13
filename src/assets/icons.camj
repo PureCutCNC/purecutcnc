@@ -3,7 +3,7 @@
   "meta": {
     "name": "icons",
     "created": "2026-04-20T18:28:41.075Z",
-    "modified": "2026-05-13T01:50:35.279Z",
+    "modified": "2026-05-13T15:19:39.669Z",
     "units": "mm",
     "showFeatureInfo": false,
     "maxTravelZ": 50,
@@ -10213,82 +10213,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
-      "locked": false,
-      "text": null
-    },
-    {
-      "id": "icon_eye-off_1",
-      "name": "eye-off_shape_0_1",
-      "kind": "composite",
-      "folderId": "folder_eye-off",
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 17.94,
-            "y": 17.94
-          },
-          "segments": [
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 16.230589955982072,
-                "y": 19.243002226518573
-              },
-              "control2": {
-                "x": 14.149107466642219,
-                "y": 19.964863157165052
-              },
-              "to": {
-                "x": 12,
-                "y": 19.999999999999996
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 5,
-                "y": 20
-              },
-              "control2": {
-                "x": 1,
-                "y": 12
-              },
-              "to": {
-                "x": 1,
-                "y": 12
-              }
-            },
-            {
-              "type": "bezier",
-              "control1": {
-                "x": 2.24388989605133,
-                "y": 9.681895667876372
-              },
-              "control2": {
-                "x": 3.9691354520768782,
-                "y": 7.656607406455075
-              },
-              "to": {
-                "x": 6.059999999999993,
-                "y": 6.0600000000000005
-              }
-            }
-          ],
-          "closed": false
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 0,
-        "dimensions": [],
-        "constraints": []
-      },
-      "operation": "add",
-      "z_top": 0,
-      "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10317,7 +10242,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10329,19 +10254,34 @@
       "sketch": {
         "profile": {
           "start": {
-            "x": 9.9,
-            "y": 4.24
+            "x": 17.9271240234375,
+            "y": 17.917734375
           },
           "segments": [
             {
               "type": "bezier",
               "control1": {
-                "x": 10.588332302017454,
-                "y": 4.078879512090427
+                "x": 20.3172412109375,
+                "y": 16.15869140625
               },
               "control2": {
-                "x": 11.293064069497346,
-                "y": 3.9983387386641533
+                "x": 22.39297957282153,
+                "y": 13.135607353311329
+              },
+              "to": {
+                "x": 23,
+                "y": 12
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 23,
+                "y": 12
+              },
+              "control2": {
+                "x": 19,
+                "y": 4
               },
               "to": {
                 "x": 11.999999999999995,
@@ -10351,35 +10291,79 @@
             {
               "type": "bezier",
               "control1": {
-                "x": 19,
-                "y": 4
+                "x": 11.293064069497346,
+                "y": 3.9983387386641533
               },
               "control2": {
-                "x": 23,
-                "y": 12
+                "x": 9.189560546875,
+                "y": 3.81856689453125
               },
               "to": {
-                "x": 23,
+                "x": 6,
+                "y": 6
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.059999999999993,
+                "y": 6.0600000000000005
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 3.9691354520768782,
+                "y": 7.656607406455075
+              },
+              "control2": {
+                "x": 2.24388989605133,
+                "y": 9.681895667876372
+              },
+              "to": {
+                "x": 1,
                 "y": 12
               }
             },
             {
               "type": "bezier",
               "control1": {
-                "x": 22.39297957282153,
-                "y": 13.135607353311329
+                "x": 1,
+                "y": 12
               },
               "control2": {
-                "x": 21.669055414847758,
-                "y": 14.20473608661519
+                "x": 5,
+                "y": 20
               },
               "to": {
-                "x": 20.84000000000001,
-                "y": 15.18999999999999
+                "x": 12,
+                "y": 19.999999999999996
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 14.149107466642219,
+                "y": 19.964863157165052
+              },
+              "control2": {
+                "x": 16.230589955982072,
+                "y": 19.243002226518573
+              },
+              "to": {
+                "x": 17.94,
+                "y": 17.94
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.9271240234375,
+                "y": 17.917734375
               }
             }
           ],
-          "closed": false
+          "closed": true
         },
         "origin": {
           "x": 0,
@@ -10392,7 +10376,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10421,7 +10405,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10496,7 +10480,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10525,7 +10509,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -10562,7 +10546,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": false,
+      "visible": true,
       "locked": false,
       "text": null
     },
@@ -12492,6 +12476,233 @@
       "text": null
     },
     {
+      "id": "icon_mirror_axis_top",
+      "name": "mirror_axis_top",
+      "kind": "composite",
+      "folderId": "folder_mirror",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 3
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 7
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_mirror_axis_mid",
+      "name": "mirror_axis_mid",
+      "kind": "composite",
+      "folderId": "folder_mirror",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_mirror_axis_bottom",
+      "name": "mirror_axis_bottom",
+      "kind": "composite",
+      "folderId": "folder_mirror",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 17
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 21
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_mirror_left",
+      "name": "mirror_left_shape",
+      "kind": "composite",
+      "folderId": "folder_mirror",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 4,
+            "y": 6
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 9
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9,
+                "y": 15
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 4,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 4,
+                "y": 6
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_mirror_right",
+      "name": "mirror_right_shape",
+      "kind": "composite",
+      "folderId": "folder_mirror",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 20,
+            "y": 6
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 9
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 15
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 20,
+                "y": 18
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 20,
+                "y": 6
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
       "id": "icon_refresh",
       "name": "refresh_shape_0",
       "kind": "composite",
@@ -13603,6 +13814,48 @@
       "text": null
     },
     {
+      "id": "f0100",
+      "name": "Circle 533 Copy",
+      "kind": "circle",
+      "folderId": "folder_segment-delete",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 3,
+                "y": 12
+              },
+              "to": {
+                "x": 5.5,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": -31.5,
+          "y": -3.552713678800501e-15
+        },
+        "orientationAngle": 90,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "subtract",
+      "z_top": 1,
+      "z_bottom": 0,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
       "id": "icon_disconnect",
       "name": "disconnect_shape_0",
       "kind": "polygon",
@@ -13635,7 +13888,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -13672,7 +13925,7 @@
       "operation": "add",
       "z_top": 0,
       "z_bottom": -1,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -13714,7 +13967,7 @@
       "operation": "subtract",
       "z_top": 1,
       "z_bottom": 0,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -13756,7 +14009,7 @@
       "operation": "subtract",
       "z_top": 1,
       "z_bottom": 0,
-      "visible": true,
+      "visible": false,
       "locked": false,
       "text": null
     },
@@ -22390,48 +22643,6 @@
       "visible": false,
       "locked": false,
       "text": null
-    },
-    {
-      "id": "f0100",
-      "name": "Circle 533 Copy",
-      "kind": "circle",
-      "folderId": "folder_segment-delete",
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 5.5,
-            "y": 12
-          },
-          "segments": [
-            {
-              "type": "circle",
-              "center": {
-                "x": 3,
-                "y": 12
-              },
-              "to": {
-                "x": 5.5,
-                "y": 12
-              },
-              "clockwise": true
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": -31.5,
-          "y": -3.552713678800501e-15
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
-      },
-      "operation": "subtract",
-      "z_top": 1,
-      "z_bottom": 0,
-      "visible": false,
-      "locked": false,
-      "text": null
     }
   ],
   "featureFolders": [
@@ -22658,6 +22869,11 @@
     {
       "id": "folder_rotate",
       "name": "rotate",
+      "collapsed": true
+    },
+    {
+      "id": "folder_mirror",
+      "name": "mirror",
       "collapsed": true
     },
     {
@@ -23029,6 +23245,10 @@
     },
     {
       "type": "folder",
+      "folderId": "folder_mirror"
+    },
+    {
+      "type": "folder",
       "folderId": "folder_refresh"
     },
     {
@@ -23174,10 +23394,6 @@
     {
       "type": "folder",
       "folderId": "fd0082"
-    },
-    {
-      "type": "feature",
-      "featureId": "f0100"
     }
   ],
   "global_constraints": [],

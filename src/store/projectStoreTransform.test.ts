@@ -5,7 +5,7 @@
  */
 
 import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type SketchFeature } from '../types/project'
-import { normalizeProject, resizeFeatureFromReference } from './projectStore'
+import { mirrorFeatureFromReference, normalizeProject, resizeFeatureFromReference } from './projectStore'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -87,6 +87,69 @@ function testStlFeatureResizeIsUniform(): void {
   assert(approx(path![2].y, 10), `expected silhouette path y scaled to 10, got ${path![2].y}`)
 }
 
+function testFeatureMirrorsAcrossVerticalLine(): void {
+  console.log('Testing feature mirror across vertical line...')
+  const mirrored = mirrorFeatureFromReference(
+    makeFeature('rect'),
+    { x: 5, y: -10 },
+    { x: 5, y: 10 },
+  )
+
+  if (!mirrored) throw new Error('Assertion failed: expected mirrored feature')
+  const bounds = getProfileBounds(mirrored.sketch.profile)
+  assert(approx(bounds.minX, 0), `expected minX 0, got ${bounds.minX}`)
+  assert(approx(bounds.maxX, 10), `expected maxX 10, got ${bounds.maxX}`)
+  assert(approx(mirrored.sketch.profile.start.x, 10), `expected mirrored start x 10, got ${mirrored.sketch.profile.start.x}`)
+  assert(approx(mirrored.sketch.origin.x, 10), `expected mirrored origin x 10, got ${mirrored.sketch.origin.x}`)
+}
+
+function testMirrorFlipsArcHandedness(): void {
+  console.log('Testing mirror flips arc handedness...')
+  const feature = makeFeature('rect')
+  const source: SketchFeature = {
+    ...feature,
+    kind: 'composite',
+    sketch: {
+      ...feature.sketch,
+      profile: {
+        start: { x: 0, y: 0 },
+        closed: false,
+        segments: [
+          {
+            type: 'arc',
+            to: { x: 10, y: 0 },
+            center: { x: 5, y: 5 },
+            clockwise: true,
+          },
+        ],
+      },
+    },
+  }
+  const mirrored = mirrorFeatureFromReference(source, { x: 5, y: -10 }, { x: 5, y: 10 })
+  if (!mirrored) throw new Error('Assertion failed: expected mirrored arc feature')
+  const segment = mirrored.sketch.profile.segments[0]
+  if (segment.type !== 'arc') throw new Error('Assertion failed: expected mirrored segment to remain an arc')
+  assert(segment.clockwise === false, 'expected mirrored arc clockwise flag to flip')
+  assert(approx(mirrored.sketch.profile.start.x, 10), `expected mirrored arc start x 10, got ${mirrored.sketch.profile.start.x}`)
+  assert(approx(segment.to.x, 0), `expected mirrored arc end x 0, got ${segment.to.x}`)
+}
+
+function testStlMirrorTransformsSilhouette(): void {
+  console.log('Testing STL mirror transforms silhouette...')
+  const mirrored = mirrorFeatureFromReference(
+    makeFeature('stl'),
+    { x: 5, y: -10 },
+    { x: 5, y: 10 },
+  )
+
+  if (!mirrored) throw new Error('Assertion failed: expected mirrored STL feature')
+  assert(approx(mirrored.stl?.scale ?? 0, 1), `expected STL mesh scale 1, got ${mirrored.stl?.scale}`)
+  const path = mirrored.stl?.silhouettePaths?.[0]
+  assert(Boolean(path), 'expected mirrored STL silhouette path')
+  assert(approx(path![0].x, 10), `expected silhouette path x mirrored to 10, got ${path![0].x}`)
+  assert(approx(path![1].x, 0), `expected silhouette path x mirrored to 0, got ${path![1].x}`)
+}
+
 function testLegacyModelMovesToAssetTable(): void {
   console.log('Testing legacy STL model migrates to project asset table...')
   const stl = `solid tri
@@ -147,6 +210,9 @@ endsolid tri
 
 testRegularFeatureCanResizeOneAxis()
 testStlFeatureResizeIsUniform()
+testFeatureMirrorsAcrossVerticalLine()
+testMirrorFlipsArcHandedness()
+testStlMirrorTransformsSilhouette()
 testLegacyModelMovesToAssetTable()
 
 console.log('projectStore transform tests passed')
