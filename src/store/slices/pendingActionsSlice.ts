@@ -334,7 +334,8 @@ export function createPendingActionsSlice(
 
     startCutSelectedFeatures: () =>
       set((s) => {
-        const cutterIds = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds).map((feature) => feature.id)
+        const cutterIds = s.selection.selectedFeatureIds
+          .filter((id) => s.project.features.some((f) => f.id === id))
 
         return {
           pendingAdd: null,

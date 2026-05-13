@@ -18,9 +18,12 @@ import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
-import { expandFeatureGeometry } from '../text'
+import { expandFeatureGeometry, getFeatureGeometryProfiles } from '../text'
 import { loadPersistedBufferGeometry, loadPersistedTriangleMesh } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
@@ -819,6 +822,53 @@ export function buildStockWireframe(stock: Stock): THREE.LineSegments {
   return lines
 }
 
+// ── Open feature (polyline) line builder ────────────────────────────
+
+export function buildOpenFeatureLine(
+  project: Project,
+  feature: SketchFeature,
+  selected = false,
+  hovered = false,
+): Line2 {
+  const profile = feature.sketch.profile
+  const zTop = resolveDimension(feature.z_top, project)
+
+  // Subdivide the profile into polyline points (handles arcs, beziers)
+  const polygon = profileToPolygon(profile)
+
+  // Build positions in world space, applying the same transform pipeline as other geometry:
+  //   rotateX(-PI/2): (x, y, 0) → (x, 0, -y)
+  //   translate(0, zTop, 0): (x, 0, -y) → (x, zTop, -y)
+  //   scale.z = -1 (Object3D): (x, zTop, -y) → (x, zTop, y)
+  // Since Line2 bakes transforms into geometry, we produce the final world position directly.
+  const positions: number[] = []
+  for (const [px, py] of polygon) {
+    positions.push(px, zTop, py)
+  }
+
+  const geometry = new LineGeometry()
+  geometry.setPositions(positions)
+
+  const color =
+    selected ? 0xffaa00
+    : hovered ? 0x44aaff
+    : feature.operation === 'subtract' ? 0x3366cc
+    : 0x33aa66
+
+  // Use LineMaterial with screen-pixel linewidth for consistent visibility
+  const material = new LineMaterial({
+    color,
+    linewidth: 4,
+    worldUnits: false,
+    resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+  })
+
+  const line = new Line2(geometry, material)
+  line.computeLineDistances()
+
+  return line
+}
+
 // ── Full scene builder ───────────────────────────────────────────────────────
 
 export interface SceneObjects {
@@ -826,6 +876,7 @@ export interface SceneObjects {
   stockWireframe: THREE.LineSegments
   modelMesh: THREE.Mesh | null
   featureMeshes: Map<string, THREE.Mesh>
+  openFeatureLines: Map<string, THREE.Object3D>
   tabMeshes: Map<string, THREE.Mesh>
   clampMeshes: Map<string, THREE.Mesh>
 }
@@ -843,6 +894,7 @@ export async function buildScene(
   const stockMesh = buildStockMesh(project.stock)
   const stockWireframe = buildStockWireframe(project.stock)
   const featureMeshes = new Map<string, THREE.Mesh>()
+  const openFeatureLines = new Map<string, THREE.Object3D>()
   const tabMeshes = new Map<string, THREE.Mesh>()
   const clampMeshes = new Map<string, THREE.Mesh>()
   let modelMesh: THREE.Mesh | null = null
@@ -862,13 +914,25 @@ export async function buildScene(
         featureMeshes.set(feature.id, buildFeatureMesh(project, feature, false, false, project.stock.thickness))
       }
       
-      // If buildBooleanModel failed, we need the rest of the meshes too
+      // If buildBooleanModel failed, we need the rest of the meshes too.
+      // Open features (polylines) are skipped — they're rendered as lines via buildOpenFeatureLine.
       if (!modelMesh) {
         for (const expanded of expandFeatureGeometry(feature)) {
           if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
+            if (!expanded.sketch.profile.closed) continue
             featureMeshes.set(expanded.id, buildFeatureMesh(project, expanded, false, false, project.stock.thickness))
           }
         }
+      }
+    }
+
+    // Build line representations for open features (polylines, skeleton text, etc.)
+    // These are excluded from the boolean model but should appear as flat lines at z_top.
+    for (const feature of visibleFeatures) {
+      // Check all geometry profiles (text features may have multiple)
+      const profiles = getFeatureGeometryProfiles(feature)
+      if (profiles.some((p) => !p.closed)) {
+        openFeatureLines.set(feature.id, buildOpenFeatureLine(project, feature))
       }
     }
   }
@@ -889,5 +953,5 @@ export async function buildScene(
     )
   }
 
-  return { stockMesh, stockWireframe, modelMesh, featureMeshes, tabMeshes, clampMeshes }
+  return { stockMesh, stockWireframe, modelMesh, featureMeshes, openFeatureLines, tabMeshes, clampMeshes }
 }
