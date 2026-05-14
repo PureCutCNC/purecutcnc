@@ -3082,12 +3082,8 @@
 }
 
 .tree-operation-menu {
-  position: absolute;
+  position: fixed;
   z-index: 1000;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-top: 4px;
   min-width: 120px;
   padding: 4px;
   border-radius: 10px;

@@ -2823,6 +2823,14 @@ export function normalizeProject(project: Project): Project {
         }
       }
     }
+    // Migration: convert open profiles from 'subtract'/'add' to 'line' operation
+    // (projects saved before the 'line' type was introduced)
+    if (!feature.sketch.profile.closed && upgradedFeature.operation !== 'line' && upgradedFeature.operation !== 'model' && upgradedFeature.operation !== 'region') {
+      upgradedFeature = {
+        ...upgradedFeature,
+        operation: 'line',
+      }
+    }
     return {
       ...upgradedFeature,
       stl: normalizeImportedModelStorage(upgradedFeature.id, upgradedFeature.stl, modelAssets),
@@ -4905,9 +4913,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           shape.name || folderDisplayName,
           [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
         )
-        // All closed profiles import as 'add'; open profiles as 'subtract'.
-        // User can change individual features after import if needed.
-        const operation: FeatureOperation = shape.profile.closed ? 'add' : 'subtract'
+        // All closed profiles import as 'add'; open profiles as 'line'.
+        const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
         const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
         const feature = normalizeFeatureZRange({
           ...createImportedFeature(shape, state.project, folderId, featureName, operation),
@@ -6046,8 +6053,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           .filter((entry) => !removedFeatureIds.has(entry.id))
           .map((entry) => {
             if (entry.id === featureId) {
+              // If closing an open profile (line), reset operation to 'subtract'
+              const updatedOperation = entry.operation === 'line' && nextProfile.closed ? 'subtract' : entry.operation
               return {
                 ...entry,
+                operation: updatedOperation,
                 kind: ['text', 'stl'].includes(entry.kind) ? entry.kind : inferFeatureKind(nextProfile),
                 sketch: {
                   ...entry.sketch,

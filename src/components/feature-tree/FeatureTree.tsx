@@ -574,11 +574,12 @@ function TreeRow({
   onDrop,
 }: TreeRowProps) {
   // First feature's operation toggle is locked to 'add' — disable it
-  const operationLocked = isFirstFeature && operation === 'add'
+  // Line features (open profiles) are also locked
+  const operationLocked = (isFirstFeature && operation === 'add') || operation === 'line'
 
-  // Popup menu state for operation selector
+  // Popup menu state for operation selector — stores viewport position for fixed positioning
   const operationBtnRef = useRef<HTMLButtonElement>(null)
-  const [showOperationMenu, setShowOperationMenu] = useState(false)
+  const [operationMenuPos, setOperationMenuPos] = useState<{ top: number; left: number } | null>(null)
 
   return (
     <div
@@ -720,11 +721,22 @@ function TreeRow({
               ].join(' ')}
               onClick={(event) => {
                 event.stopPropagation()
-                if (!operationLocked && operation !== 'model') setShowOperationMenu((prev) => !prev)
+                if (!operationLocked && operation !== 'model') {
+                  const rect = operationBtnRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    setOperationMenuPos(
+                      operationMenuPos
+                        ? null
+                        : { top: rect.bottom + 4, left: rect.left + rect.width / 2 }
+                    )
+                  }
+                }
               }}
               title={
-                operationLocked
+                operationLocked && isFirstFeature
                   ? 'First 2.5D feature must be Add (base solid)'
+                  : operation === 'line'
+                  ? 'Line — open profile (locked)'
                   : operation === 'model'
                   ? 'Model — imported 3D object (locked)'
                   : operation === 'add'
@@ -734,15 +746,20 @@ function TreeRow({
                   : 'Feature outlines machining region'
               }
               aria-label={
-                operationLocked ? 'Operation locked to Add'
+                operationLocked && isFirstFeature ? 'Operation locked to Add'
+                : operation === 'line' ? 'Line — operation locked'
                 : operation === 'model' ? 'Model — operation locked'
                 : 'Change operation'
               }
               aria-haspopup={operationLocked || operation === 'model' ? undefined : 'true'}
-              aria-expanded={showOperationMenu}
+              aria-expanded={operationMenuPos !== null}
               aria-disabled={operationLocked || operation === 'model'}
             >
-              {operationLocked ? '🔒' : operation === 'model' ? (
+              {operationLocked && isFirstFeature ? '🔒' : operation === 'line' ? (
+                <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
+                  <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                </svg>
+              ) : operation === 'model' ? (
                 <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
                   <path d="M 12 2 L 22 7 L 12 12 L 2 7 L 12 2 Z" />
                   <path d="M 2 7 L 12 12 L 12 22 L 2 17 L 2 7 Z" />
@@ -754,17 +771,17 @@ function TreeRow({
                 </svg>
               )}
             </button>
-            {showOperationMenu && !operationLocked && operation !== 'model' ? (
+            {operationMenuPos && !operationLocked && operation !== 'model' ? (
               <>
-                <div className="tree-operation-overlay" onClick={() => setShowOperationMenu(false)} />
-                <div className="tree-operation-menu">
+                <div className="tree-operation-overlay" onClick={() => setOperationMenuPos(null)} />
+                <div className="tree-operation-menu" style={{ top: operationMenuPos.top, left: operationMenuPos.left, transform: 'translateX(-50%)' }}>
                   <button
                     type="button"
                     className={['tree-operation-menu__item', operation === 'add' ? 'tree-operation-menu__item--active' : ''].join(' ')}
                     onClick={(event) => {
                       event.stopPropagation()
                       onToggleOperation('add')
-                      setShowOperationMenu(false)
+                      setOperationMenuPos(null)
                     }}
                     title="Add — feature adds material"
                   >
@@ -777,7 +794,7 @@ function TreeRow({
                     onClick={(event) => {
                       event.stopPropagation()
                       onToggleOperation('subtract')
-                      setShowOperationMenu(false)
+                      setOperationMenuPos(null)
                     }}
                     title="Subtract — feature removes material"
                   >
@@ -790,7 +807,7 @@ function TreeRow({
                     onClick={(event) => {
                       event.stopPropagation()
                       onToggleOperation('region')
-                      setShowOperationMenu(false)
+                      setOperationMenuPos(null)
                     }}
                     title="Region — feature filters machining operations"
                   >
