@@ -1097,7 +1097,12 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              {allSelectedFeatures.some((f) => f.operation === 'model') ? (
+              {allSelectedFeatures.every((f) => !f.sketch.profile.closed || f.operation === 'line') && allSelectedFeatures.length > 0 ? (
+                <div className="properties-locked-field" title="All selected features are open profiles (Line)">
+                  <span>Line</span>
+                  <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+                </div>
+              ) : allSelectedFeatures.some((f) => f.operation === 'model') ? (
                 <div className="properties-locked-field" title="Model entries cannot change operation type here">
                   <span>Contains model features</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
@@ -1228,7 +1233,12 @@ export function PropertiesPanel() {
         </label>
         <label className="properties-field">
           <span>Operation</span>
-          {operationLockedToAdd || selectedFeature.operation === 'model' ? (
+          {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+            <div className="properties-locked-field" title="Line features are open profiles and cannot change operation type">
+              <span>Line</span>
+              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+            </div>
+          ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
             <div className="properties-locked-field" title={
               selectedFeature.operation === 'model'
                 ? 'Model features are imported 3D objects and cannot change operation type'
