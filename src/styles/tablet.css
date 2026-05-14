@@ -76,13 +76,11 @@
   .app-body--toolbar-left,
   .app-body--lcr,
   .app-body--cr {
-    grid-template-columns: minmax(200px, 20%) minmax(0, 1fr) !important;
     grid-template-areas: 'left centre' !important;
   }
 
   .app-body--lc,
   .app-body--toolbar-left.app-body--lc {
-    grid-template-columns: minmax(200px, 20%) minmax(0, 1fr) !important;
     grid-template-areas: 'left centre' !important;
   }
 
@@ -98,14 +96,22 @@
   }
 }
 
-/* Hide the drawer toggle on desktop */
-.tablet-drawer-toggle {
+/* Also support the JS-driven shell mode attribute */
+[data-shell-mode="tablet"] .tablet-drawer-toggle,
+[data-shell-mode="tablet-compact"] .tablet-drawer-toggle {
+  display: inline-flex;
+}
+
+/* Hide the drawer toggle on desktop — must come before the tablet
+   overrides or use lower specificity so they can win. Using :where()
+   gives specificity 0 so the tablet rules always take precedence. */
+:where(.app-shell) .tablet-drawer-toggle {
   display: none;
 }
 
 /* Scrim is only rendered by React when the drawer is open, but ensure
    it never shows on desktop even if the component renders it */
-.tablet-drawer-scrim {
+:where(.app-shell) .tablet-drawer-scrim {
   display: none;
 }
 
@@ -113,6 +119,11 @@
   .tablet-drawer-scrim {
     display: block;
   }
+}
+
+[data-shell-mode="tablet"] .tablet-drawer-scrim,
+[data-shell-mode="tablet-compact"] .tablet-drawer-scrim {
+  display: block;
 }
 
 /* ── Touch targets: toolbar ───────────────────────────────── */
@@ -221,6 +232,66 @@
   }
 }
 
+/* ── Shell-mode attribute selectors for drawer layout ────── */
+
+[data-shell-mode="tablet"] .panel-right,
+[data-shell-mode="tablet-compact"] .panel-right {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 50;
+  width: min(340px, 88vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev-1);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+  grid-area: unset;
+}
+
+[data-shell-mode="tablet"] .app-shell[data-right-open="true"] .panel-right,
+[data-shell-mode="tablet-compact"] .app-shell[data-right-open="true"] .panel-right {
+  transform: translateX(0);
+}
+
+/* Also allow data-right-open on the shell itself (the attribute IS on .app-shell) */
+.app-shell[data-shell-mode="tablet"][data-right-open="true"] .panel-right,
+.app-shell[data-shell-mode="tablet-compact"][data-right-open="true"] .panel-right {
+  transform: translateX(0);
+}
+
+[data-shell-mode="tablet"] .app-body,
+[data-shell-mode="tablet"] .app-body--toolbar-left,
+[data-shell-mode="tablet"] .app-body--lcr,
+[data-shell-mode="tablet"] .app-body--cr,
+[data-shell-mode="tablet-compact"] .app-body,
+[data-shell-mode="tablet-compact"] .app-body--toolbar-left,
+[data-shell-mode="tablet-compact"] .app-body--lcr,
+[data-shell-mode="tablet-compact"] .app-body--cr {
+  grid-template-areas: 'left centre' !important;
+}
+
+[data-shell-mode="tablet"] .app-body--c,
+[data-shell-mode="tablet-compact"] .app-body--c {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-areas: 'centre' !important;
+}
+
+[data-shell-mode="tablet"] .panel-left .panel-resize-divider,
+[data-shell-mode="tablet-compact"] .panel-left .panel-resize-divider {
+  right: -20px;
+  width: 28px;
+}
+
+[data-shell-mode="tablet"] .panel-split__divider,
+[data-shell-mode="tablet-compact"] .panel-split__divider {
+  min-height: 28px;
+  margin: -10px 0;
+  position: relative;
+  z-index: 10;
+}
+
 /* ── Drawer close button ─────────────────────────────────── */
 
 .tablet-drawer-close {
@@ -245,4 +316,30 @@
   .tablet-drawer-close:hover {
     color: var(--text);
   }
+}
+
+[data-shell-mode="tablet"] .tablet-drawer-close,
+[data-shell-mode="tablet-compact"] .tablet-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target, 44px);
+  height: var(--touch-target, 44px);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+/* ── Dev mode shell badge ──────────────────────────────── */
+
+.statusbar-shell-mode {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 165, 0, 0.2);
+  color: orange;
+  font-family: monospace;
 }

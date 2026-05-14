@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface PanelSplitProps {
   children: [React.ReactNode, React.ReactNode]
@@ -52,21 +52,16 @@ export function PanelSplit({
   })
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const activePointerRef = useRef<number | null>(null)
 
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.currentTarget.setPointerCapture(e.pointerId)
-  }, [])
-
-  const handlePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+  const resizeAt = useCallback(
+    (clientY: number) => {
       const container = containerRef.current
       if (!container) return
 
       const rect = container.getBoundingClientRect()
       const totalHeight = rect.height
-      const offsetY = e.clientY - rect.top
+      const offsetY = clientY - rect.top
 
       const minRatio = minFirst / totalHeight
       const maxRatio = 1 - minSecond / totalHeight
@@ -79,6 +74,47 @@ export function PanelSplit({
     },
     [minFirst, minSecond, storageKey],
   )
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    activePointerRef.current = e.pointerId
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // Window-level pointer tracking below keeps resizing working if capture is unavailable.
+    }
+  }, [])
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (activePointerRef.current !== e.pointerId && !e.currentTarget.hasPointerCapture(e.pointerId)) return
+      resizeAt(e.clientY)
+    },
+    [resizeAt],
+  )
+
+  useEffect(() => {
+    function handleWindowPointerMove(event: PointerEvent) {
+      if (activePointerRef.current !== event.pointerId) return
+      event.preventDefault()
+      resizeAt(event.clientY)
+    }
+
+    function handleWindowPointerEnd(event: PointerEvent) {
+      if (activePointerRef.current === event.pointerId) {
+        activePointerRef.current = null
+      }
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false })
+    window.addEventListener('pointerup', handleWindowPointerEnd)
+    window.addEventListener('pointercancel', handleWindowPointerEnd)
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove)
+      window.removeEventListener('pointerup', handleWindowPointerEnd)
+      window.removeEventListener('pointercancel', handleWindowPointerEnd)
+    }
+  }, [resizeAt])
 
   const classes = ['panel-split', className].filter(Boolean).join(' ')
 

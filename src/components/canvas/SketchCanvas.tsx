@@ -15,7 +15,7 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react'
+import type { KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel, type ToolpathVisibility } from '../ToolpathVisibilityPanel'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
@@ -107,6 +107,7 @@ import {
 import type { Clamp, Point, SketchFeature, Tab } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
+import { useCanvasGestures } from '../../sketch/useCanvasGestures'
 
 const NODE_HIT_RADIUS = 9
 const HANDLE_HIT_RADIUS = 7
@@ -254,6 +255,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressStartRef = useRef<{ cx: number; cy: number; clientX: number; clientY: number } | null>(null)
   const marqueeStartRef = useRef<CanvasPoint | null>(null)
   const marqueeCurrentRef = useRef<CanvasPoint | null>(null)
   const zoomWindowStartRef = useRef<CanvasPoint | null>(null)
@@ -1796,6 +1799,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     function handleNativePointerMove(event: PointerEvent) {
+      if (longPressTimerRef.current && longPressStartRef.current) {
+        const dx = event.clientX - longPressStartRef.current.clientX
+        const dy = event.clientY - longPressStartRef.current.clientY
+        if (dx * dx + dy * dy > 100) {
+          clearTimeout(longPressTimerRef.current)
+          longPressTimerRef.current = null
+          longPressStartRef.current = null
+        }
+      }
       const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
       const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
       handleCanvasPointerMove(canvasCoordinates(sourceEvent))
@@ -1822,6 +1834,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       canvas.removeEventListener('wheel', handleNativeWheel)
     }
   }, [zoomWindowActive])
+
+  const { isGestureActive: isGestureActiveRef } = useCanvasGestures({
+    getCanvas: () => canvasRef.current,
+    getViewState: () => viewStateRef.current,
+    setViewState: (updater) => setViewState(updater),
+    getBaseTransform: () => {
+      const canvas = canvasRef.current
+      if (!canvas) return { scale: 1, offsetX: 0, offsetY: 0 }
+      const base = computeBaseViewTransform(projectRef.current.stock, canvas.width, canvas.height)
+      return { scale: base.scale, offsetX: base.offsetX, offsetY: base.offsetY }
+    },
+    canvasToWorld: (cx, cy) => {
+      const canvas = canvasRef.current
+      if (!canvas) return { x: 0, y: 0 }
+      const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+      return canvasToWorld(cx, cy, vt)
+    },
+    minZoom: MIN_SKETCH_ZOOM,
+  })
 
   function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement> | globalThis.WheelEvent, 'clientX' | 'clientY'>): CanvasPoint {
     const rect = canvasRef.current!.getBoundingClientRect()
@@ -2104,7 +2135,39 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return bestControl
   }
 
-  function handleMouseDown(event: MouseEvent<HTMLCanvasElement>) {
+  function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (isGestureActiveRef.current) return
+
+    if (event.pointerType === 'touch') {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+
+    if (event.pointerType === 'touch' && event.button === 0) {
+      const startCx = event.clientX
+      const startCy = event.clientY
+      const rect = canvasRef.current?.getBoundingClientRect()
+      longPressStartRef.current = {
+        cx: rect ? startCx - rect.left : startCx,
+        cy: rect ? startCy - rect.top : startCy,
+        clientX: startCx,
+        clientY: startCy,
+      }
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null
+        if (longPressStartRef.current) {
+          triggerContextMenuAt(longPressStartRef.current.clientX, longPressStartRef.current.clientY)
+          suppressClickRef.current = true
+          stopPan()
+          longPressStartRef.current = null
+        }
+      }, 500)
+    }
+
     const project = projectRef.current
     const selection = selectionRef.current
     const pendingOffset = pendingOffsetRef.current
@@ -2123,6 +2186,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     const shiftStartsPan = event.button === 0 && event.shiftKey && !pendingShapeAction
+    const isTouch = event.pointerType === 'touch'
     if (event.button === 1 || event.button === 2 || shiftStartsPan) {
       isPanningRef.current = true
       didPanRef.current = false
@@ -2151,6 +2215,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const hitTabId = findHitTabId(world, project.tabs)
     const hitFeatureId = findHitFeatureId(world, project.features, vt)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
+      if (isTouch) {
+        isPanningRef.current = true
+        didPanRef.current = false
+        lastPanPointRef.current = point
+        setHoveredEditControl(null)
+        return
+      }
       marqueeStartRef.current = point
       marqueeCurrentRef.current = point
       setHoveredEditControl(null)
@@ -2563,7 +2634,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     lastPanPointRef.current = null
   }
 
-  function handleMouseUp() {
+  function handlePointerUp(event?: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event?.pointerType === 'touch') {
+      try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+    }
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    longPressStartRef.current = null
+
     const canvas = canvasRef.current
     const project = projectRef.current
     const selection = selectionRef.current
@@ -2633,7 +2714,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     stopPan()
   }
 
-  function handleMouseLeave() {
+  function handlePointerLeave() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    longPressStartRef.current = null
+
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
@@ -3133,69 +3220,51 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (hitId) enterSketchEdit(hitId)
   }
 
-  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
-    event.preventDefault()
-
-    if (zoomWindowActive) {
-      return
-    }
-
-    if (didPanRef.current) {
-      didPanRef.current = false
-      return
-    }
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    if (pendingAdd) {
-      return
-    }
-
-    if (pendingMove) {
-      return
-    }
-
-    if (pendingTransform) {
-      return
-    }
-
-    if (pendingOffset) {
-      return
-    }
+  function triggerContextMenuAt(clientX: number, clientY: number) {
+    if (zoomWindowActive) return
+    if (pendingAddRef.current || pendingMoveRef.current || pendingTransformRef.current || pendingOffsetRef.current) return
 
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const point = canvasCoordinates(event)
+    const rect = canvas.getBoundingClientRect()
+    const point: CanvasPoint = { cx: clientX - rect.left, cy: clientY - rect.top }
+    const project = projectRef.current
+    const selection = selectionRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
       selectClamp(hitClampId)
-      onClampContextMenu?.(hitClampId, event.clientX, event.clientY)
+      onClampContextMenu?.(hitClampId, clientX, clientY)
       return
     }
 
     const hitTabId = findHitTabId(world, project.tabs)
     if (hitTabId) {
       selectTab(hitTabId)
-      onTabContextMenu?.(hitTabId, event.clientX, event.clientY)
+      onTabContextMenu?.(hitTabId, clientX, clientY)
       return
     }
 
     const hitId = findHitFeatureId(world, project.features, vt)
-    if (!hitId) {
-      return
-    }
+    if (!hitId) return
 
     if (!selection.selectedFeatureIds.includes(hitId)) {
       selectFeature(hitId)
     }
-    onFeatureContextMenu?.(hitId, event.clientX, event.clientY)
+    onFeatureContextMenu?.(hitId, clientX, clientY)
+  }
+
+  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
+    event.preventDefault()
+
+    if (didPanRef.current) {
+      didPanRef.current = false
+      return
+    }
+
+    triggerContextMenuAt(event.clientX, event.clientY)
   }
 
   function applyEditDimStep(stepIndex: number, steps: EditDimStep[], featureId: string, units: 'mm' | 'inch') {
@@ -3964,9 +4033,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       <canvas
         ref={canvasRef}
         className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction ? 'sketch-canvas--placing' : ''}`}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}

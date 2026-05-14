@@ -1,5 +1,12 @@
 # Tablet UX Implementation Plan
 
+## Obsolete
+
+`[x]` Superseded. This document is retained as historical context and a bug inventory only.
+Do not use it as the implementation source of truth.
+
+Current plan: [TABLET_UX_COMBINED_PLAN.md](TABLET_UX_COMBINED_PLAN.md)
+
 ## Context
 
 This plan is based on a code review of the current shell, responsive CSS, and input handling.

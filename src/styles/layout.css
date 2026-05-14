@@ -1186,6 +1186,7 @@
   display: block;
   cursor: crosshair;
   outline: none;
+  touch-action: none;
 }
 
 .sketch-canvas--placing {
