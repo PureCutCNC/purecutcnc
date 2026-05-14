@@ -241,6 +241,234 @@ In `handlePointerDown` when `pointerType === 'touch'` and a control is hit:
 
 ---
 
+## PR 2.5 — Refactor Canvas Workflows Into Reusable Panels
+
+**Goal:** Pause feature expansion and turn the successful Cut popup experiment into a
+reusable interaction pattern before continuing with toolbar and drawer work.
+
+The Cut flow showed that the same explicit, draggable workflow panel works better on both
+tablet and desktop than the old banner text plus `Tab` / `Enter` / `Esc` hints. We should
+promote this into a shared canvas workflow surface and then migrate similar multi-step
+operations onto it deliberately.
+
+### 2.5a. Workflow panel pattern ✓
+
+Create a reusable canvas-overlay panel for active workflows.
+
+Expected behavior:
+- Draggable by a compact handle/header.
+- Clamped inside the canvas viewport.
+- Works with mouse, touch, and pen.
+- Does not steal the canvas as the primary interaction surface.
+- Returns focus to the canvas when opened, when closed, and after panel actions.
+- Clears transient canvas click/pan suppression state after panel actions so the next sketch
+  selection works on the first click/tap.
+- Uses intent labels (`Next`, `Confirm`, `Cancel`, `Dimension`, `Select targets`) rather than
+  visible keyboard-key labels.
+- Keyboard shortcuts may remain as secondary desktop accelerators, but they are no longer the
+  primary visible workflow UI.
+
+Candidate component/API:
+```tsx
+<CanvasWorkflowPanel
+  title="Cut"
+  step="Select targets"
+  position={position}
+  onPositionChange={setPosition}
+  onRequestCanvasFocus={focusCanvasForWorkflow}
+  actions={...}
+>
+  ...
+</CanvasWorkflowPanel>
+```
+
+Supporting hook:
+```ts
+useCanvasWorkflowPanel({
+  open,
+  phaseKey,
+  containerRef,
+  canvasRef,
+  clearTransientCanvasState,
+})
+```
+
+Do not leave Cut-specific drag/focus code embedded directly in `SketchCanvas` after this
+refactor. `SketchCanvas` should decide *which* workflow is active; reusable workflow panel
+code should handle movement, focus handoff, and overlay mechanics.
+
+### 2.5b. Cut as the reference implementation ✓
+
+Current Cut pilot behavior to preserve:
+- Panel appears for Cut on desktop and tablet.
+- Header is compact: title only (`Cut`) plus drag grip.
+- Current phase appears in the body: `Select cutters` or `Select targets`.
+- Body copy uses input-neutral language: `Select features...`, not `Tap...`.
+- `Keep originals` stays in the panel body.
+- `Next`, `Confirm`, and `Cancel` stay in the panel action row.
+- `Next` is disabled until at least one cutter is selected.
+- `Confirm` is disabled until at least one target is selected.
+- Multi-select remains in the existing selection command surface, visually selected during
+  Cut/Join because multi-select is automatic; it should not be a dead control inside the
+  workflow panel.
+
+Cut-specific acceptance:
+- Open Cut, select a cutter, press `Next`, then select the first target with one click/tap.
+- Open Cut and select additional cutters without first clicking/tapping the canvas just to
+  recover focus.
+- Toggle `Keep originals`, then select geometry with one click/tap.
+- Drag the panel away from geometry; it remains inside the canvas.
+- Desktop mouse and tablet touch follow the same visible flow.
+
+### 2.5c. Migration order after Cut
+
+After Cut is refactored into the reusable panel pattern, migrate workflows in this order:
+1. ✓ Join closed features.
+2. ✓ Move / Copy.
+3. ✓ Rotate / Resize / Mirror.
+4. ✓ Offset.
+5. Composite / polygon / spline drawing command controls.
+6. Sketch edit apply/cancel/dimension controls.
+
+For each migration:
+- Remove keyboard-key text from the primary visible flow.
+- Keep shortcuts operational where they already exist.
+- Add panel actions only when they map to a real state transition.
+- Keep the canvas focus contract: after any panel action, the next geometry click/tap must be
+  handled by the canvas immediately.
+- Verify desktop and tablet together. This pattern is now cross-device, not tablet-only.
+
+### 2.5d. Design constraints
+
+- Panels should be compact. Default width target: about 300px, responsive down to available
+  canvas width.
+- No nested cards.
+- Action rows should be stable: button sizes should not reflow wildly as workflow state
+  changes.
+- Use concise phase labels and put longer guidance in the body.
+- Prefer one active workflow panel at a time.
+- If a workflow needs global selection state, reflect that state in the existing command
+  surface rather than duplicating confusing controls inside the workflow panel.
+
+### 2.5e. Exact entry requires an explicit preview reference
+
+The old desktop `Tab` model depended on hover state: move the mouse in the intended
+direction, press `Tab`, then type the distance along that live vector. A standalone
+`Dimension` button is not equivalent. On desktop it can be pressed before the pointer has
+defined a direction; on tablet there is no hover preview at all, so the user can be asked
+to type a distance without knowing which direction or snap result will be used.
+
+Rule: exact entry is never a free-standing command. It must operate on an existing,
+visible, frozen preview reference.
+
+Move / Copy target flow should become:
+1. Select the source/from point.
+2. Select or preview the target direction.
+3. Show a visible guide from source to preview target, a target marker, the measured
+   distance, and the active snap result.
+4. Click/tap the canvas target to freeze the reference point and enter exact distance
+   editing immediately.
+5. Prefill the distance field from the frozen source-to-reference vector.
+6. `Confirm` commits that prefilled distance as-is, or the user can edit the value first.
+7. `Cancel` exits the move/copy workflow. A separate `Back`/`Change reference` action may be
+   added if testing shows users need to re-pick the reference without cancelling.
+
+Tablet-specific behavior:
+- The first tap after the source point should set a preview/reference point instead of
+  blindly committing the move/copy.
+- After that tap, the workflow panel opens distance entry prefilled from the selected point.
+- The canvas must show the resolved snap mode near the preview target or in the workflow
+  panel, for example `Snap: Grid`, `Snap: Point`, `Snap: Midpoint`, `Snap: Center`,
+  `Snap: Line`, `Snap: Perpendicular`, or `Snap: Free`.
+
+Desktop behavior may stay faster, but it should use the same model internally:
+- Hover updates the preview reference.
+- Clicking freezes the hovered/snapped reference and opens the same prefilled distance
+  entry. This avoids depending on hover after the pointer moves toward a panel button.
+- Pressing `Tab` can remain as a desktop shortcut that freezes the current hover reference
+  and opens the same prefilled distance entry.
+
+Apply the same rule to shape drawing and sketch edit dimensions:
+- A typed length/angle should be based on the current visible preview segment.
+- Tablet users need a visible preview point/segment and snap indicator before typing exact
+  values.
+- Do not migrate more dimension-heavy workflows until this reference/preview contract is
+  implemented.
+
+### 2.5f. Feature creation workflow panels
+
+Feature creation (rect, circle, ellipse, line, arc, polygon, spline, composite) must use the
+same workflow panel pattern as Cut/Join/Move/Transform/Offset. This is the only way for
+tablet users to enter precise dimensions, and it gives desktop users a visual alternative to
+the `Tab`-to-type shortcut.
+
+Universal focus contract — applies to both desktop and tablet:
+1. **Canvas phase:** the user taps/clicks points on the canvas. The canvas holds focus. The
+   workflow panel is visible but passive, showing the current step and offering action buttons.
+2. **Numeric entry phase:** the user taps a panel action (e.g. `Dimensions`, `Radius`,
+   `Angle`). Focus moves to the first input field inside the panel. The user types values and
+   tabs between fields within the panel.
+3. **Confirm:** the user taps `Confirm` or presses `Enter`. The feature is applied (or the
+   step advances), and focus returns to the canvas immediately via `focusCanvasAfterAction()`.
+4. **Cancel:** the user taps `Cancel` or presses `Escape`. Input is discarded, focus returns
+   to the canvas, and the user is back in the spatial-click phase.
+
+The panel never holds focus after an action completes. Every button tap and every
+`Enter`/`Escape` in a panel input ends with the canvas receiving focus. This is enforced by
+`useCanvasWorkflowPanel` — the same hook already used by Cut, Join, Move, Transform, and
+Offset.
+
+Desktop retains existing keyboard shortcuts (`Tab` to open dimension entry, `Enter` to
+confirm, `Escape` to cancel) as accelerators. These shortcuts trigger the same state
+transitions as the panel buttons — they are not a separate code path.
+
+Feature creation migration order:
+1. ✓ Rectangle (width × height after first point).
+2. ✓ Circle (radius after center point).
+3. ✓ Ellipse (radii after center point).
+4. Line / Arc / Spline segment dimension entry.
+5. Polygon (side count, radius).
+6. Composite drawing controls.
+
+Tab and Clamp creation also migrated to the workflow panel (same anchor-based pattern as
+rect/circle/ellipse).
+
+For each feature type:
+- The panel shows the current creation step (e.g. `Click first corner`, `Click second corner
+  or enter dimensions`).
+- Numeric entry buttons are only enabled when a visible preview reference exists (per 2.5e).
+- After confirming dimensions, the feature is created and the tool either resets for the next
+  feature or exits, matching current behavior.
+- The `sketch-dim-input` inline overlays on the canvas are replaced by input fields inside
+  the workflow panel. This removes the split between "canvas overlay inputs" and "panel
+  inputs" and gives a single consistent surface for numeric entry.
+
+Dialog focus restoration: ✓
+- Modal dialogs (New Project, Import Geometry, Export, Text Tool) use
+  `useRestoreCanvasFocus()` to return focus to the canvas on close. Implemented and separate
+  from the workflow panel focus contract.
+
+### Files likely modified
+- `src/components/canvas/CanvasWorkflowPanel.tsx` — reusable overlay component
+- `src/components/canvas/useCanvasWorkflowPanel.ts` — drag/focus helper hook
+- `src/components/canvas/SketchCanvas.tsx` — consume workflow panel for all creation flows
+- `src/utils/useRestoreCanvasFocus.ts` — modal dialog focus restoration hook
+- `src/styles/canvas-workflow.css` or `src/styles/tablet.css` — shared panel styles
+
+### Verification
+- `npm run build`
+- Desktop Cut flow: no keyboard required, no double-click/two-click focus recovery.
+- Tablet Cut flow: same behavior with touch.
+- Desktop feature creation: click points or use panel dimensions — both work.
+- Tablet feature creation: tap first point, tap Dimensions, type values, confirm — canvas
+  receives focus immediately and is ready for the next interaction.
+- Drag panel with mouse and touch.
+- Existing keyboard shortcuts still work as accelerators.
+- Modal dialogs (New Project, Import, Export, Text) restore canvas focus on close.
+- No duplicated or contradictory visible controls.
+
+---
+
 ## PR 3 — Toolbar split + left drawer + command surfaces
 
 **Goal:** Replace the wrapping one-strip toolbar with purpose-built command surfaces and

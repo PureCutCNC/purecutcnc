@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react'
 import type { FeatureOperation, TextFontStyle } from '../../types/project'
+import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type TextToolConfig } from '../../text'
 import { useProjectStore } from '../../store/projectStore'
 
@@ -25,6 +26,7 @@ interface TextToolDialogProps {
 }
 
 export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
+  useRestoreCanvasFocus()
   const units = useProjectStore((state) => state.project.meta.units)
   const defaults = defaultTextToolConfig(units)
   const [text, setText] = useState(defaults.text)

@@ -71,7 +71,12 @@ export function useAxisLock(active: boolean, onLockChange?: () => void) {
     return point
   }, [])
 
-  return { lockModeRef, applyLock }
+  const cycleLock = useCallback(() => {
+    lockModeRef.current = cycleLockMode(lockModeRef.current)
+    onLockChangeRef.current?.()
+  }, [])
+
+  return { lockModeRef, applyLock, cycleLock }
 }
 
 /** Cycles through lock modes: none → x → y → none */

@@ -343,3 +343,77 @@
   color: orange;
   font-family: monospace;
 }
+
+/* ── Floating tablet command bar ────────────────────────── */
+
+.tablet-command-bar {
+  display: none;
+}
+
+[data-shell-mode="tablet"] .tablet-command-bar,
+[data-shell-mode="tablet-compact"] .tablet-command-bar {
+  display: flex;
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 20;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(16, 24, 33, 0.88);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 320px;
+}
+
+.tablet-cmd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-elev-1);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tablet-cmd-btn:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tablet-cmd-btn--active {
+  background: rgba(220, 165, 106, 0.18);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.tablet-cmd-btn--confirm {
+  background: rgba(60, 180, 60, 0.15);
+  border-color: rgba(60, 180, 60, 0.4);
+  color: #7ddf7d;
+}
+
+.tablet-cmd-btn--cancel {
+  background: rgba(220, 60, 60, 0.12);
+  border-color: rgba(220, 60, 60, 0.35);
+  color: #df8080;
+}
+
+.tablet-cmd-btn:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.tablet-cmd-btn--active:disabled {
+  opacity: 1;
+}

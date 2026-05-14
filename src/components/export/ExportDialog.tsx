@@ -16,6 +16,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { platform } from '../../platform'
 import {
   getActiveMachineDefinition,
@@ -32,6 +33,7 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
+  useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)

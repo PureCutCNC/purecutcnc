@@ -16,6 +16,7 @@
 
 @import './styles/layout.css';
 @import './styles/dialog.css';
+@import './styles/canvas-workflow.css';
 @import './styles/tablet.css';
 
 :root {

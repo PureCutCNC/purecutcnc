@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { getStockBounds, newProject } from '../../types/project'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -73,6 +74,7 @@ function setupOnlyTemplate(template: Project): Project {
 }
 
 export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) {
+  useRestoreCanvasFocus()
   const { project, createNewProject } = useProjectStore()
   const [templateKind, setTemplateKind] = useState<TemplateKind>('blank_metric')
   const [fileTemplate, setFileTemplate] = useState<Project | null>(null)
