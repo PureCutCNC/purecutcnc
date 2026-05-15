@@ -57,10 +57,12 @@
     transition: transform 0.22s ease;
     /* Override the grid-area assignment from the narrow desktop breakpoint */
     grid-area: unset;
+    pointer-events: none;
   }
 
   .app-shell[data-right-open="true"] .panel-right {
     transform: translateX(0);
+    pointer-events: auto;
   }
 
   /* Scrim behind the open drawer */
@@ -247,18 +249,19 @@
   box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
   transform: translateX(100%);
   transition: transform 0.22s ease;
-  grid-area: unset;
+  pointer-events: none;
 }
 
 [data-shell-mode="tablet"] .app-shell[data-right-open="true"] .panel-right,
 [data-shell-mode="tablet-compact"] .app-shell[data-right-open="true"] .panel-right {
   transform: translateX(0);
+  pointer-events: auto;
 }
 
-/* Also allow data-right-open on the shell itself (the attribute IS on .app-shell) */
 .app-shell[data-shell-mode="tablet"][data-right-open="true"] .panel-right,
 .app-shell[data-shell-mode="tablet-compact"][data-right-open="true"] .panel-right {
   transform: translateX(0);
+  pointer-events: auto;
 }
 
 [data-shell-mode="tablet"] .app-body,
@@ -278,10 +281,10 @@
   grid-template-areas: 'centre' !important;
 }
 
-[data-shell-mode="tablet"] .panel-left .panel-resize-divider,
-[data-shell-mode="tablet-compact"] .panel-left .panel-resize-divider {
-  right: -20px;
-  width: 28px;
+/* Hide all panel resize dividers on tablet — panels are drawers now */
+[data-shell-mode="tablet"] .panel-resize-divider,
+[data-shell-mode="tablet-compact"] .panel-resize-divider {
+  display: none;
 }
 
 [data-shell-mode="tablet"] .panel-split__divider,
@@ -342,6 +345,7 @@
   background: rgba(255, 165, 0, 0.2);
   color: orange;
   font-family: monospace;
+  margin-left: auto;
 }
 
 /* ── Floating tablet command bar ────────────────────────── */
@@ -416,4 +420,524 @@
 
 .tablet-cmd-btn--active:disabled {
   opacity: 1;
+}
+
+/* ── Top Command Bar (tablet) ──────────────────────────── */
+
+.top-command-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 4px 8px;
+}
+
+.top-command-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.top-command-bar__project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.top-command-bar__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 6px;
+  height: 36px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.top-command-bar__name:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.top-command-bar__save-state {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.top-command-bar__save-state--dirty {
+  color: var(--accent);
+}
+
+.top-command-bar__center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+}
+
+.top-command-bar__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.top-cmd-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.top-cmd-group--tabs {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.top-cmd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.top-cmd-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.top-cmd-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.top-cmd-btn--active {
+  background: rgba(220, 165, 106, 0.25);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.top-cmd-btn--emphasized {
+  color: var(--accent);
+}
+
+.top-cmd-btn--operations {
+  width: auto;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.top-cmd-btn .icon-sprite {
+  width: 20px;
+  height: 20px;
+}
+
+.top-cmd-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.top-cmd-tab:hover {
+  color: var(--text);
+}
+
+.top-cmd-tab--active {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.25);
+}
+
+/* ── Tool Rail (tablet) ────────────────────────────────── */
+
+.tool-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 48px;
+  padding: 4px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.tool-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.tool-rail__section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  width: 100%;
+}
+
+.tool-rail__section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tool-rail__action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-rail__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tool-rail__btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.tool-rail__btn--active {
+  background: rgba(220, 165, 106, 0.28);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.tool-rail__btn--live {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.tool-rail__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tool-rail__btn .icon-sprite {
+  width: 20px;
+  height: 20px;
+}
+
+.tool-rail__tooltip {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-elev-3);
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+
+.tool-rail__action:hover .tool-rail__tooltip {
+  opacity: 1;
+}
+
+.tool-rail__target-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tool-rail__target-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 34px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tool-rail__target-btn--active {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.3);
+}
+
+.tool-rail__target-btn--region.tool-rail__target-btn--active {
+  background: rgba(100, 180, 255, 0.2);
+  color: #7ec4ff;
+  box-shadow: inset 0 0 0 1.5px rgba(100, 180, 255, 0.4);
+}
+
+.tool-rail__target-btn .icon-sprite {
+  width: 18px;
+  height: 18px;
+}
+
+.tool-rail__popover {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 2px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.tool-rail__popover button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tool-rail__popover button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.tool-rail__popover button .icon-sprite {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── Snap Popover ──────────────────────────────────────── */
+
+.snap-popover-host {
+  position: relative;
+  display: flex;
+  align-items: center;
+  z-index: 60;
+}
+
+.snap-popover-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #1a1a1a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.snap-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  min-width: 180px;
+}
+
+.snap-popover-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.snap-popover-enable-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.snap-popover-enable-btn--active {
+  background: rgba(60, 180, 60, 0.12);
+  border-color: rgba(60, 180, 60, 0.4);
+  color: #7ddf7d;
+}
+
+.snap-popover-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.snap-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: color 0.1s, background 0.1s;
+}
+
+.snap-popover-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.snap-popover-item--active,
+.snap-popover-item--active:hover {
+  background: rgba(220, 165, 106, 0.18);
+  color: var(--accent-strong);
+}
+
+.snap-popover-item--live {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.snap-popover-item .icon-sprite {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.snap-popover-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Left drawer (tablet) ──────────────────────────────── */
+
+[data-shell-mode="tablet"] .panel-left,
+[data-shell-mode="tablet-compact"] .panel-left {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 50;
+  width: min(300px, 85vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev-1);
+  border-right: 1px solid var(--line);
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.45);
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  pointer-events: none;
+}
+
+.app-shell[data-shell-mode="tablet"][data-left-open="true"] .panel-left,
+.app-shell[data-shell-mode="tablet-compact"][data-left-open="true"] .panel-left {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* Tablet body: tool rail + centre only */
+[data-shell-mode="tablet"] .app-body--tablet,
+[data-shell-mode="tablet-compact"] .app-body--tablet {
+  grid-template-columns: 48px minmax(0, 1fr) !important;
+  grid-template-rows: 1fr !important;
+  gap: 0 !important;
+  padding: 0 !important;
+}
+
+.app-left-rail--tablet {
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  border-right: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-elev-1) 80%, black);
+  overflow: hidden;
+  min-height: 0;
+}
+
+
+/* Left drawer close button visibility */
+.tablet-drawer-close--left {
+  display: none;
+}
+
+[data-shell-mode="tablet"] .tablet-drawer-close--left,
+[data-shell-mode="tablet-compact"] .tablet-drawer-close--left {
+  display: inline-flex;
+}
+
+/* Hide centre workspace tabs header on tablet (view tabs are in the top command bar) */
+[data-shell-mode="tablet"] .centre-workspace > .panel-tabs-header,
+[data-shell-mode="tablet-compact"] .centre-workspace > .panel-tabs-header {
+  display: none;
+}
+
+/* With the tabs header hidden, the workspace grid (auto 1fr) would put the stage
+   in the auto row and collapse it.  Switch to a single-row stretch layout. */
+[data-shell-mode="tablet"] .centre-workspace,
+[data-shell-mode="tablet-compact"] .centre-workspace {
+  grid-template-rows: 1fr;
 }

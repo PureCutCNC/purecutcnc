@@ -984,6 +984,14 @@ function App() {
         rightTab={rightTab}
         onRightTabChange={setRightTab}
         statusBarExtras={collapsedDepthLegend}
+        onZoomToModel={handleZoomToModel}
+        onZoomWindow={handleZoomWindow}
+        zoomWindowActive={zoomWindowActive}
+        onImportComplete={handleImportComplete}
+        snapSettings={snapSettings}
+        activeSnapMode={activeSnapMode}
+        onToggleSnapEnabled={handleToggleSnapEnabled}
+        onToggleSnapMode={handleToggleSnapMode}
       />
       
       {showExportDialog && (

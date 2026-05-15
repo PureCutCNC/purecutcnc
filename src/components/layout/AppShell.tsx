@@ -20,6 +20,9 @@ import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
+import { TopCommandBar } from './TopCommandBar'
+import { ToolRail } from './ToolRail'
+import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
 
 interface AppShellProps {
@@ -42,6 +45,14 @@ interface AppShellProps {
   rightTab: 'operations' | 'tools'
   onRightTabChange: (tab: 'operations' | 'tools') => void
   statusBarExtras?: ReactNode
+  onZoomToModel: () => void
+  onZoomWindow: () => void
+  zoomWindowActive: boolean
+  onImportComplete?: () => void
+  snapSettings: SnapSettings
+  activeSnapMode?: SnapMode | null
+  onToggleSnapEnabled: () => void
+  onToggleSnapMode: (mode: SnapMode) => void
 }
 
 function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 | -1): T {
@@ -70,10 +81,19 @@ export function AppShell({
   rightTab,
   onRightTabChange,
   statusBarExtras,
+  onZoomToModel,
+  onZoomWindow,
+  zoomWindowActive,
+  onImportComplete,
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
 }: AppShellProps) {
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
+  const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
 
   const LC_STORAGE_KEY = 'panel-split:left-center'
   const CR_STORAGE_KEY = 'panel-split:center-right'
@@ -202,7 +222,7 @@ export function AppShell({
   // left=L/(L+C), right=R/(C+R) → express as fr with centre always 1fr:
   //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
-  if (showLeft || showDockedRight) {
+  if (!tabletShell && (showLeft || showDockedRight)) {
     const railPrefix = toolbarOrientation === 'left' ? 'var(--left-toolbar-width) ' : ''
     const leftCol = showLeft
       ? `minmax(${MIN_LEFT_WIDTH}px, ${leftPanelRatio / (1 - leftPanelRatio)}fr) `
@@ -240,32 +260,55 @@ export function AppShell({
   ] as const
 
   return (
-    <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined}>
-      {rightDrawerOpen && (
+    <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined} data-left-open={leftDrawerOpen ? 'true' : undefined}>
+      {(rightDrawerOpen || leftDrawerOpen) && (
         <div
           className="tablet-drawer-scrim"
           aria-hidden="true"
-          onClick={() => setRightDrawerOpen(false)}
+          onClick={() => { setRightDrawerOpen(false); setLeftDrawerOpen(false) }}
         />
       )}
       {/* ── Top toolbar ── */}
-      <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
-        {toolbarOrientation === 'left' ? globalToolbar : toolbar}
-        <button
-          className="tablet-drawer-toggle toolbar-btn"
-          type="button"
-          title="Open operations panel"
-          aria-label="Open operations panel"
-          aria-expanded={rightDrawerOpen}
-          onClick={() => setRightDrawerOpen(true)}
-        >
-          Operations{project.operations.length > 0 ? ` ${project.operations.length}` : ''}
-        </button>
-      </header>
+      {tabletShell ? (
+        <header className="app-toolbar app-toolbar--tablet">
+          <TopCommandBar
+            centerTab={centerTab}
+            onCenterTabChange={onCenterTabChange}
+            onZoomToModel={onZoomToModel}
+            onZoomWindow={onZoomWindow}
+            zoomWindowActive={zoomWindowActive}
+            onOpenLeftDrawer={() => setLeftDrawerOpen(true)}
+            onOpenRightDrawer={() => setRightDrawerOpen(true)}
+            onImportComplete={onImportComplete}
+            snapSettings={snapSettings}
+            activeSnapMode={activeSnapMode}
+            onToggleSnapEnabled={onToggleSnapEnabled}
+            onToggleSnapMode={onToggleSnapMode}
+          />
+        </header>
+      ) : (
+        <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
+          {toolbarOrientation === 'left' ? globalToolbar : toolbar}
+          <button
+            className="tablet-drawer-toggle toolbar-btn"
+            type="button"
+            title="Open operations panel"
+            aria-label="Open operations panel"
+            aria-expanded={rightDrawerOpen}
+            onClick={() => setRightDrawerOpen(true)}
+          >
+            Operations{project.operations.length > 0 ? ` ${project.operations.length}` : ''}
+          </button>
+        </header>
+      )}
 
       {/* Main work area */}
-      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation}`} style={bodyStyle}>
-        {toolbarOrientation === 'left' ? (
+      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation} ${tabletShell ? 'app-body--tablet' : ''}`} style={bodyStyle}>
+        {tabletShell ? (
+          <aside className="app-left-rail app-left-rail--tablet" aria-label="Tools">
+            <ToolRail onZoomToModel={onZoomToModel} onImportComplete={onImportComplete} />
+          </aside>
+        ) : toolbarOrientation === 'left' ? (
           <aside className="app-left-rail" aria-label="Creation tools">
             {creationToolbar}
           </aside>
@@ -275,6 +318,14 @@ export function AppShell({
           <PanelSplit storageKey="project-tree" initialRatio={0.55} minFirst={160} minSecond={160}>
             <section className="panel panel-tree">
               <div className="panel-header">
+                <button
+                  className="tablet-drawer-close tablet-drawer-close--left"
+                  type="button"
+                  aria-label="Close project panel"
+                  onClick={() => setLeftDrawerOpen(false)}
+                >
+                  ✕
+                </button>
                 Project Tree
                 <span className="feature-count">
                   {project.features.length + project.featureFolders.length + project.tabs.length + project.clamps.length + 6}

@@ -50,6 +50,14 @@
   padding: 6px 10px;
 }
 
+.app-toolbar--tablet {
+  padding: 4px 8px;
+  gap: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 20;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
