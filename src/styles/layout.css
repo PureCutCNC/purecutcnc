@@ -1189,6 +1189,22 @@
   touch-action: none;
 }
 
+.axis-lock-chip {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 20;
+  padding: 2px 10px;
+  border: 1px solid;
+  border-radius: 4px;
+  background: rgba(15, 21, 27, 0.85);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+  line-height: 22px;
+}
+
 .sketch-canvas--placing {
   cursor: copy;
 }

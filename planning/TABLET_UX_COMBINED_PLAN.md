@@ -327,8 +327,9 @@ After Cut is refactored into the reusable panel pattern, migrate workflows in th
 2. ✓ Move / Copy.
 3. ✓ Rotate / Resize / Mirror.
 4. ✓ Offset.
-5. Composite / polygon / spline drawing command controls.
-6. Sketch edit apply/cancel/dimension controls.
+5. ✓ Composite / polygon / spline drawing command controls.
+6. ✓ Sketch edit apply/cancel/dimension controls.
+7. ✓ Constraint creation (anchor → reference → distance entry).
 
 For each migration:
 - Remove keyboard-key text from the primary visible flow.
@@ -395,7 +396,7 @@ Apply the same rule to shape drawing and sketch edit dimensions:
 - Do not migrate more dimension-heavy workflows until this reference/preview contract is
   implemented.
 
-### 2.5f. Feature creation workflow panels
+### 2.5f. Feature creation workflow panels ✓
 
 Feature creation (rect, circle, ellipse, line, arc, polygon, spline, composite) must use the
 same workflow panel pattern as Cut/Join/Move/Transform/Offset. This is the only way for
@@ -426,9 +427,9 @@ Feature creation migration order:
 1. ✓ Rectangle (width × height after first point).
 2. ✓ Circle (radius after center point).
 3. ✓ Ellipse (radii after center point).
-4. Line / Arc / Spline segment dimension entry.
-5. Polygon (side count, radius).
-6. Composite drawing controls.
+4. ✓ Line / Arc / Spline segment dimension entry.
+5. ✓ Polygon (side count, radius).
+6. ✓ Composite drawing controls.
 
 Tab and Clamp creation also migrated to the workflow panel (same anchor-based pattern as
 rect/circle/ellipse).
@@ -466,6 +467,86 @@ Dialog focus restoration: ✓
 - Existing keyboard shortcuts still work as accelerators.
 - Modal dialogs (New Project, Import, Export, Text) restore canvas focus on close.
 - No duplicated or contradictory visible controls.
+
+### 2.5g. Composite arc dimension entry modes
+
+The composite shape supports three segment modes (line, arc, spline), each with different
+dimension entry fields. The arc mode has a two-phase click workflow (endpoint then curvature
+point), but dimension entry collapses this into fewer steps.
+
+**Line mode:** Length + Angle — polar coordinates from the last point. Same as polygon/spline.
+
+**Arc mode, entering from scratch (no pendingArcEnd):** Length + Angle + Radius — all three
+fields shown together. Length and angle define the arc endpoint (same as line), and radius
+defines the arc curvature. On confirm, the system:
+1. Computes the endpoint from length + angle relative to the last point.
+2. Adds it as `pendingArcEnd` via `addPendingCompositePoint`.
+3. Computes the arc through-point from the radius using the sagitta formula on the chord
+   between the last point and the new endpoint.
+4. Adds the through-point via `addPendingCompositePoint` to complete the arc segment.
+This means the user defines a full arc in one dimension entry step rather than two clicks.
+
+**Arc mode, endpoint already placed (has pendingArcEnd):** Radius only — the arc endpoint
+was already clicked, so only the curvature remains. The through-point is computed from the
+chord (lastPoint → pendingArcEnd) and the entered radius, placed on the perpendicular
+bisector of the chord at sagitta distance.
+
+**Spline mode:** Length + Angle — same as line mode. The spline curvature is computed
+automatically from the sequence of control points.
+
+The sagitta formula: given chord half-length `h` and radius `r` (must be ≥ h), the sagitta
+(bulge distance from chord midpoint to arc midpoint) is `s = r - sqrt(r² - h²)`. The
+through-point is placed at `chordMidpoint + s * perpendicular`. The perpendicular direction
+defaults based on the cursor position when dimension entry was triggered, stored as
+`arcClockwise` on the dimension edit state.
+
+### 2.5h. Edit mode workflow panel + click-to-edit dimensions ✓
+
+The edit mode currently renders Apply, Cancel, Dimension, and Lock buttons in the tablet
+command bar. The Lock button only appears during drag but is impractical to tap while
+dragging. These controls should migrate into a CanvasWorkflowPanel for consistency with
+creation workflows.
+
+**Workflow panel for edit mode:**
+- Shows when `selection.mode === 'sketch_edit'` (not during creation).
+- Always shows Apply and Cancel buttons.
+- Shows axis Lock toggle when dragging a node.
+- Dimension entry is triggered by tapping a segment or anchor on the canvas, not by a
+  separate Dimension button. This eliminates the `armedForDimension` flag and Tab-key
+  cycling through segments.
+
+**Click-to-edit segment dimensions:**
+When the user clicks/taps a segment in edit mode, the workflow panel shows dimension input
+fields appropriate to the segment type:
+- **Line segment:** Length + Angle (polar from the segment's start anchor).
+- **Arc segment:** Radius (of the arc).
+- **Bezier segment:** Length + Angle (chord from start to end anchor).
+Confirm applies the dimension change. Cancel discards it. This replaces the desktop-only
+Tab-to-cycle-dimensions workflow with a visual, click-based approach that works on both
+platforms.
+
+**Add-point bug on tablet (open feature extension):**
+`handlePointerLeave` clears `pendingSketchExtensionRef` when the pointer leaves the canvas.
+On touch devices, `pointerleave` fires after every finger lift (touch → pointerup →
+pointerleave → click). This means the first tap successfully sets the extension endpoint,
+but `pointerleave` clears it before the second tap's click handler runs. Fix:
+`handlePointerLeave` must not clear `pendingSketchExtensionRef` — it should only be cleared
+by explicit cancellation or successful extension.
+
+### 2.5i. Constraint creation workflow panel ✓
+
+The constraint creation flow (press C → pick anchor → pick reference → enter distance) was
+previously rendered as a `sketch-place-banner` with a floating positioned input. Converted to
+a `CanvasWorkflowPanel` with three phases:
+- **Pick anchor point:** summary text guiding user to tap a snap point on the feature.
+- **Pick reference point:** summary text guiding user to tap a snap point on another feature.
+- **Set distance:** Distance input field with Confirm/Cancel buttons.
+
+The existing `constraintEdit` inline input (click-on-constraint-label to edit its value)
+remains as a positioned overlay since it needs to appear at the constraint's screen location.
+
+Also: starting a node drag now auto-cancels any active dimension edit fields to prevent stale
+inputs from remaining visible while the user interacts with geometry directly.
 
 ---
 

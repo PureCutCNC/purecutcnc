@@ -17,7 +17,7 @@
 .canvas-workflow-panel {
   position: absolute;
   z-index: 26;
-  width: min(300px, calc(100% - 24px));
+  width: min(340px, calc(100% - 24px));
   border: 1px solid rgba(200, 156, 98, 0.7);
   border-radius: 8px;
   background:
@@ -133,4 +133,10 @@
 .canvas-workflow-panel__actions {
   justify-content: flex-end;
   padding: 0 12px 12px;
+}
+
+.canvas-workflow-panel__actions .tablet-cmd-btn {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
 }

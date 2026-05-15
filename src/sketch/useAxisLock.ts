@@ -14,49 +14,40 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LockMode } from '../types/axisLock'
 import type { Point } from '../types/project'
 
 /**
- * Manages axis lock state during drag operations.
- *
- * Pressing Alt/Option while dragging cycles through: none → x → y → none.
- * The lock is automatically reset when `active` becomes false.
- *
- * @param active - Whether a drag operation is currently in progress.
- * @returns Object with the current lock mode ref and a function to apply the lock to a point.
- */
-/**
- * @param active - Whether a drag operation is currently in progress.
  * @param onLockChange - Called whenever the lock mode changes so the caller can redraw.
  */
-export function useAxisLock(active: boolean, onLockChange?: () => void) {
+export function useAxisLock(onLockChange?: () => void) {
   const lockModeRef = useRef<LockMode>('none')
+  const [lockMode, setLockMode] = useState<LockMode>('none')
   const onLockChangeRef = useRef(onLockChange)
   onLockChangeRef.current = onLockChange
 
-  // Reset lock when drag ends
-  useEffect(() => {
-    if (!active) {
-      lockModeRef.current = 'none'
-    }
-  }, [active])
+  function setLock(mode: LockMode) {
+    lockModeRef.current = mode
+    setLockMode(mode)
+    onLockChangeRef.current?.()
+  }
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    if (!active) return
     if (event.key !== 'Alt') return
-    // Prevent browser default (e.g. focus menu bar on some platforms)
     event.preventDefault()
-    lockModeRef.current = cycleLockMode(lockModeRef.current)
-    onLockChangeRef.current?.()
-  }, [active])
+    setLock(cycleLockMode(lockModeRef.current))
+  }, [])
 
   useEffect(() => {
-    if (!active) return
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [active, handleKeyDown])
+  }, [handleKeyDown])
+
+  const reset = useCallback(() => {
+    lockModeRef.current = 'none'
+    setLockMode('none')
+  }, [])
 
   /**
    * Applies the current lock mode to constrain `point` relative to `origin`.
@@ -72,11 +63,10 @@ export function useAxisLock(active: boolean, onLockChange?: () => void) {
   }, [])
 
   const cycleLock = useCallback(() => {
-    lockModeRef.current = cycleLockMode(lockModeRef.current)
-    onLockChangeRef.current?.()
+    setLock(cycleLockMode(lockModeRef.current))
   }, [])
 
-  return { lockModeRef, applyLock, cycleLock }
+  return { lockModeRef, lockMode, applyLock, cycleLock, reset }
 }
 
 /** Cycles through lock modes: none → x → y → none */
