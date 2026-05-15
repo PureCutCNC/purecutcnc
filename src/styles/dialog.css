@@ -500,3 +500,73 @@
     padding-top: 16px;
   }
 }
+
+/* ── Tablet touch targets for dialogs ──────────────────── */
+
+[data-shell-mode="tablet"] .import-dialog__info-row,
+[data-shell-mode="tablet-compact"] .import-dialog__info-row {
+  min-height: 44px;
+}
+
+[data-shell-mode="tablet"] .import-dialog__info-row select,
+[data-shell-mode="tablet"] .import-dialog__info-row input[type="number"],
+[data-shell-mode="tablet-compact"] .import-dialog__info-row select,
+[data-shell-mode="tablet-compact"] .import-dialog__info-row input[type="number"] {
+  height: 44px;
+  font-size: 16px;
+}
+
+[data-shell-mode="tablet"] .import-dialog__toggle-row,
+[data-shell-mode="tablet-compact"] .import-dialog__toggle-row {
+  min-height: 44px;
+}
+
+[data-shell-mode="tablet"] .import-dialog__toggle-input,
+[data-shell-mode="tablet-compact"] .import-dialog__toggle-input {
+  width: 22px;
+  height: 22px;
+}
+
+[data-shell-mode="tablet"] .import-dialog__layer-row,
+[data-shell-mode="tablet-compact"] .import-dialog__layer-row {
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+[data-shell-mode="tablet"] .import-dialog__layer-row input[type="checkbox"],
+[data-shell-mode="tablet-compact"] .import-dialog__layer-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+
+[data-shell-mode="tablet"] .export-option input,
+[data-shell-mode="tablet-compact"] .export-option input {
+  width: 22px;
+  height: 22px;
+}
+
+[data-shell-mode="tablet"] .export-option,
+[data-shell-mode="tablet-compact"] .export-option {
+  min-height: 44px;
+}
+
+[data-shell-mode="tablet"] .feat-btn,
+[data-shell-mode="tablet-compact"] .feat-btn {
+  height: 38px;
+  font-size: 13px;
+}
+
+[data-shell-mode="tablet"] .dialog input,
+[data-shell-mode="tablet"] .dialog select,
+[data-shell-mode="tablet"] .dialog textarea,
+[data-shell-mode="tablet-compact"] .dialog input,
+[data-shell-mode="tablet-compact"] .dialog select,
+[data-shell-mode="tablet-compact"] .dialog textarea {
+  min-height: 44px;
+  font-size: 16px;
+}
+
+[data-shell-mode="tablet"] .dialog button,
+[data-shell-mode="tablet-compact"] .dialog button {
+  min-height: 38px;
+}

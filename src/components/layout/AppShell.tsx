@@ -94,6 +94,7 @@ export function AppShell({
   const tabletShell = isTabletMode(shellMode)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
+  const [statusBarExpanded, setStatusBarExpanded] = useState(false)
 
   const LC_STORAGE_KEY = 'panel-split:left-center'
   const CR_STORAGE_KEY = 'panel-split:center-right'
@@ -261,6 +262,13 @@ export function AppShell({
 
   return (
     <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined} data-left-open={leftDrawerOpen ? 'true' : undefined}>
+      <div className="tablet-rotate-overlay" aria-hidden="true">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="2" width="16" height="20" rx="2" />
+          <path d="M12 18h.01" />
+        </svg>
+        <span>Please rotate your device to landscape mode</span>
+      </div>
       {(rightDrawerOpen || leftDrawerOpen) && (
         <div
           className="tablet-drawer-scrim"
@@ -610,13 +618,25 @@ export function AppShell({
 
       </div>
 
-      <footer className="app-statusbar">
+      <footer className={`app-statusbar ${tabletShell ? (statusBarExpanded ? 'app-statusbar--tablet-expanded' : 'app-statusbar--tablet-compact') : ''}`}>
         <span>{project.meta.name}</span>
         <span>{project.meta.units.toUpperCase()}</span>
         <span>
           Stock: {formatLength(stockWidth, project.meta.units)} × {formatLength(stockHeight, project.meta.units)} × {formatLength(project.stock.thickness, project.meta.units)} {project.meta.units}
         </span>
-        <div className="statusbar-visibility" aria-label="View visibility">
+        {tabletShell ? (
+          <button
+            type="button"
+            className="statusbar-expand-btn"
+            onClick={() => setStatusBarExpanded((v) => !v)}
+            title={statusBarExpanded ? 'Collapse status bar' : 'Expand status bar'}
+            aria-label={statusBarExpanded ? 'Collapse status bar' : 'Expand status bar'}
+            aria-expanded={statusBarExpanded}
+          >
+            {statusBarExpanded ? '▾' : '▸'}
+          </button>
+        ) : null}
+        <div className={`statusbar-visibility ${tabletShell && !statusBarExpanded ? 'statusbar-visibility--hidden' : ''}`} aria-label="View visibility">
           <button
             className={`statusbar-toggle ${project.grid.visible ? 'statusbar-toggle--active' : ''}`}
             type="button"

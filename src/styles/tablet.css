@@ -164,6 +164,7 @@
     height: var(--touch-target, 44px);
     min-width: var(--touch-target, 44px);
     min-height: var(--touch-target, 44px);
+    font-size: 22px;
   }
 
   .tree-action-btn .icon-sprite {
@@ -190,6 +191,15 @@
   .properties-field button:not(.tree-action-btn) {
     height: var(--touch-target, 44px);
   }
+
+}
+
+
+/* ── Tablet shell: tree button font size ───────────────── */
+
+[data-shell-mode="tablet"] .tree-action-btn,
+[data-shell-mode="tablet-compact"] .tree-action-btn {
+  font-size: 22px;
 }
 
 /* ── Touch targets: CAM buttons ─────────────────────────── */
@@ -941,3 +951,233 @@
 [data-shell-mode="tablet-compact"] .centre-workspace {
   grid-template-rows: 1fr;
 }
+
+/* ── Drag grip handle (tablet only) ──────────────────────── */
+
+.tree-drag-grip {
+  display: none;
+}
+
+[data-shell-mode="tablet"] .tree-row:has(.tree-drag-grip),
+[data-shell-mode="tablet-compact"] .tree-row:has(.tree-drag-grip) {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 4px;
+  padding-left: 0 !important;
+}
+
+[data-shell-mode="tablet"] .tree-row:has(.tree-drag-grip) .tree-branch,
+[data-shell-mode="tablet-compact"] .tree-row:has(.tree-drag-grip) .tree-branch {
+  display: none;
+}
+
+[data-shell-mode="tablet"] .tree-drag-grip,
+[data-shell-mode="tablet-compact"] .tree-drag-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 36px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.6;
+  padding: 0;
+}
+
+[data-shell-mode="tablet"] .tree-drag-grip:active,
+[data-shell-mode="tablet-compact"] .tree-drag-grip:active {
+  cursor: grabbing;
+  opacity: 1;
+  color: var(--text);
+}
+
+/* ── Status bar compact mode (tablet) ────────────────────── */
+
+.statusbar-expand-btn {
+  display: none;
+}
+
+.app-statusbar--tablet-compact,
+.app-statusbar--tablet-expanded {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.app-statusbar--tablet-compact {
+  max-height: 28px;
+  min-height: 28px;
+  padding: 4px 14px;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.app-statusbar--tablet-expanded {
+  flex-wrap: wrap;
+}
+
+.app-statusbar--tablet-compact .statusbar-expand-btn,
+.app-statusbar--tablet-expanded .statusbar-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.statusbar-expand-btn:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.statusbar-visibility--hidden {
+  display: none;
+}
+
+/* ── Operations drawer polish ────────────────────────────── */
+
+[data-shell-mode="tablet"] .cam-section-header,
+[data-shell-mode="tablet-compact"] .cam-section-header {
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+[data-shell-mode="tablet"] .cam-section-header .feature-count,
+[data-shell-mode="tablet-compact"] .cam-section-header .feature-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: rgba(220, 165, 106, 0.2);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+[data-shell-mode="tablet"] .cam-section-toolbar,
+[data-shell-mode="tablet-compact"] .cam-section-toolbar {
+  min-height: 44px;
+}
+
+[data-shell-mode="tablet"] .cam-header-action,
+[data-shell-mode="tablet-compact"] .cam-header-action {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+[data-shell-mode="tablet"] .cam-operation-tree .tree-row:has(.tree-drag-grip),
+[data-shell-mode="tablet-compact"] .cam-operation-tree .tree-row:has(.tree-drag-grip) {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 4px;
+  padding-left: 0 !important;
+}
+
+[data-shell-mode="tablet"] .cam-operation-tree .tree-row:has(.tree-drag-grip) .tree-branch,
+[data-shell-mode="tablet-compact"] .cam-operation-tree .tree-row:has(.tree-drag-grip) .tree-branch {
+  display: none;
+}
+
+[data-shell-mode="tablet"] .cam-operation-badge,
+[data-shell-mode="tablet-compact"] .cam-operation-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+/* Warning messages in the operations panel */
+[data-shell-mode="tablet"] .cam-field-message,
+[data-shell-mode="tablet-compact"] .cam-field-message {
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+/* ── Dialog audit: touch-friendly dialogs ────────────────── */
+
+@media (pointer: coarse) {
+  .dialog {
+    max-width: min(560px, 92vw);
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+
+  .dialog input,
+  .dialog select,
+  .dialog textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .dialog button {
+    min-height: 44px;
+    padding: 0 16px;
+  }
+
+  .dialog-header {
+    min-height: 48px;
+    padding: 0 16px;
+    font-size: 16px;
+  }
+
+  .dialog-footer {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  .dialog-footer button {
+    flex: 1;
+    min-height: 48px;
+  }
+
+  .import-dialog-body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .import-dialog-layers {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+}
+
+/* ── Tablet portrait rotate overlay ─────────────────────── */
+
+.tablet-rotate-overlay {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  [data-shell-mode="tablet"] > .tablet-rotate-overlay,
+  [data-shell-mode="tablet-compact"] > .tablet-rotate-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: #0b1219;
+    color: var(--text-dim);
+    font-size: 18px;
+    text-align: center;
+    padding: 32px;
+  }
+}
+

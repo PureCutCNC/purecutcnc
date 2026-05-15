@@ -221,6 +221,8 @@ function createOrbitControls(
   const panRight = new THREE.Vector3()
   const panUp = new THREE.Vector3()
   const cameraDirection = new THREE.Vector3()
+  const touchPointers = new Map<number, { x: number; y: number }>()
+  let gestureState: { centerX: number; centerY: number; distance: number } | null = null
 
   function updateCamera() {
     camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2])
@@ -281,6 +283,20 @@ function createOrbitControls(
       return
     }
 
+    if (event.pointerType === 'touch') {
+      touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointers.size >= 2) {
+        dragMode = null
+        const points = [...touchPointers.values()]
+        gestureState = {
+          centerX: (points[0].x + points[1].x) / 2,
+          centerY: (points[0].y + points[1].y) / 2,
+          distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+        }
+        return
+      }
+    }
+
     const nextDragMode =
       event.button === 0 && !event.shiftKey ? 'rotate'
       : event.button === 1 || event.button === 2 || (event.button === 0 && event.shiftKey) ? 'pan'
@@ -298,6 +314,12 @@ function createOrbitControls(
   }
 
   function onPointerUp(event: PointerEvent) {
+    if (event.pointerType === 'touch') {
+      touchPointers.delete(event.pointerId)
+      if (touchPointers.size < 2) {
+        gestureState = null
+      }
+    }
     dragMode = null
     if (domElement.hasPointerCapture?.(event.pointerId)) {
       domElement.releasePointerCapture(event.pointerId)
@@ -307,6 +329,23 @@ function createOrbitControls(
   function onPointerMove(event: PointerEvent) {
     if (isInteractionBlocked()) {
       return
+    }
+
+    if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
+      touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointers.size >= 2 && gestureState) {
+        const points = [...touchPointers.values()]
+        const newCenterX = (points[0].x + points[1].x) / 2
+        const newCenterY = (points[0].y + points[1].y) / 2
+        const newDistance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
+        if (gestureState.distance > 0 && newDistance > 0) {
+          spherical.radius = Math.max(MIN_CAMERA_RADIUS, Math.min(MAX_CAMERA_RADIUS, spherical.radius * (gestureState.distance / newDistance)))
+        }
+        panByPixels(newCenterX - gestureState.centerX, newCenterY - gestureState.centerY)
+        gestureState = { centerX: newCenterX, centerY: newCenterY, distance: newDistance }
+        updateCamera()
+        return
+      }
     }
 
     if (!dragMode) {
@@ -667,6 +706,21 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const controls = controlsRef.current
     if (!scene || !controls) {
       return
+    }
+
+    // Force renderer resize to current mount dimensions.
+    // When the component first mounts (tab hidden), the mount may have zero or
+    // incorrect dimensions.  On tab switch to simulation, the ResizeObserver
+    // only fires on actual dimension changes — but switching tabs only toggles
+    // opacity/visibility, not size.  Resize explicitly here so camera aspect
+    // and renderer viewport are correct before mesh creation and auto-frame.
+    const mount = mountRef.current
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    if (mount && renderer && camera) {
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
+      camera.aspect = mount.clientWidth / mount.clientHeight
+      camera.updateProjectionMatrix()
     }
 
     if (playbackEnabled) {

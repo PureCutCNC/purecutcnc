@@ -19,6 +19,7 @@ import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { Icon } from '../Icon'
+import { isTabletMode, useShellMode } from '../layout/useShellMode'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -68,6 +69,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     selectStock,
     hoverFeature,
   } = useProjectStore()
+
+  const shellMode = useShellMode()
+  const tabletShell = isTabletMode(shellMode)
 
   const [dragItem, setDragItem] = useState<{ kind: 'feature' | 'folder'; id: string } | null>(null)
   const [featuresCollapsed, setFeaturesCollapsed] = useState(false)
@@ -140,6 +144,77 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     dragOverTarget.current = null
   }
 
+  function handleMoveFeature(featureId: string, direction: -1 | 1) {
+    const feature = project.features.find((f) => f.id === featureId)
+    if (!feature) return
+
+    if (feature.folderId === null) {
+      const sectionEntries = project.featureTree.filter((entry) => {
+        if (entry.type === 'folder') {
+          const folder = project.featureFolders.find((f) => f.id === entry.folderId)
+          return feature.operation === 'region'
+            ? (folder?.section ?? 'features') === 'regions'
+            : (folder?.section ?? 'features') !== 'regions'
+        }
+        const f = project.features.find((item) => item.id === entry.featureId)
+        return feature.operation === 'region'
+          ? f?.operation === 'region'
+          : f?.operation !== 'region'
+      })
+      const entryIndex = sectionEntries.findIndex((e) => e.type === 'feature' && e.featureId === featureId)
+      const swapIndex = entryIndex + direction
+      if (entryIndex === -1 || swapIndex < 0 || swapIndex >= sectionEntries.length) return
+
+      const fullTree = [...project.featureTree]
+      const aIdx = fullTree.findIndex((e) => e === sectionEntries[entryIndex])
+      const bIdx = fullTree.findIndex((e) => e === sectionEntries[swapIndex])
+      if (aIdx === -1 || bIdx === -1) return
+      ;[fullTree[aIdx], fullTree[bIdx]] = [fullTree[bIdx], fullTree[aIdx]]
+      reorderFeatureTreeEntries(fullTree)
+    } else {
+      const siblings = project.features.filter((f) =>
+        f.folderId === feature.folderId && (feature.operation === 'region' ? f.operation === 'region' : f.operation !== 'region')
+      )
+      const sibIndex = siblings.findIndex((f) => f.id === featureId)
+      if (sibIndex === -1) return
+
+      if (direction === -1 && sibIndex > 0) {
+        moveFeatureTreeFeature(featureId, feature.folderId, siblings[sibIndex - 1].id)
+      } else if (direction === 1 && sibIndex < siblings.length - 1) {
+        if (sibIndex + 2 < siblings.length) {
+          moveFeatureTreeFeature(featureId, feature.folderId, siblings[sibIndex + 2].id)
+        } else {
+          moveFeatureTreeFeature(featureId, feature.folderId)
+        }
+      }
+    }
+  }
+
+  function handleMoveFolder(folderId: string, direction: -1 | 1) {
+    const folder = project.featureFolders.find((f) => f.id === folderId)
+    if (!folder) return
+
+    const section = folder.section ?? 'features'
+    const sectionEntries = project.featureTree.filter((entry) => {
+      if (entry.type === 'folder') {
+        const f = project.featureFolders.find((item) => item.id === entry.folderId)
+        return (f?.section ?? 'features') === section
+      }
+      const f = project.features.find((item) => item.id === entry.featureId)
+      return section === 'regions' ? f?.operation === 'region' : f?.operation !== 'region'
+    })
+    const entryIndex = sectionEntries.findIndex((e) => e.type === 'folder' && e.folderId === folderId)
+    const swapIndex = entryIndex + direction
+    if (entryIndex === -1 || swapIndex < 0 || swapIndex >= sectionEntries.length) return
+
+    const fullTree = [...project.featureTree]
+    const aIdx = fullTree.findIndex((e) => e === sectionEntries[entryIndex])
+    const bIdx = fullTree.findIndex((e) => e === sectionEntries[swapIndex])
+    if (aIdx === -1 || bIdx === -1) return
+    ;[fullTree[aIdx], fullTree[bIdx]] = [fullTree[bIdx], fullTree[aIdx]]
+    reorderFeatureTreeEntries(fullTree)
+  }
+
   // Warn if first 2.5D feature is not 'add' — imported STL models may be first.
   // since the store enforces it, but a loaded file could be malformed.
   const machiningFeatures = project.features.filter((feature) => feature.operation !== 'region')
@@ -161,13 +236,24 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return feature?.operation !== 'region'
   })
 
-  function renderFeatureRow(featureId: string, depth: number) {
+  const regionRootEntries = project.featureTree.filter((entry) => {
+    if (entry.type === 'folder') {
+      const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+      return (folder?.section ?? 'features') === 'regions'
+    }
+    const feature = project.features.find((item) => item.id === entry.featureId)
+    return feature?.operation === 'region' && feature.folderId === null
+  })
+
+  function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
     const feature = project.features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
     }
 
     const index = project.features.findIndex((entry) => entry.id === feature.id)
+    const canMoveUp = tabletShell && siblingIndex !== undefined && siblingIndex > 0
+    const canMoveDown = tabletShell && siblingIndex !== undefined && siblingCount !== undefined && siblingIndex < siblingCount - 1
     return (
       <TreeRow
         key={feature.id}
@@ -201,6 +287,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           }
           onFeatureContextMenu(feature.id, x, y)
         } : undefined}
+        onMoveUp={canMoveUp ? () => handleMoveFeature(feature.id, -1) : undefined}
+        onMoveDown={canMoveDown ? () => handleMoveFeature(feature.id, 1) : undefined}
         draggable
         onDragStart={() => handleFeatureDragStart(feature.id)}
         onDragEnd={() => setDragItem(null)}
@@ -301,9 +389,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 ⚠ First 2.5D feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
               </div>
             )}
-            {rootEntries.map((entry) => {
+            {rootEntries.map((entry, rootIdx) => {
               if (entry.type === 'feature') {
-                return renderFeatureRow(entry.featureId, 1)
+                return renderFeatureRow(entry.featureId, 1, rootIdx, rootEntries.length)
               }
 
               const folder = project.featureFolders.find((item) => item.id === entry.folderId)
@@ -313,6 +401,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
               const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && feature.operation !== 'region')
               const folderVisible = folderFeatures.some((f) => f.visible)
+              const canMoveFolderUp = tabletShell && rootIdx > 0
+              const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
               return (
                 <div key={folder.id}>
                   <TreeRow
@@ -328,6 +418,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
+                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
+                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
                     onDragStart={() => handleFolderDragStart(folder.id)}
                     onDragEnd={() => setDragItem(null)}
@@ -339,7 +431,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                       {folderFeatures.length === 0 ? (
                         <div className="feature-tree-empty">Empty folder.</div>
                       ) : (
-                        folderFeatures.map((feature) => renderFeatureRow(feature.id, 2))
+                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
                       )}
                     </div>
                   ) : null}
@@ -366,24 +458,20 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           <div className="feature-tree-empty">No regions yet.</div>
         ) : (
           <div className="tree-children">
-            {project.featureTree.map((entry) => {
+            {regionRootEntries.map((entry, regionIdx) => {
               if (entry.type === 'feature') {
-                const feature = project.features.find((item) => item.id === entry.featureId)
-                return feature?.operation === 'region' && feature.folderId === null
-                  ? renderFeatureRow(entry.featureId, 1)
-                  : null
+                return renderFeatureRow(entry.featureId, 1, regionIdx, regionRootEntries.length)
               }
 
               const folder = project.featureFolders.find((item) => item.id === entry.folderId)
               if (!folder) {
                 return null
               }
-              if ((folder.section ?? 'features') !== 'regions') {
-                return null
-              }
 
               const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && feature.operation === 'region')
               const folderVisible = folderFeatures.some((f) => f.visible)
+              const canMoveFolderUp = tabletShell && regionIdx > 0
+              const canMoveFolderDown = tabletShell && regionIdx < regionRootEntries.length - 1
               return (
                 <div key={`regions-${folder.id}`}>
                   <TreeRow
@@ -399,6 +487,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleRegionFolderVisible(folder.id) : undefined}
+                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
+                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
                     onDragStart={() => handleFolderDragStart(folder.id)}
                     onDragEnd={() => setDragItem(null)}
@@ -410,7 +500,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                       {folderFeatures.length === 0 ? (
                         <div className="feature-tree-empty">Empty folder.</div>
                       ) : (
-                        folderFeatures.map((feature) => renderFeatureRow(feature.id, 2))
+                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
                       )}
                     </div>
                   ) : null}
@@ -537,6 +627,8 @@ interface TreeRowProps {
   onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void
   onEditEntry?: () => void
   onMoreMenu?: (x: number, y: number) => void
+  onMoveUp?: () => void
+  onMoveDown?: () => void
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
@@ -567,6 +659,8 @@ function TreeRow({
   onContextMenu,
   onEditEntry,
   onMoreMenu,
+  onMoveUp,
+  onMoveDown,
   draggable,
   onDragStart,
   onDragEnd,
@@ -580,6 +674,12 @@ function TreeRow({
   // Popup menu state for operation selector — stores viewport position for fixed positioning
   const operationBtnRef = useRef<HTMLButtonElement>(null)
   const [operationMenuPos, setOperationMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const moveUpRef = useRef(onMoveUp)
+  const moveDownRef = useRef(onMoveDown)
+  moveUpRef.current = onMoveUp
+  moveDownRef.current = onMoveDown
+  const gripDragRef = useRef<{ lastSwapY: number; pointerId: number } | null>(null)
+  const hasGrip = onMoveUp || onMoveDown
 
   return (
     <div
@@ -636,6 +736,53 @@ function TreeRow({
                       : 'node'
         )}
       </span>
+      {hasGrip ? (
+        <button
+          type="button"
+          className="tree-action-btn tree-drag-grip"
+          title="Drag to reorder"
+          aria-label="Drag to reorder"
+          onPointerDown={(e) => {
+            if (e.pointerType !== 'touch') return
+            e.preventDefault()
+            e.stopPropagation()
+            e.currentTarget.setPointerCapture(e.pointerId)
+            gripDragRef.current = { lastSwapY: e.clientY, pointerId: e.pointerId }
+          }}
+          onPointerMove={(e) => {
+            const state = gripDragRef.current
+            if (!state || state.pointerId !== e.pointerId) return
+            e.preventDefault()
+            const delta = e.clientY - state.lastSwapY
+            const threshold = 36
+            if (delta > threshold && moveDownRef.current) {
+              moveDownRef.current()
+              state.lastSwapY = e.clientY
+            } else if (delta < -threshold && moveUpRef.current) {
+              moveUpRef.current()
+              state.lastSwapY = e.clientY
+            }
+          }}
+          onPointerUp={(e) => {
+            gripDragRef.current = null
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId)
+            }
+          }}
+          onPointerCancel={(e) => {
+            gripDragRef.current = null
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId)
+            }
+          }}
+        >
+          <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+            <circle cx="5" cy="3.5" r="1.2" fill="currentColor" /><circle cx="9" cy="3.5" r="1.2" fill="currentColor" />
+            <circle cx="5" cy="7" r="1.2" fill="currentColor" /><circle cx="9" cy="7" r="1.2" fill="currentColor" />
+            <circle cx="5" cy="10.5" r="1.2" fill="currentColor" /><circle cx="9" cy="10.5" r="1.2" fill="currentColor" />
+          </svg>
+        </button>
+      ) : null}
       <span className="tree-label" title={label}>{label}</span>
       <div className="tree-row-actions">
         {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (

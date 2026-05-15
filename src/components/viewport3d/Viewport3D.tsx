@@ -392,6 +392,8 @@ function createOrbitControls(
   const panRight = new THREE.Vector3()
   const panUp = new THREE.Vector3()
   const cameraDirection = new THREE.Vector3()
+  const touchPointers = new Map<number, { x: number; y: number }>()
+  let gestureState: { centerX: number; centerY: number; distance: number } | null = null
 
   function applyDefaultOrientation(preserveRadius = true) {
     applyPreset('iso', preserveRadius, false)
@@ -461,6 +463,21 @@ function createOrbitControls(
       return
     }
 
+    if (e.pointerType === 'touch') {
+      touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (touchPointers.size >= 2) {
+        dragMode = null
+        const points = [...touchPointers.values()]
+        gestureState = {
+          centerX: (points[0].x + points[1].x) / 2,
+          centerY: (points[0].y + points[1].y) / 2,
+          distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+        }
+        onPresetChange(null)
+        return
+      }
+    }
+
     const nextDragMode =
       e.button === 0 && !e.shiftKey ? 'rotate'
       : e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey) ? 'pan'
@@ -478,6 +495,12 @@ function createOrbitControls(
   }
 
   function onPointerUp(e: PointerEvent) {
+    if (e.pointerType === 'touch') {
+      touchPointers.delete(e.pointerId)
+      if (touchPointers.size < 2) {
+        gestureState = null
+      }
+    }
     dragMode = null
     if (domElement.hasPointerCapture?.(e.pointerId)) {
       domElement.releasePointerCapture(e.pointerId)
@@ -487,6 +510,23 @@ function createOrbitControls(
   function onPointerMove(e: PointerEvent) {
     if (isInteractionBlocked()) {
       return
+    }
+
+    if (e.pointerType === 'touch' && touchPointers.has(e.pointerId)) {
+      touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (touchPointers.size >= 2 && gestureState) {
+        const points = [...touchPointers.values()]
+        const newCenterX = (points[0].x + points[1].x) / 2
+        const newCenterY = (points[0].y + points[1].y) / 2
+        const newDistance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
+        if (gestureState.distance > 0 && newDistance > 0) {
+          spherical.radius = Math.max(MIN_CAMERA_RADIUS, Math.min(MAX_CAMERA_RADIUS, spherical.radius * (gestureState.distance / newDistance)))
+        }
+        panByPixels(newCenterX - gestureState.centerX, newCenterY - gestureState.centerY)
+        gestureState = { centerX: newCenterX, centerY: newCenterY, distance: newDistance }
+        updateCamera()
+        return
+      }
     }
 
     if (!dragMode) return

@@ -133,7 +133,7 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
                 <div style={{ fontSize: '13px', color: 'var(--text)' }}>
                   {activeDefinition?.name ?? 'None selected'}
                 </div>
-                <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ height: '32px', padding: '0 12px' }}>
+                <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ padding: '0 12px' }}>
                   Change
                 </button>
               </div>

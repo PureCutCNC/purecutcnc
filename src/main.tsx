@@ -55,7 +55,10 @@ function isPhoneSizedTouchDevice() {
     return false
   }
 
-  return window.matchMedia('(max-width: 760px) and (pointer: coarse)').matches
+  const mq = window.matchMedia('(pointer: coarse)')
+  if (!mq.matches) return false
+  const short = Math.min(window.innerWidth, window.innerHeight)
+  return short < 500
 }
 
 function UnsupportedMobileScreen() {
