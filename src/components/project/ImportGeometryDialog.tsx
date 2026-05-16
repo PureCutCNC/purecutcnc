@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent } from 'react'
+import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { importDxfString, importSvgString, inspectDxfString, inspectSvgString, type ImportInspection, type ImportSourceType } from '../../import'
 import {
   clampImportedMeshSilhouetteZSteps,
@@ -99,6 +100,7 @@ function detectSourceType(fileName: string): ImportSourceType | null {
 }
 
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
+  useRestoreCanvasFocus()
   const { project, importShapes } = useProjectStore()
   const [loadedFile, setLoadedFile] = useState<LoadedImportFile | null>(null)
   const [sourceUnits, setSourceUnits] = useState<Units | ''>('')

@@ -14,11 +14,15 @@
  * limitations under the License.
  */
 
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { PanelSplit } from '../cam/PanelSplit'
+import { isTabletMode, useShellMode } from './useShellMode'
+import { TopCommandBar } from './TopCommandBar'
+import { ToolRail } from './ToolRail'
+import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
 
 interface AppShellProps {
@@ -41,6 +45,14 @@ interface AppShellProps {
   rightTab: 'operations' | 'tools'
   onRightTabChange: (tab: 'operations' | 'tools') => void
   statusBarExtras?: ReactNode
+  onZoomToModel: () => void
+  onZoomWindow: () => void
+  zoomWindowActive: boolean
+  onImportComplete?: () => void
+  snapSettings: SnapSettings
+  activeSnapMode?: SnapMode | null
+  onToggleSnapEnabled: () => void
+  onToggleSnapMode: (mode: SnapMode) => void
 }
 
 function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 | -1): T {
@@ -69,8 +81,20 @@ export function AppShell({
   rightTab,
   onRightTabChange,
   statusBarExtras,
+  onZoomToModel,
+  onZoomWindow,
+  zoomWindowActive,
+  onImportComplete,
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
 }: AppShellProps) {
+  const shellMode = useShellMode()
+  const tabletShell = isTabletMode(shellMode)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
+  const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
+  const [statusBarExpanded, setStatusBarExpanded] = useState(false)
 
   const LC_STORAGE_KEY = 'panel-split:left-center'
   const CR_STORAGE_KEY = 'panel-split:center-right'
@@ -99,25 +123,21 @@ export function AppShell({
   const leftPanelRef = useRef<HTMLElement>(null)
   const centrePanelRef = useRef<HTMLElement>(null)
   const rightPanelRef = useRef<HTMLElement>(null)
+  const activeDividerRef = useRef<{ side: 'left' | 'right'; pointerId: number } | null>(null)
 
   const showLeft = workspaceLayout === 'lcr' || workspaceLayout === 'lc'
   const showRight = workspaceLayout === 'lcr' || workspaceLayout === 'cr'
+  const showDockedRight = showRight && !tabletShell
 
-  const handleDividerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.currentTarget.setPointerCapture(e.pointerId)
-  }, [])
-
-  const handleLeftDividerPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+  const resizeLeftPanel = useCallback(
+    (clientX: number) => {
       const leftEl = leftPanelRef.current
       const centreEl = centrePanelRef.current
       if (!leftEl || !centreEl) return
       const leftRect = leftEl.getBoundingClientRect()
       const centreRect = centreEl.getBoundingClientRect()
       const totalWidth = centreRect.right - leftRect.left
-      const offsetX = e.clientX - leftRect.left
+      const offsetX = clientX - leftRect.left
       const minRatio = MIN_LEFT_WIDTH / totalWidth
       const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
       const newRatio = Math.max(minRatio, Math.min(maxRatio, offsetX / totalWidth))
@@ -127,16 +147,15 @@ export function AppShell({
     [],
   )
 
-  const handleRightDividerPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+  const resizeRightPanel = useCallback(
+    (clientX: number) => {
       const centreEl = centrePanelRef.current
       const rightEl = rightPanelRef.current
       if (!centreEl || !rightEl) return
       const centreRect = centreEl.getBoundingClientRect()
       const rightRect = rightEl.getBoundingClientRect()
       const totalWidth = rightRect.right - centreRect.left
-      const offsetX = e.clientX - centreRect.left
+      const offsetX = clientX - centreRect.left
       const minRatio = MIN_RIGHT_WIDTH / totalWidth
       const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
       const newRatio = Math.max(minRatio, Math.min(maxRatio, 1 - offsetX / totalWidth))
@@ -146,15 +165,70 @@ export function AppShell({
     [],
   )
 
+  const startDividerResize = useCallback((side: 'left' | 'right', e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    activeDividerRef.current = { side, pointerId: e.pointerId }
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // Window-level pointer tracking below keeps resizing working if capture is unavailable.
+    }
+  }, [])
+
+  const handleLeftDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (activeDividerRef.current?.side !== 'left' && !e.currentTarget.hasPointerCapture(e.pointerId)) return
+      resizeLeftPanel(e.clientX)
+    },
+    [resizeLeftPanel],
+  )
+
+  const handleRightDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (activeDividerRef.current?.side !== 'right' && !e.currentTarget.hasPointerCapture(e.pointerId)) return
+      resizeRightPanel(e.clientX)
+    },
+    [resizeRightPanel],
+  )
+
+  useEffect(() => {
+    function handleWindowPointerMove(event: PointerEvent) {
+      const active = activeDividerRef.current
+      if (!active || active.pointerId !== event.pointerId) return
+      event.preventDefault()
+      if (active.side === 'left') {
+        resizeLeftPanel(event.clientX)
+      } else {
+        resizeRightPanel(event.clientX)
+      }
+    }
+
+    function handleWindowPointerEnd(event: PointerEvent) {
+      const active = activeDividerRef.current
+      if (active && active.pointerId === event.pointerId) {
+        activeDividerRef.current = null
+      }
+    }
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false })
+    window.addEventListener('pointerup', handleWindowPointerEnd)
+    window.addEventListener('pointercancel', handleWindowPointerEnd)
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove)
+      window.removeEventListener('pointerup', handleWindowPointerEnd)
+      window.removeEventListener('pointercancel', handleWindowPointerEnd)
+    }
+  }, [resizeLeftPanel, resizeRightPanel])
+
   // left=L/(L+C), right=R/(C+R) → express as fr with centre always 1fr:
   //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
-  if (showLeft || showRight) {
+  if (!tabletShell && (showLeft || showDockedRight)) {
     const railPrefix = toolbarOrientation === 'left' ? 'var(--left-toolbar-width) ' : ''
     const leftCol = showLeft
       ? `minmax(${MIN_LEFT_WIDTH}px, ${leftPanelRatio / (1 - leftPanelRatio)}fr) `
       : ''
-    const rightCol = showRight
+    const rightCol = showDockedRight
       ? ` minmax(${MIN_RIGHT_WIDTH}px, ${rightPanelRatio / (1 - rightPanelRatio)}fr)`
       : ''
     bodyStyle.gridTemplateColumns = `${railPrefix}${leftCol}minmax(${MIN_CENTER_WIDTH}px, 1fr)${rightCol}`
@@ -187,32 +261,62 @@ export function AppShell({
   ] as const
 
   return (
-    <div className="app-shell" data-right-open={rightDrawerOpen ? 'true' : undefined}>
-      {rightDrawerOpen && (
+    <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined} data-left-open={leftDrawerOpen ? 'true' : undefined}>
+      <div className="tablet-rotate-overlay" aria-hidden="true">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="2" width="16" height="20" rx="2" />
+          <path d="M12 18h.01" />
+        </svg>
+        <span>Please rotate your device to landscape mode</span>
+      </div>
+      {(rightDrawerOpen || leftDrawerOpen) && (
         <div
           className="tablet-drawer-scrim"
           aria-hidden="true"
-          onClick={() => setRightDrawerOpen(false)}
+          onClick={() => { setRightDrawerOpen(false); setLeftDrawerOpen(false) }}
         />
       )}
       {/* ── Top toolbar ── */}
-      <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
-        {toolbarOrientation === 'left' ? globalToolbar : toolbar}
-        <button
-          className="tablet-drawer-toggle toolbar-btn"
-          type="button"
-          title="Open operations panel"
-          aria-label="Open operations panel"
-          aria-expanded={rightDrawerOpen}
-          onClick={() => setRightDrawerOpen(true)}
-        >
-          CAM
-        </button>
-      </header>
+      {tabletShell ? (
+        <header className="app-toolbar app-toolbar--tablet">
+          <TopCommandBar
+            centerTab={centerTab}
+            onCenterTabChange={onCenterTabChange}
+            onZoomToModel={onZoomToModel}
+            onZoomWindow={onZoomWindow}
+            zoomWindowActive={zoomWindowActive}
+            onOpenLeftDrawer={() => setLeftDrawerOpen(true)}
+            onOpenRightDrawer={() => setRightDrawerOpen(true)}
+            onImportComplete={onImportComplete}
+            snapSettings={snapSettings}
+            activeSnapMode={activeSnapMode}
+            onToggleSnapEnabled={onToggleSnapEnabled}
+            onToggleSnapMode={onToggleSnapMode}
+          />
+        </header>
+      ) : (
+        <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
+          {toolbarOrientation === 'left' ? globalToolbar : toolbar}
+          <button
+            className="tablet-drawer-toggle toolbar-btn"
+            type="button"
+            title="Open operations panel"
+            aria-label="Open operations panel"
+            aria-expanded={rightDrawerOpen}
+            onClick={() => setRightDrawerOpen(true)}
+          >
+            Operations{project.operations.length > 0 ? ` ${project.operations.length}` : ''}
+          </button>
+        </header>
+      )}
 
       {/* Main work area */}
-      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation}`} style={bodyStyle}>
-        {toolbarOrientation === 'left' ? (
+      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation} ${tabletShell ? 'app-body--tablet' : ''}`} style={bodyStyle}>
+        {tabletShell ? (
+          <aside className="app-left-rail app-left-rail--tablet" aria-label="Tools">
+            <ToolRail onZoomToModel={onZoomToModel} onImportComplete={onImportComplete} />
+          </aside>
+        ) : toolbarOrientation === 'left' ? (
           <aside className="app-left-rail" aria-label="Creation tools">
             {creationToolbar}
           </aside>
@@ -222,6 +326,14 @@ export function AppShell({
           <PanelSplit storageKey="project-tree" initialRatio={0.55} minFirst={160} minSecond={160}>
             <section className="panel panel-tree">
               <div className="panel-header">
+                <button
+                  className="tablet-drawer-close tablet-drawer-close--left"
+                  type="button"
+                  aria-label="Close project panel"
+                  onClick={() => setLeftDrawerOpen(false)}
+                >
+                  ✕
+                </button>
                 Project Tree
                 <span className="feature-count">
                   {project.features.length + project.featureFolders.length + project.tabs.length + project.clamps.length + 6}
@@ -238,7 +350,7 @@ export function AppShell({
             className="panel-resize-divider"
             role="separator"
             aria-orientation="vertical"
-            onPointerDown={handleDividerPointerDown}
+            onPointerDown={(event) => startDividerResize('left', event)}
             onPointerMove={handleLeftDividerPointerMove}
           />
         </aside>
@@ -328,51 +440,55 @@ export function AppShell({
                 Simulation
               </button>
               <div className="panel-tabs-spacer" />
-              <div className="workspace-layout-controls" aria-label="Workspace layout presets">
-                {workspaceLayouts.map((layout) => (
-                  <button
-                    key={layout.id}
-                    className={`workspace-layout-btn ${workspaceLayout === layout.id ? 'workspace-layout-btn--active' : ''}`}
-                    type="button"
-                    title={layout.label}
-                    aria-label={layout.label}
-                    onClick={() => onWorkspaceLayoutChange(layout.id)}
-                  >
-                    <span className={`workspace-layout-icon workspace-layout-icon--${layout.id}`} aria-hidden="true">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <div className="toolbar-orientation-controls" aria-label="Toolbar orientation">
-                <button
-                  className={`toolbar-orientation-btn ${toolbarOrientation === 'top' ? 'toolbar-orientation-btn--active' : ''}`}
-                  type="button"
-                  title="Use top toolbar"
-                  aria-label="Use top toolbar"
-                  onClick={() => onToolbarOrientationChange('top')}
-                >
-                  <span className="toolbar-orientation-icon toolbar-orientation-icon--top" aria-hidden="true">
-                    <span />
-                    <span />
-                  </span>
-                </button>
-                <button
-                  className={`toolbar-orientation-btn ${toolbarOrientation === 'left' ? 'toolbar-orientation-btn--active' : ''}`}
-                  type="button"
-                  title={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
-                  aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
-                  onClick={() => onToolbarOrientationChange('left')}
-                  disabled={toolbarOrientationForced}
-                >
-                  <span className="toolbar-orientation-icon toolbar-orientation-icon--left" aria-hidden="true">
-                    <span />
-                    <span />
-                  </span>
-                </button>
-              </div>
+              {!tabletShell && (
+                <>
+                  <div className="workspace-layout-controls" aria-label="Workspace layout presets">
+                    {workspaceLayouts.map((layout) => (
+                      <button
+                        key={layout.id}
+                        className={`workspace-layout-btn ${workspaceLayout === layout.id ? 'workspace-layout-btn--active' : ''}`}
+                        type="button"
+                        title={layout.label}
+                        aria-label={layout.label}
+                        onClick={() => onWorkspaceLayoutChange(layout.id)}
+                      >
+                        <span className={`workspace-layout-icon workspace-layout-icon--${layout.id}`} aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="toolbar-orientation-controls" aria-label="Toolbar orientation">
+                    <button
+                      className={`toolbar-orientation-btn ${toolbarOrientation === 'top' ? 'toolbar-orientation-btn--active' : ''}`}
+                      type="button"
+                      title="Use top toolbar"
+                      aria-label="Use top toolbar"
+                      onClick={() => onToolbarOrientationChange('top')}
+                    >
+                      <span className="toolbar-orientation-icon toolbar-orientation-icon--top" aria-hidden="true">
+                        <span />
+                        <span />
+                      </span>
+                    </button>
+                    <button
+                      className={`toolbar-orientation-btn ${toolbarOrientation === 'left' ? 'toolbar-orientation-btn--active' : ''}`}
+                      type="button"
+                      title={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
+                      aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
+                      onClick={() => onToolbarOrientationChange('left')}
+                      disabled={toolbarOrientationForced}
+                    >
+                      <span className="toolbar-orientation-icon toolbar-orientation-icon--left" aria-hidden="true">
+                        <span />
+                        <span />
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
             <div className="centre-stage">
               <div
@@ -404,12 +520,12 @@ export function AppShell({
               </div>
             </div>
           </div>
-          {showRight && (
+          {showDockedRight && (
             <div
               className="panel-resize-divider"
               role="separator"
               aria-orientation="vertical"
-              onPointerDown={handleDividerPointerDown}
+              onPointerDown={(event) => startDividerResize('right', event)}
               onPointerMove={handleRightDividerPointerMove}
             />
           )}
@@ -502,13 +618,25 @@ export function AppShell({
 
       </div>
 
-      <footer className="app-statusbar">
+      <footer className={`app-statusbar ${tabletShell ? (statusBarExpanded ? 'app-statusbar--tablet-expanded' : 'app-statusbar--tablet-compact') : ''}`}>
         <span>{project.meta.name}</span>
         <span>{project.meta.units.toUpperCase()}</span>
         <span>
           Stock: {formatLength(stockWidth, project.meta.units)} × {formatLength(stockHeight, project.meta.units)} × {formatLength(project.stock.thickness, project.meta.units)} {project.meta.units}
         </span>
-        <div className="statusbar-visibility" aria-label="View visibility">
+        {tabletShell ? (
+          <button
+            type="button"
+            className="statusbar-expand-btn"
+            onClick={() => setStatusBarExpanded((v) => !v)}
+            title={statusBarExpanded ? 'Collapse status bar' : 'Expand status bar'}
+            aria-label={statusBarExpanded ? 'Collapse status bar' : 'Expand status bar'}
+            aria-expanded={statusBarExpanded}
+          >
+            {statusBarExpanded ? '▾' : '▸'}
+          </button>
+        ) : null}
+        <div className={`statusbar-visibility ${tabletShell && !statusBarExpanded ? 'statusbar-visibility--hidden' : ''}`} aria-label="View visibility">
           <button
             className={`statusbar-toggle ${project.grid.visible ? 'statusbar-toggle--active' : ''}`}
             type="button"
@@ -580,6 +708,9 @@ export function AppShell({
           </button>
         </div>
         {statusBarExtras}
+        {import.meta.env.DEV && (
+          <span className="statusbar-shell-mode" title="Shell mode (dev only)">{shellMode}</span>
+        )}
       </footer>
     </div>
   )

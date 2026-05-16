@@ -1,6 +1,6 @@
 # PureCutCNC — Foundational Architecture & Standards (ARCHITECTURE.md)
 
-This document is the primary source of truth for the architectural vision, coding standards, and operational constraints of the PureCutCNC project. It takes absolute precedence over general defaults. Always refer to this file and the `planning/` directory for detailed design and implementation context.
+This document is the primary source of truth for the architectural vision, coding standards, and operational constraints of the PureCutCNC project. It takes absolute precedence over general defaults. Always refer to this file and the `planning/` directory for detailed design and implementation context. For tablet UI/UX-specific architecture and design decisions, see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md).
 
 ## 1. Project Vision & Purpose
 PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enthusiasts. 
@@ -34,6 +34,7 @@ Defined in `src/types/project.ts`:
 - `src/components/canvas/`: Complex 2D interaction logic, snapping, and viewport transformations.
 - `src/import/`: DXF and SVG parsers that normalize external geometry into the `.camj` format.
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
+- `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md) for the full tablet UX design).
 
 ## 5. Icon System
 

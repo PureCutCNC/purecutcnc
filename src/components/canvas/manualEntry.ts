@@ -132,6 +132,28 @@ export function computeDimensionEditPreviewPoint(
     return { x: edit.anchor.x + r, y: edit.anchor.y }
   }
 
+  if (edit.shape === 'composite' && edit.arcStart && edit.arcEnd) {
+    const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
+    const arcStart = edit.arcStart
+    const arcEnd = edit.arcEnd
+    const midX = (arcStart.x + arcEnd.x) / 2
+    const midY = (arcStart.y + arcEnd.y) / 2
+    const chordDx = arcEnd.x - arcStart.x
+    const chordDy = arcEnd.y - arcStart.y
+    const halfChord = Math.hypot(chordDx, chordDy) / 2
+    if (halfChord < 1e-9 || r < halfChord) return edit.anchor
+
+    const chordLen = halfChord * 2
+    const perpX = -chordDy / chordLen
+    const perpY = chordDx / chordLen
+    const side = edit.arcClockwise ? -1 : 1
+    const sagitta = r - Math.sqrt(r * r - halfChord * halfChord)
+    return {
+      x: midX + side * sagitta * perpX,
+      y: midY + side * sagitta * perpY,
+    }
+  }
+
   if (edit.shape === 'polygon' || edit.shape === 'spline' || edit.shape === 'composite') {
     const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
     const angleDeg = parseFloat(edit.angle) || 0

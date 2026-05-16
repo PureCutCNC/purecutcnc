@@ -16,6 +16,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { platform } from '../../platform'
 import {
   getActiveMachineDefinition,
@@ -32,6 +33,7 @@ interface ExportDialogProps {
 }
 
 export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
+  useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)
@@ -131,7 +133,7 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
                 <div style={{ fontSize: '13px', color: 'var(--text)' }}>
                   {activeDefinition?.name ?? 'None selected'}
                 </div>
-                <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ height: '32px', padding: '0 12px' }}>
+                <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ padding: '0 12px' }}>
                   Change
                 </button>
               </div>

@@ -50,6 +50,14 @@
   padding: 6px 10px;
 }
 
+.app-toolbar--tablet {
+  padding: 4px 8px;
+  gap: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 20;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -573,6 +581,7 @@
 
 .simulation-viewport {
   position: relative;
+  width: 100%;
   height: 100%;
   background:
     radial-gradient(circle at top left, rgba(120, 170, 255, 0.08), transparent 34%),
@@ -1186,23 +1195,27 @@
   display: block;
   cursor: crosshair;
   outline: none;
+  touch-action: none;
+}
+
+.axis-lock-chip {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 20;
+  padding: 2px 10px;
+  border: 1px solid;
+  border-radius: 4px;
+  background: rgba(15, 21, 27, 0.85);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+  line-height: 22px;
 }
 
 .sketch-canvas--placing {
   cursor: copy;
-}
-
-.sketch-edit-banner {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 4;
-  background: rgba(17, 24, 32, 0.92);
-  border: 1px solid var(--accent);
-  color: #f5d9b5;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
 }
 
 .sketch-banner-warning {
@@ -1210,86 +1223,6 @@
   color: #f7b86a;
 }
 
-.sketch-edit-banner kbd,
-.sketch-place-banner kbd {
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 4px;
-  background: #0f161f;
-}
-
-.sketch-kbd-btn {
-  cursor: pointer;
-  user-select: none;
-}
-
-.sketch-kbd-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-}
-
-@media (pointer: coarse) {
-  .sketch-kbd-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: var(--touch-target, 44px);
-    min-height: var(--touch-target, 44px);
-    padding: 0 10px;
-    font-size: 13px;
-    border-radius: 6px;
-    vertical-align: middle;
-  }
-}
-
-.sketch-place-banner {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  z-index: 4;
-  background: rgba(26, 21, 14, 0.92);
-  border: 1px solid #c89c62;
-  color: #f0d3af;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-  line-height: 1.2;
-  display: inline-flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0;
-}
-
-.sketch-place-toggle {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0 10px 0 8px;
-  color: #f0d3af;
-  white-space: nowrap;
-}
-
-.sketch-place-toggle input {
-  margin: 0;
-  position: relative;
-  top: 1px;
-}
-
-.sketch-place-count {
-  width: 56px;
-  height: 28px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: #0f1820;
-  color: var(--text);
-  padding: 0 8px;
-  outline: none;
-}
-
-.sketch-place-count:focus {
-  border-color: var(--accent);
-}
 
 .sketch-depth-legend {
   position: absolute;
@@ -1744,6 +1677,8 @@
   height: 32px;
   padding: 0 8px;
   min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .properties-field select {
@@ -1999,7 +1934,7 @@
   line-height: 1.45;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 399px) {
   .properties-field {
     grid-template-columns: 1fr;
     align-items: stretch;

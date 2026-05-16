@@ -33,6 +33,7 @@ import type {
 import { featureHasClosedGeometry } from '../../text'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
+import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 
 interface CAMPanelProps {
@@ -728,9 +729,12 @@ export function CAMPanel({
     operationId: string
     text: string
   } | null>(null)
+  const shellMode = useShellMode()
+  const tabletShell = isTabletMode(shellMode)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
   const addOperationMenuRef = useRef<HTMLDivElement>(null)
   const dragOverOperationId = useRef<string | null>(null)
+  const gripDragRef = useRef<{ operationId: string; lastSwapY: number; pointerId: number } | null>(null)
   const {
     project,
     selection,
@@ -1103,6 +1107,16 @@ export function CAMPanel({
     dragOverOperationId.current = null
   }
 
+  function handleMoveOperation(operationId: string, direction: -1 | 1) {
+    const ids = project.operations.map((op) => op.id)
+    const index = ids.indexOf(operationId)
+    const swapIndex = index + direction
+    if (index === -1 || swapIndex < 0 || swapIndex >= ids.length) return
+    const nextIds = [...ids]
+    ;[nextIds[index], nextIds[swapIndex]] = [nextIds[swapIndex], nextIds[index]]
+    reorderOperations(nextIds)
+  }
+
   function handleApplySelectionToOperation() {
     if (!selectedOperation) {
       return
@@ -1276,6 +1290,53 @@ export function CAMPanel({
                           onDrop={handleOperationDrop}
                         >
                           <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
+                          {tabletShell && project.operations.length > 1 ? (
+                            <button
+                              className="tree-action-btn tree-drag-grip"
+                              type="button"
+                              title="Drag to reorder"
+                              aria-label="Drag to reorder"
+                              onPointerDown={(e) => {
+                                if (e.pointerType !== 'touch') return
+                                e.preventDefault()
+                                e.stopPropagation()
+                                e.currentTarget.setPointerCapture(e.pointerId)
+                                gripDragRef.current = { operationId: operation.id, lastSwapY: e.clientY, pointerId: e.pointerId }
+                              }}
+                              onPointerMove={(e) => {
+                                const state = gripDragRef.current
+                                if (!state || state.pointerId !== e.pointerId) return
+                                e.preventDefault()
+                                const delta = e.clientY - state.lastSwapY
+                                const threshold = 36
+                                if (delta > threshold) {
+                                  handleMoveOperation(state.operationId, 1)
+                                  state.lastSwapY = e.clientY
+                                } else if (delta < -threshold) {
+                                  handleMoveOperation(state.operationId, -1)
+                                  state.lastSwapY = e.clientY
+                                }
+                              }}
+                              onPointerUp={(e) => {
+                                gripDragRef.current = null
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId)
+                                }
+                              }}
+                              onPointerCancel={(e) => {
+                                gripDragRef.current = null
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId)
+                                }
+                              }}
+                            >
+                              <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+                                <circle cx="5" cy="3.5" r="1.2" fill="currentColor" /><circle cx="9" cy="3.5" r="1.2" fill="currentColor" />
+                                <circle cx="5" cy="7" r="1.2" fill="currentColor" /><circle cx="9" cy="7" r="1.2" fill="currentColor" />
+                                <circle cx="5" cy="10.5" r="1.2" fill="currentColor" /><circle cx="9" cy="10.5" r="1.2" fill="currentColor" />
+                              </svg>
+                            </button>
+                          ) : null}
                           <span className="tree-label">
                             {operation.name}
                           </span>
@@ -1320,7 +1381,7 @@ export function CAMPanel({
                                 handleDeleteOperation(operation.id)
                               }}
                             >
-                              ✕
+                              <Icon id="trash" />
                             </button>
                           </span>
                         </div>

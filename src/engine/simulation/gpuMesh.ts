@@ -31,8 +31,12 @@ export function createHeightfieldTexture(grid: SimulationGrid): THREE.DataTextur
     THREE.RedFormat,
     THREE.FloatType,
   )
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
+  // NearestFilter is required: many mobile GPUs (including iPad) lack
+  // OES_texture_float_linear, so LinearFilter on an R32F texture returns
+  // garbage in vertex texture fetches. The heightfield is discrete (one
+  // Z per cell) and vertices sit on cell corners, so nearest is correct.
+  texture.minFilter = THREE.NearestFilter
+  texture.magFilter = THREE.NearestFilter
   texture.needsUpdate = true
   return texture
 }
