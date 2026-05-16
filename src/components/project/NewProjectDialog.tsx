@@ -241,7 +241,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".camj,.json"
+                accept=".camj,.json,application/json"
                 onChange={handleTemplateFileChange}
                 style={{ display: 'none' }}
               />

@@ -38,6 +38,14 @@
   overflow: hidden;
 }
 
+.dialog--no-clip {
+  overflow: visible;
+}
+
+.dialog--no-clip .dialog-body {
+  overflow: visible;
+}
+
 .dialog--import {
   max-width: 480px;
 }

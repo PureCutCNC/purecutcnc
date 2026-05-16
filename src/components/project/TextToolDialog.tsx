@@ -19,6 +19,7 @@ import type { FeatureOperation, TextFontStyle } from '../../types/project'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type TextToolConfig } from '../../text'
 import { useProjectStore } from '../../store/projectStore'
+import { Select } from '../Select'
 
 interface TextToolDialogProps {
   onClose: () => void
@@ -70,7 +71,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(event) => event.stopPropagation()}>
+      <div className="dialog dialog--import dialog--no-clip" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">Add Text</h2>
           <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
@@ -80,7 +81,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
           </button>
         </div>
 
-        <div className="dialog-body">
+        <div className="dialog-body dialog-body--import">
           <div className="dialog-section">
             <div className="dialog-section-group">
               <label className="dialog-section-title" htmlFor="text-tool-value">Text</label>
@@ -96,24 +97,26 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="text-tool-style">Font Style</label>
+              <label className="dialog-section-title">Font Style</label>
               <div className="properties-field">
-                <select id="text-tool-style" value={style} onChange={(event) => setStyle(event.target.value as TextFontStyle)}>
-                  <option value="skeleton">Skeleton</option>
-                  <option value="outline">Outline</option>
-                </select>
+                <Select
+                  value={style}
+                  options={[
+                    { value: 'skeleton' as TextFontStyle, label: 'Skeleton' },
+                    { value: 'outline' as TextFontStyle, label: 'Outline' },
+                  ]}
+                  onChange={(v) => setStyle(v)}
+                />
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="text-tool-font">Font</label>
+              <label className="dialog-section-title">Font</label>
               <div className="properties-field">
-                <select id="text-tool-font" value={fontId} onChange={(event) => setFontId(event.target.value as typeof fontId)}>
-                  {fontOptions.map((font) => (
-                    <option key={font.id} value={font.id}>
-                      {font.label}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={fontId}
+                  options={fontOptions.map((font) => ({ value: font.id, label: font.label }))}
+                  onChange={(v) => setFontId(v as typeof fontId)}
+                />
               </div>
             </div>
             <div className="dialog-section-group">
@@ -130,12 +133,16 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="text-tool-operation">Operation</label>
+              <label className="dialog-section-title">Operation</label>
               <div className="properties-field">
-                <select id="text-tool-operation" value={operation} onChange={(event) => setOperation(event.target.value as FeatureOperation)}>
-                  <option value="subtract">Subtract</option>
-                  <option value="add">Add</option>
-                </select>
+                <Select
+                  value={operation}
+                  options={[
+                    { value: 'subtract' as FeatureOperation, label: 'Subtract' },
+                    { value: 'add' as FeatureOperation, label: 'Add' },
+                  ]}
+                  onChange={(v) => setOperation(v)}
+                />
               </div>
             </div>
             <div className="cam-field-message">

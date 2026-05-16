@@ -519,6 +519,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
+  const placementPanelActive = !!pendingAdd && !creationPanelShape
+  const placementWorkflowPanel = useCanvasWorkflowPanel({
+    open: placementPanelActive,
+    phaseKey: pendingAdd?.shape ?? 'place',
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
   const editDimEditActive = editModeActive && !!dimensionEdit
   const editWorkflowPanel = useCanvasWorkflowPanel({
@@ -5256,17 +5265,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           ) : null}
         </CanvasWorkflowPanel>
       )}
-      {pendingAdd && !creationPanelShape && (
-        <div className="sketch-place-banner">
-          <div>
-            {pendingAdd.shape === 'origin'
+      {placementPanelActive && (
+        <CanvasWorkflowPanel
+          title={pendingAdd!.shape === 'origin' ? 'Place Origin' : 'Place Text'}
+          step={
+            pendingAdd!.shape === 'origin'
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
-              : pendingAdd.shape === 'text'
-                ? 'Move the mouse to preview the text, then click to place it.'
-                : null}
-            {' '}Press <kbd className="sketch-kbd-btn" role="button" tabIndex={0} title="Cancel" onClick={cancelPendingAdd} onKeyDown={(e) => { if (e.key === 'Enter') cancelPendingAdd() }}>Esc</kbd> to cancel.
-          </div>
-        </div>
+              : 'Tap the sketch to place the text.'
+          }
+          position={placementWorkflowPanel.position}
+          panelRef={placementWorkflowPanel.panelRef}
+          handleProps={placementWorkflowPanel.handleProps}
+          actions={
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelPendingAdd}>Cancel</button>
+          }
+        >
+          {null}
+        </CanvasWorkflowPanel>
       )}
       {pendingConstraint && (
         <CanvasWorkflowPanel

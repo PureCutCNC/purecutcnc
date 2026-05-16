@@ -92,7 +92,7 @@ export const browserPlatform: PlatformApi = {
   isDesktop: false,
 
   async openProjectFile(): Promise<OpenProjectResult | null> {
-    const file = await pickFile('.camj,.json')
+    const file = await pickFile('.camj,.json,application/json')
     if (!file) return null
     const content = await readFileAsText(file)
     return { content, path: null }
