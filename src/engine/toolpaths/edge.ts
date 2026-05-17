@@ -32,7 +32,7 @@ import {
 } from './geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
-import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstaclesByLevel, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 
@@ -245,13 +245,6 @@ function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation):
   if (feature.operation === 'region') return true
   if (operation.kind === 'edge_route_inside') return feature.operation === 'subtract'
   return feature.operation === 'add' || feature.operation === 'model'
-}
-
-function resolveContourPaths(paths: ClipperPath[], offsetDistance: number): Point[][] {
-  const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE)
-  return offset
-    .map((entry) => fromClipperPath(entry))
-    .filter((points) => points.length >= 3)
 }
 
 function resolveEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
@@ -502,6 +495,37 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     }
   }
 
+  const targetFeatureIdSet = new Set(closedTargetFeatures.map((feature) => feature.id))
+  const allAdditiveObstacles = project.features
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
+    .filter((feature) => !targetFeatureIdSet.has(feature.id))
+    .map((feature) => ({
+      paths: featureToClipperPaths(feature),
+      span: resolveFeatureZSpan(project, feature),
+    }))
+
+  const obstacleMaskCache = new Map<string, ReturnType<typeof buildMaskFromClipperPaths>>()
+  function obstacleMaskForZ(z: number) {
+    const key = z.toFixed(9)
+    const cached = obstacleMaskCache.get(key)
+    if (cached !== undefined) return cached
+    const activePaths = allAdditiveObstacles
+      .filter(({ span }) => z <= span.max && z >= span.min)
+      .flatMap(({ paths }) => paths)
+    let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
+    if (activePaths.length > 0) {
+      mask = buildMaskFromClipperPaths(offsetPaths(activePaths, tool.radius * DEFAULT_CLIPPER_SCALE))
+    }
+    obstacleMaskCache.set(key, mask)
+    return mask
+  }
+
+  function resolveContourPaths(paths: ClipperPath[]): Point[][] {
+    const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE)
+    return offset.map((entry) => fromClipperPath(entry)).filter((points) => points.length >= 3)
+  }
+
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {
     const referenceTarget = routableTargets[0]
@@ -513,7 +537,6 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     if (canCombineOutsideTargets) {
       const rawContours = resolveContourPaths(
         unionPaths(routableTargets.flatMap((target) => target.contourPaths)),
-        offsetDistance,
       )
 
       if (rawContours.length === 0) {
@@ -536,7 +559,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
 
   if (moves.length === 0) {
     for (const target of routableTargets) {
-      const rawContours = resolveContourPaths(target.contourPaths, offsetDistance)
+      const rawContours = resolveContourPaths(target.contourPaths)
       if (rawContours.length === 0) {
         warnings.push(`No valid contour could be generated for ${target.feature.name}`)
         continue
@@ -560,11 +583,14 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     bounds = updateBounds(bounds, move.to)
   }
 
-  const result = {
+  let result: ToolpathResult = {
     operationId: operation.id,
     moves,
     warnings,
     bounds,
+  }
+  if (allAdditiveObstacles.length > 0) {
+    result = clipToolpathResultToObstaclesByLevel(project, result, obstacleMaskForZ)
   }
   return clipToolpathResultToRegionMask(project, result, regionMask)
 }
