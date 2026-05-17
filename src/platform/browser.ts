@@ -25,9 +25,24 @@ function pickFile(accept: string): Promise<File | null> {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = accept
-    input.onchange = () => resolve(input.files?.[0] ?? null)
-    // Resolve null if the dialog is dismissed without a selection
-    input.addEventListener('cancel', () => resolve(null))
+    // Some iOS browsers (Chrome/WKWebView) require the input to be in the DOM
+    // for the programmatic .click() to open the file picker.
+    input.style.position = 'fixed'
+    input.style.left = '-9999px'
+    input.style.opacity = '0'
+    document.body.appendChild(input)
+    function cleanup() {
+      input.remove()
+    }
+    input.onchange = () => {
+      const file = input.files?.[0] ?? null
+      cleanup()
+      resolve(file)
+    }
+    input.addEventListener('cancel', () => {
+      cleanup()
+      resolve(null)
+    })
     input.click()
   })
 }
@@ -92,15 +107,35 @@ export const browserPlatform: PlatformApi = {
   isDesktop: false,
 
   async openProjectFile(): Promise<OpenProjectResult | null> {
-    const file = await pickFile('.camj,.json,application/json')
+    // iOS doesn't recognise the custom .camj extension (no registered UTI),
+    // so the file picker hides those files.  On touch devices we accept .json
+    // (which iOS does recognise) and rely on browser saves using .camj.json.
+    // Desktop browsers with the File System Access API handle .camj natively.
+    const isTouchDevice = window.matchMedia('(pointer: coarse)').matches
+    const accept = isTouchDevice
+      ? '.json,application/json'
+      : '.camj,.camj.json,.json,application/json'
+    const file = await pickFile(accept)
     if (!file) return null
-    const content = await readFileAsText(file)
-    return { content, path: null }
+    try {
+      const content = await readFileAsText(file)
+      return { content, path: null }
+    } catch {
+      throw new Error(`Failed to read "${file.name}". The file may be too large or inaccessible.`)
+    }
   },
 
   async saveProjectFile(suggestedName: string, content: string): Promise<string | null> {
-    const fileName = suggestedName.endsWith('.camj') ? suggestedName : `${suggestedName}.camj`
-    return saveFile(content, fileName, 'application/json', 'PureCutCNC Project', ['.camj'])
+    const baseName = suggestedName.replace(/\.camj(\.json)?$/i, '')
+
+    // Desktop browsers with the File System Access API can handle the custom
+    // .camj extension natively.  On mobile/tablet browsers we save as
+    // .camj.json so iOS recognises the file in the picker (it needs a known
+    // UTI — .json qualifies, .camj alone does not).
+    if (typeof window.showSaveFilePicker === 'function') {
+      return saveFile(content, `${baseName}.camj`, 'application/json', 'PureCutCNC Project', ['.camj'])
+    }
+    return saveFile(content, `${baseName}.camj.json`, 'application/json', 'PureCutCNC Project', ['.camj.json'])
   },
 
   async saveTextFile(

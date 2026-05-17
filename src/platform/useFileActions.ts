@@ -54,11 +54,27 @@ export function useFileActions() {
    * chose not to discard unsaved changes.
    */
   async function open(): Promise<boolean> {
+    // On browsers without native dialogs (mobile Safari, Chrome/iOS), an
+    // async `await` before `input.click()` breaks the user-gesture chain and
+    // the file picker never opens.  `window.confirm` is synchronous, so we
+    // call it directly here to keep the gesture alive.  The desktop platform
+    // handles this in its own async `confirmDiscardChanges`.
     if (dirty) {
-      const ok = await platform.confirmDiscardChanges()
-      if (!ok) return false
+      if (platform.isDesktop) {
+        const ok = await platform.confirmDiscardChanges()
+        if (!ok) return false
+      } else {
+        if (!window.confirm('You have unsaved changes. Discard them and continue?')) return false
+      }
     }
-    const result = await platform.openProjectFile()
+
+    let result: Awaited<ReturnType<typeof platform.openProjectFile>>
+    try {
+      result = await platform.openProjectFile()
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to read project file.')
+      return false
+    }
     if (!result) return false
 
     const store = useProjectStore.getState()
