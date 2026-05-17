@@ -703,6 +703,69 @@ function testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts() {
 }
 
 // ---------------------------------------------------------------------------
+// Edge outside: obstacle avoidance — toolpath must not cut into other add features
+// ---------------------------------------------------------------------------
+
+function makeAddFeature(id: string, x: number, y: number, w: number, h: number, zTop: number, zBottom: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
+function testEdgeOutsideClipsAroundNonSelectedAddFeatures() {
+  console.log('Testing edge_route_outside clips moves around non-selected add features...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // featureA at x=0..10, featureB at x=12..22. Gap = 2mm < tool diameter (4mm).
+  // Edge out routes around featureA only, but moves that enter featureB's
+  // keep-away zone (featureB expanded by tool.radius = 2, so x >= 10) are clipped.
+  const featureA = makeAddFeature('a', 0, 0, 10, 10, 6, 0)
+  const featureB = makeAddFeature('b', 12, 0, 10, 10, 6, 0)
+  const project = baseProject([tool], [featureA, featureB])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'outside edge route produces cut moves')
+
+  // Tool center must not enter featureB's keep-away zone. FeatureB spans
+  // x=[12..22], expanded by tool.radius (2) means keep-away starts at x=10.
+  // No cut move's tool center should be inside the expanded obstacle area.
+  const violatingCuts = cuts.filter((move) => {
+    const inKeepAwayY = move.to.y >= -2 && move.to.y <= 12
+    const inKeepAwayX = move.to.x >= 10 && move.to.x <= 24
+    return inKeepAwayX && inKeepAwayY
+  })
+
+  assert(
+    violatingCuts.length === 0,
+    `expected no cuts inside featureB keep-away zone, got ${violatingCuts.length} (first at x=${violatingCuts[0]?.to.x.toFixed(2)}, y=${violatingCuts[0]?.to.y.toFixed(2)})`,
+  )
+
+  console.log('edge_route_outside obstacle clipping (non-selected): PASSED')
+}
+
+// ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
 
@@ -880,6 +943,7 @@ try {
   testEdgeOutsideAcceptsModelSilhouette()
   testEdgeOutsideUsesStoredModelSilhouettePaths()
   testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()
+  testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testVCarveFeatureFirstProducesSameMoveCount()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testFollowLineRegionClipsOpenPath()

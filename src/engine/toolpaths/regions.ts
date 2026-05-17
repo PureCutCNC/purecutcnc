@@ -103,6 +103,14 @@ export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | n
   }
 }
 
+export function buildMaskFromClipperPaths(paths: ClipperPath[]): RegionMask | null {
+  if (paths.length === 0) return null
+  return {
+    paths,
+    containsPoint: (point) => pointInClipperPaths(point, paths),
+  }
+}
+
 export function featurePathToClipper(feature: SketchFeature): ClipperPath | null {
   if (!feature.sketch.profile.closed) return null
   const flattened = flattenProfile(feature.sketch.profile)
@@ -276,6 +284,59 @@ function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
     bounds = updateBounds(bounds, move.to)
   }
   return bounds
+}
+
+export function clipToolpathResultToObstaclesByLevel(
+  project: Project,
+  result: ToolpathResult,
+  maskForZ: (z: number) => RegionMask | null,
+): ToolpathResult {
+  if (result.moves.length === 0) return result
+
+  const safeZ = getOperationSafeZ(project)
+  const clippedMoves: ToolpathMove[] = []
+  let current: ToolpathPoint | null = null
+  const cutMoves = result.moves.filter((move) => move.kind === 'cut')
+
+  for (const move of cutMoves) {
+    const mask = maskForZ(move.to.z)
+    if (!mask) {
+      current = pushSafeTransition(clippedMoves, current, move.from, safeZ)
+      clippedMoves.push(move)
+      current = move.to
+      continue
+    }
+
+    const inverseMask: RegionMask = {
+      paths: mask.paths,
+      containsPoint: (point) => !pointInClipperPaths(point, mask.paths),
+    }
+
+    const fragments = clipCutMoveToRegion(move, inverseMask)
+    for (const fragment of fragments) {
+      current = pushSafeTransition(clippedMoves, current, fragment.from, safeZ)
+      clippedMoves.push({
+        ...move,
+        from: fragment.from,
+        to: fragment.to,
+      })
+      current = fragment.to
+    }
+  }
+
+  if (current && Math.abs(current.z - safeZ) > 1e-9) {
+    clippedMoves.push({
+      kind: 'rapid',
+      from: current,
+      to: { x: current.x, y: current.y, z: safeZ },
+    })
+  }
+
+  return {
+    ...result,
+    moves: clippedMoves,
+    bounds: computeBounds(clippedMoves),
+  }
 }
 
 export function clipToolpathResultToRegionMask(
