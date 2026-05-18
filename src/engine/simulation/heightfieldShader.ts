@@ -66,7 +66,13 @@ const fragmentShader = /* glsl */ `
   ${LIGHTING_GLSL}
 
   void main() {
-    if (vHeight <= uStockBottomZ + 0.000001) {
+    float threshold = uStockBottomZ + 0.000001;
+    vec2 maxCellIndex = (vec2(1.0) / uTexelSize) - vec2(1.0);
+    vec2 cellIndex = floor(clamp(vUv / uTexelSize, vec2(0.0), maxCellIndex));
+    vec2 cellUv = (cellIndex + vec2(0.5)) * uTexelSize;
+    float cellHeight = texture2D(uHeightfield, cellUv).r;
+
+    if (cellHeight <= threshold) {
       discard;
     }
 
@@ -75,7 +81,6 @@ const fragmentShader = /* glsl */ `
     float hD = texture2D(uHeightfield, vUv - vec2(0.0, uTexelSize.y)).r;
     float hU = texture2D(uHeightfield, vUv + vec2(0.0, uTexelSize.y)).r;
 
-    float threshold = uStockBottomZ + 0.000001;
     if (hL <= threshold) hL = vHeight;
     if (hR <= threshold) hR = vHeight;
     if (hD <= threshold) hD = vHeight;
