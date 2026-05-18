@@ -3,10 +3,10 @@
 This document is the primary source of truth for the architectural vision, coding standards, and operational constraints of the PureCutCNC project. It takes absolute precedence over general defaults. Always refer to this file and the `planning/` directory for detailed design and implementation context. For tablet UI/UX-specific architecture and design decisions, see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md).
 
 ## 1. Project Vision & Purpose
-PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enthusiasts. 
+PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enthusiasts.
 - **Core Innovation:** Collapses the CAD (sketch) and CAM (operation) steps. Features carry their own volumetric intent (add/subtract) and depth (z_top/z_bottom) directly in the sketch.
 - **User Persona:** Hobbyists and small shops who need more power than basic 2D tools but less complexity than full 3D CAD/CAM suites.
-- **AI-First:** The application is designed to be manipulated via an AI agent through an MCP (Model Context Protocol) interface. This is now pushed down on the priority list and MCP server functions are not designed and implemented yet.
+- **AI integration (future):** Exposing the engine to AI agents via MCP (Model Context Protocol) is a long-term direction, but no agent-facing surface exists in the app today. AI is currently used only as a development aid, not as an in-product feature.
 
 ## 2. Core Architecture
 - **State Management:** Driven by a central Zustand store (`src/store/projectStore.ts`). It handles the project lifecycle, feature tree ordering, and undo/redo history.
@@ -63,8 +63,8 @@ Icons are managed as a custom build pipeline using the `.camj` project format.
 - **Unit Handling:** Use helpers in `src/utils/units.ts`. The project can be in `mm` or `inch`; always check `project.meta.units`.
 - **CSG Debouncing:** 3D model generation is expensive. The `Viewport3D` updates are typically debounced (150ms-300ms).
 
-## 7. AI & MCP Integration
-The application exposes its engine via tool calls. When acting as an agent:
-- Prefer using the `projectStore` actions to modify state.
-- Use `get_project_state` to understand the current feature tree before making changes.
-- Ensure all geometric modifications result in valid closed profiles unless specifically creating an open-path engrave feature.
+## 7. AI & MCP Integration (not yet implemented)
+There is **no MCP server or agent-facing tool surface in the app today**. Earlier drafts of this document described an aspirational design; treat it as a future direction, not current behavior. When that work begins, the guiding principles will be:
+- All mutations should flow through `projectStore` actions (same rule as the UI).
+- An agent will need a project-state inspection call before making changes.
+- Geometric modifications must produce valid closed profiles, except for explicit open-path engrave features.
