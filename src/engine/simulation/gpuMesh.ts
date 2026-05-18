@@ -17,6 +17,10 @@
 import * as THREE from 'three'
 import type { DirtyRegion, SimulationGrid } from './types'
 
+const MAX_UINT16_INDEX = 65535
+const STOCK_PLANE_CHUNK_CELLS = 128
+const PROFILE_BOUNDARY_CHUNK_CELLS = 64
+
 /**
  * Build a `DataTexture` backed by the grid's `topZ` Float32Array. The texture
  * uses a single RED channel so each texel stores one height value. The array is
@@ -55,20 +59,49 @@ export function createHeightfieldTexture(grid: SimulationGrid): THREE.DataTextur
  * vertices at cell centers with UVs that map exactly to texel centers.
  */
 export function createStockPlaneGeometry(grid: SimulationGrid): THREE.BufferGeometry {
+  return createStockPlaneGeometryChunk(grid, 0, 0, grid.cols, grid.rows)
+}
+
+export function createStockPlaneGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
+  const fullVertexCount = (grid.cols + 1) * (grid.rows + 1)
+  if (fullVertexCount <= MAX_UINT16_INDEX) {
+    return [createStockPlaneGeometry(grid)]
+  }
+
+  const geometries: THREE.BufferGeometry[] = []
+  for (let rowStart = 0; rowStart < grid.rows; rowStart += STOCK_PLANE_CHUNK_CELLS) {
+    const chunkRows = Math.min(STOCK_PLANE_CHUNK_CELLS, grid.rows - rowStart)
+    for (let colStart = 0; colStart < grid.cols; colStart += STOCK_PLANE_CHUNK_CELLS) {
+      const chunkCols = Math.min(STOCK_PLANE_CHUNK_CELLS, grid.cols - colStart)
+      geometries.push(createStockPlaneGeometryChunk(grid, colStart, rowStart, chunkCols, chunkRows))
+    }
+  }
+  return geometries
+}
+
+function createStockPlaneGeometryChunk(
+  grid: SimulationGrid,
+  colStart: number,
+  rowStart: number,
+  chunkCols: number,
+  chunkRows: number,
+): THREE.BufferGeometry {
   const { originX, originY, cellSize, cols, rows } = grid
 
   // One vertex per cell corner → (cols+1) × (rows+1) vertices
-  const vertCols = cols + 1
-  const vertRows = rows + 1
+  const vertCols = chunkCols + 1
+  const vertRows = chunkRows + 1
   const vertexCount = vertCols * vertRows
   const positions = new Float32Array(vertexCount * 3)
   const uvs = new Float32Array(vertexCount * 2)
 
-  for (let row = 0; row <= rows; row += 1) {
-    for (let col = 0; col <= cols; col += 1) {
+  for (let row = 0; row <= chunkRows; row += 1) {
+    const gridRow = rowStart + row
+    for (let col = 0; col <= chunkCols; col += 1) {
+      const gridCol = colStart + col
       const idx = row * vertCols + col
-      const worldX = originX + col * cellSize
-      const worldZ = originY + row * cellSize
+      const worldX = originX + gridCol * cellSize
+      const worldZ = originY + gridRow * cellSize
 
       positions[idx * 3] = worldX
       positions[idx * 3 + 1] = 0 // Y displaced by shader
@@ -77,17 +110,17 @@ export function createStockPlaneGeometry(grid: SimulationGrid): THREE.BufferGeom
       // UV maps to texel centers: col 0 → 0.5/cols, col cols → (cols-0.5)/cols
       // At cell boundaries we average neighboring texels, which is correct for
       // vertex positions sitting on cell edges.
-      uvs[idx * 2] = Math.max(0, Math.min(1, col / cols))
-      uvs[idx * 2 + 1] = Math.max(0, Math.min(1, row / rows))
+      uvs[idx * 2] = Math.max(0, Math.min(1, gridCol / cols))
+      uvs[idx * 2 + 1] = Math.max(0, Math.min(1, gridRow / rows))
     }
   }
 
   // Two triangles per cell
-  const indexCount = cols * rows * 6
-  const indices = indexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
+  const indexCount = chunkCols * chunkRows * 6
+  const indices = vertexCount > MAX_UINT16_INDEX ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
   let offset = 0
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
+  for (let row = 0; row < chunkRows; row += 1) {
+    for (let col = 0; col < chunkCols; col += 1) {
       const tl = row * vertCols + col
       const tr = tl + 1
       const bl = (row + 1) * vertCols + col
@@ -295,6 +328,37 @@ export function createProfileBoundaryGeometry(grid: SimulationGrid): THREE.Buffe
  * without geometry rebuilds.
  */
 export function createDynamicProfileBoundaryGeometry(grid: SimulationGrid): THREE.BufferGeometry {
+  return createDynamicProfileBoundaryGeometryChunk(grid, 0, 0, grid.cols, grid.rows)
+}
+
+export function createDynamicProfileBoundaryGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
+  if (grid.cols * grid.rows * 6 <= MAX_UINT16_INDEX) {
+    return [createDynamicProfileBoundaryGeometry(grid)]
+  }
+
+  const geometries: THREE.BufferGeometry[] = []
+  for (let rowStart = 0; rowStart < grid.rows; rowStart += PROFILE_BOUNDARY_CHUNK_CELLS) {
+    const chunkRows = Math.min(PROFILE_BOUNDARY_CHUNK_CELLS, grid.rows - rowStart)
+    for (let colStart = 0; colStart < grid.cols; colStart += PROFILE_BOUNDARY_CHUNK_CELLS) {
+      const chunkCols = Math.min(PROFILE_BOUNDARY_CHUNK_CELLS, grid.cols - colStart)
+      const geometry = createDynamicProfileBoundaryGeometryChunk(grid, colStart, rowStart, chunkCols, chunkRows)
+      if (geometry.getAttribute('position').count > 0) {
+        geometries.push(geometry)
+      } else {
+        geometry.dispose()
+      }
+    }
+  }
+  return geometries
+}
+
+function createDynamicProfileBoundaryGeometryChunk(
+  grid: SimulationGrid,
+  colStart: number,
+  rowStart: number,
+  chunkCols: number,
+  chunkRows: number,
+): THREE.BufferGeometry {
   const { originX, originY, cellSize, cols, rows, stockBottomZ } = grid
   const positions: number[] = []
   const normals: number[] = []
@@ -307,8 +371,11 @@ export function createDynamicProfileBoundaryGeometry(grid: SimulationGrid): THRE
     col >= 0 && col < cols && row >= 0 && row < rows &&
     grid.topZ[row * cols + col] > stockBottomZ + eps
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
+  const rowEnd = Math.min(rows, rowStart + chunkRows)
+  const colEnd = Math.min(cols, colStart + chunkCols)
+
+  for (let row = rowStart; row < rowEnd; row += 1) {
+    for (let col = colStart; col < colEnd; col += 1) {
       if (!hasMaterial(col, row)) continue
 
       const x0 = originX + col * cellSize
