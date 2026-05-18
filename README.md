@@ -1,6 +1,6 @@
 # PureCutCNC
 
-`PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export.
+`PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export. The core focus is 2.5D, but the app also handles 3D surface machining of imported meshes (rough and finish passes).
 
 It is aimed at the kind of work where you want one place to:
 
@@ -39,6 +39,17 @@ Import source geometry and continue working with it as native sketch features:
 
 Imported geometry can then be transformed, assigned operations, and used like hand-drawn features.
 
+### Import 3D models
+
+Import STL and OBJ meshes to drive 3D surface machining:
+
+- STL import (binary and ASCII)
+- OBJ import
+- axis orientation swaps for parts authored in a different up-axis
+- automatic silhouette extraction so the mesh appears as a sketch feature you can position, transform, and use as a region
+
+Imported meshes participate in `Surface Rough` and `Surface Finish` operations and are visible in both the 3D preview and the simulation view.
+
 ### Work with text
 
 Text is handled as an editable feature rather than exploded letter geometry.
@@ -59,12 +70,12 @@ Current operation set includes:
 
 - Pocket Rough
 - Pocket Finish
-- Surface Rough
-- Surface Finish
-- Edge Route
+- Surface Rough — rough clearing of an imported 3D mesh
+- Surface Finish — finish pass on an imported 3D mesh (parallel and waterline patterns)
+- Edge Route (inside / outside)
 - Follow Line
-- V-Carve
-- V-Carve Recursive
+- V-Carve (offset and skeleton modes)
+- Drilling (simple, peck, dwell, chip-breaking)
 
 The toolpath system supports things such as:
 

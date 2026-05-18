@@ -4,6 +4,24 @@
 
 PureCutCNC is a browser-based 2.5D CAD/CAM application for CNC hobbyists. It collapses CAD sketching and CAM operation definition into a single workflow. Built with Vite + React + TypeScript, state managed by Zustand, with a Tauri wrapper for desktop builds.
 
+## Code Map (read first)
+
+Start every session by reading [`INDEX.md`](INDEX.md) at the repo root. It maps the codebase folder-by-folder and points to per-folder `INDEX.md` files for deeper detail. When you work inside a folder that has an `INDEX.md`, read it before exploring files there. Prefer the index over grepping blind.
+
+**Maintenance rule:** when you add, rename, remove, or significantly change the purpose of a file, update the nearest `INDEX.md` in the same commit. If you create a new folder with non-trivial content, add an `INDEX.md` there and link it from the parent index.
+
+## Workflow: Plan → Approve → Implement → Archive
+
+**Every task follows this loop. No exceptions — even a one-line bug fix gets a short plan.** The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable.
+
+1. **Plan.** Before changing any code, write a plan to `planning/<TOPIC>_Plan.md` using [`planning/TEMPLATE.md`](planning/TEMPLATE.md). Add an entry under "Pending approval" in [`planning/INDEX.md`](planning/INDEX.md). The plan's frontmatter starts at `status: Draft`.
+2. **Approve.** Share the plan with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, update the plan and re-confirm.
+3. **Implement.** On approval, set `status: Approved` (then `In progress` once you begin) and move the index entry to "In progress". Implement against the plan. If the plan needs to change mid-flight, update the plan file in the same commit as the deviation.
+4. **Archive before PR.** When the work is complete and the build is green, **before opening the PR**: `git mv planning/<TOPIC>_Plan.md planning/archive/`, set `status: Done`, and remove the entry from `planning/INDEX.md`. The PR description should link to the archived plan.
+5. **Abandon.** If a plan is dropped before implementation, set `status: Abandoned`, move it to `planning/archive/`, and remove the index entry.
+
+The existing 13 active plans at `planning/` root predate this rule — treat them as `In progress` even though they don't carry the frontmatter.
+
 ## Build & Verify
 
 ```bash
