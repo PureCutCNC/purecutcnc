@@ -31,6 +31,7 @@ import { SimulationViewport, type SimulationViewportHandle } from './components/
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './components/ToolpathVisibilityPanel'
 import { ExportDialog } from './components/export/ExportDialog'
+import { ModelExportDialog } from './components/export/ModelExportDialog'
 import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
@@ -96,6 +97,7 @@ function App() {
   const [isSimulationPending, startSimulationTransition] = useTransition()
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [showModelExportDialog, setShowModelExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
@@ -878,11 +880,12 @@ function App() {
     <>
       <AppShell
         toolbar={
-          <Toolbar 
+          <Toolbar
             onZoomToModel={handleZoomToModel}
             onZoomWindow={handleZoomWindow}
             zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
+            onExportModel={() => setShowModelExportDialog(true)}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
             onToggleSnapEnabled={handleToggleSnapEnabled}
@@ -895,6 +898,7 @@ function App() {
             onZoomWindow={handleZoomWindow}
             zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
+            onExportModel={() => setShowModelExportDialog(true)}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
             onToggleSnapEnabled={handleToggleSnapEnabled}
@@ -988,12 +992,17 @@ function App() {
         onZoomWindow={handleZoomWindow}
         zoomWindowActive={zoomWindowActive}
         onImportComplete={handleImportComplete}
+        onExportModel={() => setShowModelExportDialog(true)}
         snapSettings={snapSettings}
         activeSnapMode={activeSnapMode}
         onToggleSnapEnabled={handleToggleSnapEnabled}
         onToggleSnapMode={handleToggleSnapMode}
       />
-      
+
+      {showModelExportDialog && (
+        <ModelExportDialog onClose={() => setShowModelExportDialog(false)} />
+      )}
+
       {showExportDialog && (
         <ExportDialog
           onClose={() => setShowExportDialog(false)}

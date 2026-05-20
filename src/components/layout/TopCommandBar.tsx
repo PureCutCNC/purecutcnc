@@ -16,6 +16,7 @@ interface TopCommandBarProps {
   onOpenLeftDrawer: () => void
   onOpenRightDrawer: () => void
   onImportComplete?: () => void
+  onExportModel: () => void
   snapSettings: SnapSettings
   activeSnapMode?: SnapMode | null
   onToggleSnapEnabled: () => void
@@ -31,6 +32,7 @@ export function TopCommandBar({
   onOpenLeftDrawer,
   onOpenRightDrawer,
   onImportComplete,
+  onExportModel,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -127,6 +129,9 @@ export function TopCommandBar({
             </button>
             <button className="top-cmd-btn" type="button" aria-label="Import geometry" onClick={() => setShowImportDialog(true)}>
               <Icon id="import" />
+            </button>
+            <button className="top-cmd-btn" type="button" aria-label="Export model" onClick={onExportModel}>
+              <Icon id="export" />
             </button>
             <button
               className={`top-cmd-btn ${dirty ? 'top-cmd-btn--emphasized' : ''}`}

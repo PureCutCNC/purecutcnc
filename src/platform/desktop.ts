@@ -15,7 +15,7 @@
  */
 
 import { open, save, confirm } from '@tauri-apps/plugin-dialog'
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,28 @@ export const desktopPlatform: PlatformApi = {
 
     if (!targetPath) return null
     await writeTextFile(targetPath, content)
+    return targetPath
+  },
+
+  async saveBinaryFile(
+    suggestedName: string,
+    content: Uint8Array,
+    extension: string,
+    _mimeType: string,
+    existingPath?: string | null
+  ): Promise<string | null> {
+    let targetPath = existingPath ?? null
+
+    if (!targetPath) {
+      const base = suggestedName.replace(new RegExp(`\\.${extension}$`), '')
+      targetPath = await save({
+        defaultPath: `${base}.${extension}`,
+        filters: [{ name: `${extension.toUpperCase()} file`, extensions: [extension] }],
+      })
+    }
+
+    if (!targetPath) return null
+    await writeFile(targetPath, content)
     return targetPath
   },
 

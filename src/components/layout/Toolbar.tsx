@@ -41,6 +41,7 @@ interface ToolbarProps {
   onZoomWindow: () => void
   zoomWindowActive?: boolean
   onImportComplete?: () => void
+  onExportModel: () => void
 }
 
 interface SnapToolbarProps {
@@ -527,6 +528,7 @@ function GlobalActions({
   onNew,
   onOpen,
   onImport,
+  onExportModel,
   onSave,
   onUndo,
   onRedo,
@@ -540,6 +542,7 @@ function GlobalActions({
   onNew: () => void
   onOpen: () => void
   onImport: () => void
+  onExportModel: () => void
   onSave: () => void
   onUndo: () => void
   onRedo: () => void
@@ -554,6 +557,7 @@ function GlobalActions({
         <ToolbarActionButton icon="new" label="New project" onClick={onNew} />
         <ToolbarActionButton icon="open" label="Open project" onClick={onOpen} />
         <ToolbarActionButton icon="import" label="Import geometry" onClick={onImport} />
+        <ToolbarActionButton icon="export" label="Export model" onClick={onExportModel} />
         <ToolbarActionButton
           icon="save"
           label={projectDirty ? 'Save project with unsaved changes' : 'Save project'}
@@ -1204,6 +1208,7 @@ export function GlobalToolbar({
   onZoomWindow,
   zoomWindowActive = false,
   onImportComplete,
+  onExportModel,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -1229,6 +1234,7 @@ export function GlobalToolbar({
           onNew={toolbar.handleNewProject}
           onOpen={toolbar.handleLoad}
           onImport={toolbar.handleImport}
+          onExportModel={onExportModel}
           onSave={toolbar.handleSave}
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}
@@ -1363,6 +1369,7 @@ export function Toolbar({
   onZoomWindow,
   zoomWindowActive = false,
   onImportComplete,
+  onExportModel,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -1388,6 +1395,7 @@ export function Toolbar({
           onNew={toolbar.handleNewProject}
           onOpen={toolbar.handleLoad}
           onImport={toolbar.handleImport}
+          onExportModel={onExportModel}
           onSave={toolbar.handleSave}
           onUndo={toolbar.handleUndo}
           onRedo={toolbar.handleRedo}

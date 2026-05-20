@@ -49,6 +49,7 @@ interface AppShellProps {
   onZoomWindow: () => void
   zoomWindowActive: boolean
   onImportComplete?: () => void
+  onExportModel: () => void
   snapSettings: SnapSettings
   activeSnapMode?: SnapMode | null
   onToggleSnapEnabled: () => void
@@ -85,6 +86,7 @@ export function AppShell({
   onZoomWindow,
   zoomWindowActive,
   onImportComplete,
+  onExportModel,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -288,6 +290,7 @@ export function AppShell({
             onOpenLeftDrawer={() => setLeftDrawerOpen(true)}
             onOpenRightDrawer={() => setRightDrawerOpen(true)}
             onImportComplete={onImportComplete}
+            onExportModel={onExportModel}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
             onToggleSnapEnabled={onToggleSnapEnabled}

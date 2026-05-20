@@ -3066,6 +3066,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   backdropImageLoading: false,
   filePath: null,
   lastExportPath: null,
+  lastModelExportPath: null,
   dirty: false,
   projectLoading: false,
   projectKey: 0,
@@ -3614,6 +3615,9 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
 
   markExported: (path) =>
     set({ lastExportPath: path }),
+
+  markModelExported: (path) =>
+    set({ lastModelExportPath: path }),
 
   undo: () =>
     set((state) => {
