@@ -839,17 +839,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const clearRenderedObjects = useCallback((scene: THREE.Scene) => {
     for (const object of objectsRef.current) {
       scene.remove(object)
-      if (object instanceof THREE.Mesh) {
-        object.geometry.dispose()
-        disposeObjectMaterial(object.material)
-      }
-      if (object instanceof THREE.LineSegments) {
-        object.geometry.dispose()
-        disposeObjectMaterial(object.material)
-      }
+      disposeObject3D(object)
     }
     objectsRef.current = []
-  }, [disposeObjectMaterial])
+  }, [])
 
   const clearToolpathObjects = useCallback((scene: THREE.Scene) => {
     for (const object of toolpathObjectsRef.current) {
@@ -903,8 +896,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             disposeObjectMaterial(nextSceneObjects.modelMesh.material)
           }
           for (const featureMesh of nextSceneObjects.featureMeshes.values()) {
-            featureMesh.geometry.dispose()
-            disposeObjectMaterial(featureMesh.material)
+            disposeObject3D(featureMesh)
           }
           for (const tabMesh of nextSceneObjects.tabMeshes.values()) {
             tabMesh.geometry.dispose()

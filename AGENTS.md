@@ -25,13 +25,14 @@ The existing 13 active plans at `planning/` root predate this rule — treat the
 ## Build & Verify
 
 ```bash
-npm run build          # Full build (icon generation + tsc + vite). Run this before committing.
+npm run build          # Full build (icon generation + tsc + tests + vite). Run this before committing.
+npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
 npm run dev            # Vite dev server (do NOT start this — the user runs it themselves)
 npm run lint           # ESLint
 npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons.camj
 ```
 
-Always run `npm run build` from the project root to verify changes compile before committing. Do not start the dev/preview server.
+Always run `npm run build` from the project root to verify changes compile before committing. `npm test` runs automatically as part of the build, so a failing structural test will fail the build. Do not start the dev/preview server.
 
 ## Key Architecture
 

@@ -61,12 +61,27 @@ interface CachedPersistedGeometryEntry {
   geometry: THREE.BufferGeometry
 }
 
+interface CachedPersistedGeometryChunksEntry {
+  positionsData: string
+  indicesData: string
+  geometries: THREE.BufferGeometry[]
+}
+
+/**
+ * Maximum index value representable in a Uint16Array. Chunks must stay at or
+ * below this vertex count so their index buffers can be Uint16 — Chrome on
+ * macOS mis-renders Uint32-indexed BufferGeometry, so we mirror the chunking
+ * pattern used by simulation/gpuMesh.ts.
+ */
+export const MAX_UINT16_INDEX = 65535
+
 const GEOMETRY_CACHE_LIMIT = 6
 const TRIANGLE_MESH_CACHE_LIMIT = 6
 const geometryCache = new Map<string, CachedGeometryEntry>()
 const triangleMeshCache = new Map<string, CachedTriangleMeshEntry>()
 const persistedTriangleMeshCache = new Map<string, CachedPersistedTriangleMeshEntry>()
 const persistedGeometryCache = new Map<string, CachedPersistedGeometryEntry>()
+const persistedGeometryChunksCache = new Map<string, CachedPersistedGeometryChunksEntry>()
 
 export function clearImportedSourceCaches(): void {
   for (const entry of geometryCache.values()) {
@@ -83,6 +98,12 @@ export function clearImportedModelCaches(): void {
     entry.geometry.dispose()
   }
   persistedGeometryCache.clear()
+  for (const entry of persistedGeometryChunksCache.values()) {
+    for (const geometry of entry.geometries) {
+      geometry.dispose()
+    }
+  }
+  persistedGeometryChunksCache.clear()
 }
 
 function decodeBase64Data(data: string): ArrayBuffer | null {
@@ -356,6 +377,122 @@ export function triangleMeshToBufferGeometry(
   return geometry
 }
 
+/**
+ * Build a list of render-safe BufferGeometry chunks from a triangle mesh. Each
+ * chunk has a Uint16Array index buffer and at most MAX_UINT16_INDEX vertices.
+ *
+ * For meshes that fit in one chunk this returns a single-element array. For
+ * larger meshes triangles are walked in order and assigned to chunks greedily:
+ * when adding the next triangle would push the chunk's unique-vertex count over
+ * MAX_UINT16_INDEX, the current chunk is finalised and a new one is started.
+ * Vertices referenced from triangles in two chunks are duplicated — that is
+ * the price of the Uint16 invariant.
+ */
+export function triangleMeshToBufferGeometryChunks(
+  mesh: ImportedTriangleMesh,
+  mergeVertices: boolean,
+): THREE.BufferGeometry[] {
+  const positions = mesh.positions
+  const index = mesh.index
+  const triangleCount = index.length / 3
+  const vertexCount = positions.length / 3
+
+  if (vertexCount <= MAX_UINT16_INDEX) {
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(index), 1))
+    const finalized = mergeVertices ? BufferGeometryUtils.mergeVertices(geometry, 1e-5) : geometry
+    finalized.computeVertexNormals()
+    return [finalized]
+  }
+
+  const chunks: THREE.BufferGeometry[] = []
+  let chunkPositions: number[] = []
+  let chunkIndices: number[] = []
+  let oldToNew = new Map<number, number>()
+
+  const finalizeChunk = (): void => {
+    if (chunkIndices.length === 0) return
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(chunkPositions), 3))
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(chunkIndices), 1))
+    const finalized = mergeVertices ? BufferGeometryUtils.mergeVertices(geometry, 1e-5) : geometry
+    finalized.computeVertexNormals()
+    chunks.push(finalized)
+    chunkPositions = []
+    chunkIndices = []
+    oldToNew = new Map<number, number>()
+  }
+
+  for (let t = 0; t < triangleCount; t += 1) {
+    const a = index[t * 3]
+    const b = index[t * 3 + 1]
+    const c = index[t * 3 + 2]
+
+    // Count how many distinct new vertices this triangle would add.
+    const needsA = !oldToNew.has(a)
+    const needsB = !oldToNew.has(b) && b !== a
+    const needsC = !oldToNew.has(c) && c !== a && c !== b
+    let newVerts = 0
+    if (needsA) newVerts += 1
+    if (needsB) newVerts += 1
+    if (needsC) newVerts += 1
+
+    if (oldToNew.size + newVerts > MAX_UINT16_INDEX && chunkIndices.length > 0) {
+      finalizeChunk()
+    }
+
+    const remap = (orig: number): number => {
+      let mapped = oldToNew.get(orig)
+      if (mapped === undefined) {
+        mapped = oldToNew.size
+        oldToNew.set(orig, mapped)
+        const base = orig * 3
+        chunkPositions.push(positions[base], positions[base + 1], positions[base + 2])
+      }
+      return mapped
+    }
+
+    chunkIndices.push(remap(a), remap(b), remap(c))
+  }
+
+  finalizeChunk()
+  return chunks
+}
+
+function getCachedPersistedGeometryChunks(
+  key: string,
+  mesh: PersistedImportedMesh,
+): THREE.BufferGeometry[] | null {
+  const entry = persistedGeometryChunksCache.get(key)
+  if (!entry || entry.positionsData !== mesh.positions || entry.indicesData !== mesh.indices) return null
+
+  persistedGeometryChunksCache.delete(key)
+  persistedGeometryChunksCache.set(key, entry)
+  return entry.geometries.map((g) => g.clone())
+}
+
+function setCachedPersistedGeometryChunks(
+  key: string,
+  persisted: PersistedImportedMesh,
+  geometries: THREE.BufferGeometry[],
+): void {
+  persistedGeometryChunksCache.set(key, {
+    positionsData: persisted.positions,
+    indicesData: persisted.indices,
+    geometries: geometries.map((g) => g.clone()),
+  })
+  while (persistedGeometryChunksCache.size > GEOMETRY_CACHE_LIMIT) {
+    const oldestKey = persistedGeometryChunksCache.keys().next().value
+    if (!oldestKey) break
+    const entry = persistedGeometryChunksCache.get(oldestKey)
+    if (entry) {
+      for (const geometry of entry.geometries) geometry.dispose()
+    }
+    persistedGeometryChunksCache.delete(oldestKey)
+  }
+}
+
 export function loadPersistedBufferGeometry(
   mesh: PersistedImportedMesh,
   mergeVertices: boolean,
@@ -370,6 +507,22 @@ export function loadPersistedBufferGeometry(
   const geometry = triangleMeshToBufferGeometry(triangleMesh, mergeVertices)
   setCachedPersistedGeometry(key, mesh, geometry)
   return geometry
+}
+
+export function loadPersistedBufferGeometryChunks(
+  mesh: PersistedImportedMesh,
+  mergeVertices: boolean,
+): THREE.BufferGeometry[] | null {
+  const key = `${persistedMeshCacheKey(mesh, mergeVertices)}|chunks`
+  const cached = getCachedPersistedGeometryChunks(key, mesh)
+  if (cached) return cached
+
+  const triangleMesh = loadPersistedTriangleMesh(mesh)
+  if (!triangleMesh) return null
+
+  const chunks = triangleMeshToBufferGeometryChunks(triangleMesh, mergeVertices)
+  setCachedPersistedGeometryChunks(key, mesh, chunks)
+  return chunks
 }
 
 export function loadStlBufferGeometry(

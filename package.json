@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/convert-camj-to-icons.js && tsc -b && vite build",
+    "build": "node scripts/convert-camj-to-icons.js && tsc -b && npm test && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "sync-icons": "node scripts/convert-camj-to-icons.js",
+    "test": "tsx scripts/run-tests.ts",
     "tauri": "tauri",
     "tauri:icon": "npx tauri icon ./app-icon.png",
     "tauri:dev": "tauri dev",
