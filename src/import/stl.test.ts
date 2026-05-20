@@ -4,7 +4,12 @@
  * Run with: npx tsx src/import/stl.test.ts
  */
 
-import { extractStlProfileAndBounds } from './stl'
+import {
+  loadImportedTriangleMesh,
+  normalizeImportedMeshForStorage,
+  splitMeshByConnectedComponents,
+} from '../engine/importedMesh'
+import { extractImportedMeshProfileAndBounds, extractStlProfileAndBounds } from './stl'
 
 type AxisSwap = 'none' | 'yz' | 'xz' | 'xy'
 
@@ -102,8 +107,99 @@ async function testSilhouetteArtifactsAreFiltered(): Promise<void> {
   assert(result!.silhouettePaths.length === 1, `expected one significant silhouette path, got ${result!.silhouettePaths.length}`)
 }
 
+/**
+ * Build an ASCII STL whose body is a unit axis-aligned cube at the given
+ * origin and side length. 12 triangles, normals omitted (set to 0 0 0; the
+ * STL loader does not require accurate normals).
+ */
+function makeCubeStlLines(originX: number, originY: number, originZ: number, side: number, label: string): string[] {
+  const corners: Array<[number, number, number]> = [
+    [0, 0, 0], [side, 0, 0], [side, side, 0], [0, side, 0],
+    [0, 0, side], [side, 0, side], [side, side, side], [0, side, side],
+  ]
+  function world(corner: [number, number, number]): [number, number, number] {
+    return [originX + corner[0], originY + corner[1], originZ + corner[2]]
+  }
+  const faces: Array<[number, number, number]> = [
+    [0, 2, 1], [0, 3, 2],
+    [4, 5, 6], [4, 6, 7],
+    [0, 1, 5], [0, 5, 4],
+    [2, 3, 7], [2, 7, 6],
+    [1, 2, 6], [1, 6, 5],
+    [0, 4, 7], [0, 7, 3],
+  ]
+  const lines: string[] = [`solid ${label}`]
+  for (const face of faces) {
+    lines.push('  facet normal 0 0 0')
+    lines.push('    outer loop')
+    for (const cornerIdx of face) {
+      const w = world(corners[cornerIdx])
+      lines.push(`      vertex ${w[0]} ${w[1]} ${w[2]}`)
+    }
+    lines.push('    endloop')
+    lines.push('  endfacet')
+  }
+  lines.push(`endsolid ${label}`)
+  return lines
+}
+
+function makeTwoCubesStlBase64(): string {
+  // Two disjoint cubes, axis-aligned, separated in X with a 10-unit gap so
+  // welding at 1e-5 cannot bridge them. The "solid" wrapper for the second
+  // cube is omitted because the STL loader treats multiple solids as a
+  // single triangle stream anyway.
+  const linesA = makeCubeStlLines(0, 0, 0, 10, 'cubeA')
+  const linesB = makeCubeStlLines(20, 0, 0, 10, 'cubeB')
+  return btoa([...linesA, ...linesB].join('\n') + '\n')
+}
+
+async function testMultiBodyImportSplits(): Promise<void> {
+  console.log('Testing multi-body STL splits into per-body profiles...')
+  const stlBase64 = makeTwoCubesStlBase64()
+  const parsed = loadImportedTriangleMesh('stl', stlBase64, 'none')
+  assert(parsed !== null, 'two-cube STL must parse')
+  const normalized = normalizeImportedMeshForStorage(parsed!, 1)
+  const bodies = splitMeshByConnectedComponents(normalized)
+  assert(bodies.length === 2, `expected 2 bodies for two disjoint cubes, got ${bodies.length}`)
+
+  // Pin order by X so the assertions are stable.
+  bodies.sort((a, b) => a.bounds.minX - b.bounds.minX)
+
+  const resultA = await extractImportedMeshProfileAndBounds(bodies[0])
+  const resultB = await extractImportedMeshProfileAndBounds(bodies[1])
+  assert(resultA !== null && resultB !== null, 'each body must yield a profile')
+
+  // Per-body Z extents match the source cubes.
+  assert(approx(resultA!.z_bottom, 0) && approx(resultA!.z_top, 10),
+    `body A z=[${resultA!.z_bottom},${resultA!.z_top}], expected [0,10]`)
+  assert(approx(resultB!.z_bottom, 0) && approx(resultB!.z_top, 10),
+    `body B z=[${resultB!.z_bottom},${resultB!.z_top}], expected [0,10]`)
+
+  // Body A's profile must live entirely within X=[0,10]; body B within X=[20,30].
+  function profileBboxX(profile: { start: { x: number; y: number }; segments: Array<{ to: { x: number; y: number } }> }): { min: number; max: number } {
+    let min = profile.start.x
+    let max = profile.start.x
+    for (const seg of profile.segments) {
+      if (seg.to.x < min) min = seg.to.x
+      if (seg.to.x > max) max = seg.to.x
+    }
+    return { min, max }
+  }
+  const aX = profileBboxX(resultA!.profile)
+  const bX = profileBboxX(resultB!.profile)
+  assert(approx(aX.min, 0, 1e-3) && approx(aX.max, 10, 1e-3),
+    `body A profile X=[${aX.min},${aX.max}], expected [0,10]`)
+  assert(approx(bX.min, 20, 1e-3) && approx(bX.max, 30, 1e-3),
+    `body B profile X=[${bX.min},${bX.max}], expected [20,30]`)
+
+  // Each body should produce a single outer silhouette path.
+  assert(resultA!.silhouettePaths.length === 1, `body A silhouettePaths=${resultA!.silhouettePaths.length}, expected 1`)
+  assert(resultB!.silhouettePaths.length === 1, `body B silhouettePaths=${resultB!.silhouettePaths.length}, expected 1`)
+}
+
 testAxisBounds()
   .then(() => testSilhouetteArtifactsAreFiltered())
+  .then(() => testMultiBodyImportSplits())
   .then(() => console.log('stl import tests passed'))
   .catch((error) => {
     console.error(error)

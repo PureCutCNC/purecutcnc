@@ -29,6 +29,7 @@ import {
   loadImportedTriangleMesh,
   normalizeImportedMeshForStorage,
   serializeImportedMesh,
+  splitMeshByConnectedComponents,
   type ImportedModelFormat,
   type ModelAxisOrientation,
 } from '../../engine/importedMesh'
@@ -46,6 +47,14 @@ interface ImportGeometryDialogProps {
   onClose: () => void
   onImportComplete?: () => void
 }
+
+/**
+ * Maximum number of disjoint bodies the model importer will split into
+ * individual features. Above this cap, the file is imported as a single
+ * feature with a warning. Manifold's `project()` is run once per body, so an
+ * uncapped import could be unboundedly slow for pathological inputs.
+ */
+const MAX_IMPORT_BODIES = 64
 
 function sourceTypeLabel(sourceType: ImportSourceType): string {
   if (sourceType === 'svg') return 'SVG'
@@ -236,7 +245,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         const modelLabel = sourceTypeLabel(loadedFile.sourceType)
         const modelScale = sourceUnits === project.meta.units ? 1 : (sourceUnits === 'inch' ? 25.4 : 1/25.4)
         const requestedSilhouetteZSteps = parseSilhouetteZStepsInput(silhouetteZSteps)
-        
+
         const fileData = loadedFile.modelBuffer
         if (!fileData) throw new Error('Missing file data')
 
@@ -244,7 +253,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setLoadingProgress(5)
         let parsedMesh = loadImportedTriangleMesh(modelFormat, fileData, axisSwap)
         if (!parsedMesh) throw new Error(`Failed to parse ${modelLabel} mesh`)
-        setLoadingProgress(12)
+        setLoadingProgress(10)
 
         setLoadingStage('Normalizing mesh')
         const importedMesh = normalizeImportedMeshForStorage(parsedMesh, modelScale)
@@ -255,58 +264,103 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           project.meta.units,
         )
         const resolvedSilhouetteZSteps = requestedSilhouetteZSteps ?? automaticSilhouetteZSteps
-        
-        setLoadingStage(`Projecting silhouette (${resolvedSilhouetteZSteps} Z steps)`)
-        setLoadingProgress(15)
-        const modelInfo = await extractImportedMeshProfileAndBounds(importedMesh, (p) => {
-          setLoadingProgress(15 + Math.round(p * 0.7))
-        }, { silhouetteZSteps: resolvedSilhouetteZSteps })
-        if (!modelInfo) throw new Error(`Failed to parse ${modelLabel} or generate silhouette`)
 
-        setLoadingStage('Preparing preview')
-        setLoadingProgress(88)
-        let topViewDataUrl: string | undefined
-        try {
-          const url = renderImportedMeshTopViewToDataUrl(importedMesh)
-          if (url) topViewDataUrl = url
-        } catch {
-          // top-view rendering is best-effort
+        setLoadingStage('Detecting bodies')
+        setLoadingProgress(13)
+        const detectedBodies = splitMeshByConnectedComponents(importedMesh)
+        let bodiesToImport: typeof detectedBodies
+        let truncationWarning: string | null = null
+        if (detectedBodies.length <= 1) {
+          bodiesToImport = [importedMesh]
+        } else if (detectedBodies.length > MAX_IMPORT_BODIES) {
+          bodiesToImport = [importedMesh]
+          truncationWarning = (
+            `The imported ${modelLabel} contains ${detectedBodies.length} disjoint bodies, ` +
+            `which exceeds the per-import limit of ${MAX_IMPORT_BODIES}. ` +
+            `Imported as a single feature; the bodies will not be individually selectable. ` +
+            `Split the file into smaller pieces or boolean-union it before importing if you need per-body features.`
+          )
+        } else {
+          bodiesToImport = detectedBodies
+        }
+        const splitIntoBodies = bodiesToImport.length > 1
+
+        const baseName = loadedFile.fileName.replace(/\.(stl|obj)$/i, '')
+        const { addFeature, addFeatureFolder, updateFeatureFolder } = useProjectStore.getState()
+
+        let importFolderId: string | null = null
+        if (splitIntoBodies) {
+          importFolderId = addFeatureFolder('features')
+          updateFeatureFolder(importFolderId, { name: baseName })
         }
 
-        setLoadingStage('Storing model')
-        setLoadingProgress(95)
-        const { addFeature } = useProjectStore.getState()
-        const featureId = crypto.randomUUID()
-        
-        addFeature({
-          id: featureId,
-          name: loadedFile.fileName.replace(/\.(stl|obj)$/i, ''),
-          kind: 'stl',
-          folderId: null,
-          stl: {
-            format: modelFormat,
-            filePath: undefined,
-            mesh: serializeImportedMesh(importedMesh, modelFormat),
-            scale: 1,
-            axisSwap: 'none',
-            silhouettePaths: modelInfo.silhouettePaths,
-            topViewDataUrl,
-          },
-          sketch: {
-            profile: modelInfo.profile,
-            origin: { x: 0, y: 0 },
-            orientationAngle: 0,
-            dimensions: [],
-            constraints: []
-          },
-          operation: 'model',
-          z_top: modelInfo.z_top,
-          z_bottom: modelInfo.z_bottom,
-          visible: true,
-          locked: false
-        })
+        const newFeatureIds: string[] = []
+        const projectionBudget = 70
+        const projectionStart = 15
+
+        for (let bodyIndex = 0; bodyIndex < bodiesToImport.length; bodyIndex += 1) {
+          const bodyMesh = bodiesToImport[bodyIndex]
+          const bodyLabel = splitIntoBodies
+            ? `Body ${bodyIndex + 1} / ${bodiesToImport.length}`
+            : modelLabel
+          const bodyStart = projectionStart + (bodyIndex / bodiesToImport.length) * projectionBudget
+          const bodyEnd = projectionStart + ((bodyIndex + 1) / bodiesToImport.length) * projectionBudget
+
+          setLoadingStage(`Projecting silhouette — ${bodyLabel} (${resolvedSilhouetteZSteps} Z steps)`)
+          setLoadingProgress(Math.round(bodyStart))
+          const modelInfo = await extractImportedMeshProfileAndBounds(bodyMesh, (p) => {
+            setLoadingProgress(Math.round(bodyStart + (bodyEnd - bodyStart) * (p / 100)))
+          }, { silhouetteZSteps: resolvedSilhouetteZSteps })
+          if (!modelInfo) {
+            throw new Error(`Failed to generate silhouette for ${bodyLabel.toLowerCase()} of ${modelLabel} import`)
+          }
+
+          let bodyTopViewDataUrl: string | undefined
+          try {
+            const url = renderImportedMeshTopViewToDataUrl(bodyMesh)
+            if (url) bodyTopViewDataUrl = url
+          } catch {
+            // top-view rendering is best-effort
+          }
+
+          const featureId = crypto.randomUUID()
+          const featureName = bodyIndex === 0 ? baseName : `${baseName} (${bodyIndex + 1})`
+          addFeature({
+            id: featureId,
+            name: featureName,
+            kind: 'stl',
+            folderId: importFolderId,
+            stl: {
+              format: modelFormat,
+              filePath: undefined,
+              mesh: serializeImportedMesh(bodyMesh, modelFormat),
+              scale: 1,
+              axisSwap: 'none',
+              silhouettePaths: modelInfo.silhouettePaths,
+              topViewDataUrl: bodyTopViewDataUrl,
+            },
+            sketch: {
+              profile: modelInfo.profile,
+              origin: { x: 0, y: 0 },
+              orientationAngle: 0,
+              dimensions: [],
+              constraints: [],
+            },
+            operation: 'model',
+            z_top: modelInfo.z_top,
+            z_bottom: modelInfo.z_bottom,
+            visible: true,
+            locked: false,
+          })
+          newFeatureIds.push(featureId)
+        }
+
         setLoadingProgress(100)
-        createdIds = [featureId]
+        createdIds = newFeatureIds
+
+        if (truncationWarning) {
+          window.alert(truncationWarning)
+        }
       } else {
         setLoadingStage('Importing geometry')
         const result = loadedFile.sourceType === 'svg'
