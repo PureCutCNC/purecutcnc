@@ -7,6 +7,7 @@
 import * as THREE from 'three'
 import {
   MAX_UINT16_INDEX,
+  computeMeshBounds,
   loadImportedBufferGeometry,
   loadImportedTriangleMesh,
   loadObjBufferGeometry,
@@ -18,6 +19,7 @@ import {
   loadStlTriangleMesh,
   normalizeImportedMeshForStorage,
   serializeImportedMesh,
+  splitMeshByConnectedComponents,
   triangleMeshToBufferGeometryChunks,
   type ImportedTriangleMesh,
   type ModelAxisOrientation,
@@ -450,6 +452,201 @@ function testLoadPersistedBufferGeometryChunksInvariant(): void {
   for (const chunk of chunks) chunk.dispose()
 }
 
+/**
+ * Build an axis-aligned cube triangle mesh (12 triangles, 8 vertices) at the
+ * given origin and with the given side length. Vertices are pre-shared, so the
+ * resulting mesh forms a single connected component under union-find without
+ * requiring weld.
+ */
+function makeCubeMesh(originX: number, originY: number, originZ: number, side: number): ImportedTriangleMesh {
+  const corners: Array<[number, number, number]> = [
+    [0, 0, 0], [side, 0, 0], [side, side, 0], [0, side, 0],
+    [0, 0, side], [side, 0, side], [side, side, side], [0, side, side],
+  ]
+  const positions = new Float32Array(8 * 3)
+  for (let i = 0; i < 8; i += 1) {
+    positions[i * 3] = originX + corners[i][0]
+    positions[i * 3 + 1] = originY + corners[i][1]
+    positions[i * 3 + 2] = originZ + corners[i][2]
+  }
+  // 6 faces × 2 triangles, CCW from outside.
+  const faces: number[][] = [
+    [0, 2, 1], [0, 3, 2], // -Z
+    [4, 5, 6], [4, 6, 7], // +Z
+    [0, 1, 5], [0, 5, 4], // -Y
+    [2, 3, 7], [2, 7, 6], // +Y
+    [1, 2, 6], [1, 6, 5], // +X
+    [0, 4, 7], [0, 7, 3], // -X
+  ]
+  const index = new Uint32Array(faces.length * 3)
+  for (let i = 0; i < faces.length; i += 1) {
+    index[i * 3] = faces[i][0]
+    index[i * 3 + 1] = faces[i][1]
+    index[i * 3 + 2] = faces[i][2]
+  }
+  return { positions, index, bounds: computeMeshBounds(positions) }
+}
+
+function concatMeshes(...meshes: ImportedTriangleMesh[]): ImportedTriangleMesh {
+  const totalVerts = meshes.reduce((acc, m) => acc + m.positions.length / 3, 0)
+  const totalTris = meshes.reduce((acc, m) => acc + m.index.length / 3, 0)
+  const positions = new Float32Array(totalVerts * 3)
+  const index = new Uint32Array(totalTris * 3)
+  let vOffset = 0
+  let iOffset = 0
+  for (const mesh of meshes) {
+    positions.set(mesh.positions, vOffset * 3)
+    for (let i = 0; i < mesh.index.length; i += 1) {
+      index[iOffset + i] = mesh.index[i] + vOffset
+    }
+    vOffset += mesh.positions.length / 3
+    iOffset += mesh.index.length
+  }
+  return { positions, index, bounds: computeMeshBounds(positions) }
+}
+
+function testSplitSingleBody(): void {
+  console.log('Testing splitMeshByConnectedComponents single-body passthrough...')
+  const cube = makeCubeMesh(0, 0, 0, 5)
+  const split = splitMeshByConnectedComponents(cube)
+  assert(split.length === 1, `expected 1 component for a single cube, got ${split.length}`)
+  assert(split[0].positions.length === cube.positions.length, 'vertex count should be preserved')
+  assert(split[0].index.length === cube.index.length, 'triangle count should be preserved')
+  assert(split[0] !== cube, 'returned mesh should be a clone, not the input reference')
+  assert(approx(split[0].bounds.maxX, 5), `expected maxX=5, got ${split[0].bounds.maxX}`)
+}
+
+function testSplitTwoDisjointCubes(): void {
+  console.log('Testing splitMeshByConnectedComponents two disjoint cubes...')
+  const cubeA = makeCubeMesh(0, 0, 0, 10)
+  const cubeB = makeCubeMesh(20, 0, 0, 10)
+  const merged = concatMeshes(cubeA, cubeB)
+  const split = splitMeshByConnectedComponents(merged)
+  assert(split.length === 2, `expected 2 components, got ${split.length}`)
+
+  const totalVerts = split.reduce((acc, m) => acc + m.positions.length / 3, 0)
+  const totalTris = split.reduce((acc, m) => acc + m.index.length / 3, 0)
+  assert(totalVerts === merged.positions.length / 3, 'vertex counts must sum to input')
+  assert(totalTris === merged.index.length / 3, 'triangle counts must sum to input')
+
+  // Find which sub-mesh corresponds to which cube via X bounds.
+  const sortedByX = [...split].sort((a, b) => a.bounds.minX - b.bounds.minX)
+  assert(approx(sortedByX[0].bounds.minX, 0) && approx(sortedByX[0].bounds.maxX, 10),
+    `expected first body X=[0,10], got [${sortedByX[0].bounds.minX},${sortedByX[0].bounds.maxX}]`)
+  assert(approx(sortedByX[1].bounds.minX, 20) && approx(sortedByX[1].bounds.maxX, 30),
+    `expected second body X=[20,30], got [${sortedByX[1].bounds.minX},${sortedByX[1].bounds.maxX}]`)
+
+  // Each sub-mesh should be self-contained: indices reference only its own vertices.
+  for (const sub of split) {
+    const subVerts = sub.positions.length / 3
+    for (let i = 0; i < sub.index.length; i += 1) {
+      assert(sub.index[i] < subVerts, `sub-mesh index ${sub.index[i]} out of range (verts=${subVerts})`)
+    }
+  }
+}
+
+function testSplitThreeDisjointCubes(): void {
+  console.log('Testing splitMeshByConnectedComponents three disjoint cubes...')
+  const merged = concatMeshes(
+    makeCubeMesh(0, 0, 0, 5),
+    makeCubeMesh(20, 0, 0, 5),
+    makeCubeMesh(0, 20, 0, 5),
+  )
+  const split = splitMeshByConnectedComponents(merged)
+  assert(split.length === 3, `expected 3 components, got ${split.length}`)
+}
+
+function testSplitEmptyMesh(): void {
+  console.log('Testing splitMeshByConnectedComponents empty mesh...')
+  const empty: ImportedTriangleMesh = {
+    positions: new Float32Array(0),
+    index: new Uint32Array(0),
+    bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+  }
+  const split = splitMeshByConnectedComponents(empty)
+  assert(split.length === 0, `expected 0 components for empty mesh, got ${split.length}`)
+}
+
+/**
+ * Build a cube whose 12 triangles each carry their own copy of every vertex
+ * position (36 distinct vertex slots, all positionally coincident in groups
+ * of 3 at each corner). This mimics STLLoader output before merging, where
+ * per-face normals prevent attribute-based weld from collapsing positional
+ * duplicates. The connected-component algorithm must rely on position
+ * equivalence to recognize this as a single body.
+ */
+function makeUnweldedCubeMesh(originX: number, originY: number, originZ: number, side: number): ImportedTriangleMesh {
+  const corners: Array<[number, number, number]> = [
+    [0, 0, 0], [side, 0, 0], [side, side, 0], [0, side, 0],
+    [0, 0, side], [side, 0, side], [side, side, side], [0, side, side],
+  ]
+  const faces: number[][] = [
+    [0, 2, 1], [0, 3, 2],
+    [4, 5, 6], [4, 6, 7],
+    [0, 1, 5], [0, 5, 4],
+    [2, 3, 7], [2, 7, 6],
+    [1, 2, 6], [1, 6, 5],
+    [0, 4, 7], [0, 7, 3],
+  ]
+  const positions = new Float32Array(faces.length * 3 * 3)
+  const index = new Uint32Array(faces.length * 3)
+  for (let t = 0; t < faces.length; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const cornerIdx = faces[t][k]
+      const c = corners[cornerIdx]
+      const vSlot = t * 3 + k
+      positions[vSlot * 3] = originX + c[0]
+      positions[vSlot * 3 + 1] = originY + c[1]
+      positions[vSlot * 3 + 2] = originZ + c[2]
+      index[vSlot] = vSlot
+    }
+  }
+  return { positions, index, bounds: computeMeshBounds(positions) }
+}
+
+function testSplitPositionWeldRecognizesSingleBody(): void {
+  console.log('Testing splitMeshByConnectedComponents position-weld on unwelded cube...')
+  // Each triangle has its own vertex copies. Index-only union-find would
+  // give 12 disjoint components (one per triangle). Position-based weld must
+  // collapse them to 1 body — this is the STLLoader-output shape that
+  // triggered the 384-bodies regression.
+  const cube = makeUnweldedCubeMesh(0, 0, 0, 5)
+  const split = splitMeshByConnectedComponents(cube)
+  assert(split.length === 1, `expected 1 component via position weld, got ${split.length}`)
+  assert(approx(split[0].bounds.maxX, 5), `expected maxX=5, got ${split[0].bounds.maxX}`)
+}
+
+function testSplitPositionWeldTwoUnweldedCubes(): void {
+  console.log('Testing splitMeshByConnectedComponents position-weld on two unwelded cubes...')
+  const cubeA = makeUnweldedCubeMesh(0, 0, 0, 10)
+  const cubeB = makeUnweldedCubeMesh(20, 0, 0, 10)
+  const merged = concatMeshes(cubeA, cubeB)
+  const split = splitMeshByConnectedComponents(merged)
+  assert(split.length === 2, `expected 2 components via position weld, got ${split.length}`)
+
+  const sortedByX = [...split].sort((a, b) => a.bounds.minX - b.bounds.minX)
+  assert(approx(sortedByX[0].bounds.maxX, 10), `body A maxX=${sortedByX[0].bounds.maxX}, expected 10`)
+  assert(approx(sortedByX[1].bounds.minX, 20), `body B minX=${sortedByX[1].bounds.minX}, expected 20`)
+}
+
+function testSplitSharedVertexTreatedAsOne(): void {
+  console.log('Testing splitMeshByConnectedComponents shared-corner bodies treated as one...')
+  // Two cubes sharing a single vertex via the concat (we construct that by
+  // overlapping a vertex). We pre-shared the vertex by using the same index.
+  // We build it manually: cube A at origin with corner (0,0,0); cube B sharing
+  // that corner. The union-find sees one component because they share a vertex.
+  const cubeA = makeCubeMesh(0, 0, 0, 5)
+  const cubeB = makeCubeMesh(0, 0, 0, 5) // identical positions → after concat, vertices duplicated
+  // Build a mesh where cubeB triangles re-use the SAME vertex indices as cubeA.
+  const positions = new Float32Array(cubeA.positions)
+  const index = new Uint32Array(cubeA.index.length + cubeB.index.length)
+  index.set(cubeA.index, 0)
+  index.set(cubeB.index, cubeA.index.length)
+  const mesh: ImportedTriangleMesh = { positions, index, bounds: computeMeshBounds(positions) }
+  const split = splitMeshByConnectedComponents(mesh)
+  assert(split.length === 1, `expected 1 component when bodies share vertices, got ${split.length}`)
+}
+
 testAxisOrientations()
 testTriangleMeshCacheReuse()
 testGeometryCloneCache()
@@ -464,5 +661,12 @@ testChunkerLargeMeshSplits()
 testChunkerVertexShared()
 testChunkerMergeVertices()
 testLoadPersistedBufferGeometryChunksInvariant()
+testSplitSingleBody()
+testSplitTwoDisjointCubes()
+testSplitThreeDisjointCubes()
+testSplitEmptyMesh()
+testSplitPositionWeldRecognizesSingleBody()
+testSplitPositionWeldTwoUnweldedCubes()
+testSplitSharedVertexTreatedAsOne()
 
 console.log('importedMesh tests passed')

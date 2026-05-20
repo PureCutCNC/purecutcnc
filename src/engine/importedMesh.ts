@@ -740,6 +740,148 @@ export function loadImportedBufferGeometry(
   }
 }
 
+/**
+ * Position-equivalence tolerance for connected-component detection. Two
+ * vertices closer than this on every axis are treated as the same body
+ * attachment point. Independent of `BufferGeometryUtils.mergeVertices` —
+ * that weld hashes per-attribute (position + normal), so STLLoader output
+ * leaves a body's shared corners split across multiple "vertices" (one per
+ * incident face normal). Index-only union-find then over-splits the mesh
+ * into hundreds of fake bodies. The position-only weld below is local to
+ * this function and does not touch the imported mesh's stored indices,
+ * which the 3D viewport depends on for per-face shading normals.
+ */
+const COMPONENT_WELD_TOLERANCE = 1e-5
+
+/**
+ * Partition a triangle mesh into disjoint connected components. Returns one
+ * sub-mesh per component, each with vertex indices remapped to a compact range
+ * and bounds recomputed. The input mesh is not mutated. If the mesh forms a
+ * single connected component, the returned array has length 1 (a clone of the
+ * input). Two bodies whose surfaces touch within
+ * `COMPONENT_WELD_TOLERANCE` will collapse into one component — this is the
+ * desired behavior for round-tripped exports (a unioned body stays unioned)
+ * and acceptable for hand-authored inputs.
+ */
+export function splitMeshByConnectedComponents(mesh: ImportedTriangleMesh): ImportedTriangleMesh[] {
+  const vertexCount = mesh.positions.length / 3
+  const triangleCount = mesh.index.length / 3
+  if (vertexCount === 0 || triangleCount === 0) return []
+
+  // Position-canonical vertex id per input vertex via spatial hashing.
+  // Vertices whose quantized cell coordinates match share a canonical id.
+  const inverseTolerance = 1 / COMPONENT_WELD_TOLERANCE
+  const canonicalIdByVertex = new Int32Array(vertexCount)
+  const cellToCanonical = new Map<string, number>()
+  let canonicalCount = 0
+  for (let v = 0; v < vertexCount; v += 1) {
+    const x = mesh.positions[v * 3]
+    const y = mesh.positions[v * 3 + 1]
+    const z = mesh.positions[v * 3 + 2]
+    const key = `${Math.round(x * inverseTolerance)},${Math.round(y * inverseTolerance)},${Math.round(z * inverseTolerance)}`
+    let id = cellToCanonical.get(key)
+    if (id === undefined) {
+      id = canonicalCount
+      canonicalCount += 1
+      cellToCanonical.set(key, id)
+    }
+    canonicalIdByVertex[v] = id
+  }
+
+  const parent = new Int32Array(canonicalCount)
+  for (let i = 0; i < canonicalCount; i += 1) parent[i] = i
+
+  function find(x: number): number {
+    let r = x
+    while (parent[r] !== r) r = parent[r]
+    let cursor = x
+    while (parent[cursor] !== r) {
+      const next = parent[cursor]
+      parent[cursor] = r
+      cursor = next
+    }
+    return r
+  }
+
+  function union(a: number, b: number): void {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+
+  for (let t = 0; t < triangleCount; t += 1) {
+    const a = canonicalIdByVertex[mesh.index[t * 3]]
+    const b = canonicalIdByVertex[mesh.index[t * 3 + 1]]
+    const c = canonicalIdByVertex[mesh.index[t * 3 + 2]]
+    union(a, b)
+    union(b, c)
+  }
+
+  const triComponentRoot = new Int32Array(triangleCount)
+  const rootSet = new Set<number>()
+  for (let t = 0; t < triangleCount; t += 1) {
+    const root = find(canonicalIdByVertex[mesh.index[t * 3]])
+    triComponentRoot[t] = root
+    rootSet.add(root)
+  }
+
+  if (rootSet.size <= 1) {
+    return [{
+      positions: new Float32Array(mesh.positions),
+      index: new Uint32Array(mesh.index),
+      bounds: { ...mesh.bounds },
+    }]
+  }
+
+  const roots = Array.from(rootSet)
+  const subMeshes: ImportedTriangleMesh[] = []
+  for (const root of roots) {
+    const vertexRemap = new Int32Array(vertexCount)
+    vertexRemap.fill(-1)
+    let nextVertex = 0
+    let triCount = 0
+
+    for (let t = 0; t < triangleCount; t += 1) {
+      if (triComponentRoot[t] !== root) continue
+      triCount += 1
+      for (let k = 0; k < 3; k += 1) {
+        const v = mesh.index[t * 3 + k]
+        if (vertexRemap[v] === -1) {
+          vertexRemap[v] = nextVertex
+          nextVertex += 1
+        }
+      }
+    }
+
+    const subPositions = new Float32Array(nextVertex * 3)
+    for (let v = 0; v < vertexCount; v += 1) {
+      const dst = vertexRemap[v]
+      if (dst === -1) continue
+      subPositions[dst * 3] = mesh.positions[v * 3]
+      subPositions[dst * 3 + 1] = mesh.positions[v * 3 + 1]
+      subPositions[dst * 3 + 2] = mesh.positions[v * 3 + 2]
+    }
+
+    const subIndices = new Uint32Array(triCount * 3)
+    let outIndex = 0
+    for (let t = 0; t < triangleCount; t += 1) {
+      if (triComponentRoot[t] !== root) continue
+      subIndices[outIndex] = vertexRemap[mesh.index[t * 3]]
+      subIndices[outIndex + 1] = vertexRemap[mesh.index[t * 3 + 1]]
+      subIndices[outIndex + 2] = vertexRemap[mesh.index[t * 3 + 2]]
+      outIndex += 3
+    }
+
+    subMeshes.push({
+      positions: subPositions,
+      index: subIndices,
+      bounds: computeMeshBounds(subPositions),
+    })
+  }
+
+  return subMeshes
+}
+
 export function computeMeshBounds(positions: Float32Array): ImportedMeshBounds {
   let minX = Infinity, maxX = -Infinity
   let minY = Infinity, maxY = -Infinity
