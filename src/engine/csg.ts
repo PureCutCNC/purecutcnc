@@ -19,7 +19,7 @@ import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel }
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry, getFeatureGeometryProfiles } from '../text'
-import { loadPersistedBufferGeometry, loadPersistedTriangleMesh } from './importedMesh'
+import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
@@ -428,49 +428,96 @@ export function buildFeatureMesh(
   selected = false,
   hovered = false,
   stockThickness?: number,
-): THREE.Mesh {
+): THREE.Object3D {
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
   if (asset) {
     const stl = feature.stl
-    const geometry = loadPersistedBufferGeometry(asset, false)
+    const chunks = loadPersistedBufferGeometryChunks(asset, false)
     const material = new THREE.MeshStandardMaterial({
       color: selected ? 0xffaa00 : hovered ? 0x44aaff : 0xb7c2cf,
       roughness: 0.82,
       metalness: 0.05,
       side: THREE.DoubleSide,
     })
-    if (!geometry) return new THREE.Mesh(new THREE.BufferGeometry(), material)
+    if (!chunks || chunks.length === 0) {
+      return new THREE.Mesh(new THREE.BufferGeometry(), material)
+    }
 
-    const scale = stl?.scale ?? 1
+    const userScale = stl?.scale ?? 1
     const angleRad = (feature.sketch.orientationAngle ?? 0) * (Math.PI / 180)
-    
-    // Initial uniform scale
-    geometry.scale(scale, scale, scale)
-    
-    // Resolve z dimensions (DimensionRef → number)
-    // STL features always store numeric z values, but the type allows DimensionRef
+
+    // Resolve z dimensions (DimensionRef → number).
+    // STL features always store numeric z values, but the type allows DimensionRef.
     const zTop = Number(feature.z_top) || 0
     const zBottom = Number(feature.z_bottom) || 0
-    
-    // Vertical positioning and scaling based on z_bottom/z_top
-    geometry.computeBoundingBox()
-    const bbox = geometry.boundingBox!
-    const meshHeight = bbox.max.z - bbox.min.z
-    const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
-    const zScale = targetHeight / (meshHeight || 1)
-    
-    // Move to 0, scale Z, then move to feature.z_bottom
-    geometry.translate(0, 0, -bbox.min.z)
-    geometry.scale(1, 1, zScale)
-    geometry.translate(0, 0, Math.min(zTop, zBottom))
 
-    geometry.rotateZ(angleRad)
-    geometry.translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
-    geometry.rotateX(-Math.PI / 2)
-    
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.scale.z = -1
-    return mesh
+    // Use the persisted mesh bounds directly — they're already in mesh-local
+    // space, untransformed. Apply userScale to derive the post-uniform-scale
+    // mesh height for the z-fit step. (Previously this was done via
+    // geometry.computeBoundingBox() after baking userScale into the geometry.)
+    const meshHeight = (asset.bounds.maxZ - asset.bounds.minZ) * userScale
+    const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
+    const zScaleFactor = targetHeight / (meshHeight || 1)
+    const minZAfterScale = asset.bounds.minZ * userScale
+
+    // The original geometry-level transform sequence (applied in order):
+    //   1. scale(userScale)              → uniform scale
+    //   2. translate(0,0,-minZ)          → move bottom of mesh to z=0
+    //   3. scale(1,1,zScaleFactor)       → stretch Z to targetHeight
+    //   4. translate(0,0,min(zTop,zBot)) → move bottom to feature's bottom plane
+    //   5. rotateZ(angleRad)
+    //   6. translate(origin.x, origin.y, 0)
+    //   7. rotateX(-π/2)                 → swap Y/Z for viewport convention
+    //   8. mesh.scale.z = -1             → flip Z (final mesh-local axis flip)
+    //
+    // We reproduce that as an Object3D hierarchy so each chunk shares it
+    // without baking transforms into per-chunk geometry. Read from outer (last
+    // applied) to inner (first applied):
+    //
+    //   group (rotateX(-π/2), translate(origin), rotateZ(angleRad))
+    //     └── inner (scale Z, translate -minZ*userScale, scale userScale, then
+    //                translate by min(zTop,zBot) along Z BEFORE rotateX)
+    //
+    // The clearest way to assemble this without juggling matrices is two
+    // nested groups: an inner that handles the mesh-local scale/translate, and
+    // an outer that handles the world-space rotate/translate. We also fold
+    // mesh.scale.z = -1 into the inner.
+
+    // Inner Z transform reproduces steps 1–4 in mesh-local space:
+    //   z' = (z * userScale - minZAfterScale) * zScaleFactor + min(zTop,zBot)
+    // As an affine transform on (x,y,z): scale (userScale, userScale, userScale*zScaleFactor),
+    // then translate (0, 0, -minZAfterScale * zScaleFactor + min(zTop,zBot)).
+    const innerGroup = new THREE.Group()
+    innerGroup.scale.set(userScale, userScale, userScale * zScaleFactor)
+    innerGroup.position.set(0, 0, -minZAfterScale * zScaleFactor + Math.min(zTop, zBottom))
+    for (const chunk of chunks) {
+      innerGroup.add(new THREE.Mesh(chunk, material))
+    }
+
+    // Each subsequent step in the original sequence (5–7, then mesh.scale.z = -1)
+    // is wrapped as its own group, outer = applied later. Three.js composes a
+    // node's local transform as T * R * S; the inner group already uses both
+    // scale and translation, so all subsequent ops use one transform per node
+    // to avoid combined-order surprises.
+    const rotateZGroup = new THREE.Group()
+    rotateZGroup.rotation.z = angleRad
+    rotateZGroup.add(innerGroup)
+
+    const translateGroup = new THREE.Group()
+    translateGroup.position.set(feature.sketch.origin.x, feature.sketch.origin.y, 0)
+    translateGroup.add(rotateZGroup)
+
+    const rotateXGroup = new THREE.Group()
+    rotateXGroup.rotation.x = -Math.PI / 2
+    rotateXGroup.add(translateGroup)
+
+    // Outermost — the equivalent of the original `mesh.scale.z = -1` applied
+    // AFTER the geometry's rotateX, so this must live in its own group.
+    const scaleZGroup = new THREE.Group()
+    scaleZGroup.scale.z = -1
+    scaleZGroup.add(rotateXGroup)
+
+    return scaleZGroup
   }
 
   const shape = profileToShape(feature.sketch.profile)
@@ -889,7 +936,7 @@ export interface SceneObjects {
   stockMesh: THREE.Mesh
   stockWireframe: THREE.LineSegments
   modelMesh: THREE.Mesh | null
-  featureMeshes: Map<string, THREE.Mesh>
+  featureMeshes: Map<string, THREE.Object3D>
   openFeatureLines: Map<string, THREE.Object3D>
   tabMeshes: Map<string, THREE.Mesh>
   clampMeshes: Map<string, THREE.Mesh>
@@ -907,7 +954,7 @@ export async function buildScene(
   const collidingClampIdSet = new Set(collidingClampIds)
   const stockMesh = buildStockMesh(project.stock)
   const stockWireframe = buildStockWireframe(project.stock)
-  const featureMeshes = new Map<string, THREE.Mesh>()
+  const featureMeshes = new Map<string, THREE.Object3D>()
   const openFeatureLines = new Map<string, THREE.Object3D>()
   const tabMeshes = new Map<string, THREE.Mesh>()
   const clampMeshes = new Map<string, THREE.Mesh>()

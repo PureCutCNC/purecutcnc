@@ -4,17 +4,22 @@
  * Run with: npx tsx src/engine/importedMesh.test.ts
  */
 
+import * as THREE from 'three'
 import {
+  MAX_UINT16_INDEX,
   loadImportedBufferGeometry,
   loadImportedTriangleMesh,
   loadObjBufferGeometry,
   loadObjTriangleMesh,
   loadPersistedBufferGeometry,
+  loadPersistedBufferGeometryChunks,
   loadPersistedTriangleMesh,
   loadStlBufferGeometry,
   loadStlTriangleMesh,
   normalizeImportedMeshForStorage,
   serializeImportedMesh,
+  triangleMeshToBufferGeometryChunks,
+  type ImportedTriangleMesh,
   type ModelAxisOrientation,
 } from './importedMesh'
 
@@ -227,6 +232,224 @@ function testPersistedMeshRoundTrip(): void {
   assert(firstGeometry !== secondGeometry, 'persisted geometry cache should return mutable clones')
 }
 
+// Render-safety invariant: every BufferGeometry destined for a Three.js Mesh
+// must use a Uint16Array index buffer with at most MAX_UINT16_INDEX vertices.
+// This is the structural guarantee that prevents the Chrome/macOS Uint32-index
+// rendering bug from recurring.
+function assertWebGLSafe(label: string, chunks: THREE.BufferGeometry[]): void {
+  assert(chunks.length > 0, `${label}: expected at least one chunk`)
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i]
+    const position = chunk.getAttribute('position')
+    const index = chunk.getIndex()
+    if (!index) throw new Error(`${label}: chunk ${i} is non-indexed`)
+    assert(
+      index.array instanceof Uint16Array,
+      `${label}: chunk ${i} must use Uint16Array indices, got ${index.array.constructor.name}`,
+    )
+    assert(
+      position.count <= MAX_UINT16_INDEX,
+      `${label}: chunk ${i} has ${position.count} vertices, exceeds ${MAX_UINT16_INDEX}`,
+    )
+  }
+}
+
+function makeTriangleMesh(positions: Float32Array, index: Uint32Array): ImportedTriangleMesh {
+  let minX = Infinity, maxX = -Infinity
+  let minY = Infinity, maxY = -Infinity
+  let minZ = Infinity, maxZ = -Infinity
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2]
+    if (x < minX) minX = x; if (x > maxX) maxX = x
+    if (y < minY) minY = y; if (y > maxY) maxY = y
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+  }
+  return { positions, index, bounds: { minX, maxX, minY, maxY, minZ, maxZ } }
+}
+
+function testChunkerSmallMeshSingleUint16Chunk(): void {
+  console.log('Testing chunker: small mesh stays single Uint16 chunk...')
+  const vertexCount = 1000
+  const triangleCount = 500
+  const positions = new Float32Array(vertexCount * 3)
+  for (let i = 0; i < vertexCount; i += 1) {
+    positions[i * 3] = i
+    positions[i * 3 + 1] = 0
+    positions[i * 3 + 2] = 0
+  }
+  const index = new Uint32Array(triangleCount * 3)
+  for (let t = 0; t < triangleCount; t += 1) {
+    index[t * 3] = t * 2
+    index[t * 3 + 1] = t * 2 + 1
+    index[t * 3 + 2] = (t * 2 + 2) % vertexCount
+  }
+  const mesh = makeTriangleMesh(positions, index)
+  const chunks = triangleMeshToBufferGeometryChunks(mesh, false)
+  assert(chunks.length === 1, `expected 1 chunk, got ${chunks.length}`)
+  assertWebGLSafe('small-mesh', chunks)
+  const position = chunks[0].getAttribute('position')
+  const idx = chunks[0].getIndex()!
+  assert(position.count === vertexCount, `expected ${vertexCount} verts, got ${position.count}`)
+  assert(idx.count === triangleCount * 3, `expected ${triangleCount * 3} indices, got ${idx.count}`)
+  for (const chunk of chunks) chunk.dispose()
+}
+
+function testChunkerLargeMeshSplits(): void {
+  console.log('Testing chunker: large mesh splits into multiple Uint16 chunks...')
+  // Construct a mesh where each triangle uses three fresh vertices, forcing
+  // splits as the chunker walks triangles in order.
+  const triangleCount = 33334
+  const vertexCount = triangleCount * 3
+  const positions = new Float32Array(vertexCount * 3)
+  const index = new Uint32Array(triangleCount * 3)
+  for (let v = 0; v < vertexCount; v += 1) {
+    positions[v * 3] = v
+    positions[v * 3 + 1] = v * 0.5
+    positions[v * 3 + 2] = v * 0.25
+  }
+  for (let t = 0; t < triangleCount; t += 1) {
+    index[t * 3] = t * 3
+    index[t * 3 + 1] = t * 3 + 1
+    index[t * 3 + 2] = t * 3 + 2
+  }
+  const mesh = makeTriangleMesh(positions, index)
+  const chunks = triangleMeshToBufferGeometryChunks(mesh, false)
+  assert(chunks.length >= 2, `expected ≥2 chunks for ${vertexCount}-vert mesh, got ${chunks.length}`)
+  assertWebGLSafe('large-mesh', chunks)
+
+  // Sum of triangle counts across chunks must equal the input.
+  let totalTriangles = 0
+  for (const chunk of chunks) {
+    const chunkIndex = chunk.getIndex()!
+    totalTriangles += chunkIndex.count / 3
+  }
+  assert(
+    totalTriangles === triangleCount,
+    `expected ${triangleCount} triangles across chunks, got ${totalTriangles}`,
+  )
+
+  // Multiset equality of triangles: decode every chunk's triangles back into
+  // world-space vertex triples and verify the set matches the input.
+  const triangleKey = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number): string => {
+    return `${ax},${ay},${az}|${bx},${by},${bz}|${cx},${cy},${cz}`
+  }
+  const expected = new Set<string>()
+  for (let t = 0; t < triangleCount; t += 1) {
+    const a = index[t * 3], b = index[t * 3 + 1], c = index[t * 3 + 2]
+    expected.add(triangleKey(
+      positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2],
+      positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2],
+      positions[c * 3], positions[c * 3 + 1], positions[c * 3 + 2],
+    ))
+  }
+  const seen = new Set<string>()
+  for (const chunk of chunks) {
+    const chunkPos = chunk.getAttribute('position').array as Float32Array
+    const chunkIdx = chunk.getIndex()!.array as Uint16Array
+    for (let t = 0; t < chunkIdx.length / 3; t += 1) {
+      const a = chunkIdx[t * 3], b = chunkIdx[t * 3 + 1], c = chunkIdx[t * 3 + 2]
+      seen.add(triangleKey(
+        chunkPos[a * 3], chunkPos[a * 3 + 1], chunkPos[a * 3 + 2],
+        chunkPos[b * 3], chunkPos[b * 3 + 1], chunkPos[b * 3 + 2],
+        chunkPos[c * 3], chunkPos[c * 3 + 1], chunkPos[c * 3 + 2],
+      ))
+    }
+  }
+  assert(seen.size === expected.size, `expected ${expected.size} unique triangles, decoded ${seen.size}`)
+  for (const key of expected) {
+    assert(seen.has(key), `chunked output is missing triangle ${key}`)
+  }
+  for (const chunk of chunks) chunk.dispose()
+}
+
+function testChunkerVertexShared(): void {
+  console.log('Testing chunker: shared-vertex mesh preserves triangle set...')
+  // ~80k unique vertices, but triangles share neighbouring vertices in pairs
+  // so the chunker has to track per-chunk uniqueness correctly.
+  const stripVertCount = 80000
+  const triangleCount = stripVertCount - 2 // triangle strip
+  const positions = new Float32Array(stripVertCount * 3)
+  const index = new Uint32Array(triangleCount * 3)
+  for (let v = 0; v < stripVertCount; v += 1) {
+    positions[v * 3] = v
+    positions[v * 3 + 1] = (v % 2) * 1
+    positions[v * 3 + 2] = 0
+  }
+  for (let t = 0; t < triangleCount; t += 1) {
+    // strip pattern: (t, t+1, t+2)
+    index[t * 3] = t
+    index[t * 3 + 1] = t + 1
+    index[t * 3 + 2] = t + 2
+  }
+  const mesh = makeTriangleMesh(positions, index)
+  const chunks = triangleMeshToBufferGeometryChunks(mesh, false)
+  assert(chunks.length >= 2, `expected ≥2 chunks for ${stripVertCount}-vert mesh, got ${chunks.length}`)
+  assertWebGLSafe('shared-vertex', chunks)
+
+  let totalTriangles = 0
+  for (const chunk of chunks) {
+    totalTriangles += chunk.getIndex()!.count / 3
+  }
+  assert(
+    totalTriangles === triangleCount,
+    `expected ${triangleCount} triangles, got ${totalTriangles}`,
+  )
+  for (const chunk of chunks) chunk.dispose()
+}
+
+function testChunkerMergeVertices(): void {
+  console.log('Testing chunker: mergeVertices welds duplicates within a chunk...')
+  // Six co-located triangles' worth of vertices, all at the same point.
+  const vertexCount = 9
+  const positions = new Float32Array(vertexCount * 3)
+  for (let v = 0; v < vertexCount; v += 1) {
+    // First triangle at origin, second at (1,0,0) — duplicate co-located verts.
+    positions[v * 3] = v < 3 ? 0 : 1
+    positions[v * 3 + 1] = 0
+    positions[v * 3 + 2] = 0
+  }
+  // Just two degenerate triangles with duplicated verts — enough to assert
+  // mergeVertices fires.
+  const index = new Uint32Array([0, 1, 2, 3, 4, 5])
+  const mesh = makeTriangleMesh(positions, index.slice(0, 6))
+
+  const merged = triangleMeshToBufferGeometryChunks(mesh, true)
+  assert(merged.length === 1, `expected single chunk, got ${merged.length}`)
+  const mergedCount = merged[0].getAttribute('position').count
+  assert(
+    mergedCount < vertexCount,
+    `expected mergeVertices to reduce vertex count below ${vertexCount}, got ${mergedCount}`,
+  )
+  assertWebGLSafe('merge-vertices', merged)
+  for (const chunk of merged) chunk.dispose()
+}
+
+function testLoadPersistedBufferGeometryChunksInvariant(): void {
+  console.log('Testing loadPersistedBufferGeometryChunks honours the WebGL-safe invariant...')
+  // Build a >65535-vert ImportedTriangleMesh, persist it, then load through
+  // the chunked loader and assert the cached result respects the invariant.
+  const triangleCount = 30000
+  const vertexCount = triangleCount * 3
+  const positions = new Float32Array(vertexCount * 3)
+  const index = new Uint32Array(triangleCount * 3)
+  for (let v = 0; v < vertexCount; v += 1) {
+    positions[v * 3] = v
+    positions[v * 3 + 1] = 0
+    positions[v * 3 + 2] = 0
+  }
+  for (let t = 0; t < triangleCount; t += 1) {
+    index[t * 3] = t * 3
+    index[t * 3 + 1] = t * 3 + 1
+    index[t * 3 + 2] = t * 3 + 2
+  }
+  const persisted = serializeImportedMesh(makeTriangleMesh(positions, index), 'stl')
+  const chunks = loadPersistedBufferGeometryChunks(persisted, false)
+  if (!chunks) throw new Error('expected chunked geometry from persisted mesh')
+  assert(chunks.length >= 2, `expected chunked output for ${vertexCount}-vert mesh, got ${chunks.length}`)
+  assertWebGLSafe('persisted-chunks', chunks)
+  for (const chunk of chunks) chunk.dispose()
+}
+
 testAxisOrientations()
 testTriangleMeshCacheReuse()
 testGeometryCloneCache()
@@ -236,5 +459,10 @@ testObjFaceSyntaxAndTriangulation()
 testObjInvalidFaces()
 testObjGeometryCloneCache()
 testPersistedMeshRoundTrip()
+testChunkerSmallMeshSingleUint16Chunk()
+testChunkerLargeMeshSplits()
+testChunkerVertexShared()
+testChunkerMergeVertices()
+testLoadPersistedBufferGeometryChunksInvariant()
 
 console.log('importedMesh tests passed')
