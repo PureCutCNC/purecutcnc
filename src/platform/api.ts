@@ -69,6 +69,22 @@ export interface PlatformApi {
   ): Promise<string | null>
 
   /**
+   * Write a binary file (e.g. binary STL).
+   *
+   * - If existingPath is provided, write to that path without a dialog.
+   * - Otherwise show a Save As dialog first.
+   *
+   * Returns the path written to, or null if the user cancels.
+   */
+  saveBinaryFile(
+    suggestedName: string,
+    content: Uint8Array,
+    extension: string,
+    mimeType: string,
+    existingPath?: string | null
+  ): Promise<string | null>
+
+  /**
    * Prompt the user to choose a JSON file and return its content.
    * Returns null if the user cancels.
    */

@@ -56,7 +56,7 @@ function readFileAsText(file: File): Promise<string> {
   })
 }
 
-function triggerDownload(content: string, fileName: string, mimeType: string): void {
+function triggerDownload(content: BlobPart, fileName: string, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -73,7 +73,7 @@ function triggerDownload(content: string, fileName: string, mimeType: string): v
  * Falls back to triggerDownload (always succeeds) when the API is missing.
  */
 async function saveFile(
-  content: string,
+  content: BlobPart,
   fileName: string,
   mimeType: string,
   description: string,
@@ -147,6 +147,23 @@ export const browserPlatform: PlatformApi = {
       ? suggestedName
       : `${suggestedName}.${extension}`
     return saveFile(content, fileName, 'text/plain', `${extension.toUpperCase()} file`, [`.${extension}`])
+  },
+
+  async saveBinaryFile(
+    suggestedName: string,
+    content: Uint8Array,
+    extension: string,
+    mimeType: string
+  ): Promise<string | null> {
+    const fileName = suggestedName.endsWith(`.${extension}`)
+      ? suggestedName
+      : `${suggestedName}.${extension}`
+    // Copy into a Uint8Array<ArrayBuffer> so it satisfies BlobPart under
+    // TS 5.7+ (the default Uint8Array generic is now ArrayBufferLike which
+    // includes SharedArrayBuffer and isn't a BlobPart).
+    const buffer = new ArrayBuffer(content.byteLength)
+    new Uint8Array(buffer).set(content)
+    return saveFile(buffer, fileName, mimeType, `${extension.toUpperCase()} file`, [`.${extension}`])
   },
 
   async pickJsonFile(): Promise<string | null> {

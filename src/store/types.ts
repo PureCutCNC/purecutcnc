@@ -208,6 +208,8 @@ export interface ProjectStore {
   filePath: string | null
   /** Path of the most recent G-code export. Null until first export this session. */
   lastExportPath: string | null
+  /** Path of the most recent 3D model export. Null until first export this session. */
+  lastModelExportPath: string | null
   /** True when the project has unsaved changes. */
   dirty: boolean
 
@@ -235,6 +237,8 @@ export interface ProjectStore {
   markSaved: (path: string | null) => void
   /** Called after a successful G-code export — records the export path. */
   markExported: (path: string) => void
+  /** Called after a successful 3D model export — records the export path. */
+  markModelExported: (path: string) => void
   undo: () => void
   redo: () => void
   beginHistoryTransaction: () => void

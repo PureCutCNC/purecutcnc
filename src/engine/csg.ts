@@ -27,6 +27,11 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 
 const ARC_STEP_RADIANS = Math.PI / 18
 
+/** Default 10° per arc segment — matches the 3D viewport tessellation. */
+export const DEFAULT_ARC_STEP_RADIANS = ARC_STEP_RADIANS
+/** Default 18 segments per bezier — derived from the default arc step. */
+const DEFAULT_BEZIER_SEGMENTS = 18
+
 let manifoldModulePromise: Promise<ManifoldToplevel> | null = null
 let manifoldModuleInstance: ManifoldToplevel | null = null
 
@@ -117,9 +122,18 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
   return shape
 }
 
-function profileToPolygon(profile: SketchProfile): [number, number][] {
+function profileToPolygon(
+  profile: SketchProfile,
+  arcStepRadians: number = ARC_STEP_RADIANS,
+): [number, number][] {
   const points: [number, number][] = [[profile.start.x, profile.start.y]]
   let current = profile.start
+
+  // Scale bezier subdivision the same way arcs scale, so curve quality is consistent.
+  const bezierSegments = Math.max(
+    8,
+    Math.round(DEFAULT_BEZIER_SEGMENTS * (ARC_STEP_RADIANS / arcStepRadians)),
+  )
 
   for (const seg of profile.segments) {
     if (seg.type === 'line') {
@@ -129,9 +143,8 @@ function profileToPolygon(profile: SketchProfile): [number, number][] {
     }
 
     if (seg.type === 'bezier') {
-      const segmentCount = 18
-      for (let index = 1; index <= segmentCount; index += 1) {
-        const point = bezierPoint(current, seg.control1, seg.control2, seg.to, index / segmentCount)
+      for (let index = 1; index <= bezierSegments; index += 1) {
+        const point = bezierPoint(current, seg.control1, seg.control2, seg.to, index / bezierSegments)
         points.push([point.x, point.y])
       }
       current = seg.to
@@ -151,7 +164,7 @@ function profileToPolygon(profile: SketchProfile): [number, number][] {
       else if (!clockwise && sweep < 0) sweep += Math.PI * 2
     }
 
-    const segmentCount = Math.max(8, Math.ceil(Math.abs(sweep) / ARC_STEP_RADIANS))
+    const segmentCount = Math.max(8, Math.ceil(Math.abs(sweep) / arcStepRadians))
     for (let index = 1; index <= segmentCount; index += 1) {
       const angle = startAngle + (sweep * index) / segmentCount
       points.push([
@@ -645,7 +658,8 @@ function manifoldMeshToGeometry(mesh: import('manifold-3d').Mesh): THREE.BufferG
 export function buildFeatureSolid(
   module: ManifoldToplevel,
   project: Project,
-  feature: SketchFeature
+  feature: SketchFeature,
+  arcStepRadians: number = ARC_STEP_RADIANS,
 ): ManifoldSolid | null {
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
   if (asset) {
@@ -693,9 +707,9 @@ export function buildFeatureSolid(
       console.warn('STL is non-manifold, falling back to 2.5D silhouette extrusion for boolean model.', error)
       
       // Treat as a 2.5D composite feature by extruding the silhouette.
-      // This allows non-manifold STLs to participate in boolean operations (like pockets/cuts) 
+      // This allows non-manifold STLs to participate in boolean operations (like pockets/cuts)
       // based on their footprint.
-      const contour = profileToPolygon(feature.sketch.profile)
+      const contour = profileToPolygon(feature.sketch.profile, arcStepRadians)
       if (contour.length < 3) {
         return null
       }
@@ -718,7 +732,7 @@ export function buildFeatureSolid(
     return null
   }
 
-  const contour = profileToPolygon(feature.sketch.profile)
+  const contour = profileToPolygon(feature.sketch.profile, arcStepRadians)
   if (contour.length < 3) {
     return null
   }
