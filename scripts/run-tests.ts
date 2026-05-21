@@ -19,14 +19,7 @@ const srcRoot = join(repoRoot, 'src')
 // Tests that are known-failing for reasons unrelated to the build's freshness.
 // Each entry should be paired with a follow-up issue/task tracking its fix.
 // Paths are relative to repo root.
-const KNOWN_FAILING_TESTS = new Set<string>([
-  // Pre-existing failure on main as of commit 414a307. The
-  // `testEdgeOutsideClipsAroundNonSelectedAddFeatures` assertion fires:
-  // "expected no cuts inside featureB keep-away zone, got 3". The regression
-  // appears to be in edge-route obstacle clipping (see commit 89f4e70 which
-  // added the guard). Tracked as a follow-up task — re-enable once fixed.
-  'src/engine/toolpaths/toolpaths.test.ts',
-])
+const KNOWN_FAILING_TESTS = new Set<string>([])
 
 function findTestFiles(root: string): string[] {
   const results: string[] = []

@@ -53,6 +53,20 @@ function pointInClipperPaths(point: Point, paths: ClipperPath[]): boolean {
   ))
 }
 
+/**
+ * Round x/y to the Clipper integer grid (1 / DEFAULT_CLIPPER_SCALE = 1e-4 mm).
+ * Used to scrub picometre-scale FP drift out of clipped-fragment endpoints
+ * (see clipToolpathResultToObstaclesByLevel). Z is left untouched because
+ * levels are already exact at this stage.
+ */
+function snapPointToClipperGrid(point: ToolpathPoint): ToolpathPoint {
+  return {
+    x: Math.round(point.x * DEFAULT_CLIPPER_SCALE) / DEFAULT_CLIPPER_SCALE,
+    y: Math.round(point.y * DEFAULT_CLIPPER_SCALE) / DEFAULT_CLIPPER_SCALE,
+    z: point.z,
+  }
+}
+
 function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   if (paths.length === 0) return []
   const clipper = new ClipperLib.Clipper()
@@ -314,13 +328,23 @@ export function clipToolpathResultToObstaclesByLevel(
 
     const fragments = clipCutMoveToRegion(move, inverseMask)
     for (const fragment of fragments) {
-      current = pushSafeTransition(clippedMoves, current, fragment.from, safeZ)
+      // Snap fragment endpoints to Clipper-grid precision (1e-4 mm). The
+      // segment/edge intersection in `clipCutMoveToRegion` is FP-only and
+      // can drift the endpoint a few picometres past the obstacle boundary
+      // (e.g. 10.000000000002 vs 10). That is far below any meaningful
+      // machining tolerance, but it means cut endpoints can technically land
+      // inside the obstacle's keep-away zone. Snapping the endpoints — and
+      // only here, on the obstacle-clip path — pulls them onto the Clipper
+      // grid so they land exactly on the obstacle boundary.
+      const snappedFrom = snapPointToClipperGrid(fragment.from)
+      const snappedTo = snapPointToClipperGrid(fragment.to)
+      current = pushSafeTransition(clippedMoves, current, snappedFrom, safeZ)
       clippedMoves.push({
         ...move,
-        from: fragment.from,
-        to: fragment.to,
+        from: snappedFrom,
+        to: snappedTo,
       })
-      current = fragment.to
+      current = snappedTo
     }
   }
 
