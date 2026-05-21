@@ -750,10 +750,13 @@ function testEdgeOutsideClipsAroundNonSelectedAddFeatures() {
 
   // Tool center must not enter featureB's keep-away zone. FeatureB spans
   // x=[12..22], expanded by tool.radius (2) means keep-away starts at x=10.
-  // No cut move's tool center should be inside the expanded obstacle area.
+  // A cut move's tool center landing strictly inside that zone (x>10) would
+  // have the tool overlap featureB's material. Tool center exactly on the
+  // boundary (x=10) puts the cutting edge exactly at featureB's left edge
+  // (x=12) — that's the optimal safe stopping position, not a violation.
   const violatingCuts = cuts.filter((move) => {
     const inKeepAwayY = move.to.y >= -2 && move.to.y <= 12
-    const inKeepAwayX = move.to.x >= 10 && move.to.x <= 24
+    const inKeepAwayX = move.to.x > 10 && move.to.x < 24
     return inKeepAwayX && inKeepAwayY
   })
 
@@ -769,11 +772,17 @@ function testEdgeOutsideClipsAroundNonSelectedAddFeatures() {
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
 
-function testVCarveFeatureFirstProducesSameMoveCount() {
-  console.log('Testing v_carve machiningOrder move-count parity...')
+function testVCarveDisjointFeaturesAreMachiningOrderInvariant() {
+  console.log('Testing v_carve disjoint features are machiningOrder invariant...')
 
-  // V-carve of disjoint features in level_first vs feature_first should
-  // produce the same *number* of cut moves — only ordering differs.
+  // V-carve of two disjoint identical features must produce the SAME output
+  // in both `level_first` and `feature_first` modes — same move count, same
+  // moves, same order. (V-carve emits per-feature contiguous blocks naturally
+  // for disjoint clusters, so the two modes converge to identity for this
+  // fixture. Asserting full move equality is the strongest invariant the
+  // fixture can support: a regression that emits the same number of moves
+  // with wrong XY/Z values, or that interleaves features incorrectly, would
+  // both be caught.)
   const tool = makeVBit('t1')
   const featA = makePocketFeature('a', 0, 0, 10, 10, 0, -2)
   const featB = makePocketFeature('b', 30, 0, 10, 10, 0, -2)
@@ -792,12 +801,50 @@ function testVCarveFeatureFirstProducesSameMoveCount() {
   const rLevel = generateVCarveToolpath(project, opLevel)
   const rFeature = generateVCarveToolpath(project, opFeature)
   assert(rLevel.moves.length > 0 && rFeature.moves.length > 0, 'both modes produce moves')
+
+  // Fast pre-condition: equal cut-move counts. Gives a clearer failure
+  // message when the multisets are obviously different sizes before we get
+  // to the per-cut diff.
+  const levelCuts = cutMoves(rLevel.moves)
+  const featureCuts = cutMoves(rFeature.moves)
   assert(
-    cutMoves(rLevel.moves).length === cutMoves(rFeature.moves).length,
-    `expected equal cut-move counts between modes (level_first=${cutMoves(rLevel.moves).length}, feature_first=${cutMoves(rFeature.moves).length})`,
+    levelCuts.length === featureCuts.length,
+    `expected equal cut-move counts between modes (level_first=${levelCuts.length}, feature_first=${featureCuts.length})`,
   )
 
-  console.log('v_carve move-count parity: PASSED')
+  // Strong invariant: full cut-move sequence equality, including ordering.
+  // Compares cuts only — not rapids/plunges — because rapid scaffolding can
+  // legitimately vary between modes (e.g. one mode emitting a redundant
+  // zero-length rapid when it transitions between feature blocks) without
+  // affecting the actual material removal. Cut moves are the meaningful CAM
+  // output. If either mode ever starts emitting different cut content or
+  // ordering, find the first divergence so the failure message points at
+  // the exact regression.
+  assert(
+    movesEqual(levelCuts, featureCuts),
+    `v_carve cut sequences diverge between modes. ${describeFirstMoveDiff(levelCuts, featureCuts)}`,
+  )
+
+  console.log('v_carve disjoint features are machiningOrder invariant: PASSED')
+}
+
+/** First-divergence description used in the v-carve mode-parity failure msg. */
+function describeFirstMoveDiff(a: ToolpathMove[], b: ToolpathMove[]): string {
+  const n = Math.min(a.length, b.length)
+  for (let i = 0; i < n; i += 1) {
+    const ma = a[i]
+    const mb = b[i]
+    const diffKind = ma.kind !== mb.kind
+    const diff = diffKind
+      || !approx(ma.from.x, mb.from.x) || !approx(ma.from.y, mb.from.y) || !approx(ma.from.z, mb.from.z)
+      || !approx(ma.to.x, mb.to.x) || !approx(ma.to.y, mb.to.y) || !approx(ma.to.z, mb.to.z)
+    if (diff) {
+      const fmt = (m: ToolpathMove) => `${m.kind}(${m.from.x.toFixed(3)},${m.from.y.toFixed(3)},${m.from.z.toFixed(3)})→(${m.to.x.toFixed(3)},${m.to.y.toFixed(3)},${m.to.z.toFixed(3)})`
+      return `First divergence at move #${i}: level_first=${fmt(ma)} feature_first=${fmt(mb)}`
+    }
+  }
+  if (a.length !== b.length) return `Lengths differ: level_first=${a.length} feature_first=${b.length}`
+  return 'No per-move divergence detected (movesEqual returned false unexpectedly)'
 }
 
 // ---------------------------------------------------------------------------
@@ -944,7 +991,7 @@ try {
   testEdgeOutsideUsesStoredModelSilhouettePaths()
   testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
-  testVCarveFeatureFirstProducesSameMoveCount()
+  testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
