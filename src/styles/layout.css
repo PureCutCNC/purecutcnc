@@ -1308,6 +1308,14 @@
   background: #63b176;
 }
 
+.sketch-depth-legend__swatch--region {
+  background: #9966cc;
+}
+
+.sketch-depth-legend__swatch--imported-model {
+  background: #bcc8d4;
+}
+
 .sketch-depth-legend__swatch--selected {
   background: #efbc7a;
 }

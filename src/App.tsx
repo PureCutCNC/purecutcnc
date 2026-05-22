@@ -871,6 +871,8 @@ function App() {
         <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
         <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
         <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
+        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
         <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
       </span>
     </button>
