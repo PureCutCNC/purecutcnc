@@ -327,7 +327,7 @@ function makeProject(): { project: Project; operation: Operation } {
 }
 
 function loadImportedBlockWaterlineProject(): { project: Project; operation: Operation } {
-  const raw = readFileSync(new URL('../../../work/3d-imported-block-test3.camj', import.meta.url), 'utf8')
+  const raw = readFileSync(new URL('../test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8')
   const project = normalizeProject(JSON.parse(raw) as Project)
   const operation = project.operations.find(
     (candidate) => candidate.kind === 'finish_surface' && candidate.pocketPattern === 'waterline',
