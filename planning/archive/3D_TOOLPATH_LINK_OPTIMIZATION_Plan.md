@@ -1,5 +1,5 @@
 ---
-status: Approved
+status: Done
 created: 2026-05-21
 ---
 

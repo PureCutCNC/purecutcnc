@@ -15,7 +15,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## In progress
 
 ### CAM / toolpaths
-- [3D_TOOLPATH_LINK_OPTIMIZATION_Plan.md](3D_TOOLPATH_LINK_OPTIMIZATION_Plan.md) — link adjacent rough/waterline paths at Z, plunge when XY aligns, finish each waterline column top-to-bottom, fix per-side cut direction.
 
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
