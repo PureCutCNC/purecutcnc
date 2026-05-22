@@ -85,8 +85,8 @@ export function drawFeature(
   }
 
   if (feature.operation === 'model') {
-    fill = 'rgba(160, 170, 180, 0.35)'
-    stroke = '#a0b0c0'
+    fill = 'rgba(188, 200, 212, 0.35)'
+    stroke = '#bcc8d4'
   }
 
   if (feature.operation === 'region') {

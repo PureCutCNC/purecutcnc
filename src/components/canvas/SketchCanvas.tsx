@@ -226,7 +226,7 @@ function drawStlTopViewImage(
       ? '#d2a064'
       : editing
         ? '#f7cd87'
-        : '#8eb6d8'
+        : '#bcc8d4'
   ctx.lineWidth = selected || editing ? 2.5 : 1.8
   ctx.stroke()
   ctx.restore()
@@ -4619,6 +4619,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             <div className="sketch-depth-legend__item">
               <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
               <span>Add feature</span>
+            </div>
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
+              <span>Region</span>
+            </div>
+            <div className="sketch-depth-legend__item">
+              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
+              <span>Imported model</span>
             </div>
             <div className="sketch-depth-legend__item">
               <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
