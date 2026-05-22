@@ -8,7 +8,8 @@ import { defaultTool, newProject, rectProfile, type Operation, type Project, typ
 import { normalizeProject } from '../../store/projectStore'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
 import { generateRoughSurfaceToolpath } from './roughSurface'
-import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE } from './geometry'
+import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide, isClockwise } from './geometry'
+import type { Point } from '../../types/project'
 import type { ClipperPath, ToolpathMove } from './types'
 import { simulateReplayItemsHeightfield } from '../simulation/replay'
 import type { SimulationGrid, SimulationReplayItem } from '../simulation/types'
@@ -324,7 +325,9 @@ function makeProject(): { project: Project; operation: Operation } {
 }
 
 function normalizeProjectFeatures(project: Project): void {
-  project.features = normalizeProject(project).features
+  const normalized = normalizeProject(project)
+  project.features = normalized.features
+  project.modelAssets = normalized.modelAssets
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -920,8 +923,22 @@ function testWaterlinePocketBlockSimplification(): void {
 
   const result = generateFinishSurfaceToolpath(project, operation)
   const cuts = cutMoves(result.moves)
+  const outsideWallCuts = cuts.filter((move) => [move.from, move.to].some((point) => (
+    point.x < 0 || point.x > 20 || point.y < 0 || point.y > 10
+  )))
+  const pocketWallCuts = cuts.filter((move) => [move.from, move.to].some((point) => {
+    if (point.z < 2 - 1e-9 || point.z > 4 + 1e-9) return false
+    const nearVerticalWall = Math.abs(point.x - 6.5) < 1e-6 || Math.abs(point.x - 13.5) < 1e-6
+    const nearHorizontalWall = Math.abs(point.y - 3.5) < 1e-6 || Math.abs(point.y - 6.5) < 1e-6
+    return point.x >= 6.5 - 1e-6 && point.x <= 13.5 + 1e-6 &&
+      point.y >= 3.5 - 1e-6 && point.y <= 6.5 + 1e-6 &&
+      (nearVerticalWall || nearHorizontalWall)
+  }))
+
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(cuts.length > 0, 'expected waterline cut moves on pocket block')
+  assert(outsideWallCuts.length > 0, 'expected waterline cuts around the outside wall')
+  assert(pocketWallCuts.length > 0, 'expected waterline cuts around the pocket walls')
   assert(!hasReducibleAdjacentCutPair(result.moves),
     'expected simplifier to remove adjacent reducible collinear cut segments')
 }
@@ -1010,6 +1027,210 @@ function testWaterlineRespectsClampFootprint(): void {
   assert(cutsInClamp.length === 0, `expected no cuts in clamp footprint, got ${cutsInClamp.length}`)
 }
 
+// ── Cut direction by ring side ───────────────────────────────────────────
+
+function ccwSquare(): Point[] {
+  // 10×10 box at origin, CCW order (Y-up math convention).
+  return [
+    { x: -5, y: -5 },
+    { x: 5, y: -5 },
+    { x: 5, y: 5 },
+    { x: -5, y: 5 },
+    { x: -5, y: -5 },
+  ]
+}
+
+function cwSquare(): Point[] {
+  return [
+    { x: -5, y: -5 },
+    { x: -5, y: 5 },
+    { x: 5, y: 5 },
+    { x: 5, y: -5 },
+    { x: -5, y: -5 },
+  ]
+}
+
+function testApplyContourDirectionBySidePocketRole(): void {
+  console.log('Testing applyContourDirectionBySide tool-inside (pocket-like) ...')
+  const outer = ccwSquare()
+  const hole = cwSquare()
+  // 'tool-inside' means outer rings have the tool inside (pocket-like).
+  // Natural winding (CCW outer, CW hole) is conventional in this role.
+  const conv = applyContourDirectionBySide([outer, hole], 'conventional', 'tool-inside')
+  assert(!isClockwise(conv[0]), 'pocket-role conventional outer stays CCW')
+  assert(isClockwise(conv[1]), 'pocket-role conventional hole stays CW')
+  const climb = applyContourDirectionBySide([outer, hole], 'climb', 'tool-inside')
+  assert(isClockwise(climb[0]), 'pocket-role climb reverses outer to CW')
+  assert(!isClockwise(climb[1]), 'pocket-role climb reverses hole to CCW')
+}
+
+function testApplyContourDirectionBySideAroundRole(): void {
+  console.log('Testing applyContourDirectionBySide tool-outside (around-the-bump) ...')
+  const outer = ccwSquare()
+  const hole = cwSquare()
+  // 'tool-outside' means outer rings have the tool outside (around-the-bump).
+  // Natural winding (CCW outer = climb, CW hole inside pocket = climb) is climb.
+  const climb = applyContourDirectionBySide([outer, hole], 'climb', 'tool-outside')
+  assert(!isClockwise(climb[0]), 'around-role climb keeps outer CCW')
+  assert(isClockwise(climb[1]), 'around-role climb keeps hole CW')
+  const conv = applyContourDirectionBySide([outer, hole], 'conventional', 'tool-outside')
+  assert(isClockwise(conv[0]), 'around-role conventional reverses outer to CW')
+  assert(!isClockwise(conv[1]), 'around-role conventional reverses hole to CCW')
+}
+
+function testApplyContourDirectionBySideReversesOpenPolylinesWhenNeeded(): void {
+  console.log('Testing applyContourDirectionBySide reverses open polylines to honor direction ...')
+  // CCW arc fragment (signed area positive). Natural traversal direction is
+  // CCW. For tool-outside topology, CCW = climb naturally.
+  const open: Point[] = [
+    { x: 0, y: 0 },
+    { x: 5, y: 0 },
+    { x: 5, y: 5 },
+    { x: 0, y: 5 },
+  ]
+  // Climb requested + tool-outside + natural CCW = match → keep order.
+  const keep = applyContourDirectionBySide([open], 'climb', 'tool-outside', [false])
+  assert(keep[0][0].x === 0 && keep[0][3].x === 0, 'open polyline kept for climb on outer-style')
+  // Conventional requested + tool-outside + natural CCW = mismatch → reverse.
+  const flipped = applyContourDirectionBySide([open], 'conventional', 'tool-outside', [false])
+  assert(flipped[0][0].x === 0 && flipped[0][0].y === 5, `open polyline reversed; first point should be (0,5), got (${flipped[0][0].x},${flipped[0][0].y})`)
+  assert(flipped[0][3].x === 0 && flipped[0][3].y === 0, 'open polyline reversed; last point should be (0,0)')
+}
+
+function testApplyContourDirectionBySideAcceptsNaturalWindingHint(): void {
+  console.log('Testing applyContourDirectionBySide honors natural-winding hint for ambiguous fragments ...')
+  // A nearly-straight open polyline whose signed area is tiny — the source
+  // ring's natural winding must come from a hint, not signed-area on the fragment.
+  const fragment: Point[] = [
+    { x: 0, y: 0 },
+    { x: 1, y: 0.001 },
+    { x: 2, y: 0 },
+  ]
+  // Tell the helper this fragment came from a CCW outer ring (tool-outside).
+  // Then conventional should reverse it.
+  const flipped = applyContourDirectionBySide(
+    [fragment], 'conventional', 'tool-outside', [false], [false],
+  )
+  assert(flipped[0][0].x === 2, 'fragment reversed per the natural-winding hint')
+}
+
+function extractClosedLoopsAtZ(moves: ToolpathMove[], z: number, eps = 1e-6): Point[][] {
+  const loops: Point[][] = []
+  let current: Point[] = []
+  let lastTo: { x: number; y: number } | null = null
+  const flush = (): void => {
+    if (current.length >= 4) {
+      const first = current[0]
+      const last = current[current.length - 1]
+      if (Math.abs(first.x - last.x) <= eps && Math.abs(first.y - last.y) <= eps) {
+        loops.push(current)
+      }
+    }
+    current = []
+    lastTo = null
+  }
+  for (const m of moves) {
+    if (m.kind !== 'cut'
+        || Math.abs(m.from.z - z) > eps
+        || Math.abs(m.to.z - z) > eps) {
+      flush()
+      continue
+    }
+    if (current.length === 0 || (lastTo && (Math.abs(lastTo.x - m.from.x) > eps || Math.abs(lastTo.y - m.from.y) > eps))) {
+      flush()
+      current = [{ x: m.from.x, y: m.from.y }]
+    }
+    current.push({ x: m.to.x, y: m.to.y })
+    lastTo = m.to
+  }
+  flush()
+  return loops
+}
+
+function loopBounds(loop: Point[]): { minX: number; maxX: number; minY: number; maxY: number } {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const p of loop) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return { minX, maxX, minY, maxY }
+}
+
+function testWaterlineClimbWindsCorrectlyOnBothSides(): void {
+  console.log('Testing waterline climb winds CCW around model and CW inside pocket ...')
+  const { project } = makeProject()
+  project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1'] },
+    cutDirection: 'climb',
+    stepdown: 0.5,
+    stepover: 0.5,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  const cutsAtZ = result.stepLevels.find((z) => z > 2.5 && z < 3.5) ?? null
+  assert(cutsAtZ !== null, 'expected at least one waterline Z between pocket floor (2) and top (4)')
+
+  const loops = extractClosedLoopsAtZ(result.moves, cutsAtZ as number)
+  assert(loops.length >= 2,
+    `expected outer-wall loop and pocket-wall loop at Z=${cutsAtZ}, got ${loops.length} loops`)
+
+  let sawOuter = false
+  let sawPocket = false
+  for (const loop of loops) {
+    const b = loopBounds(loop)
+    const isOuter = b.minX < 0 && b.maxX > 20
+    const isPocket = b.minX > 5.5 && b.maxX < 14.5 && b.minY > 2.5 && b.maxY < 7.5
+    if (isOuter) {
+      sawOuter = true
+      assert(!isClockwise(loop),
+        `climb around outer wall should be CCW (positive area); got CW loop bounds=${JSON.stringify(b)}`)
+    } else if (isPocket) {
+      sawPocket = true
+      assert(isClockwise(loop),
+        `climb inside pocket should be CW (negative area); got CCW loop bounds=${JSON.stringify(b)}`)
+    }
+  }
+  assert(sawOuter, 'expected an outer-wall loop in the waterline output')
+  assert(sawPocket, 'expected a pocket-wall loop in the waterline output')
+}
+
+function testWaterlineConventionalWindsOppositeOfClimb(): void {
+  console.log('Testing waterline conventional winds CW around model and CCW inside pocket ...')
+  const { project } = makeProject()
+  project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1'] },
+    cutDirection: 'conventional',
+    stepdown: 0.5,
+    stepover: 0.5,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  const cutsAtZ = result.stepLevels.find((z) => z > 2.5 && z < 3.5) ?? null
+  assert(cutsAtZ !== null, 'expected at least one waterline Z')
+
+  const loops = extractClosedLoopsAtZ(result.moves, cutsAtZ as number)
+  for (const loop of loops) {
+    const b = loopBounds(loop)
+    if (b.minX < 0 && b.maxX > 20) {
+      assert(isClockwise(loop),
+        `conventional around outer wall should be CW; got CCW loop bounds=${JSON.stringify(b)}`)
+    } else if (b.minX > 5.5 && b.maxX < 14.5 && b.minY > 2.5 && b.maxY < 7.5) {
+      assert(!isClockwise(loop),
+        `conventional inside pocket should be CCW; got CW loop bounds=${JSON.stringify(b)}`)
+    }
+  }
+}
+
 // ── Run all tests ────────────────────────────────────────────────────────
 
 testFinishSurfaceCoversLowerTopPlateau()
@@ -1037,5 +1258,162 @@ testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()
 testWaterlineRespectsTabZRange()
 testWaterlineRespectsClampFootprint()
+
+testApplyContourDirectionBySidePocketRole()
+testApplyContourDirectionBySideAroundRole()
+testApplyContourDirectionBySideReversesOpenPolylinesWhenNeeded()
+testApplyContourDirectionBySideAcceptsNaturalWindingHint()
+testWaterlineClimbWindsCorrectlyOnBothSides()
+testWaterlineConventionalWindsOppositeOfClimb()
+
+function testWaterlineFinishesOneColumnBeforeNext(): void {
+  console.log('Testing waterline finishes one column top-to-bottom before moving to the next...')
+  const { project } = makeProject()
+  project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1'] },
+    cutDirection: 'climb',
+    stepdown: 0.5,
+    stepover: 0.5,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'expected cut moves')
+
+  // Classify each cut by which column it belongs to: outer-wall ring (bbox
+  // extends past the model footprint) vs pocket-wall ring (bbox confined
+  // within the pocket).
+  type Col = 'outer' | 'pocket' | 'other'
+  const classify = (move: ToolpathMove): Col => {
+    const x = (move.from.x + move.to.x) / 2
+    const y = (move.from.y + move.to.y) / 2
+    if (x < 0 || x > 20 || y < 0 || y > 10) return 'outer'
+    if (x > 5.5 && x < 14.5 && y > 2.5 && y < 7.5) return 'pocket'
+    return 'other'
+  }
+
+  // Each column should appear as a single contiguous block of cuts (with
+  // intra-column plunges allowed, but no other-column cuts in the middle).
+  // Count column transitions: should be ≤ number of distinct columns − 1.
+  let lastCol: Col | null = null
+  const visited = new Set<Col>()
+  let transitions = 0
+  for (const move of cuts) {
+    const col = classify(move)
+    if (col === 'other') continue
+    if (col !== lastCol) {
+      transitions += 1
+      visited.add(col)
+      lastCol = col
+    }
+  }
+  assert(visited.has('outer'), 'expected outer-wall cuts')
+  assert(visited.has('pocket'), 'expected pocket-wall cuts')
+  // With column ordering, the first time we see each column counts as a
+  // transition (visited.size transitions). Any more means we left a column
+  // and came back to it — which the new ordering should not do.
+  assert(transitions <= visited.size,
+    `expected at most ${visited.size} column transitions (one per column), got ${transitions}; columns are being interleaved instead of finished one at a time`)
+}
+
+function testWaterlineColumnDescentReusesSameXYWithPlunge(): void {
+  console.log('Testing waterline column descent reuses XY and emits plunge instead of retract...')
+  const { project } = makeProject()
+  project.features = [makePocketBlockModelFeature()]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1'] },
+    cutDirection: 'climb',
+    stepdown: 0.5,
+    stepover: 0.5,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  // Count plunges that are direct descents from a cut Z to a lower cut Z at
+  // the same XY. Each such plunge is one column-step that did not retract to
+  // safe Z. With column ordering + ring rotation, most Z transitions inside
+  // a column should be of this kind.
+  let columnPlunges = 0
+  const eps = 1e-3
+  for (let i = 0; i < result.moves.length; i += 1) {
+    const m = result.moves[i]
+    if (m.kind !== 'plunge') continue
+    // A "column plunge" lands directly from a previous cut Z (m.from.z is well
+    // below safeZ — i.e., not coming from the safe-Z lane).
+    if (m.from.z > 10 - eps) continue
+    if (m.from.z - m.to.z <= 0) continue
+    columnPlunges += 1
+  }
+  assert(columnPlunges >= 1,
+    `expected at least one column-descent plunge (cut-Z to cut-Z), got ${columnPlunges}; column ordering is not reusing XY between Z levels`)
+}
+
+testWaterlineFinishesOneColumnBeforeNext()
+testWaterlineColumnDescentReusesSameXYWithPlunge()
+
+function testParallelFinishLinksScanlinesOnFlatPocket(): void {
+  console.log('Testing parallel finish links adjacent scanlines on a flat pocket floor...')
+  const { project } = makeProject()
+  // Use a region feature to restrict parallel finish to the pocket interior
+  // only, so every scanline is entirely on the flat floor (no walls crossing).
+  // This isolates the scanline-to-scanline link case the user reported.
+  project.features = [
+    makePocketBlockModelFeature(),
+    makeRegionFeatureRect('region-pocket', 6.5, 3.5, 7, 3),
+  ]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region-pocket'] },
+    pocketPattern: 'parallel',
+    pocketAngle: 0,
+    stockToLeaveAxial: 0,
+    stockToLeaveRadial: 0,
+    stepover: 0.4,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'expected parallel finish cuts inside the pocket region')
+
+  // Every cut should be at the pocket floor (z≈2). With at-Z linking, the
+  // scanline ends should be joined by cut moves, leaving very few plunges and
+  // very few contiguous cut runs.
+  const floorZ = 2
+  const eps = 0.05
+  for (const m of cuts) {
+    assert(Math.abs(m.to.z - floorZ) <= eps,
+      `expected cut at floor Z=${floorZ}, got z=${m.to.z}`)
+  }
+
+  let scanlineRuns = 0
+  let prevWasCut = false
+  for (const m of result.moves) {
+    if (m.kind === 'cut') {
+      if (!prevWasCut) scanlineRuns += 1
+      prevWasCut = true
+    } else {
+      prevWasCut = false
+    }
+  }
+  const plunges = result.moves.filter((m) => m.kind === 'plunge').length
+
+  assert(plunges <= 2,
+    `expected at most 2 plunges into the pocket floor, got ${plunges}; scanlines are not linking at Z`)
+  assert(scanlineRuns <= 2,
+    `expected pocket-floor scanlines to be stitched into ≤2 contiguous runs, got ${scanlineRuns}; at-Z linking is not merging scanlines`)
+}
+
+testParallelFinishLinksScanlinesOnFlatPocket()
 
 console.log('finishSurface tests passed')

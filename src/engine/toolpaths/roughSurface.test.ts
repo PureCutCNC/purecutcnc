@@ -8,7 +8,8 @@ import { defaultTool, newProject, rectProfile, type Operation, type Project, typ
 import { normalizeProject } from '../../store/projectStore'
 import { serializeImportedMesh } from '../importedMesh'
 import { generateRoughSurfaceToolpath } from './roughSurface'
-import type { ToolpathMove } from './types'
+import { transitionToCutEntry } from './pocket'
+import type { ToolpathMove, ToolpathPoint } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -163,6 +164,27 @@ function makeContainingAddFeature(): SketchFeature {
   }
 }
 
+function makeTightContainingAddFeature(): SketchFeature {
+  return {
+    id: 'base-tight',
+    name: 'Tight base stock feature',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 12, 8),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 6,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
 function makeContainingSubtractFeature(): SketchFeature {
   return {
     id: 'pocket1',
@@ -181,6 +203,21 @@ function makeContainingSubtractFeature(): SketchFeature {
     z_bottom: 3,
     visible: true,
     locked: false,
+  }
+}
+
+function makeTightContainingSubtractFeature(): SketchFeature {
+  return {
+    ...makeContainingSubtractFeature(),
+    id: 'pocket-tight',
+    name: 'Tight containing pocket',
+    sketch: {
+      profile: rectProfile(0, 0, 12, 8),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
   }
 }
 
@@ -234,6 +271,11 @@ function makeRoughOperation(featureIds: string[]): Operation {
   }
 }
 
+// Frustum models in these fixtures occupy Z=0..6. Set stock thickness to
+// match the model so the rough op doesn't try to clear 14 mm of dead space
+// above the model (which exceeds the 10 mm tool maxCutDepth).
+const TEST_STOCK_THICKNESS = 6
+
 function makeProject(featureIds: string[]): { project: Project; operation: Operation } {
   const model = makeModelFeature()
   const region = makeRegionFeature()
@@ -242,6 +284,7 @@ function makeProject(featureIds: string[]): { project: Project; operation: Opera
     tools: [makeTool()],
     features: [model, region],
   }
+  project.stock.thickness = TEST_STOCK_THICKNESS
   return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
@@ -253,6 +296,7 @@ function makeLegacyProject(featureIds: string[]): { project: Project; operation:
     tools: [makeTool()],
     features: [model, region],
   }
+  project.stock.thickness = TEST_STOCK_THICKNESS
   return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
@@ -264,6 +308,7 @@ function makeInvertedProject(featureIds: string[]): { project: Project; operatio
     tools: [makeTool()],
     features: [model, region],
   }
+  project.stock.thickness = TEST_STOCK_THICKNESS
   return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
 }
 
@@ -319,6 +364,103 @@ function appendVerticalQuad(
   indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3)
 }
 
+function appendMeshQuad(
+  vertices: number[],
+  indices: number[],
+  a: [number, number, number],
+  b: [number, number, number],
+  c: [number, number, number],
+  d: [number, number, number],
+): void {
+  const offset = vertices.length / 3
+  vertices.push(
+    a[0], a[1], a[2],
+    b[0], b[1], b[2],
+    c[0], c[1], c[2],
+    d[0], d[1], d[2],
+  )
+  indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3)
+}
+
+function makePocketBlockProject(): { project: Project; operation: Operation } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  const minX = 0, minY = 0, minZ = 0
+  const maxX = 20, maxY = 10, maxZ = 4
+  const pocketMinX = 6, pocketMinY = 3, pocketMaxX = 14, pocketMaxY = 7, pocketFloorZ = 2
+
+  appendMeshQuad(vertices, indices,
+    [minX, minY, minZ], [maxX, minY, minZ], [maxX, maxY, minZ], [minX, maxY, minZ],
+  )
+  appendVerticalQuad(vertices, indices, [minX, minY], [maxX, minY], minZ, maxZ)
+  appendVerticalQuad(vertices, indices, [maxX, minY], [maxX, maxY], minZ, maxZ)
+  appendVerticalQuad(vertices, indices, [maxX, maxY], [minX, maxY], minZ, maxZ)
+  appendVerticalQuad(vertices, indices, [minX, maxY], [minX, minY], minZ, maxZ)
+
+  appendMeshQuad(vertices, indices,
+    [minX, minY, maxZ], [maxX, minY, maxZ], [maxX, pocketMinY, maxZ], [minX, pocketMinY, maxZ],
+  )
+  appendMeshQuad(vertices, indices,
+    [minX, pocketMaxY, maxZ], [maxX, pocketMaxY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ],
+  )
+  appendMeshQuad(vertices, indices,
+    [minX, pocketMinY, maxZ], [pocketMinX, pocketMinY, maxZ], [pocketMinX, pocketMaxY, maxZ], [minX, pocketMaxY, maxZ],
+  )
+  appendMeshQuad(vertices, indices,
+    [pocketMaxX, pocketMinY, maxZ], [maxX, pocketMinY, maxZ], [maxX, pocketMaxY, maxZ], [pocketMaxX, pocketMaxY, maxZ],
+  )
+
+  appendMeshQuad(vertices, indices,
+    [pocketMinX, pocketMinY, pocketFloorZ], [pocketMaxX, pocketMinY, pocketFloorZ],
+    [pocketMaxX, pocketMaxY, pocketFloorZ], [pocketMinX, pocketMaxY, pocketFloorZ],
+  )
+  appendVerticalQuad(vertices, indices, [pocketMinX, pocketMinY], [pocketMaxX, pocketMinY], pocketFloorZ, maxZ)
+  appendVerticalQuad(vertices, indices, [pocketMaxX, pocketMinY], [pocketMaxX, pocketMaxY], pocketFloorZ, maxZ)
+  appendVerticalQuad(vertices, indices, [pocketMaxX, pocketMaxY], [pocketMinX, pocketMaxY], pocketFloorZ, maxZ)
+  appendVerticalQuad(vertices, indices, [pocketMinX, pocketMaxY], [pocketMinX, pocketMinY], pocketFloorZ, maxZ)
+
+  const mesh = serializeImportedMesh({
+    positions: new Float32Array(vertices),
+    index: new Uint32Array(indices),
+    bounds: { minX, maxX, minY, maxY, minZ, maxZ },
+  }, 'stl')
+
+  const model: SketchFeature = {
+    ...makeModelFeature(),
+    name: 'Pocket Block STL',
+    stl: {
+      format: 'stl',
+      meshAssetId: 'pocket-block',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: minX, y: minY },
+        { x: maxX, y: minY },
+        { x: maxX, y: maxY },
+        { x: minX, y: maxY },
+      ]],
+    },
+    sketch: {
+      ...makeModelFeature().sketch,
+      profile: rectProfile(minX, minY, maxX - minX, maxY - minY),
+    },
+    z_top: maxZ,
+    z_bottom: minZ,
+  }
+  const project = {
+    ...newProject('rough-surface-pocket-block-test', 'mm'),
+    tools: [makeTool()],
+    modelAssets: { 'pocket-block': mesh },
+    features: [model],
+  }
+  project.stock.thickness = maxZ
+  const operation = {
+    ...makeRoughOperation(['model1']),
+    stepdown: 1,
+  }
+  return { project: normalizeProject(project), operation }
+}
+
 function makeOpenSliceProject(): { project: Project; operation: Operation } {
   const vertices: number[] = []
   const indices: number[] = []
@@ -366,6 +508,7 @@ function makeOpenSliceProject(): { project: Project; operation: Operation } {
     modelAssets: { 'open-shell': mesh },
     features: [model],
   }
+  project.stock.thickness = TEST_STOCK_THICKNESS
   const operation = {
     ...makeRoughOperation(['model1']),
     stepdown: 2,
@@ -379,6 +522,16 @@ function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
 
 function distinctCutZs(moves: ToolpathMove[]): number[] {
   return [...new Set(cutMoves(moves).map((move) => Number(move.to.z.toFixed(4))))].sort((a, b) => b - a)
+}
+
+function moveTouchesRect(
+  move: ToolpathMove,
+  rect: { minX: number; maxX: number; minY: number; maxY: number },
+): boolean {
+  return [move.from, move.to].some((point) => (
+    point.x > rect.minX && point.x < rect.maxX &&
+    point.y > rect.minY && point.y < rect.maxY
+  ))
 }
 
 function testRoughSurfaceGeneratesChangingZCuts(): void {
@@ -410,6 +563,37 @@ function testRoughSurfaceDefaultsLegacyModelFormatToStl(): void {
 
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves for legacy STL model data')
+}
+
+function testRoughSurfaceCutsVerticalPocketAndOutsideWall(): void {
+  console.log('Testing rough_surface cuts vertical-walled imported pocket block...')
+  const { project, operation } = makePocketBlockProject()
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const topDeckCuts = cuts.filter((move) => (
+    Math.abs(move.to.z - 4) < 1e-9 &&
+    moveTouchesRect(move, {
+      minX: 1,
+      maxX: 5,
+      minY: 1,
+      maxY: 2,
+    })
+  ))
+  const pocketCuts = cuts.filter((move) => moveTouchesRect(move, {
+    minX: 6.25,
+    maxX: 13.75,
+    minY: 3.25,
+    maxY: 6.75,
+  }))
+  const outsideWallCuts = cuts.filter((move) => [move.from, move.to].some((point) => (
+    point.x < 0 || point.x > 20 || point.y < 0 || point.y > 10
+  )))
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected rough surface cuts on pocket block')
+  assert(topDeckCuts.length > 0, 'expected rough cuts on the top deck')
+  assert(pocketCuts.length > 0, 'expected rough cuts inside the vertical-walled pocket')
+  assert(outsideWallCuts.length > 0, 'expected rough cuts around the outside wall')
 }
 
 function testRoughSurfaceProtectsOverhangingModelShadow(): void {
@@ -479,6 +663,17 @@ function testRoughSurfaceIgnoresContainingBaseFeature(): void {
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves when a base add feature contains the model envelope')
 }
 
+function testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope(): void {
+  console.log('Testing rough_surface ignores tight base when containing pocket limits envelope...')
+  const { project, operation } = makeProject(['model1'])
+  project.features = [makeTightContainingAddFeature(), makeTightContainingSubtractFeature(), ...project.features]
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected rough surface moves inside active containing pocket even when base stock is tighter than the expanded rough outline')
+}
+
 function testRoughSurfaceRespectsContainingPocketDepth(): void {
   console.log('Testing rough_surface respects containing subtract pocket depth...')
   const { project, operation } = makeProject(['model1'])
@@ -510,14 +705,103 @@ function testRoughSurfaceRespectsSplitPocketDepths(): void {
   assert(leftBelowShallow.length === 0, `expected no rough cuts below shallow pocket bottom on left side, got ${leftBelowShallow.length}`)
 }
 
+function testRoughSurfaceLinksOffsetRingsAtZ(): void {
+  console.log('Testing rough_surface links offset rings at Z instead of retracting...')
+  const { project, operation } = makePocketBlockProject()
+  const result = generateRoughSurfaceToolpath(project, operation)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  // Count every closed cut loop at Z=3 by scanning the cut moves and detecting
+  // each return to a previously-seen `from` point. With at-Z linking each ring
+  // is still emitted as its own closed loop (returns to its own entry), but
+  // the loops are stitched together by cut links instead of retract+plunge
+  // pairs — so closedLoops stays high while plunge count drops to roughly one
+  // per region.
+  const targetZ = 3
+  const eps = 1e-6
+  const samePoint = (a: { x: number; y: number }, b: { x: number; y: number }): boolean =>
+    Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps
+
+  let closedLoopsAtZ = 0
+  let cutRun: Array<{ x: number; y: number }> = []
+  const closeAt = (idx: number): boolean => {
+    // The current point closes back to some earlier point in this contiguous
+    // cut run — that earlier→current span is one closed loop.
+    const here = cutRun[idx]
+    for (let j = 0; j < idx; j += 1) {
+      if (samePoint(cutRun[j], here)) {
+        closedLoopsAtZ += 1
+        // Drop everything up to and including the loop-start so we can detect
+        // the next loop in the same run (loops stitched by at-Z links).
+        cutRun = cutRun.slice(idx)
+        return true
+      }
+    }
+    return false
+  }
+  for (const move of result.moves) {
+    const isCutAtZ = move.kind === 'cut'
+      && Math.abs(move.from.z - targetZ) <= eps
+      && Math.abs(move.to.z - targetZ) <= eps
+    if (!isCutAtZ) {
+      cutRun = []
+      continue
+    }
+    if (cutRun.length === 0) {
+      cutRun.push({ x: move.from.x, y: move.from.y })
+    }
+    cutRun.push({ x: move.to.x, y: move.to.y })
+    closeAt(cutRun.length - 1)
+  }
+
+  const plungesAtZ = result.moves.filter((m) =>
+    m.kind === 'plunge' && Math.abs(m.to.z - targetZ) <= eps
+  ).length
+
+  assert(closedLoopsAtZ >= 4,
+    `expected at least 4 closed cut loops at Z=${targetZ}, got ${closedLoopsAtZ}`)
+  assert(plungesAtZ * 2 <= closedLoopsAtZ,
+    `expected plunges (${plungesAtZ}) to be at most half the closed-loop count (${closedLoopsAtZ}) at Z=${targetZ}; at-Z linking does not appear to be firing`)
+}
+
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
 testRoughSurfaceDefaultsLegacyModelFormatToStl()
+testRoughSurfaceCutsVerticalPocketAndOutsideWall()
 testRoughSurfaceProtectsOverhangingModelShadow()
 testRoughSurfaceProtectsOpenMeshSlicesConservatively()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
+testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
 testRoughSurfaceRespectsSplitPocketDepths()
+testRoughSurfaceLinksOffsetRingsAtZ()
+
+function testTransitionToCutEntryPlungesAtAlignedXY(): void {
+  console.log('Testing transitionToCutEntry plunges straight down at aligned XY...')
+  const moves: ToolpathMove[] = []
+  const from: ToolpathPoint = { x: 5, y: 7, z: 5 }
+  const to: ToolpathPoint = { x: 5, y: 7, z: 2 }
+  const out = transitionToCutEntry(moves, from, to, 10, 0)
+  assert(moves.length === 1, `expected 1 move, got ${moves.length}`)
+  assert(moves[0].kind === 'plunge', `expected plunge, got ${moves[0].kind}`)
+  assert(moves[0].from.z === 5 && moves[0].to.z === 2, 'plunge Z range incorrect')
+  assert(out.z === 2 && out.x === 5 && out.y === 7, 'returned position incorrect')
+}
+
+function testTransitionToCutEntryRetractsAcrossDifferentXY(): void {
+  console.log('Testing transitionToCutEntry retracts when XY differs and no link is allowed...')
+  const moves: ToolpathMove[] = []
+  const from: ToolpathPoint = { x: 5, y: 7, z: 5 }
+  const to: ToolpathPoint = { x: 20, y: 20, z: 5 }
+  transitionToCutEntry(moves, from, to, 10, 0)
+  // Expect: rapid up to safeZ, rapid across to new XY, plunge down
+  const kinds = moves.map((m) => m.kind)
+  assert(kinds.includes('rapid'), `expected at least one rapid, got ${kinds.join(',')}`)
+  assert(kinds.includes('plunge'), `expected a plunge, got ${kinds.join(',')}`)
+}
+
+testTransitionToCutEntryPlungesAtAlignedXY()
+testTransitionToCutEntryRetractsAcrossDifferentXY()
 
 console.log('roughSurface tests passed')

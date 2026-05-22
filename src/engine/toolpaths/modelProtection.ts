@@ -26,6 +26,9 @@ import {
 } from './geometry'
 import { significantSilhouettePaths } from './silhouette'
 
+// clipper-lib exposes pftEvenOdd at runtime, but its TS type only includes pftNonZero.
+const POLY_FILL_EVEN_ODD = 0
+
 export interface ProtectedFootprintOptions {
   targetFeatureIds: Set<string>
   z?: number
@@ -58,6 +61,21 @@ export function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
     solution,
     ClipperLib.PolyFillType.pftNonZero,
     ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
+}
+
+export function unionClipperPathsEvenOdd(paths: ClipperPath[]): ClipperPath[] {
+  if (paths.length === 0) return []
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    solution,
+    POLY_FILL_EVEN_ODD,
+    POLY_FILL_EVEN_ODD,
   )
   return solution as ClipperPath[]
 }
@@ -202,6 +220,58 @@ export function subtractBottomZAtPoint(
   return bottom
 }
 
+/**
+ * Even-odd point-in-region test for a `ClipperPath[]` that represents a
+ * polygon-with-holes (outer rings + hole rings, mixed). Each `PointInPolygon`
+ * hit toggles "inside" — a point inside an outer alone is inside; a point
+ * inside both an outer and a hole nested in it cancels out to outside.
+ */
+export function pointInClipperPaths(paths: ClipperPath[], point: Point): boolean {
+  if (paths.length === 0) return false
+  const cp = {
+    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+  }
+  let inside = false
+  for (const path of paths) {
+    const res = (ClipperLib.Clipper as unknown as { PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number })
+      .PointInPolygon(cp, path)
+    if (res !== 0) inside = !inside
+  }
+  return inside
+}
+
+/**
+ * Returns true if every point on the segment `from`→`to` is inside the region
+ * defined by `paths`. Samples both endpoints plus interior points spaced at
+ * roughly `sampleSpacing` units. The caller is responsible for inflating the
+ * region inward by tool radius before passing it here — `paths` is treated as
+ * the *tool-center safe zone*, not the cut boundary.
+ */
+export function segmentInsideClipperPaths(
+  paths: ClipperPath[],
+  from: Point,
+  to: Point,
+  sampleSpacing: number,
+): boolean {
+  if (paths.length === 0) return false
+  if (!pointInClipperPaths(paths, from)) return false
+  if (!pointInClipperPaths(paths, to)) return false
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const length = Math.hypot(dx, dy)
+  if (length === 0) return true
+  const spacing = Math.max(sampleSpacing, length * 1e-3)
+  const steps = Math.max(1, Math.ceil(length / spacing))
+  for (let i = 1; i < steps; i += 1) {
+    const t = i / steps
+    if (!pointInClipperPaths(paths, { x: from.x + dx * t, y: from.y + dy * t })) {
+      return false
+    }
+  }
+  return true
+}
+
 export function safeSubtractBottomZAtPoint(
   subtracts: Array<{ paths: ClipperPath[]; bottomZ: number; clearancePaths?: ClipperPath[] }>,
   point: Point,
@@ -287,4 +357,14 @@ export function buildProtectedFootprintPaths(
   }
 
   return unionClipperPaths(protectedPaths)
+}
+
+export function calculateClipperArea(paths: ClipperPath[]): number {
+  let total = 0
+  for (const path of paths) {
+    // Area() returns positive for CW, negative for CCW
+    total += ClipperLib.Clipper.Area(path)
+  }
+  // If the outer contour is CCW, total will be negative.
+  return Math.abs(total) / (DEFAULT_CLIPPER_SCALE * DEFAULT_CLIPPER_SCALE)
 }
