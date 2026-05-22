@@ -9,6 +9,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 
 ## Subfolders
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**
+- `test-fixtures/` — committed engine-test assets such as `.camj` regression files shared by engine tests
 - `gcode/` — G-code post-processors and emission
   - `index.ts` — public API
   - `postprocessor.ts` — post-processor runner

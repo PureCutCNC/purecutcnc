@@ -210,31 +210,56 @@ export function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null,
   return safePoint
 }
 
+/**
+ * Optional callback for deciding whether a straight tool-center segment from
+ * `from` to `to` can be cut directly at Z (skipping retract/plunge). Returns
+ * true when the segment is known to lie inside already-cleared material.
+ */
+export type SafeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint) => boolean
+
+const XY_ALIGN_EPS = 1e-6
+
 export function transitionToCutEntry(
   moves: ToolpathMove[],
   from: ToolpathPoint | null,
   toXY: ToolpathPoint,
   safeZ: number,
   maxLinkDistance: number,
+  safeLinkCheck?: SafeLinkCheck,
 ): ToolpathPoint {
   if (from) {
     const dx = toXY.x - from.x
     const dy = toXY.y - from.y
     const distance = Math.hypot(dx, dy)
+    const dz = toXY.z - from.z
 
-    if (distance === 0) {
+    // Same XY (within epsilon): no XY travel needed. If Z descends, plunge
+    // straight down to the next cut start rather than retracting to safe Z
+    // and re-plunging. If Z ascends, rapid up. Same Z: no-op.
+    if (distance <= XY_ALIGN_EPS) {
+      if (dz < -XY_ALIGN_EPS) {
+        moves.push({ kind: 'plunge', from, to: toXY })
+      } else if (dz > XY_ALIGN_EPS) {
+        moves.push({ kind: 'rapid', from, to: toXY })
+      }
       return toXY
     }
 
     if (distance <= maxLinkDistance) {
       // Direct cut link — works across Z levels (3D cut moves are valid
-      // for ramping between layers in roughing/surface operations).
-      moves.push({
-        kind: 'cut',
-        from,
-        to: toXY,
-      })
-      return toXY
+      // for ramping between layers in roughing/surface operations). When
+      // a safe-link check is supplied it must also approve the segment;
+      // this is the path used by 3D roughing to link offset rings at Z
+      // inside the previously cleared area instead of round-tripping
+      // through safe Z.
+      if (!safeLinkCheck || safeLinkCheck(from, toXY)) {
+        moves.push({
+          kind: 'cut',
+          from,
+          to: toXY,
+        })
+        return toXY
+      }
     }
   }
 
@@ -509,7 +534,7 @@ function contourEntryDistanceSquared(points: Point[], anchor: Point): number {
   return contourNearestVertexDistance(points, anchor)
 }
 
-function rotateContourToNearestEntry(points: Point[], anchor: Point | null): Point[] {
+export function rotateContourToNearestEntry(points: Point[], anchor: Point | null): Point[] {
   if (points.length === 0 || anchor === null) {
     return points
   }
@@ -748,6 +773,7 @@ export function cutClosedContours(
   currentPosition: ToolpathPoint | null,
   preserveContourRotation = false,
   direction: CutDirection = 'conventional',
+  safeLinkCheck?: SafeLinkCheck,
 ): ToolpathPoint | null {
   const directedContours = applyContourDirection(contours, direction)
   const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
@@ -758,7 +784,7 @@ export function cutClosedContours(
   let nextPosition = currentPosition
   for (const contour of orderedContours) {
     const entryPoint = contourStartPoint(contour, z)
-    nextPosition = transitionToCutEntry(moves, nextPosition, entryPoint, safeZ, maxLinkDistance)
+    nextPosition = transitionToCutEntry(moves, nextPosition, entryPoint, safeZ, maxLinkDistance, safeLinkCheck)
     const cutMoves = toClosedCutMoves(contour, z)
     moves.push(...cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
@@ -776,6 +802,7 @@ export function cutOffsetRegionRecursive(
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
   direction: CutDirection = 'conventional',
+  safeLinkCheck?: SafeLinkCheck,
 ): ToolpathPoint | null {
   const childRegions = buildInsetRegions(region, stepoverDistance)
   const childAnchors = childRegions
@@ -797,6 +824,7 @@ export function cutOffsetRegionRecursive(
     currentPosition,
     true,
     direction,
+    safeLinkCheck,
   )
 
   const orderedChildren = orderRegionsGreedy(
@@ -814,6 +842,7 @@ export function cutOffsetRegionRecursive(
       maxLinkDistance,
       nextPosition,
       direction,
+      safeLinkCheck,
     )
   }
 

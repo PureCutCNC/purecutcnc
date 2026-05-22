@@ -311,13 +311,83 @@ function getCachedHeightMap(
   return heightMap
 }
 
+/**
+ * Minimum tool-tip Z at (x, y) given the height map and tool kinematics.
+ * Same logic as `applyGougeProtection` but for a single XY query. Returns
+ * `-Infinity` if no model cells fall under the tool footprint (free travel).
+ */
+function safeToolTipZAt(
+  x: number,
+  y: number,
+  heightMap: HeightMap,
+  tool: NormalizedTool,
+): number {
+  const toolRadius = tool.radius
+  const neighborCells = Math.ceil(toolRadius / heightMap.cellSize)
+  const radiusSq = toolRadius * toolRadius
+  const isBall = tool.type === 'ball_endmill'
+  const vBitHalfAngleDeg = tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0
+    ? tool.vBitAngle / 2
+    : 0
+  const cotHalfAngle = vBitHalfAngleDeg > 0
+    ? 1 / Math.tan((vBitHalfAngleDeg * Math.PI) / 180)
+    : 0
+
+  const col = Math.floor((x - heightMap.originX) / heightMap.cellSize)
+  const row = Math.floor((y - heightMap.originY) / heightMap.cellSize)
+
+  let safeZ = Number.NEGATIVE_INFINITY
+  const minC = Math.max(0, col - neighborCells)
+  const maxC = Math.min(heightMap.width - 1, col + neighborCells)
+  const minR = Math.max(0, row - neighborCells)
+  const maxR = Math.min(heightMap.height - 1, row + neighborCells)
+
+  for (let nr = minR; nr <= maxR; nr += 1) {
+    for (let nc = minC; nc <= maxC; nc += 1) {
+      const cellZ = heightMap.data[nr * heightMap.width + nc]
+      if (!isFinite(cellZ)) continue
+      const cx = heightMap.originX + (nc + 0.5) * heightMap.cellSize
+      const cy = heightMap.originY + (nr + 0.5) * heightMap.cellSize
+      const dx = cx - x
+      const dy = cy - y
+      const dSq = dx * dx + dy * dy
+      if (dSq > radiusSq) continue
+      let constrained: number
+      if (isBall) {
+        constrained = cellZ - toolRadius + Math.sqrt(radiusSq - dSq)
+      } else if (cotHalfAngle > 0) {
+        constrained = cellZ - Math.sqrt(dSq) * cotHalfAngle
+      } else {
+        constrained = cellZ
+      }
+      if (constrained > safeZ) safeZ = constrained
+    }
+  }
+
+  return safeZ
+}
+
 function applyGougeProtection(
   scanPoints: Array<{ x: number; y: number; z: number; rotX: number }>,
   heightMap: HeightMap,
-  toolRadius: number,
+  tool: NormalizedTool,
 ): void {
+  const toolRadius = tool.radius
   const neighborCells = Math.ceil(toolRadius / heightMap.cellSize)
   const radiusSq = toolRadius * toolRadius
+  // Kinematic constraint depends on tool geometry. For a model cell at lateral
+  // distance d (d <= R) and height cellZ, the constraint on the tool-tip Z is:
+  //   - Ball endmill:  sp.z >= cellZ - R + sqrt(R² - d²)   (sphere clearance)
+  //   - Flat endmill:  sp.z >= cellZ                       (cylinder clearance)
+  //   - V-bit (cone θ): sp.z >= cellZ - d / tan(θ/2)
+  //   - Other:         fall back to flat (conservative — never gouges)
+  const isBall = tool.type === 'ball_endmill'
+  const vBitHalfAngleDeg = tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0
+    ? tool.vBitAngle / 2
+    : 0
+  const cotHalfAngle = vBitHalfAngleDeg > 0
+    ? 1 / Math.tan((vBitHalfAngleDeg * Math.PI) / 180)
+    : 0
 
   for (let pi = 0; pi < scanPoints.length; pi++) {
     const sp = scanPoints[pi]
@@ -344,7 +414,16 @@ function applyGougeProtection(
         const dSq = dx * dx + dy * dy
         if (dSq > radiusSq) continue
 
-        const constrained = cellZ - toolRadius + Math.sqrt(radiusSq - dSq)
+        let constrained: number
+        if (isBall) {
+          constrained = cellZ - toolRadius + Math.sqrt(radiusSq - dSq)
+        } else if (cotHalfAngle > 0) {
+          constrained = cellZ - Math.sqrt(dSq) * cotHalfAngle
+        } else {
+          // Flat endmill (and conservative fallback): any model material at
+          // lateral distance <= R must be at or below the tool tip.
+          constrained = cellZ
+        }
         if (constrained > safeZ) safeZ = constrained
       }
     }
@@ -510,6 +589,37 @@ export function generateFinishSurfaceParallel(
   const heightMap = getCachedHeightMap(sliceIndexHost, transformedPos, index, heightMapBbox, heightMapCellSize)
   const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
+  // Safe link check for scanline → scanline transitions. The straight 3D
+  // segment from one scanline's end to the next scanline's start (already
+  // gouge-protected at the endpoints) is allowed when the linearly
+  // interpolated link Z stays above the kinematic safe Z along the way. The
+  // common flat-pocket-floor case: surface Z = link Z everywhere, link is
+  // accepted, and the tool moves straight across at constant Z instead of
+  // retracting and re-plunging on every scanline.
+  const linkSampleSpacing = Math.max(heightMapCellSize, tool.radius * 0.5)
+  const linkCushion = Math.max(heightMapCellSize * 0.5, 1e-3)
+  const safeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint): boolean => {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const dz = to.z - from.z
+    const length = Math.hypot(dx, dy)
+    if (length === 0) return true
+    const steps = Math.max(1, Math.ceil(length / linkSampleSpacing))
+    for (let i = 1; i < steps; i += 1) {
+      const t = i / steps
+      const sx = from.x + dx * t
+      const sy = from.y + dy * t
+      const sz = from.z + dz * t
+      const required = safeToolTipZAt(sx, sy, heightMap, tool)
+      if (sz + linkCushion < required) return false
+    }
+    return true
+  }
+  // Allow the link to extend up to a couple of stepovers — slightly more than
+  // the natural Y jump between adjacent scanlines so segments with small X
+  // misalignment still link. The kinematic check above is the real guard.
+  const linkMaxDistance = stepoverDistance * 2
+
   const angleRad = (angleDeg * Math.PI) / 180
   const cosNeg = Math.cos(-angleRad)
   const sinNeg = Math.sin(-angleRad)
@@ -534,13 +644,16 @@ export function generateFinishSurfaceParallel(
     const rotMinY = Math.min(...corners.map((c) => c.y))
     const rotMaxY = Math.max(...corners.map((c) => c.y))
     const rotatedContours = contours.map((contour) => contour.map(([x, y]) => rotatePoint({ x, y }, cosNeg, sinNeg)))
-    let scanIndex = startScanIndex
     let pos = position
+    // startScanIndex is preserved on the signature for API stability but no
+    // longer drives an even/odd zigzag flip — phase 5 of the link-optimization
+    // plan replaces that with closer-endpoint pickup per segment.
+    void startScanIndex
 
     for (
       let rotY = rotMinY + stepoverDistance / 2;
       rotY < rotMaxY;
-      rotY += stepoverDistance, scanIndex += 1
+      rotY += stepoverDistance
     ) {
       const scanSegments: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
 
@@ -556,15 +669,35 @@ export function generateFinishSurfaceParallel(
 
       scanSegments.sort((a, b) => a[0].rotX - b[0].rotX)
 
-      if (scanIndex % 2 === 1) {
-        scanSegments.reverse()
-        for (const segment of scanSegments) {
-          segment.reverse()
+      // Closer-endpoint pickup. Instead of always cutting segments in their
+      // sorted-rotX order with a blanket reverse on odd scanlines, pick the
+      // next segment whose nearest endpoint is closest to the current tool
+      // position and reverse the segment only if its end is nearer than its
+      // start. This preserves the zigzag macro-pattern (the geometric reason
+      // we still chose to keep zigzag) while shortening cross-table travel
+      // between segments, especially on scanlines split by protected regions.
+      const remainingSegments = [...scanSegments]
+      while (remainingSegments.length > 0) {
+        let bestIdx = 0
+        let bestReverse = false
+        let bestDist = Number.POSITIVE_INFINITY
+        for (let i = 0; i < remainingSegments.length; i += 1) {
+          const seg = remainingSegments[i]
+          const startP = seg[0]
+          const endP = seg[seg.length - 1]
+          const dStart = pos ? (startP.x - pos.x) ** 2 + (startP.y - pos.y) ** 2 : 0
+          const dEnd = pos ? (endP.x - pos.x) ** 2 + (endP.y - pos.y) ** 2 : 0
+          const local = Math.min(dStart, dEnd)
+          if (local < bestDist) {
+            bestDist = local
+            bestIdx = i
+            bestReverse = dEnd < dStart
+          }
         }
-      }
+        const segment = remainingSegments.splice(bestIdx, 1)[0]
+        if (bestReverse) segment.reverse()
 
-      for (const segment of scanSegments) {
-        applyGougeProtection(segment, heightMap, tool.radius)
+        applyGougeProtection(segment, heightMap, tool)
         const clampedSegment = clampSurfaceSegmentToMinZ(segment, minCutZAtPoint)
 
         for (const sp of clampedSegment) {
@@ -578,7 +711,7 @@ export function generateFinishSurfaceParallel(
         }))
         const entryPoint = cutPoints3D[0]
 
-        pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, 0)
+        pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
         moves.push(...toOpenCutMoves3D(cutPoints3D))
         pos = cutPoints3D[cutPoints3D.length - 1]
       }

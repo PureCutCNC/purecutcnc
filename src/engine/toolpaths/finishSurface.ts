@@ -23,10 +23,15 @@
 import type { Operation, Point, Project } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds } from './types'
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
-import { generateStepLevels, updateBounds } from './pocket'
+import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { splitFeatureTargets } from './regions'
-import { offsetClipperPaths, relatedSubtractFeatures, safeSubtractBottomZAtPoint } from './modelProtection'
+import {
+  offsetClipperPaths,
+  relatedIntersectingAddFeatures,
+  relatedSubtractFeatures,
+  safeSubtractBottomZAtPoint,
+} from './modelProtection'
 import {
   generateFinishSurfaceParallel,
   modelSilhouettePathsForFinishSurface,
@@ -127,6 +132,23 @@ export function generateFinishSurfaceToolpath(
     if (z < modelBottomZ) modelBottomZ = z
   }
 
+  // Detect horizontal model surfaces (triangles whose three vertices share Z).
+  // For waterline these become "critical" levels — the contour right at the
+  // floor of a bump or the top of a pocket has to be included as a stepdown,
+  // otherwise a thin ring of material is left between the lowest evenly-spaced
+  // stepdown and the actual floor.
+  const horizontalFloorZs = new Set<number>()
+  if (operation.pocketPattern === 'waterline') {
+    for (let i = 0; i < index.length; i += 3) {
+      const z0 = transformedPos[index[i] * 3 + 2]
+      const z1 = transformedPos[index[i + 1] * 3 + 2]
+      const z2 = transformedPos[index[i + 2] * 3 + 2]
+      if (Math.abs(z0 - z1) < 1e-6 && Math.abs(z1 - z2) < 1e-6) {
+        horizontalFloorZs.add(z0)
+      }
+    }
+  }
+
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
   let effectiveBottom = modelBottomZ + axialLeave
   if (effectiveBottom >= modelTopZ) {
@@ -140,6 +162,15 @@ export function generateFinishSurfaceToolpath(
   }
 
   const modelSilhouettePaths = modelSilhouettePathsForFinishSurface(modelFeature)
+  const intersectingAdds = relatedIntersectingAddFeatures(
+    project,
+    new Set(target.featureIds),
+    modelSilhouettePaths,
+  )
+  const intersectingAddTopMax = intersectingAdds.length === 0
+    ? -Infinity
+    : intersectingAdds.reduce((m, a) => Math.max(m, a.topZ), -Infinity)
+
   const relatedSubtracts = relatedSubtractFeatures(
     project,
     new Set(target.featureIds),
@@ -162,11 +193,31 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  let stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
+  // Waterline must reach above modelTopZ when an intersecting add feature
+  // pokes higher than the mesh — those exposed walls live above the model
+  // surface and need finishing too. For other strategies, keep modelTopZ as
+  // the upper bound (parallel finish samples the model surface only).
+  const stepLevelTopZ = operation.pocketPattern === 'waterline'
+    ? Math.max(modelTopZ, intersectingAddTopMax)
+    : modelTopZ
+  let stepLevels = generateStepLevels(stepLevelTopZ, effectiveBottom, operation.stepdown)
   if (operation.pocketPattern === 'waterline') {
-    if (stepLevels.length === 0 || stepLevels[0] < modelTopZ - 1e-9) {
-      stepLevels = [modelTopZ, ...stepLevels]
+    // Insert stepLevelTopZ, modelTopZ, and horizontal floor Zs within the
+    // effective range as additional waterline rings. The floor levels are
+    // critical to leave a clean foot at the base of bumps (and a clean top at
+    // the rim of pockets) — without them the lowest ring sits one stepdown
+    // above the floor and leaves a small unmachined band.
+    const merged = new Set<number>(stepLevels)
+    if (stepLevelTopZ > effectiveBottom + 1e-9) merged.add(stepLevelTopZ)
+    if (modelTopZ > effectiveBottom + 1e-9 && modelTopZ <= stepLevelTopZ + 1e-9) {
+      merged.add(modelTopZ)
     }
+    for (const z of horizontalFloorZs) {
+      if (z > effectiveBottom + 1e-9 && z <= stepLevelTopZ + 1e-9) {
+        merged.add(z)
+      }
+    }
+    stepLevels = [...merged].sort((a, b) => b - a)
   }
 
   if (stepLevels.length === 0) {
@@ -197,6 +248,8 @@ export function generateFinishSurfaceToolpath(
       effectiveBottom,
       modelTopZ,
       warnings,
+      intersectingAdds,
+      modelSilhouettePaths,
     )
     : generateFinishSurfaceParallel(
       project,
@@ -212,15 +265,21 @@ export function generateFinishSurfaceToolpath(
       warnings,
     )
 
+  const finalMoves = strategyResult.moves
+  const lastMove = finalMoves[finalMoves.length - 1]
+  if (lastMove && lastMove.to.z !== safeZ) {
+    retractToSafe(finalMoves, lastMove.to, safeZ)
+  }
+
   let bounds: ToolpathBounds | null = null
-  for (const move of strategyResult.moves) {
+  for (const move of finalMoves) {
     bounds = updateBounds(bounds, move.from)
     bounds = updateBounds(bounds, move.to)
   }
 
   return {
     operationId: operation.id,
-    moves: strategyResult.moves,
+    moves: finalMoves,
     warnings,
     bounds,
     stepLevels: [...strategyResult.stepLevels].sort((a, b) => b - a),

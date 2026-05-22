@@ -151,6 +151,91 @@ export function applyContourDirection(contours: Point[][], direction: 'conventio
   return contours.map((c) => normalizeWinding(c, !isClockwise(c)))
 }
 
+/**
+ * Apply cut direction to a mix of outer-of-region and hole-of-region contours
+ * where the tool's relationship to the contour differs per ring.
+ *
+ * `outerRingRole` describes whether the OUTER (CCW) rings have the tool on the
+ * inside (e.g. roughing's clearable polygon — pocket-like) or on the outside
+ * (e.g. waterline's offset-shadow — around-the-bump). HOLE rings (CW) get the
+ * opposite role automatically within the same call.
+ *
+ * Why this exists: the simpler `applyContourDirection` assumes all contours
+ * share one role (tool-inside) and lets the caller pre-invert direction for
+ * tool-outside cases. That doesn't work when one set of contours mixes both
+ * roles, as waterline rings do (outer ring around model, hole rings inside
+ * pockets). This helper classifies per contour by natural winding and picks
+ * the winding that produces the requested cut direction.
+ *
+ * Open polylines (e.g. closed contours clipped by a tab/clamp/add-feature
+ * into segments) inherit the parent ring's traversal order. They are direction-
+ * adjusted by reversing the point order when natural ≠ desired. Winding is
+ * inferred from the polyline's signed area; for fragments that are tiny or
+ * nearly straight this is ambiguous, so callers can pass an explicit per-
+ * contour `naturalIsClockwise` hint via `closed`.
+ */
+export function applyContourDirectionBySide(
+  contours: Point[][],
+  direction: 'conventional' | 'climb' = 'conventional',
+  outerRingRole: 'tool-inside' | 'tool-outside' = 'tool-inside',
+  closed?: boolean[],
+  naturalIsClockwise?: boolean[],
+  toolInsidePerContour?: boolean[],
+): Point[][] {
+  return contours.map((c, i) => {
+    if (c.length < 2) return c
+    const isClosed = closed ? closed[i] : c.length >= 3
+
+    // Determine tool-inside / tool-outside topology for THIS contour.
+    //
+    // Preferred: the caller has classified by an external geometric test
+    // (e.g., is the ring's centroid inside the slice material?). That is
+    // always more reliable than inferring from winding because Clipper's
+    // open-path difference can flip closed-ring traversal direction even
+    // when it doesn't actually clip the ring.
+    //
+    // Fallback: infer from winding combined with `outerRingRole`.
+    const outerToolInside = outerRingRole === 'tool-inside'
+    let toolInside: boolean
+    if (toolInsidePerContour && i < toolInsidePerContour.length && toolInsidePerContour[i] !== undefined) {
+      toolInside = toolInsidePerContour[i]
+    } else {
+      // Pick a winding source: actual signed area for closed contours
+      // (definitive), hint for open polylines (signed area on a fragment is
+      // ambiguous), and signed area as the last-resort fallback.
+      const clockwiseHint = naturalIsClockwise ? naturalIsClockwise[i] : null
+      const clockwise = isClosed
+        ? isClockwise(c)
+        : (clockwiseHint !== null && clockwiseHint !== undefined
+            ? clockwiseHint
+            : isClockwise(c))
+      toolInside = clockwise ? !outerToolInside : outerToolInside
+    }
+
+    // Decide the WINDING the output should have to honor the user's setting.
+    //   tool-inside  + climb       => CW
+    //   tool-inside  + conventional=> CCW
+    //   tool-outside + climb       => CCW
+    //   tool-outside + conventional=> CW
+    const wantClimb = direction === 'climb'
+    const wantClockwise = toolInside ? wantClimb : !wantClimb
+
+    if (isClosed) {
+      return normalizeWinding(c, wantClockwise)
+    }
+    // Open polyline: ensure traversal order matches the desired winding.
+    // For closed-ring-fragments, signed area on the fragment is ambiguous;
+    // use the hint if provided to know whether the current order matches
+    // the source ring's natural winding.
+    const clockwiseHint = naturalIsClockwise ? naturalIsClockwise[i] : null
+    const currentClockwise = clockwiseHint !== null && clockwiseHint !== undefined
+      ? clockwiseHint
+      : isClockwise(c)
+    if (currentClockwise === wantClockwise) return c
+    return [...c].reverse()
+  })
+}
+
 export function toClipperPath(points: Point[], scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
   return ensureClosedPath(points).map((p) => ({ X: Math.round(p.x * scale), Y: Math.round(p.y * scale) }))
 }
