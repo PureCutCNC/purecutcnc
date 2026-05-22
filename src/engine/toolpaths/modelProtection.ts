@@ -172,6 +172,52 @@ export function containingSubtractBottomZ(
   return bottom
 }
 
+/**
+ * Returns true if `subjectPaths` is fully contained within any non-target add
+ * feature's footprint — i.e. the subtract is "owned by" that add feature
+ * (it represents the add's own pocket) rather than carving into the model.
+ * Used to exclude such subtracts from the 3D operation's Z-range calculation,
+ * so an add-feature pocket that happens to fall within the model's XY
+ * silhouette does not incorrectly pull the model operation's bottom Z deeper.
+ */
+/**
+ * True if some non-target add feature "owns" the subject footprint — i.e. the
+ * add feature strictly contains the subject AND the add feature does not
+ * itself cover the entire model footprint. The latter distinguishes an
+ * "intersecting" topographic add (a small boss/island on or near the model)
+ * from a "containing" base feature (stock-defining envelope around the
+ * model). A subtract inside the former is the add's own pocket and must not
+ * pull the model operation's Z range deeper. A subtract co-extensive with a
+ * containing add is the user's model-pocket and must keep constraining Z.
+ */
+export function isFootprintInsideAddFeature(
+  project: Project,
+  subjectPaths: ClipperPath[],
+  targetFeatureIds: Set<string>,
+  modelFootprintPaths: ClipperPath[],
+): boolean {
+  if (subjectPaths.length === 0) return false
+  for (const feature of project.features) {
+    if (targetFeatureIds.has(feature.id)) continue
+    if (feature.operation !== 'add') continue
+    const addPaths = featureFootprintPaths(feature)
+    if (addPaths.length === 0) continue
+    // Add must strictly contain the subject (so the subject is internal to
+    // the add, with material around it).
+    if (differenceClipperPaths(subjectPaths, addPaths).length !== 0) continue
+    if (differenceClipperPaths(addPaths, subjectPaths).length === 0) continue
+    // Add must NOT also cover the entire model footprint — that pattern is
+    // the user defining stock geometry around the model, not a topographic
+    // feature with its own pocket.
+    if (modelFootprintPaths.length > 0
+      && differenceClipperPaths(modelFootprintPaths, addPaths).length === 0) {
+      continue
+    }
+    return true
+  }
+  return false
+}
+
 export function relatedSubtractFeatures(
   project: Project,
   targetFeatureIds: Set<string>,
@@ -185,6 +231,10 @@ export function relatedSubtractFeatures(
 
     const paths = featureFootprintPaths(feature)
     if (paths.length === 0 || intersectClipperPaths(modelFootprintPaths, paths).length === 0) continue
+    // A subtract that lives entirely within an add feature's footprint is the
+    // add's own pocket — its depth must not constrain the 3D model operation's
+    // Z range, even though its XY footprint overlaps the model silhouette.
+    if (isFootprintInsideAddFeature(project, paths, targetFeatureIds, modelFootprintPaths)) continue
 
     const span = resolveFeatureZSpan(project, feature)
     related.push({
@@ -193,6 +243,33 @@ export function relatedSubtractFeatures(
       bottomZ: span.min,
       topZ: span.max,
     })
+  }
+
+  return related
+}
+
+/**
+ * Non-target add features whose footprint intersects the 3D model silhouette
+ * — these create vertical walls inside the model's machining envelope and
+ * must be finished alongside the model's own walls.
+ */
+export function relatedIntersectingAddFeatures(
+  project: Project,
+  targetFeatureIds: Set<string>,
+  modelFootprintPaths: ClipperPath[],
+): Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> {
+  const related: Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> = []
+
+  for (const feature of project.features) {
+    if (targetFeatureIds.has(feature.id)) continue
+    if (feature.operation !== 'add') continue
+
+    const paths = featureFootprintPaths(feature)
+    if (paths.length === 0) continue
+    if (intersectClipperPaths(modelFootprintPaths, paths).length === 0) continue
+
+    const span = resolveFeatureZSpan(project, feature)
+    related.push({ feature, paths, bottomZ: span.min, topZ: span.max })
   }
 
   return related

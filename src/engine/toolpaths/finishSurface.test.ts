@@ -4,6 +4,8 @@
  * Run with: npx tsx src/engine/toolpaths/finishSurface.test.ts
  */
 
+// @ts-ignore Node-only test fixture loading; the app tsconfig excludes Node typings.
+import { readFileSync } from 'fs'
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
 import { normalizeProject } from '../../store/projectStore'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
@@ -324,6 +326,18 @@ function makeProject(): { project: Project; operation: Operation } {
   return { project: normalizeProject(project), operation: makeOperation() }
 }
 
+function loadImportedBlockWaterlineProject(): { project: Project; operation: Operation } {
+  const raw = readFileSync(new URL('../../../work/3d-imported-block-test3.camj', import.meta.url), 'utf8')
+  const project = normalizeProject(JSON.parse(raw) as Project)
+  const operation = project.operations.find(
+    (candidate) => candidate.kind === 'finish_surface' && candidate.pocketPattern === 'waterline',
+  )
+  if (!operation) {
+    throw new Error('expected waterline finish operation in 3d-imported-block-test3.camj')
+  }
+  return { project, operation }
+}
+
 function normalizeProjectFeatures(project: Project): void {
   const normalized = normalizeProject(project)
   project.features = normalized.features
@@ -465,6 +479,78 @@ function makeContainingSubtractFeature(): SketchFeature {
     operation: 'subtract',
     z_top: 4,
     z_bottom: 2,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeIntersectingAddFeature(): SketchFeature {
+  // Straddles the model's right edge (model is x=0..20). The portion x=18..20
+  // overlaps the model footprint; x=20..25 is outside. Waterline must cut the
+  // intersecting wall at x=18 but NOT trace the outer perimeter at x=25.
+  return {
+    id: 'intersectAdd1',
+    name: 'Intersecting add straddling model right edge',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(18, 1, 7, 8),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeAddOwnedPocketFeature(): SketchFeature {
+  // Subtract pocket fully inside an intersecting add feature (see
+  // makeAddWithOwnedPocketParent). Its footprint overlaps the model
+  // silhouette, but it is the add's own pocket and must not pull the model
+  // operation's bottom Z deeper.
+  return {
+    id: 'ownedPocket',
+    name: 'Add-owned pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(18, 2, 5, 6),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 5,
+    z_bottom: -2,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeAddOwnedPocketParent(): SketchFeature {
+  // Wide add feature that fully contains makeAddOwnedPocketFeature and
+  // partially overlaps the model footprint (x=15..25; model is x=0..20).
+  return {
+    id: 'addParent',
+    name: 'Wide intersecting add (parent of owned pocket)',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(15, 0, 10, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
     visible: true,
     locked: false,
   }
@@ -943,6 +1029,93 @@ function testWaterlinePocketBlockSimplification(): void {
     'expected simplifier to remove adjacent reducible collinear cut segments')
 }
 
+function testWaterlineCutsIntersectingAddFeatureWalls(): void {
+  console.log('Testing waterline cuts intersecting add feature walls...')
+  const { project } = makeProject()
+  project.features = [makePocketBlockModelFeature(), makeIntersectingAddFeature()]
+  normalizeProjectFeatures(project)
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepdown: 0.5,
+    stepover: 0.5,
+  }
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected waterline cut moves')
+
+  // The intersecting add pokes above the mesh top (4). Waterline previously
+  // emitted no rings above the mesh; now it must trace the add walls there.
+  const cutsAboveMeshTop = cuts.filter((m) => m.from.z > 4 + 1e-6 || m.to.z > 4 + 1e-6)
+  assert(cutsAboveMeshTop.length > 0,
+    `expected waterline cuts above mesh top tracing intersecting add walls, got ${cutsAboveMeshTop.length}`)
+
+  // The intersecting portion runs from x=18 to x=20 (model right edge). With
+  // a 1mm tool the offset contour around that clipped patch sits at x≈17.5
+  // (intersecting wall) and x≈20.5 (model-edge wall above the mesh top). The
+  // add's outer wall at x=25 must NOT be traced because it lies outside the
+  // model silhouette.
+  const epsilon = 0.6
+  const nearIntersectingWall = cutsAboveMeshTop.some((m) => (
+    Math.abs(m.from.x - 17.5) <= epsilon || Math.abs(m.to.x - 17.5) <= epsilon
+  ))
+  assert(nearIntersectingWall,
+    'expected waterline cuts near intersecting add wall (x≈17.5) above mesh top')
+  const beyondModel = cutsAboveMeshTop.some((m) => m.from.x > 21 || m.to.x > 21)
+  assert(!beyondModel,
+    'expected no waterline cuts beyond the model silhouette (x>21) — intersecting feature must be clipped to model footprint')
+}
+
+function testWaterlineClipsIntersectingWallToActualModelSpan(): void {
+  console.log('Testing waterline clips intersecting wall cuts to the actual model span...')
+  const { project, operation } = loadImportedBlockWaterlineProject()
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected waterline cut moves')
+
+  const overlapCuts = cuts.filter((move) => (
+    move.to.z >= 0.5 - 1e-9 &&
+    [move.from, move.to].some((point) => (
+      point.x >= 2.4 && point.x <= 3.65 &&
+      point.y >= 0.6 && point.y <= 1.6
+    ))
+  ))
+  assert(overlapCuts.length > 0, 'expected waterline cuts in the imported-model/add overlap zone')
+
+  const touchesDiagonalWall = overlapCuts.some((move) => {
+    const dx = Math.abs(move.to.x - move.from.x)
+    const dy = Math.abs(move.to.y - move.from.y)
+    return dx > 0.5 && dy > 0.5
+  })
+  const hasUpperRightCornerCap = overlapCuts.some((move) => {
+    const endpoints = [move.from, move.to]
+    if (!endpoints.every((point) => point.x >= 3.45 && point.y >= 1.5)) return false
+    return Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) < 0.2
+  })
+
+  assert(touchesDiagonalWall,
+    'expected waterline to keep the actual diagonal intersecting wall segment')
+  assert(!hasUpperRightCornerCap,
+    'expected no tiny waterline corner cap in the clipped upper-right corner outside the true intersection wall')
+}
+
+function testFinishSurfaceExcludesAddOwnedPocketFromZRange(): void {
+  console.log('Testing finish_surface excludes add-feature-owned pocket from Z range...')
+  const { project, operation } = makeProject()
+  project.features = [makeAddOwnedPocketParent(), makeAddOwnedPocketFeature(), ...project.features]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected finish surface cut moves')
+  const minCutZ = Math.min(...cuts.map((m) => m.to.z))
+  // Without the fix, the owned pocket (z_bottom=-2) would pull effectiveBottom
+  // down to -2. With it, bottom stays at the model bottom (z=0).
+  assert(minCutZ >= 0 - 1e-9,
+    `expected no finish cuts below model bottom (z=0); got min ${minCutZ}`)
+}
+
 function testWaterlineRespectsTabZRange(): void {
   console.log('Testing waterline respects tab Z range...')
   const { project } = makeProject()
@@ -1256,6 +1429,9 @@ testWaterlineBallEndmillUsesSideContactZ()
 testWaterlineReachesModelTop()
 testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()
+testWaterlineCutsIntersectingAddFeatureWalls()
+testWaterlineClipsIntersectingWallToActualModelSpan()
+testFinishSurfaceExcludesAddOwnedPocketFromZRange()
 testWaterlineRespectsTabZRange()
 testWaterlineRespectsClampFootprint()
 

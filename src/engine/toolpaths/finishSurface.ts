@@ -26,7 +26,12 @@ import { getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { splitFeatureTargets } from './regions'
-import { offsetClipperPaths, relatedSubtractFeatures, safeSubtractBottomZAtPoint } from './modelProtection'
+import {
+  offsetClipperPaths,
+  relatedIntersectingAddFeatures,
+  relatedSubtractFeatures,
+  safeSubtractBottomZAtPoint,
+} from './modelProtection'
 import {
   generateFinishSurfaceParallel,
   modelSilhouettePathsForFinishSurface,
@@ -157,6 +162,15 @@ export function generateFinishSurfaceToolpath(
   }
 
   const modelSilhouettePaths = modelSilhouettePathsForFinishSurface(modelFeature)
+  const intersectingAdds = relatedIntersectingAddFeatures(
+    project,
+    new Set(target.featureIds),
+    modelSilhouettePaths,
+  )
+  const intersectingAddTopMax = intersectingAdds.length === 0
+    ? -Infinity
+    : intersectingAdds.reduce((m, a) => Math.max(m, a.topZ), -Infinity)
+
   const relatedSubtracts = relatedSubtractFeatures(
     project,
     new Set(target.featureIds),
@@ -179,17 +193,27 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  let stepLevels = generateStepLevels(modelTopZ, effectiveBottom, operation.stepdown)
+  // Waterline must reach above modelTopZ when an intersecting add feature
+  // pokes higher than the mesh — those exposed walls live above the model
+  // surface and need finishing too. For other strategies, keep modelTopZ as
+  // the upper bound (parallel finish samples the model surface only).
+  const stepLevelTopZ = operation.pocketPattern === 'waterline'
+    ? Math.max(modelTopZ, intersectingAddTopMax)
+    : modelTopZ
+  let stepLevels = generateStepLevels(stepLevelTopZ, effectiveBottom, operation.stepdown)
   if (operation.pocketPattern === 'waterline') {
-    // Insert modelTopZ and any horizontal floor Zs (within the effective range)
-    // as additional waterline rings, sorted descending and de-duplicated. The
-    // floor levels are critical to leave a clean foot at the base of bumps
-    // (and a clean top at the rim of pockets) — without them, the lowest ring
-    // sits one stepdown above the floor and leaves a small unmachined band.
+    // Insert stepLevelTopZ, modelTopZ, and horizontal floor Zs within the
+    // effective range as additional waterline rings. The floor levels are
+    // critical to leave a clean foot at the base of bumps (and a clean top at
+    // the rim of pockets) — without them the lowest ring sits one stepdown
+    // above the floor and leaves a small unmachined band.
     const merged = new Set<number>(stepLevels)
-    if (modelTopZ > effectiveBottom + 1e-9) merged.add(modelTopZ)
+    if (stepLevelTopZ > effectiveBottom + 1e-9) merged.add(stepLevelTopZ)
+    if (modelTopZ > effectiveBottom + 1e-9 && modelTopZ <= stepLevelTopZ + 1e-9) {
+      merged.add(modelTopZ)
+    }
     for (const z of horizontalFloorZs) {
-      if (z > effectiveBottom + 1e-9 && z <= modelTopZ + 1e-9) {
+      if (z > effectiveBottom + 1e-9 && z <= stepLevelTopZ + 1e-9) {
         merged.add(z)
       }
     }
@@ -224,6 +248,8 @@ export function generateFinishSurfaceToolpath(
       effectiveBottom,
       modelTopZ,
       warnings,
+      intersectingAdds,
+      modelSilhouettePaths,
     )
     : generateFinishSurfaceParallel(
       project,

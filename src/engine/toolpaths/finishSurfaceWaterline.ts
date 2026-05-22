@@ -16,6 +16,13 @@
 
 import ClipperLib from 'clipper-lib'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+
+export interface IntersectingAddFeature {
+  feature: SketchFeature
+  paths: ClipperPath[]
+  bottomZ: number
+  topZ: number
+}
 import {
   DEFAULT_CLIPPER_SCALE,
   applyContourDirectionBySide,
@@ -27,7 +34,7 @@ import {
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
 import {
   buildProtectedFootprintPaths,
-  clipperPathsToPointContours,
+  intersectClipperPaths,
   offsetClipperPaths,
   pointInClipperPaths,
   unionClipperPaths,
@@ -40,13 +47,13 @@ import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from '.
 const MIN_Z_STEP = 0.01
 
 /**
- * Clip a set of CLOSED contour polygons against `clipPaths`, returning the
- * parts of each contour boundary that lie OUTSIDE the clip region.
+ * Clip contour/polyline boundaries against `clipPaths`, preserving either the
+ * parts that lie INSIDE or OUTSIDE the clip region.
  *
- * Returned paths are OPEN polylines (sequences of points the tool follows
- * without auto-closing). A contour that doesn't intersect the clip region is
- * returned as a closed polyline (start point repeated at end) — callers should
- * detect closure by comparing first/last points.
+ * Closed subjects are fed to Clipper as open polylines with their start point
+ * appended to the end. Returned paths remain open polylines unless the clipped
+ * result still forms a loop, in which case `closed[i]` is true and the
+ * duplicate terminal point is removed.
  */
 function mergeChainedOpenPaths(paths: ClipperPath[]): ClipperPath[] {
   // Clipper's open-path difference may emit a single connected polyline as
@@ -89,30 +96,38 @@ function mergeChainedOpenPaths(paths: ClipperPath[]): ClipperPath[] {
   return merged
 }
 
-function clipContourBoundariesAgainstRegion(
-  closedContourPaths: ClipperPath[],
+function clipContourBoundariesByRegion(
+  subjectPaths: ClipperPath[],
   clipPaths: ClipperPath[],
+  subjectClosed: boolean[],
+  keepInside: boolean,
 ): { paths: ClipperPath[]; closed: boolean[] } {
-  if (closedContourPaths.length === 0) return { paths: [], closed: [] }
+  if (subjectPaths.length === 0) return { paths: [], closed: [] }
   if (clipPaths.length === 0) {
     return {
-      paths: closedContourPaths,
-      closed: closedContourPaths.map(() => true),
+      paths: subjectPaths.map((path) => [...path]),
+      closed: [...subjectClosed],
     }
   }
 
-  // Treat each closed contour as an open polyline by appending the start point.
-  const openSubjects: ClipperPath[] = closedContourPaths.map((path) => {
-    if (path.length < 2) return path
-    return [...path, { X: path[0].X, Y: path[0].Y }]
-  })
+  const openSubjects: ClipperPath[] = []
+  for (let i = 0; i < subjectPaths.length; i += 1) {
+    const path = subjectPaths[i]
+    if (path.length < 2) continue
+    openSubjects.push(
+      subjectClosed[i]
+        ? [...path, { X: path[0].X, Y: path[0].Y }]
+        : [...path],
+    )
+  }
+  if (openSubjects.length === 0) return { paths: [], closed: [] }
 
   const clipper = new ClipperLib.Clipper()
   clipper.AddPaths(openSubjects, ClipperLib.PolyType.ptSubject, false)
   clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
   const polytree = new ClipperLib.PolyTree()
   clipper.Execute(
-    ClipperLib.ClipType.ctDifference,
+    keepInside ? ClipperLib.ClipType.ctIntersection : ClipperLib.ClipType.ctDifference,
     polytree,
     ClipperLib.PolyFillType.pftNonZero,
     ClipperLib.PolyFillType.pftNonZero,
@@ -136,6 +151,26 @@ function clipContourBoundariesAgainstRegion(
   return { paths: normalized, closed }
 }
 
+function clipContourBoundariesToRegion(
+  closedContourPaths: ClipperPath[],
+  clipPaths: ClipperPath[],
+): { paths: ClipperPath[]; closed: boolean[] } {
+  return clipContourBoundariesByRegion(
+    closedContourPaths,
+    clipPaths,
+    closedContourPaths.map(() => true),
+    true,
+  )
+}
+
+function clipContourBoundariesAgainstRegion(
+  subjectPaths: ClipperPath[],
+  clipPaths: ClipperPath[],
+  subjectClosed: boolean[] = subjectPaths.map(() => true),
+): { paths: ClipperPath[]; closed: boolean[] } {
+  return clipContourBoundariesByRegion(subjectPaths, clipPaths, subjectClosed, false)
+}
+
 function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
   const paths = slicePolygons
     .filter((poly) => poly.length >= 3)
@@ -144,6 +179,15 @@ function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]
       DEFAULT_CLIPPER_SCALE,
     ))
   return unionClipperPathsEvenOdd(paths)
+}
+
+function clipperPathsToPointContoursForWaterline(paths: ClipperPath[]): Array<Array<{ x: number; y: number }>> {
+  return paths
+    .filter((path) => path.length >= 2)
+    .map((path) => path.map((point) => ({
+      x: point.X / DEFAULT_CLIPPER_SCALE,
+      y: point.Y / DEFAULT_CLIPPER_SCALE,
+    })))
 }
 
 export function maxContourGap(pathsA: ClipperPath[], pathsB: ClipperPath[]): number {
@@ -183,6 +227,41 @@ interface WaterlineLevel {
 
 function pointDistance3D(a: ToolpathPoint, b: ToolpathPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+function trimOpenContourCaps(
+  paths: ClipperPath[],
+  closed: boolean[],
+  maxCapLength: number,
+): { paths: ClipperPath[]; closed: boolean[] } {
+  if (paths.length === 0) return { paths, closed }
+  const maxCapLengthScaled = maxCapLength * DEFAULT_CLIPPER_SCALE
+  const trimmedPaths: ClipperPath[] = []
+  const trimmedClosed: boolean[] = []
+
+  for (let i = 0; i < paths.length; i += 1) {
+    const path = [...paths[i]]
+    const isClosed = closed[i] ?? false
+    if (!isClosed) {
+      while (path.length > 2) {
+        const first = path[0]
+        const next = path[1]
+        if (Math.hypot(next.X - first.X, next.Y - first.Y) > maxCapLengthScaled) break
+        path.shift()
+      }
+      while (path.length > 2) {
+        const penultimate = path[path.length - 2]
+        const last = path[path.length - 1]
+        if (Math.hypot(last.X - penultimate.X, last.Y - penultimate.Y) > maxCapLengthScaled) break
+        path.pop()
+      }
+    }
+    if (path.length < 2) continue
+    trimmedPaths.push(path)
+    trimmedClosed.push(isClosed)
+  }
+
+  return { paths: trimmedPaths, closed: trimmedClosed }
 }
 
 function movesAreContiguous(a: ToolpathMove, b: ToolpathMove, epsilon: number): boolean {
@@ -257,6 +336,8 @@ export function generateFinishSurfaceWaterline(
   effectiveBottom: number,
   modelTopZ: number,
   warnings: string[],
+  intersectingAdds: IntersectingAddFeature[] = [],
+  modelSilhouettePaths: ClipperPath[] = [],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const toolOffset = tool.radius + radialLeave
@@ -271,6 +352,11 @@ export function generateFinishSurfaceWaterline(
   const targetFeatureIds = new Set(
     operation.target.source === 'features' ? operation.target.featureIds : [],
   )
+  // Intersecting add features create vertical walls inside the model envelope.
+  // Their boundaries must be finished, not protected — treat them like targets
+  // for the protected-footprint builder so the contour can run along their
+  // walls instead of being clipped away.
+  for (const add of intersectingAdds) targetFeatureIds.add(add.feature.id)
 
   if (operation.debugToolpath) {
     warnings.push(
@@ -278,19 +364,51 @@ export function generateFinishSurfaceWaterline(
     )
   }
 
+  // Mesh top extracted from the slice index domain — separate from the
+  // requested step-level top, which may extend above the mesh when an
+  // intersecting add feature pokes higher than the model surface.
+  const meshTopZ = modelTopZ
+
   const sliceAtZ = (z: number): ClipperPath[] => {
-    // Slice biased slightly ABOVE the requested z so horizontal model floors
-    // at z (bump bases, pocket rims) don't produce a degenerate empty slice.
-    // The slicer skips triangles whose three vertices all sit on the plane,
-    // so for a flat floor at exactly z we'd get 0 polygons — biasing up by
-    // sliceSampleEpsilon catches the walls coming up from the floor instead.
-    const clampedZ = z >= modelTopZ - sliceSampleEpsilon
-      ? Math.max(effectiveBottom + sliceSampleEpsilon, modelTopZ - sliceSampleEpsilon)
-      : Math.min(modelTopZ - sliceSampleEpsilon, Math.max(effectiveBottom + sliceSampleEpsilon, z + sliceSampleEpsilon))
-    const polygons = sliceMeshAtZ(sliceIndex, clampedZ)
-    if (polygons.length === 0) return []
-    return slicePolygonsToClipperPaths(polygons)
+    // Skip the mesh slice entirely above the mesh top; the slicer would return
+    // empty anyway but the clamp below would force it to the top silhouette.
+    let meshPaths: ClipperPath[] = []
+    if (z <= meshTopZ + sliceSampleEpsilon) {
+      // Slice biased slightly ABOVE the requested z so horizontal model floors
+      // at z (bump bases, pocket rims) don't produce a degenerate empty slice.
+      // The slicer skips triangles whose three vertices all sit on the plane,
+      // so for a flat floor at exactly z we'd get 0 polygons — biasing up by
+      // sliceSampleEpsilon catches the walls coming up from the floor instead.
+      const clampedZ = z >= meshTopZ - sliceSampleEpsilon
+        ? Math.max(effectiveBottom + sliceSampleEpsilon, meshTopZ - sliceSampleEpsilon)
+        : Math.min(meshTopZ - sliceSampleEpsilon, Math.max(effectiveBottom + sliceSampleEpsilon, z + sliceSampleEpsilon))
+      const polygons = sliceMeshAtZ(sliceIndex, clampedZ)
+      meshPaths = polygons.length === 0 ? [] : slicePolygonsToClipperPaths(polygons)
+    }
+    // Add footprints of intersecting add features that are active at z. Their
+    // vertical walls live above the mesh surface and must contribute to the
+    // waterline contour so the finish pass cleans the intersection walls.
+    const addPaths: ClipperPath[] = []
+    for (const add of intersectingAdds) {
+      if (z > add.topZ + 1e-9 || z < add.bottomZ - 1e-9) continue
+      addPaths.push(...add.paths)
+    }
+    if (addPaths.length === 0) return meshPaths
+    if (meshPaths.length === 0) return unionClipperPaths(addPaths)
+    return unionClipperPaths([...meshPaths, ...addPaths])
   }
+
+  // Clip envelope for waterline contours. When an intersecting add feature
+  // protrudes beyond the model footprint (e.g. a wedge attached to the model
+  // side), the offset contour around the (slice ∪ add) union would otherwise
+  // trace the add's outer perimeter — material the 3D operation shouldn't
+  // touch. We confine all generated contours to the model silhouette expanded
+  // by the tool offset, mirroring how roughing's `outline` bounds its
+  // clearable region. When no intersecting adds are present, leave the
+  // envelope undefined to avoid unnecessary clipping.
+  const contourClipEnvelope = intersectingAdds.length > 0 && modelSilhouettePaths.length > 0
+    ? offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), toolOffset + 1e-3)
+    : null
 
   const coarseLevels: WaterlineLevel[] = []
   // Slice material at each level — kept around so we can geometrically classify
@@ -309,10 +427,8 @@ export function generateFinishSurfaceWaterline(
           : unionClipperPaths([...shadow, ...slice])
       }
       sliceMaterialByZ.set(z, slice)
-      coarseLevels.push({
-        z,
-        contourPaths: shadow.length > 0 ? offsetClipperPaths(shadow, toolOffset) : [],
-      })
+      const contourPaths = shadow.length > 0 ? offsetClipperPaths(shadow, toolOffset) : []
+      coarseLevels.push({ z, contourPaths })
     }
   }
 
@@ -398,7 +514,12 @@ export function generateFinishSurfaceWaterline(
   }
 
   const machiningEnvelopePaths = unionClipperPaths(
-    coarseLevels.flatMap((level) => level.contourPaths),
+    contourClipEnvelope
+      ? intersectClipperPaths(
+          coarseLevels.flatMap((level) => level.contourPaths),
+          contourClipEnvelope,
+        )
+      : coarseLevels.flatMap((level) => level.contourPaths),
   )
   const protectedPathsByZ = new Map<string, ClipperPath[]>()
   const protectedPathsAtZ = (z: number): ClipperPath[] => {
@@ -463,18 +584,29 @@ export function generateFinishSurfaceWaterline(
     for (const ringEntry of cluster) {
       const protectionQueryZ = ringEntry.z
       const protectedAtLevel = protectedPathsAtZ(protectionQueryZ)
+      const envelopeClippedRaw = contourClipEnvelope
+        ? clipContourBoundariesToRegion([ringEntry.path], contourClipEnvelope)
+        : { paths: [ringEntry.path], closed: [true] }
+      const envelopeClipped = contourClipEnvelope
+        ? trimOpenContourCaps(envelopeClippedRaw.paths, envelopeClippedRaw.closed, toolOffset * 2)
+        : envelopeClippedRaw
+      if (envelopeClipped.paths.length === 0) continue
       // Clip the contour boundary (treated as a polyline) against protected
       // regions. Where a contour passes through an add-feature / clamp / tab,
       // the resulting OPEN polyline segments break around the protected region
       // — the tool then traces each segment with a retract between them, never
       // dipping into protected material and never chord-cutting across it.
       const { paths: clippedPaths, closed: pathClosed } = protectedAtLevel.length > 0
-        ? clipContourBoundariesAgainstRegion([ringEntry.path], protectedAtLevel)
-        : { paths: [ringEntry.path], closed: [true] }
+        ? clipContourBoundariesAgainstRegion(
+            envelopeClipped.paths,
+            protectedAtLevel,
+            envelopeClipped.closed,
+          )
+        : envelopeClipped
 
       if (clippedPaths.length === 0) continue
 
-      const pointContours = clipperPathsToPointContours(clippedPaths)
+      const pointContours = clipperPathsToPointContoursForWaterline(clippedPaths)
 
       // Geometrically classify each contour as tool-inside vs tool-outside.
       // Sample a point on each contour and offset it slightly toward the
