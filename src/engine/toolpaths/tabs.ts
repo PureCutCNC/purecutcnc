@@ -204,6 +204,7 @@ function isSupportedTabOperation(kind: Operation['kind']): boolean {
     || kind === 'edge_route_outside'
     || kind === 'pocket'
     || kind === 'finish_surface'
+    || kind === 'finish_surface_cleanup'
 }
 
 function pointAt(move: ToolpathMove, t: number, z: number): ToolpathPoint {

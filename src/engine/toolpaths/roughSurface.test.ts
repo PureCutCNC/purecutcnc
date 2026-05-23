@@ -524,6 +524,28 @@ function distinctCutZs(moves: ToolpathMove[]): number[] {
   return [...new Set(cutMoves(moves).map((move) => Number(move.to.z.toFixed(4))))].sort((a, b) => b - a)
 }
 
+function cutBounds(moves: ToolpathMove[]): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  const cuts = cutMoves(moves)
+  if (cuts.length === 0) {
+    return null
+  }
+
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const move of cuts) {
+    for (const point of [move.from, move.to]) {
+      minX = Math.min(minX, point.x)
+      maxX = Math.max(maxX, point.x)
+      minY = Math.min(minY, point.y)
+      maxY = Math.max(maxY, point.y)
+    }
+  }
+
+  return { minX, maxX, minY, maxY }
+}
+
 function moveTouchesRect(
   move: ToolpathMove,
   rect: { minX: number; maxX: number; minY: number; maxY: number },
@@ -594,6 +616,24 @@ function testRoughSurfaceCutsVerticalPocketAndOutsideWall(): void {
   assert(topDeckCuts.length > 0, 'expected rough cuts on the top deck')
   assert(pocketCuts.length > 0, 'expected rough cuts inside the vertical-walled pocket')
   assert(outsideWallCuts.length > 0, 'expected rough cuts around the outside wall')
+}
+
+function testRoughSurfaceKeepsOuterWallEnvelopeTight(): void {
+  console.log('Testing rough_surface keeps outer wall envelope close to the model silhouette...')
+  const { project, operation } = makePocketBlockProject()
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const bounds = cutBounds(result.moves)
+  const allowedOvershoot = operation.stockToLeaveRadial + project.tools[0].diameter / 2 + 0.002
+
+  assert(bounds !== null, 'expected rough surface cut bounds')
+  if (!bounds) {
+    throw new Error('expected rough surface cut bounds')
+  }
+
+  assert(bounds.minX >= -allowedOvershoot, `expected minX >= -${allowedOvershoot}, got ${bounds.minX}`)
+  assert(bounds.maxX <= 20 + allowedOvershoot, `expected maxX <= ${20 + allowedOvershoot}, got ${bounds.maxX}`)
+  assert(bounds.minY >= -allowedOvershoot, `expected minY >= -${allowedOvershoot}, got ${bounds.minY}`)
+  assert(bounds.maxY <= 10 + allowedOvershoot, `expected maxY <= ${10 + allowedOvershoot}, got ${bounds.maxY}`)
 }
 
 function testRoughSurfaceProtectsOverhangingModelShadow(): void {
@@ -766,9 +806,10 @@ function testRoughSurfaceLinksOffsetRingsAtZ(): void {
 
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
-testRoughSurfaceDefaultsLegacyModelFormatToStl()
-testRoughSurfaceCutsVerticalPocketAndOutsideWall()
-testRoughSurfaceProtectsOverhangingModelShadow()
+  testRoughSurfaceDefaultsLegacyModelFormatToStl()
+  testRoughSurfaceCutsVerticalPocketAndOutsideWall()
+  testRoughSurfaceKeepsOuterWallEnvelopeTight()
+  testRoughSurfaceProtectsOverhangingModelShadow()
 testRoughSurfaceProtectsOpenMeshSlicesConservatively()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()

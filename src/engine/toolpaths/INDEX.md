@@ -11,9 +11,11 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `vcarveRecursive.ts` — recursive v-carve with larger tools (clears bulk first)
 - `roughSurface.ts` — 3D rough clearing of an imported mesh
 - `finishSurface.ts` — 3D finish pass dispatcher
+- `finishSurfaceCleanup.ts` — cleanup-style 3D imported-mesh finishing that emits deepest retained wall/floor paths from rough-surface-style levels
 - `finishSurfaceParallel.ts` — parallel-line finish strategy
 - `finishSurfaceWaterline.ts` — waterline (constant-Z) finish strategy
 - `surface.ts` — shared surface-toolpath helpers
+- `surfaceStepdown3d.ts` — shared imported-mesh stepdown resolver used by rough-surface and cleanup-surface operations
 - `tabs.ts` — holding-tab generation on profile cuts
 - `multiFeature.ts` — ops that span multiple features (e.g. combined clearing)
 
@@ -31,7 +33,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `toolpaths.test.ts` — broad smoke tests across strategies
-- `roughSurface.test.ts` / `finishSurface.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
+- `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
 
 ## Adding a new strategy
 1. New file `myStrategy.ts` exporting a generator function.
