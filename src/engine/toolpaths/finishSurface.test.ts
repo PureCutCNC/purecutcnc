@@ -1592,4 +1592,95 @@ function testParallelFinishLinksScanlinesOnFlatPocket(): void {
 
 testParallelFinishLinksScanlinesOnFlatPocket()
 
+function testParallelFinishCutsOverDeepTab(): void {
+  console.log('Testing parallel finish cuts over a deep tab in the pocket floor...')
+  const { project } = makeProject()
+  project.features = [
+    makePocketBlockModelFeature(),
+    makeRegionFeatureRect('region-pocket', 6.5, 3.5, 7, 3),
+  ]
+  normalizeProjectFeatures(project)
+  // Tab sits inside the pocket footprint with its top well BELOW the pocket
+  // floor (floor at z=2, tab top at z=0.5). The cutter never touches the tab,
+  // so the toolpath must still cover this XY area.
+  const tabRect = { x: 8, y: 4, w: 4, h: 2 }
+  project.tabs = [{
+    id: 'deep-tab',
+    name: 'Deep tab',
+    ...tabRect,
+    z_top: 0.5,
+    z_bottom: 0,
+    visible: true,
+  }]
+
+  const op: Operation = {
+    ...makeOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region-pocket'] },
+    pocketPattern: 'parallel',
+    stepover: 0.4,
+    stockToLeaveAxial: 0,
+    stockToLeaveRadial: 0,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const cutsOverTab = cutMoves(result.moves).filter((move) => (
+    pointInsideRect(move.to, tabRect) || pointInsideRect(move.from, tabRect)
+  ))
+  assert(cutsOverTab.length > 0,
+    `expected parallel finish cuts above a deep tab (tab top z=0.5, surface z=2), got ${cutsOverTab.length}; tab is being treated as protected at all depths`)
+}
+
+function testParallelFinishPreservesTabWhenSurfaceDipsIntoIt(): void {
+  console.log('Testing parallel finish clamps Z up to tab.z_top inside tab footprint...')
+  const { project } = makeProject()
+  project.features = [
+    makePocketBlockModelFeature(),
+    makeRegionFeatureRect('region-pocket', 6.5, 3.5, 7, 3),
+  ]
+  normalizeProjectFeatures(project)
+  // Tab top sits ABOVE the pocket floor — the natural finish surface dips
+  // into the tab. The toolpath must raise its Z to tab.z_top inside the
+  // tab footprint so the tab is left standing.
+  const tabRect = { x: 8, y: 4, w: 4, h: 2 }
+  const tabTopZ = 2.5
+  project.tabs = [{
+    id: 'shallow-tab',
+    name: 'Shallow tab',
+    ...tabRect,
+    z_top: tabTopZ,
+    z_bottom: 0.5,
+    visible: true,
+  }]
+
+  const op: Operation = {
+    ...makeOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region-pocket'] },
+    pocketPattern: 'parallel',
+    stepover: 0.4,
+    stockToLeaveAxial: 0,
+    stockToLeaveRadial: 0,
+  }
+  project.operations = [op]
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const eps = 1e-6
+  const cutsBelowTabTopInTab = cutMoves(result.moves).filter((move) => (
+    pointInsideRect(move.to, tabRect) && move.to.z < tabTopZ - eps
+  ))
+  assert(cutsBelowTabTopInTab.length === 0,
+    `expected no cut moves below tab.z_top=${tabTopZ} inside tab footprint, got ${cutsBelowTabTopInTab.length}; clamp is not engaging`)
+
+  const cutsInTab = cutMoves(result.moves).filter((move) => (
+    pointInsideRect(move.to, tabRect)
+  ))
+  assert(cutsInTab.length > 0,
+    `expected some cut moves inside tab footprint (clamped to z=${tabTopZ}), got none`)
+}
+
+testParallelFinishCutsOverDeepTab()
+testParallelFinishPreservesTabWhenSurfaceDipsIntoIt()
+
 console.log('finishSurface tests passed')

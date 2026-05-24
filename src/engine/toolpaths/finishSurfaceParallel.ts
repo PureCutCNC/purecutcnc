@@ -726,11 +726,16 @@ export function generateFinishSurfaceParallel(
   const scanIndex = 0
   const baseContours = modelSilhouetteContours(modelFeature)
   const baseCoveragePaths = unionClipperPaths(coverageContoursToClipperPaths(baseContours))
+  // Tabs are NOT 2D-subtracted from coverage here — they were being subtracted
+  // unconditionally, which carved a hole above every tab regardless of how far
+  // below the cut surface the tab actually sat. Tab preservation is instead
+  // handled per-point via minCutZAtPoint, which clamps cut Z up to tab.z_top
+  // only where the surface would otherwise dip into a tab.
   const protectedPaths = buildProtectedFootprintPaths(project, {
     targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []),
     featureExpansion: tool.radius + Math.max(0, operation.stockToLeaveRadial),
-    tabExpansion: tool.radius,
     clampExpansion: tool.radius,
+    includeTabs: false,
     machiningEnvelopePaths: baseCoveragePaths,
   })
   const baseBounds = computeContourBounds([baseContours])
