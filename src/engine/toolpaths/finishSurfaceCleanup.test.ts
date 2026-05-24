@@ -4,6 +4,8 @@
  * Run with: npx tsx src/engine/toolpaths/finishSurfaceCleanup.test.ts
  */
 
+// @ts-ignore Node-only test fixture loading; the app tsconfig excludes Node typings.
+import { readFileSync } from 'fs'
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
 import { normalizeProject } from '../../store/projectStore'
 import { serializeImportedMesh } from '../importedMesh'
@@ -450,6 +452,38 @@ function makeOpenSliceProject(): { project: Project; operation: Operation } {
   return { project: normalizeProject(project), operation: makeCleanupOperation(['model1']) }
 }
 
+function loadTrackedImportedBlockCleanupProject(): { project: Project; operation: Operation } {
+  const raw = readFileSync(new URL('../test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8')
+  const project = normalizeProject(JSON.parse(raw) as Project)
+  const sourceOperation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
+  if (!sourceOperation) {
+    throw new Error('expected rough_surface operation in 3d-imported-block-test3.camj')
+  }
+  const operation: Operation = {
+    ...sourceOperation,
+    id: 'cleanup-fixture-op',
+    name: '3D Surface cleanup fixture',
+    kind: 'finish_surface_cleanup',
+    pass: 'finish',
+    pocketPattern: 'offset',
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+  }
+  return { project, operation }
+}
+
+function loadTrackedModelInPocketCleanupProject(): { project: Project; operation: Operation } {
+  const raw = readFileSync(new URL('../test-fixtures/model-in-pocket.camj', import.meta.url), 'utf8')
+  const project = normalizeProject(JSON.parse(raw) as Project)
+  const operation = project.operations.find((candidate) => candidate.kind === 'finish_surface_cleanup')
+  if (!operation) {
+    throw new Error('expected finish_surface_cleanup operation in model-in-pocket.camj')
+  }
+  return { project, operation }
+}
+
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
@@ -481,6 +515,26 @@ function cutBounds(moves: ToolpathMove[]): { minX: number; maxX: number; minY: n
   return { minX, maxX, minY, maxY }
 }
 
+function cutBoundsAtZ(
+  moves: ToolpathMove[],
+  z: number,
+): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  const levelCuts = cutMoves(moves).filter((move) => Math.abs(move.to.z - z) < 1e-9)
+  return cutBounds(levelCuts)
+}
+
+function countInteriorCuts(
+  moves: ToolpathMove[],
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+): number {
+  return cutMoves(moves).filter((move) => (
+    Math.min(move.from.x, move.to.x) > bounds.minX
+    && Math.max(move.from.x, move.to.x) < bounds.maxX
+    && Math.min(move.from.y, move.to.y) > bounds.minY
+    && Math.max(move.from.y, move.to.y) < bounds.maxY
+  )).length
+}
+
 function testCleanupRejectsDisabledFinishModes(): void {
   console.log('Testing finish_surface_cleanup rejects both finish toggles disabled...')
   const { project, operation } = makePocketBlockProject(['model1'])
@@ -490,6 +544,26 @@ function testCleanupRejectsDisabledFinishModes(): void {
 
   assert(result.moves.length === 0, 'expected no cleanup moves')
   assert(result.warnings.includes('Finish operation has both Finish Walls and Finish Floor disabled'), 'expected disabled-finish warning')
+}
+
+function testCleanupUsesInternalSamplingStepdown(): void {
+  console.log('Testing finish_surface_cleanup uses internal sampling stepdown instead of the stored operation stepdown...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  operation.stepdown = 0
+  const result = generateFinishSurfaceCleanupToolpath(project, operation)
+
+  assert(cutMoves(result.moves).length > 0, 'expected cleanup moves even when the stored stepdown is zero')
+  assert(!result.warnings.includes('Operation stepdown must be greater than zero'), 'expected cleanup to ignore the stored stepdown validation')
+}
+
+function testCleanupWarnsOnStockToLeave(): void {
+  console.log('Testing finish_surface_cleanup warns when stock-to-leave is non-zero...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  operation.stockToLeaveRadial = 0.1
+  operation.stockToLeaveAxial = 0.2
+  const result = generateFinishSurfaceCleanupToolpath(project, operation)
+
+  assert(result.warnings.some((warning) => warning.includes('stock-to-leave values')), 'expected cleanup stock-to-leave warning')
 }
 
 function testCleanupWallsEmitOnlyLowestRetainedLevels(): void {
@@ -520,6 +594,29 @@ function testCleanupFloorsEmitOnlyLowestRetainedLevels(): void {
   assert(pocketFloorCuts.length > 0, 'expected cleanup cuts at the pocket-floor Z level')
 }
 
+function testCleanupOffsetFloorsReachFinishBoundary(): void {
+  console.log('Testing finish_surface_cleanup offset floors include the first boundary ring...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  operation.finishWalls = false
+  operation.finishFloor = true
+  operation.pocketPattern = 'offset'
+  const result = generateFinishSurfaceCleanupToolpath(project, operation)
+  const topFloorBounds = cutBoundsAtZ(result.moves, 4)
+  const pocketFloorBounds = cutBoundsAtZ(result.moves, 2)
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(topFloorBounds !== null, 'expected top-floor cleanup cuts at Z=4')
+  assert(pocketFloorBounds !== null, 'expected pocket-floor cleanup cuts at Z=2')
+  if (!topFloorBounds || !pocketFloorBounds) {
+    throw new Error('expected floor cleanup bounds')
+  }
+
+  assert(topFloorBounds.minX <= 0.26, `expected top-floor cleanup to reach the finish boundary near X=0.25, got minX ${topFloorBounds.minX}`)
+  assert(topFloorBounds.maxX >= 19.74, `expected top-floor cleanup to reach the finish boundary near X=19.75, got maxX ${topFloorBounds.maxX}`)
+  assert(pocketFloorBounds.minX <= 6.26, `expected pocket-floor cleanup to reach the pocket wall near X=6.25, got minX ${pocketFloorBounds.minX}`)
+  assert(pocketFloorBounds.maxX >= 13.74, `expected pocket-floor cleanup to reach the pocket wall near X=13.75, got maxX ${pocketFloorBounds.maxX}`)
+}
+
 function testCleanupSolidBlockOuterWallEmitsSingleContour(): void {
   console.log('Testing finish_surface_cleanup emits a single outer-wall contour for a solid block...')
   const { project, operation } = makeSolidBlockProject(['model1'])
@@ -529,6 +626,24 @@ function testCleanupSolidBlockOuterWallEmitsSingleContour(): void {
 
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(wallCutsAtBottom.length === 4, `expected one rectangular outer-wall contour (4 cut moves), got ${wallCutsAtBottom.length}`)
+}
+
+function testCleanupIntersectingOuterWallAvoidsDuplicateReturnLoop(): void {
+  console.log('Testing finish_surface_cleanup avoids the duplicate return loop on intersecting outer walls...')
+  const { project, operation } = loadTrackedImportedBlockCleanupProject()
+  operation.finishWalls = true
+  operation.finishFloor = false
+  const result = generateFinishSurfaceCleanupToolpath(project, operation)
+  const wallCutsAtBottom = cutMoves(result.moves).filter((move) => Math.abs(move.to.z) < 1e-9)
+  const lastCut = wallCutsAtBottom.at(-1) ?? null
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(wallCutsAtBottom.length === 6, `expected the intersecting outer wall to collapse to one retained run (6 cut moves), got ${wallCutsAtBottom.length}`)
+  assert(lastCut !== null, 'expected a retained intersecting-wall tail segment')
+  if (!lastCut) {
+    throw new Error('expected a retained intersecting-wall tail segment')
+  }
+  assert(lastCut.to.x > 3.5 && lastCut.to.y < 1.53, `expected the retained wall run to terminate on the intersecting diagonal, got (${lastCut.to.x}, ${lastCut.to.y})`)
 }
 
 function testCleanupRespectsContainingPocketDepth(): void {
@@ -584,16 +699,52 @@ function testCleanupWarnsOnOpenSliceFallback(): void {
   assert(result.warnings.some((warning) => warning.includes('open/non-watertight slices')), 'expected open-slice fallback warning')
 }
 
-function run(): void {
+function testCleanupRespectsContainingPocketWallsAndFloor(): void {
+  console.log('Testing finish_surface_cleanup respects containing pocket walls and floor...')
+  const { project, operation } = loadTrackedModelInPocketCleanupProject()
+
+  const wallOnly = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation,
+    finishWalls: true,
+    finishFloor: false,
+  })
+  const floorOnly = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation,
+    finishWalls: false,
+    finishFloor: true,
+  })
+
+  const wallZs = distinctCutZs(wallOnly.moves)
+  const floorZs = distinctCutZs(floorOnly.moves)
+  const pocketInteriorBounds = {
+    minX: 0.6,
+    maxX: 3.4,
+    minY: 0.6,
+    maxY: 2.4,
+  }
+
+  assert(wallOnly.warnings.length === 0, `unexpected wall warnings: ${wallOnly.warnings.join(', ')}`)
+  assert(floorOnly.warnings.length === 0, `unexpected floor warnings: ${floorOnly.warnings.join(', ')}`)
+  assert(wallZs.length === 1 && wallZs[0] === 0.5, `expected wall cleanup only at the pocket floor Z=0.5, got ${wallZs.join(', ')}`)
+  assert(countInteriorCuts(wallOnly.moves, pocketInteriorBounds) > 100, 'expected wall cleanup to include interior island walls inside the pocket')
+  assert(floorZs.includes(0.5), `expected floor cleanup to include the containing pocket floor at Z=0.5, got ${floorZs.join(', ')}`)
+}
+
+async function run(): Promise<void> {
   testCleanupRejectsDisabledFinishModes()
+  testCleanupUsesInternalSamplingStepdown()
+  testCleanupWarnsOnStockToLeave()
   testCleanupWallsEmitOnlyLowestRetainedLevels()
   testCleanupFloorsEmitOnlyLowestRetainedLevels()
+  testCleanupOffsetFloorsReachFinishBoundary()
   testCleanupSolidBlockOuterWallEmitsSingleContour()
+  testCleanupIntersectingOuterWallAvoidsDuplicateReturnLoop()
   testCleanupRespectsContainingPocketDepth()
   testCleanupKeepsOuterWallEnvelopeTight()
   testCleanupRespectsRegionMask()
   testCleanupWarnsOnOpenSliceFallback()
+  testCleanupRespectsContainingPocketWallsAndFloor()
   console.log('finishSurfaceCleanup.test.ts: all tests passed')
 }
 
-run()
+void run()

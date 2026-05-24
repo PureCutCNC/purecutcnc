@@ -1698,7 +1698,9 @@ export function CAMPanel({
                           ...(toolInProjectUnits ? {
                             feed: toolInProjectUnits.defaultFeed,
                             plungeFeed: toolInProjectUnits.defaultPlungeFeed,
-                            stepdown: toolInProjectUnits.defaultStepdown,
+                            ...(selectedOperation.kind !== 'finish_surface_cleanup'
+                              ? { stepdown: toolInProjectUnits.defaultStepdown }
+                              : {}),
                             stepover: toolInProjectUnits.defaultStepover,
                             rpm: toolInProjectUnits.defaultRpm,
                             ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {

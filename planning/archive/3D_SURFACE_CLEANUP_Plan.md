@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Done
 created: 2026-05-22
 ---
 
@@ -20,7 +20,7 @@ Add a new imported-mesh CAM operation that reuses the 3D rough-surface stepdown 
 - Reuse existing 3D rough protections and conventions: model-shadow handling, related subtract limits, region filters, add/clamp/tab protection, cut direction, safe-Z motion, and radial/axial stock-to-leave semantics.
   - The shared rough/cleanup outer silhouette envelope should stay tight to the tool-center outer wall (`tool radius + radial leave`, with only a small numerical margin), matching waterline semantics instead of machining an extra outer waste pocket.
 - Default the new operation to `pass: 'finish'`, `pocketPattern: 'parallel'`, `finishWalls: true`, and `finishFloor: true`. `stepdown` remains the band resolver for the cleanup logic; `stepover` and `pocketAngle` only affect floor coverage.
-  - `stepdown` stays internal to the resolver for now and is not exposed in the CAM panel for this operation.
+  - Cleanup uses a derived internal vertical sampling step based on model height and exact critical floor Zs, and does not expose or inherit roughing-style `stepdown` from tool defaults in the CAM panel.
 
 ## Files affected
 

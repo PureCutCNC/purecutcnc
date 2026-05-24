@@ -2118,7 +2118,9 @@ function defaultOperationForTarget(
     debugToolpath: false,
     target,
     toolRef,
-    stepdown: tool.defaultStepdown,
+    stepdown: kind === 'finish_surface_cleanup'
+      ? convertLength(1, 'mm', project.meta.units)
+      : tool.defaultStepdown,
     stepover: tool.defaultStepover,
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,

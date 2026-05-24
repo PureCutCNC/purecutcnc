@@ -14,9 +14,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-### CAM / toolpaths
-- [3D_SURFACE_CLEANUP_Plan.md](3D_SURFACE_CLEANUP_Plan.md) — add a cleanup-style imported-mesh finishing operation derived from 3D rough-surface levels, with `Finish Walls` / `Finish Floor` controls and lowest-Z-only cleanup passes
-
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — how regions filter rather than define machining targets. Read before touching operation/region logic.

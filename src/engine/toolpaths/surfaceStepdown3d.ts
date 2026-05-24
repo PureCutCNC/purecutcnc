@@ -69,6 +69,19 @@ export type Resolve3DSurfaceStepdownResult =
   | { ok: true; resolved: Resolved3DSurfaceStepdown }
   | { ok: false; result: PocketToolpathResult }
 
+interface Resolve3DSurfaceStepdownOptions {
+  operationLabel?: string
+  resolveStepdown?: (context: {
+    project: Project
+    operation: Operation
+    tool: NormalizedTool
+    stockTop: number
+    modelTopZ: number
+    modelBottomZ: number
+    effectiveBottom: number
+  }) => number
+}
+
 const Z_TOLERANCE = 1e-6
 const OUTER_WALL_MARGIN = 1e-3
 
@@ -123,7 +136,7 @@ function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[]
 export function resolve3DSurfaceStepdown(
   project: Project,
   operation: Operation,
-  options?: { operationLabel?: string },
+  options?: Resolve3DSurfaceStepdownOptions,
 ): Resolve3DSurfaceStepdownResult {
   const operationLabel = options?.operationLabel ?? '3D surface operation'
   const target = operation.target
@@ -168,13 +181,6 @@ export function resolve3DSurfaceStepdown(
     return {
       ok: false,
       result: emptyResult(operation, 'Tool diameter must be greater than zero'),
-    }
-  }
-
-  if (!(operation.stepdown > 0)) {
-    return {
-      ok: false,
-      result: emptyResult(operation, 'Operation stepdown must be greater than zero'),
     }
   }
 
@@ -280,8 +286,28 @@ export function resolve3DSurfaceStepdown(
   }
 
   const stockTop = Math.max(modelTopZ, project.stock.thickness)
-  const stepLevels = generateStepLevels(stockTop, effectiveBottom, operation.stepdown)
-  const criticalLevels = dedupeZLevelsDescending([...floorLevels].map((floorZ) => floorZ + axialLeave))
+  const resolvedStepdown = options?.resolveStepdown?.({
+    project,
+    operation,
+    tool,
+    stockTop,
+    modelTopZ,
+    modelBottomZ,
+    effectiveBottom,
+  }) ?? operation.stepdown
+  if (!(resolvedStepdown > 0)) {
+    return {
+      ok: false,
+      result: emptyResult(operation, 'Operation stepdown must be greater than zero'),
+    }
+  }
+
+  const stepLevels = generateStepLevels(stockTop, effectiveBottom, resolvedStepdown)
+  const subtractFloorLevels = relatedSubtracts.map((subtract) => subtract.bottomZ + axialLeave)
+  const criticalLevels = dedupeZLevelsDescending([
+    ...[...floorLevels].map((floorZ) => floorZ + axialLeave),
+    ...subtractFloorLevels,
+  ])
   const roughLevels = dedupeZLevelsDescending([...stepLevels, ...criticalLevels])
     .filter((z) => z <= stockTop + 1e-9 && z >= effectiveBottom - 1e-9)
 
@@ -307,7 +333,7 @@ export function resolve3DSurfaceStepdown(
     warnings.push(`Debug: rough levels = ${roughLevels.map((z) => z.toFixed(4)).join(', ')}`)
     warnings.push(`Debug: mesh triangles = ${index.length / 3}`)
     warnings.push(
-      `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)}`,
+      `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)} stepdown=${resolvedStepdown.toFixed(4)}`,
     )
   }
 
@@ -393,7 +419,11 @@ export function resolve3DSurfaceStepdown(
     if (clearablePaths.length > 0) {
       const baseRegions = polyTreeToRegions(executeDifference(clearablePaths, []), [], [])
       const insetRegions = baseRegions.flatMap((baseRegion) => buildInsetRegions(baseRegion, initialInset))
+      const isCriticalFloorLevel = criticalLevels.some((criticalLevel) => sameZ(criticalLevel, z))
       if (insetRegions.length === 0) {
+        if (isCriticalFloorLevel) {
+          warnings.push(`Critical cleanup floor at Z=${z.toFixed(4)} collapsed after inset and was skipped`)
+        }
         if (operation.debugToolpath) {
           warnings.push(`Debug: Z=${z.toFixed(4)} no machinable region after initial inset`)
         }
@@ -403,7 +433,7 @@ export function resolve3DSurfaceStepdown(
           clearablePaths,
           baseRegions,
           insetRegions,
-          isCriticalFloorLevel: criticalLevels.some((criticalLevel) => sameZ(criticalLevel, z)),
+          isCriticalFloorLevel,
         })
       }
     } else if (operation.debugToolpath) {
