@@ -1913,6 +1913,8 @@ function operationKindLabel(kind: OperationKind): string {
       return '3D Surface rough'
     case 'finish_surface':
       return '3D Surface finish'
+    case 'finish_surface_cleanup':
+      return '3D Surface cleanup'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':
@@ -1990,7 +1992,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
   }
 
-  if (kind === 'finish_surface') {
+  if (kind === 'finish_surface' || kind === 'finish_surface_cleanup') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
@@ -2082,6 +2084,7 @@ function isOperationTargetValid(project: Project, kind: OperationKind, target: O
 
 function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
   const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
+    || kind === 'finish_surface_cleanup'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -2115,12 +2118,14 @@ function defaultOperationForTarget(
     debugToolpath: false,
     target,
     toolRef,
-    stepdown: tool.defaultStepdown,
+    stepdown: kind === 'finish_surface_cleanup'
+      ? convertLength(1, 'mm', project.meta.units)
+      : tool.defaultStepdown,
     stepover: tool.defaultStepover,
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
-    pocketPattern: kind === 'finish_surface' ? 'parallel' : 'offset',
+    pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
@@ -2161,7 +2166,7 @@ function fallbackOperationTarget(project: Project, kind: OperationKind): Operati
       : { source: 'stock' }
   }
 
-  if (kind === 'finish_surface') {
+  if (kind === 'finish_surface' || kind === 'finish_surface_cleanup') {
     const modelFeature = project.features.find((feature) => feature.operation === 'model' && feature.kind === 'stl')
     if (modelFeature) {
       // Optionally include a region if one exists

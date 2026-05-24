@@ -14,6 +14,7 @@ import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations 
 import { generatePocketToolpath } from './pocket'
 import { generateEdgeRouteToolpath } from './edge'
 import { generateVCarveToolpath } from './vcarve'
+import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath } from './drilling'
@@ -971,6 +972,24 @@ function testDrillingRegionFiltersHolePoints() {
   console.log('drilling region filtering: PASSED')
 }
 
+function testFinishSurfaceCleanupRejectsRegionOnlyTarget() {
+  console.log('Testing finish_surface_cleanup rejects region-only target...')
+  const tool = makeFlatEndmill('t1', 1)
+  const region = makeRegionFeature('r1', 0, 0, 10, 10)
+  const project = baseProject([tool], [region])
+  const op = makePocketOp({
+    kind: 'finish_surface_cleanup',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['r1'] },
+    toolRef: 't1',
+  })
+  const result = generateFinishSurfaceCleanupToolpath(project, op)
+
+  assert(cutMoves(result.moves).length === 0, 'region-only cleanup should generate no cuts')
+  assert(result.warnings.some((warning) => warning.includes('imported mesh model')), 'region-only cleanup should warn about the missing imported model target')
+  console.log('finish_surface_cleanup region-only rejection: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
@@ -995,6 +1014,7 @@ try {
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
+  testFinishSurfaceCleanupRejectsRegionOnlyTarget()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
   console.error(e)

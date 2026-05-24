@@ -322,6 +322,7 @@ export type OperationKind =
   | 'surface_clean'
   | 'rough_surface'
   | 'finish_surface'
+  | 'finish_surface_cleanup'
   | 'follow_line'
   | 'drilling'
 
