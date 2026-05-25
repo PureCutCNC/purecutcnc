@@ -20,6 +20,7 @@ import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import { Select } from '../Select'
+import { OperationAddMenu } from './OperationAddMenu'
 import type {
   DrillType,
   OperationKind,
@@ -918,14 +919,14 @@ export function CAMPanel({
         hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
       },
       {
-        kind: 'finish_surface',
-        label: operationAddButtonLabel('finish_surface'),
-        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
-      },
-      {
         kind: 'finish_surface_cleanup',
         label: operationAddButtonLabel('finish_surface_cleanup'),
         hint: getOperationAddHint(project, selection, 'finish_surface_cleanup') ?? undefined,
+      },
+      {
+        kind: 'finish_surface',
+        label: operationAddButtonLabel('finish_surface'),
+        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
       },
     ]),
     [project, selection]
@@ -933,12 +934,6 @@ export function CAMPanel({
 
   const selectedNewOperationHint = selectedNewOperationKind
     ? getOperationAddHint(project, selection, selectedNewOperationKind)
-    : null
-  const selectedNewOperationSupportsPass = selectedNewOperationKind
-    ? operationSupportsPassSelection(selectedNewOperationKind)
-    : false
-  const selectedNewOperationTarget = selectedNewOperationKind
-    ? getValidOperationTarget(project, selection, selectedNewOperationKind)
     : null
 
   useEffect(() => {
@@ -1256,57 +1251,14 @@ export function CAMPanel({
                     Add
                   </button>
                     {showAddOperationMenu ? (
-                      <div className="cam-add-menu" role="dialog" aria-label="Add operation">
-                        <div className="cam-add-menu__section">
-                          <span className="cam-add-menu__label">Operation</span>
-                          <div className="cam-add-menu__buttons">
-                            {operationButtons.map((button) => (
-                              <button
-                                key={button.kind}
-                                className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
-                                type="button"
-                                title={button.hint}
-                                onClick={() => handleChooseOperationForAdd(button.kind)}
-                              >
-                                {button.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        {selectedNewOperationKind && selectedNewOperationSupportsPass && selectedNewOperationTarget ? (
-                          <div className="cam-add-menu__section">
-                            <span className="cam-add-menu__label">Pass</span>
-                            <div className="cam-pass-toggle">
-                              <button
-                                className="cam-subtab"
-                                type="button"
-                                onClick={() => handleAddOperation(selectedNewOperationKind, 'rough')}
-                              >
-                                Rough
-                              </button>
-                              <button
-                                className="cam-subtab"
-                                type="button"
-                                onClick={() => handleAddOperation(selectedNewOperationKind, 'finish')}
-                              >
-                                Finish
-                              </button>
-                              <button
-                                className="cam-subtab"
-                                type="button"
-                                onClick={() => handleAddOperation(selectedNewOperationKind, 'pair')}
-                              >
-                                Rough + finish
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                        {selectedNewOperationHint ? (
-                          <div className="cam-field-message" role="status">
-                            {selectedNewOperationHint}
-                          </div>
-                        ) : null}
-                      </div>
+                      <OperationAddMenu
+                        operationButtons={operationButtons}
+                        selectedNewOperationKind={selectedNewOperationKind}
+                        selectedNewOperationHint={selectedNewOperationHint}
+                        operationSupportsPass={operationSupportsPassSelection}
+                        onChooseOperation={handleChooseOperationForAdd}
+                        onAddOperation={handleAddOperation}
+                      />
                     ) : null}
                   </div>
                 </div>

@@ -390,6 +390,52 @@ export function safeSubtractBottomZAtPoint(
   return deepestClearanceBottom ?? shallowestContainingBottom
 }
 
+export interface ExpandedTabFootprint {
+  paths: ClipperPath[]
+  topZ: number
+}
+
+export function buildExpandedTabFootprints(
+  project: Project,
+  tabExpansion: number,
+): ExpandedTabFootprint[] {
+  const expansion = Math.max(0, tabExpansion)
+  const footprints: ExpandedTabFootprint[] = []
+  for (const tab of project.tabs) {
+    if (!tab.visible) continue
+    const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
+    const rawPath = toClipperPath(
+      normalizeWinding(flattenProfile(profile).points, false),
+      DEFAULT_CLIPPER_SCALE,
+    )
+    const expanded = expansion > 0 ? offsetClipperPaths([rawPath], expansion) : [rawPath]
+    if (expanded.length === 0) continue
+    footprints.push({ paths: expanded, topZ: tab.z_top })
+  }
+  return footprints
+}
+
+export function tabTopZAtPoint(
+  footprints: ExpandedTabFootprint[],
+  point: Point,
+): number | null {
+  if (footprints.length === 0) return null
+  const clipperPoint = {
+    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+  }
+  let highest: number | null = null
+  for (const footprint of footprints) {
+    const inside = footprint.paths.some((path) => (
+      (ClipperLib.Clipper as unknown as { PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number })
+        .PointInPolygon(clipperPoint, path) !== 0
+    ))
+    if (!inside) continue
+    highest = highest === null ? footprint.topZ : Math.max(highest, footprint.topZ)
+  }
+  return highest
+}
+
 export function buildProtectedFootprintPaths(
   project: Project,
   options: ProtectedFootprintOptions,

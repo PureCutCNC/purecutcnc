@@ -27,10 +27,12 @@ import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { splitFeatureTargets } from './regions'
 import {
+  buildExpandedTabFootprints,
   offsetClipperPaths,
   relatedIntersectingAddFeatures,
   relatedSubtractFeatures,
   safeSubtractBottomZAtPoint,
+  tabTopZAtPoint,
 } from './modelProtection'
 import {
   generateFinishSurfaceParallel,
@@ -233,9 +235,18 @@ export function generateFinishSurfaceToolpath(
 
   const safeZ = getOperationSafeZ(project)
   const warnings: string[] = []
-  const minCutZAtPoint = (point: Point): number => (
-    safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
-  )
+  // Tabs constrain the parallel-finish cut Z per-point: at any XY inside an
+  // expanded tab footprint, the cutter tip must stay at or above tab.z_top so
+  // the tab material from z_bottom..z_top is preserved. Tabs whose top sits
+  // below the surface being cut still get clamped, but the natural surface Z
+  // is already higher and the clamp is a no-op — i.e., the toolpath sweeps
+  // over deep tabs normally rather than skipping their XY footprint.
+  const tabFootprints = buildExpandedTabFootprints(project, tool.radius)
+  const minCutZAtPoint = (point: Point): number => {
+    const floor = safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
+    const tabTop = tabTopZAtPoint(tabFootprints, point)
+    return tabTop !== null ? Math.max(floor, tabTop) : floor
+  }
 
   const strategyResult = operation.pocketPattern === 'waterline'
     ? generateFinishSurfaceWaterline(
