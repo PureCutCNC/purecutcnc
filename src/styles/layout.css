@@ -2436,6 +2436,13 @@
   color: var(--text);
 }
 
+.cam-subtab--compact {
+  min-height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
 .cam-tools {
   min-height: 0;
   height: 100%;
@@ -2591,14 +2598,17 @@
   top: calc(100% + 8px);
   right: 0;
   z-index: 10;
+  border: 1px solid var(--line-strong);
+  background: rgba(14, 20, 28, 0.98);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+}
+
+.cam-add-menu--horizontal {
   width: 248px;
   display: grid;
   gap: 10px;
   padding: 10px;
-  border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: rgba(14, 20, 28, 0.98);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
 }
 
 .cam-add-menu__section {
@@ -3230,16 +3240,16 @@
 /* Operation Add Menu - Vertical Layout with Expandable Cards */
 
 .cam-add-menu--vertical {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 0 !important;
-  width: 360px !important;
-  max-width: 90vw !important;
-  max-height: 70vh !important;
-  padding: 0 !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  border-radius: 10px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 360px;
+  max-width: 90vw;
+  max-height: 70vh;
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 10px;
 }
 
 .cam-operations-list {
@@ -3251,7 +3261,7 @@
 .cam-operation-item {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--line);
   transition: background-color 0.2s ease;
 }
 
@@ -3284,13 +3294,15 @@
 }
 
 .cam-operation-label-btn {
-  all: unset;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
   cursor: pointer;
   text-align: left;
-  padding: 0;
-  color: var(--text);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3316,20 +3328,19 @@
   padding: 10px 10px;
   margin: 0;
   background-color: rgba(255, 255, 255, 0.02);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   animation: cam-operation-expand 0.2s ease-out;
-  overflow: hidden;
 }
 
 @keyframes cam-operation-expand {
   from {
     opacity: 0;
-    max-height: 0;
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    max-height: 500px;
+    transform: translateY(0);
   }
 }
 
@@ -3339,7 +3350,7 @@
   border-radius: 6px;
   overflow: hidden;
   background-color: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3361,7 +3372,7 @@
   height: 100%;
   text-align: center;
   font-size: 11px;
-  color: #8899aa;
+  color: var(--text-dim);
   line-height: 1.5;
   padding: 10px;
 }
@@ -3377,7 +3388,7 @@
 .cam-operation-details__description {
   font-size: 12px;
   line-height: 1.5;
-  color: #c8ddf0;
+  color: var(--text);
   margin: 0;
   padding: 0;
 }
@@ -3390,15 +3401,13 @@
 .cam-operation-details__keypoints-label {
   font-size: 11px;
   font-weight: 600;
-  color: #8899aa;
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
 .cam-operation-details__keypoints-list {
-  all: unset;
-  display: grid;
-  gap: 4px;
+  list-style: disc;
   margin: 0;
   padding: 0 0 0 18px;
 }
@@ -3406,10 +3415,9 @@
 .cam-operation-details__keypoint {
   font-size: 11px;
   line-height: 1.4;
-  color: #a8b8c8;
+  color: var(--text-dim);
   margin: 0;
   padding: 0;
-  list-style: disc;
 }
 
 .cam-operation-pass-buttons {
@@ -3418,45 +3426,14 @@
   flex-shrink: 0;
 }
 
-.cam-operation-pass-btn {
-  all: unset;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-dim);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.cam-operation-pass-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-  background-color: rgba(220, 165, 106, 0.08);
-}
-
-.cam-operation-pass-btn:active:not(:disabled) {
-  background-color: rgba(220, 165, 106, 0.15);
-}
-
-.cam-operation-pass-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
 /* Tablet/Mobile adjustments for operation menu */
 
 @media (max-width: 768px) {
   .cam-add-menu--vertical {
-    width: 100% !important;
-    max-width: 100% !important;
-    max-height: 60vh !important;
-    border-radius: 8px !important;
+    width: 100%;
+    max-width: 100%;
+    max-height: 60vh;
+    border-radius: 8px;
   }
 
   .cam-operation-row {
@@ -3467,11 +3444,6 @@
 
   .cam-operation-pass-buttons {
     gap: 3px;
-  }
-
-  .cam-operation-pass-btn {
-    padding: 3px 6px;
-    font-size: 10px;
   }
 
   .cam-operation-details__image-container {

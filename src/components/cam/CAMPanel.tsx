@@ -891,14 +891,14 @@ export function CAMPanel({
         hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
       },
       {
-        kind: 'finish_surface',
-        label: operationAddButtonLabel('finish_surface'),
-        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
-      },
-      {
         kind: 'finish_surface_cleanup',
         label: operationAddButtonLabel('finish_surface_cleanup'),
         hint: getOperationAddHint(project, selection, 'finish_surface_cleanup') ?? undefined,
+      },
+      {
+        kind: 'finish_surface',
+        label: operationAddButtonLabel('finish_surface'),
+        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
       },
     ]),
     [project, selection]

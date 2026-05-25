@@ -17,7 +17,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OperationKind } from '../../types/project'
 import { operationDescriptions } from '../../types/operationDescriptions'
-import { Icon } from '../Icon'
 
 interface OperationButton {
   kind: OperationKind
@@ -42,18 +41,17 @@ export function OperationAddMenu({
   onChooseOperation,
   onAddOperation,
 }: OperationAddMenuProps) {
+  // expandedOperationKind: which description card is open (one at a time).
+  // selectedNewOperationKind (prop): which operation the user last attempted to add via the
+  // + button for non-pass operations — separate from expansion state so the user can browse
+  // descriptions without clearing the attempted-operation highlight.
   const [expandedOperationKind, setExpandedOperationKind] = useState<OperationKind | null>(null)
+  const [imageErrors, setImageErrors] = useState<Set<OperationKind>>(new Set())
   const expandedRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll expanded card into view on tablet/mobile
+  // Auto-scroll expanded card into view
   useEffect(() => {
-    if (expandedRef.current && expandedOperationKind) {
-      const scrollParent = expandedRef.current.closest('.cam-add-menu')
-      if (scrollParent && scrollParent.scrollHeight > scrollParent.clientHeight) {
-        // Only scroll if menu is scrollable
-        expandedRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      }
-    }
+    expandedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [expandedOperationKind])
 
   function handleOperationClick(kind: OperationKind) {
@@ -89,7 +87,7 @@ export function OperationAddMenu({
                   {operationSupportsPass(button.kind) ? (
                     <div className="cam-operation-pass-buttons">
                       <button
-                        className="cam-operation-pass-btn"
+                        className="cam-subtab cam-subtab--compact"
                         type="button"
                         title={button.hint ? `Rough pass (${button.hint})` : 'Rough pass'}
                         disabled={!!button.hint}
@@ -98,7 +96,7 @@ export function OperationAddMenu({
                         Rough
                       </button>
                       <button
-                        className="cam-operation-pass-btn"
+                        className="cam-subtab cam-subtab--compact"
                         type="button"
                         title={button.hint ? `Finish pass (${button.hint})` : 'Finish pass'}
                         disabled={!!button.hint}
@@ -107,7 +105,7 @@ export function OperationAddMenu({
                         Finish
                       </button>
                       <button
-                        className="cam-operation-pass-btn"
+                        className="cam-subtab cam-subtab--compact"
                         type="button"
                         title={button.hint ? `Both passes (${button.hint})` : 'Both rough and finish passes'}
                         disabled={!!button.hint}
@@ -124,7 +122,7 @@ export function OperationAddMenu({
                       disabled={!!button.hint}
                       onClick={() => handleOperationClick(button.kind)}
                     >
-                      <Icon id="plus" size={14} />
+                      Add
                     </button>
                   )}
                 </div>
@@ -133,26 +131,19 @@ export function OperationAddMenu({
                 {isExpanded && description && (
                   <div className="cam-operation-details" ref={expandedRef}>
                     <div className="cam-operation-details__image-container">
-                      <img
-                        src={`/operation-examples/${description.exampleImageName}`}
-                        alt={`${description.title} example`}
-                        className="cam-operation-details__image"
-                        onError={(e) => {
-                          const el = e.currentTarget
-                          el.style.display = 'none'
-                          const placeholder = el.nextElementSibling
-                          if (placeholder) {
-                            ;(placeholder as HTMLElement).style.display = 'flex'
-                          }
-                        }}
-                      />
-                      <div
-                        className="cam-operation-details__image-fallback"
-                        style={{ display: 'none' }}
-                      >
-                        Missing image:<br />
-                        <code>public/operation-examples/{description.exampleImageName}</code>
-                      </div>
+                      {imageErrors.has(button.kind) ? (
+                        <div className="cam-operation-details__image-fallback">
+                          Missing image:<br />
+                          <code>public/operation-examples/{description.exampleImageName}</code>
+                        </div>
+                      ) : (
+                        <img
+                          src={`/operation-examples/${description.exampleImageName}`}
+                          alt={`${description.title} example`}
+                          className="cam-operation-details__image"
+                          onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
+                        />
+                      )}
                     </div>
 
                     <p className="cam-operation-details__description">
