@@ -251,12 +251,15 @@ export function relatedSubtractFeatures(
 /**
  * Non-target add features whose footprint intersects the 3D model silhouette
  * — these create vertical walls inside the model's machining envelope and
- * must be finished alongside the model's own walls.
+ * must be finished alongside the model's own walls. Some callers can exclude
+ * add features that fully contain the model footprint when those should be
+ * treated as base/stock geometry rather than intersecting model walls.
  */
 export function relatedIntersectingAddFeatures(
   project: Project,
   targetFeatureIds: Set<string>,
   modelFootprintPaths: ClipperPath[],
+  options: { excludeContainingAddFeatures?: boolean } = {},
 ): Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> {
   const related: Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> = []
 
@@ -267,6 +270,7 @@ export function relatedIntersectingAddFeatures(
     const paths = featureFootprintPaths(feature)
     if (paths.length === 0) continue
     if (intersectClipperPaths(modelFootprintPaths, paths).length === 0) continue
+    if (options.excludeContainingAddFeatures && pathsContainEnvelope(paths, modelFootprintPaths)) continue
 
     const span = resolveFeatureZSpan(project, feature)
     related.push({ feature, paths, bottomZ: span.min, topZ: span.max })
