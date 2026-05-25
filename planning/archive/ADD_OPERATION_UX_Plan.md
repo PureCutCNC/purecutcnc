@@ -20,13 +20,13 @@ The outcome is a more intuitive onboarding experience for new users and better d
 ## Approach
 
 **UI Structure:**
-1. Convert the operation grid layout to a vertical list with each operation as a row
+1. Vertical list with each operation as a compact row (24px desktop, 28px tablet)
 2. Each row contains:
-   - Operation name/label (left side)
-   - (?) Info icon (center/clickable)
-   - Button to add the operation (right side)
-3. When user clicks the (?) icon, that operation expands below to show a rich description card
-4. Only one description card is expanded at a time; clicking (?) on another operation collapses the current one
+   - Operation name/label (left, clickable to expand/collapse details)
+   - For pass-capable ops: **Rough** | **Finish** | **Both** buttons
+   - For single-pass ops: **+** icon button
+3. Clicking the operation name toggles an expanded description card below
+4. Only one description card is expanded at a time
 
 **Data Model:**
 - Create a new `operationDescriptions` export in the types/operations area
@@ -51,10 +51,52 @@ The outcome is a more intuitive onboarding experience for new users and better d
 
 ## Files affected
 
-- `src/components/cam/CAMPanel.tsx` — extract operation add menu logic; reduce menu render size
-- *(new)* `src/components/cam/OperationAddMenu.tsx` — new component for vertical list + expandable cards
-- *(new)* `src/types/operationDescriptions.ts` — operation descriptions data structure
-- `src/styles/layout.css` — new styles for vertical list, expandable cards, info icons
+- `src/components/cam/CAMPanel.tsx` — integrated `OperationAddMenu` component, removed the old inline menu and separate pass-selection section
+- *(new)* `src/components/cam/OperationAddMenu.tsx` — new component for compact vertical list + expandable cards + inline pass buttons
+- *(new)* `src/types/operationDescriptions.ts` — operation descriptions and image-name definitions
+- `src/styles/layout.css` — compact vertical list styles, expandable cards, pass-button styles, fallback placeholder, responsive overrides
+
+## Operation descriptions
+
+Descriptions live in `src/types/operationDescriptions.ts` as a `Record<OperationKind, OperationDescription>` export. The `OperationDescription` type captures:
+
+| Field | Purpose |
+|---|---|
+| `title` | Display name (redundant with the row label, informational only) |
+| `shortSummary` | One-line summary (not currently rendered; available for tooltips) |
+| `fullDescription` | Rendered as body text in the expanded card |
+| `keyPoints` | Bulleted list of 3-4 practical notes shown in the expanded card |
+| `exampleImageName` | File name (without path) the component will request from `/operation-examples/` |
+
+Editing a description is a TypeScript-only change — no database or runtime format migration needed.
+
+## Example images
+
+Images are **not** shipped in the repository. Each operation declares an `exampleImageName` (e.g. `pocket-example.png`) and the component requests that file from the Vite `public/` folder at `/operation-examples/<name>`. If the file is missing:
+- The `<img>` element fires `onError` and hides itself.
+- A fallback `<div>` appears showing **Missing image:** and the exact path where the file should be placed (`public/operation-examples/<name>`).
+
+This keeps the repo lean (zero image blobs) and lets the user add screenshots later by dropping PNGs into `public/operation-examples/` with the names defined in `operationDescriptions.ts`. Supported formats are whatever the browser can render (PNG, JPG, WebP, SVG).
+
+Image names currently defined:
+
+```
+pocket-example.png
+vcarve-offset-example.png
+vcarve-skeleton-example.png
+edge-route-inside-example.png
+edge-route-outside-example.png
+surface-clean-example.png
+engrave-example.png
+drilling-example.png
+rough-surface-example.png
+finish-surface-example.png
+finish-surface-cleanup-example.png
+```
+
+## Pass selection
+
+Operations that support rough/finish passes (pocket, edge_route_inside, edge_route_outside, surface_clean) show three inline buttons — **Rough**, **Finish**, **Both** — directly in the row. Operations that don't support passes (follow_line, v_carve, v_carve_recursive, drilling, rough_surface, finish_surface, finish_surface_cleanup) show a single **+** button. There is no separate pass-selection step; the old two-step flow (select operation → select pass) is eliminated.
 
 ## Tests
 
@@ -64,21 +106,16 @@ The outcome is a more intuitive onboarding experience for new users and better d
 
 ## Open questions / risks
 
-1. **Rich content in descriptions:** Where should operation description images come from? Options:
-   - Embed as data URIs in the descriptions object (simpler, larger bundle)
-   - Reference external URLs (lighter, requires internet or CDN)
-   - Generate small SVG diagrams dynamically (cleanest, but more complex)
-   - For MVP, suggest simple text + 1-2 key points per operation; images can be added later
+1. **Rich content in descriptions:** ✅ Resolved — images are referenced by name from `/operation-examples/`, not bundled. If missing, a fallback message shows the expected file path. User provides PNGs separately.
 
-2. **Responsive design:** Should the layout adapt on mobile/tablet? Current menu is already absolute-positioned and scrollable. Suggest keeping similar layout but may need width adjustment.
+2. **Responsive design:** ✅ Implemented — compact rows (24px desktop / 28px tablet), responsive pass buttons, and media queries at 768px.
 
-3. **Localization:** Should descriptions be localized? For MVP, English-only is fine; mark strings for future i18n if needed.
+3. **Localization:** English-only for now; strings in `operationDescriptions.ts` are easy to internationalize later.
 
-4. **Description content ownership:** Who owns the descriptions? Suggest Frank (user) edits them as needed; they're design/content, not code.
+4. **Description content ownership:** The user owns the descriptions; they're plain TypeScript objects in `operationDescriptions.ts`.
 
 ## Out of scope
 
-- Changing the pass selection logic (rough/finish/pair modes) — those stay below the operation list
 - Modifying operation creation logic itself (all target validation, tool assignment, etc. unchanged)
 - Creating a help system or tooltip library (this is just one UI improvement)
 - Rearranging or renaming operations themselves
