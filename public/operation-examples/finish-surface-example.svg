@@ -1,0 +1,26 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="finishGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#a78bfa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- 3D Model outline -->
+  <path d="M 100 70 L 150 50 L 200 70 L 200 140 L 100 140 Z" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Fine finishing passes (closer together) -->
+  <path d="M 110 85 L 190 85 M 112 95 L 188 95 M 110 105 L 190 105 M 112 115 L 188 115 M 110 125 L 190 125 M 112 135 L 188 135" stroke="url(#finishGrad)" stroke-width="1.5" opacity="0.8" stroke-linecap="round"/>
+  <!-- Ball endmill -->
+  <circle cx="110" cy="85" r="7" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Fine stepover indicator -->
+  <g stroke="#8899aa" stroke-width="1" fill="none">
+    <line x1="65" y1="85" x2="75" y2="85"/>
+    <line x1="70" y1="82" x2="70" y2="88"/>
+    <line x1="65" y1="95" x2="75" y2="95"/>
+    <line x1="70" y1="92" x2="70" y2="98"/>
+  </g>
+  <text x="42" y="92" font-size="10" fill="#8899aa">Fine</text>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">3D Surface Finish</text>
+</svg>

@@ -1,0 +1,19 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="vgrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff8c42;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff6b35;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- V-groove path -->
+  <polyline points="100,70 150,150 200,70" fill="none" stroke="url(#vgrad)" stroke-width="3"/>
+  <!-- Tool (V-bit) -->
+  <path d="M 150 50 L 140 65 L 160 65 Z" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Depth indicator -->
+  <line x1="80" y1="150" x2="30" y2="150" stroke="#8899aa" stroke-width="1" stroke-dasharray="2,2"/>
+  <text x="25" y="155" font-size="10" fill="#8899aa">Depth</text>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">V-Carve Offset</text>
+</svg>

@@ -1,0 +1,25 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="edgeGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" style="stop-color:#e0a861;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d4915c;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Feature outline -->
+  <rect x="80" y="60" width="140" height="100" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Inside edge routing -->
+  <rect x="85" y="65" width="130" height="90" fill="none" stroke="url(#edgeGrad)" stroke-width="3"/>
+  <!-- Tool -->
+  <circle cx="90" cy="70" r="7" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Arrow showing direction -->
+  <path d="M 95 75 L 150 90" stroke="#8899aa" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+      <polygon points="0 0, 10 5, 0 10" fill="#8899aa"/>
+    </marker>
+  </defs>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">Edge Route Inside</text>
+</svg>

@@ -3226,3 +3226,207 @@
   font-size: 13px;
   letter-spacing: 0.02em;
 }
+
+/* Operation Add Menu - Vertical Layout with Expandable Cards */
+
+.cam-add-menu--vertical {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  width: 360px !important;
+  max-width: 90vw !important;
+  max-height: 70vh !important;
+  padding: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  border-radius: 10px !important;
+}
+
+.cam-operations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cam-operation-item {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background-color 0.2s ease;
+}
+
+.cam-operation-item:last-child {
+  border-bottom: none;
+}
+
+.cam-operation-item:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.cam-operation-item--expanded {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.cam-operation-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  min-height: 24px;
+}
+
+.cam-operation-row .feat-btn {
+  padding: 2px 6px;
+  height: auto;
+  min-height: auto;
+  line-height: 1;
+}
+
+.cam-operation-label-btn {
+  all: unset;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cam-operation-label-btn:hover {
+  color: var(--accent);
+}
+
+.cam-operation-label-btn--expanded {
+  color: var(--accent);
+}
+
+.cam-operation-label {
+  display: block;
+}
+
+/* Expanded operation details card */
+
+.cam-operation-details {
+  display: grid;
+  gap: 10px;
+  padding: 10px 10px;
+  margin: 0;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  animation: cam-operation-expand 0.2s ease-out;
+  overflow: hidden;
+}
+
+@keyframes cam-operation-expand {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+.cam-operation-details__image-container {
+  width: 100%;
+  height: 160px;
+  border-radius: 6px;
+  overflow: hidden;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-operation-details__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.cam-operation-details__description {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c8ddf0;
+  margin: 0;
+  padding: 0;
+}
+
+.cam-operation-details__keypoints {
+  display: grid;
+  gap: 6px;
+}
+
+.cam-operation-details__keypoints-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8899aa;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.cam-operation-details__keypoints-list {
+  all: unset;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+
+.cam-operation-details__keypoint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a8b8c8;
+  margin: 0;
+  padding: 0;
+  list-style: disc;
+}
+
+/* Tablet/Mobile adjustments for operation menu */
+
+@media (max-width: 768px) {
+  .cam-add-menu--vertical {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 60vh !important;
+    border-radius: 8px !important;
+  }
+
+  .cam-operation-row {
+    min-height: 28px;
+    gap: 6px;
+    padding: 5px 10px;
+  }
+
+  .cam-operation-details__image-container {
+    height: 140px;
+  }
+}
+
+/* Scrollbar styling for operation menu */
+
+.cam-add-menu--vertical::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cam-add-menu--vertical::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cam-add-menu--vertical::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.cam-add-menu--vertical::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+

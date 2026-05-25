@@ -1,0 +1,21 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="edgeOutGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6b9d;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c9184a;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Feature outline -->
+  <rect x="100" y="70" width="100" height="80" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Outside edge routing -->
+  <rect x="95" y="65" width="110" height="90" fill="none" stroke="url(#edgeOutGrad)" stroke-width="3"/>
+  <!-- Tool at corner -->
+  <circle cx="98" cy="68" r="7" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Arrow showing direction -->
+  <path d="M 105 65 L 150 70" stroke="#8899aa" stroke-width="1.5" fill="none"/>
+  <path d="M 155 75 L 200 80" stroke="#8899aa" stroke-width="1.5" fill="none"/>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">Edge Route Outside</text>
+</svg>

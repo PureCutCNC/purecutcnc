@@ -1,0 +1,18 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="engraveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f97316;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d97706;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Text path -->
+  <text x="150" y="110" text-anchor="middle" font-size="48" font-weight="bold" fill="none" stroke="url(#engraveGrad)" stroke-width="2">ABC</text>
+  <!-- Tool -->
+  <circle cx="140" cy="90" r="6" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Tool path indicator -->
+  <path d="M 140 96 Q 150 100 160 96" stroke="url(#engraveGrad)" stroke-width="1.5" fill="none" stroke-dasharray="3,2" opacity="0.6"/>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">Engrave</text>
+</svg>

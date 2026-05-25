@@ -1,0 +1,21 @@
+<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cleanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0095cc;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Stock -->
+  <rect x="30" y="30" width="240" height="140" fill="none" stroke="#8899aa" stroke-width="2"/>
+  <!-- Two pockets -->
+  <rect x="60" y="80" width="50" height="50" fill="#4a5568" opacity="0.3"/>
+  <rect x="190" y="80" width="50" height="50" fill="#4a5568" opacity="0.3"/>
+  <!-- Surface clean area -->
+  <rect x="110" y="75" width="80" height="60" fill="url(#cleanGrad)" opacity="0.5"/>
+  <!-- Tool path -->
+  <path d="M 120 100 L 180 100 M 130 110 L 170 110 M 120 120 L 180 120" stroke="#00d4ff" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Tool -->
+  <circle cx="125" cy="100" r="6" fill="#daa520" stroke="#b8860b" stroke-width="1.5"/>
+  <!-- Label -->
+  <text x="150" y="190" text-anchor="middle" font-size="14" fill="#c8ddf0" font-weight="600">Surface Clean</text>
+</svg>
