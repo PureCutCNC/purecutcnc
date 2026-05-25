@@ -7,7 +7,8 @@
 // @ts-ignore Node-only test fixture loading; the app tsconfig excludes Node typings.
 import { readFileSync } from 'fs'
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
-import { normalizeProject } from '../../store/projectStore'
+import { normalizeProject, useProjectStore } from '../../store/projectStore'
+import { convertProjectUnits } from '../../utils/units'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide, isClockwise, normalizeToolForProject } from './geometry'
@@ -349,6 +350,12 @@ function normalizeProjectFeatures(project: Project): void {
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
+}
+
+function projectedWaterlineCuts(result: PocketToolpathResult, source?: 'projectedBand' | 'projectedCap'): ToolpathMove[] {
+  return cutMoves(result.moves).filter((move) => (
+    source ? move.source === source : move.source === 'projectedBand' || move.source === 'projectedCap'
+  ))
 }
 
 function distanceToSegment(point: Point, a: Point, b: Point): number {
@@ -981,6 +988,106 @@ function testWaterlineAdaptivelyRefinesShallowSlope(): void {
     `expected debug metrics for inserted adaptive levels, got: ${insertedDebug}`)
 }
 
+function testWaterlineAdaptiveRefinementCanBeDisabled(): void {
+  console.log('Testing waterline adaptive refinement can be disabled...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.3,
+    waterlineAdaptiveRefinement: false,
+    debugToolpath: true,
+  }
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const projectedCuts = projectedWaterlineCuts(result)
+
+  assert(projectedCuts.length === 0,
+    `expected no projected cuts when adaptive refinement is disabled, got ${projectedCuts.length}`)
+  assert(result.warnings.some((warning) => warning.includes('adaptive refinement is disabled')),
+    `expected disabled adaptive refinement debug warning, got: ${result.warnings.join('; ')}`)
+}
+
+function testWaterlineMicroStepoverControlsProjectedDensity(): void {
+  console.log('Testing waterline adaptive spacing controls projected pass density...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
+  const coarseOperation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.8,
+  }
+  const denseOperation: Operation = {
+    ...coarseOperation,
+    id: 'finish-dense',
+    waterlineMicroStepover: 0.2,
+  }
+
+  project.operations = [coarseOperation]
+  const coarse = generateFinishSurfaceToolpath(project, coarseOperation)
+  project.operations = [denseOperation]
+  const dense = generateFinishSurfaceToolpath(project, denseOperation)
+  const coarseProjected = projectedWaterlineCuts(coarse)
+  const denseProjected = projectedWaterlineCuts(dense)
+
+  assert(denseProjected.length > coarseProjected.length,
+    `expected smaller adaptive spacing to increase projected cuts, coarse=${coarseProjected.length}, dense=${denseProjected.length}`)
+}
+
+function testWaterlineZeroMicroStepoverUsesLegacyRatioFallback(): void {
+  console.log('Testing waterline zero adaptive spacing uses legacy stepover-ratio fallback...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
+  const legacyOperation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.25,
+    waterlineMicroStepover: 0,
+  }
+  const explicitOperation: Operation = {
+    ...legacyOperation,
+    id: 'finish-explicit',
+    waterlineMicroStepover: 0.25,
+  }
+
+  project.operations = [legacyOperation]
+  const legacy = generateFinishSurfaceToolpath(project, legacyOperation)
+  project.operations = [explicitOperation]
+  const explicit = generateFinishSurfaceToolpath(project, explicitOperation)
+  const legacyProjected = projectedWaterlineCuts(legacy)
+  const explicitProjected = projectedWaterlineCuts(explicit)
+
+  assert(legacyProjected.length === explicitProjected.length,
+    `expected zero adaptive spacing to match legacy ratio fallback, legacy=${legacyProjected.length}, explicit=${explicitProjected.length}`)
+}
+
+function testWaterlineRefinementThresholdControlsProjectedBands(): void {
+  console.log('Testing waterline trigger gap controls projected band insertion...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
+  const autoThresholdOperation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.3,
+  }
+  const highThresholdOperation: Operation = {
+    ...autoThresholdOperation,
+    id: 'finish-high-threshold',
+    waterlineRefinementThreshold: 100,
+  }
+
+  project.operations = [autoThresholdOperation]
+  const autoThreshold = generateFinishSurfaceToolpath(project, autoThresholdOperation)
+  project.operations = [highThresholdOperation]
+  const highThreshold = generateFinishSurfaceToolpath(project, highThresholdOperation)
+  const autoBandCuts = projectedWaterlineCuts(autoThreshold, 'projectedBand')
+  const highThresholdBandCuts = projectedWaterlineCuts(highThreshold, 'projectedBand')
+
+  assert(autoBandCuts.length > highThresholdBandCuts.length,
+    `expected larger trigger gap to reduce projected bands, auto=${autoBandCuts.length}, high=${highThresholdBandCuts.length}`)
+}
+
 function testWaterlineAdaptiveDoesNotRefineSteepVerticalWalls(): void {
   console.log('Testing waterline adaptive refinement avoids 3D micro passes on steep vertical walls...')
   const { project } = makeProject()
@@ -1014,10 +1121,108 @@ function testWaterlineAdaptiveSubdivisionIsBounded(): void {
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
   const projectedCuts = cutMoves(result.moves).filter((move) => move.source === 'projectedBand' || move.source === 'projectedCap')
-  assert(projectedCuts.length < 200_000,
+  assert(projectedCuts.length < 350_000,
     `expected bounded projected micro-offset cuts, got ${projectedCuts.length} — debug: ${result.warnings.join('; ')}`)
-  assert(result.warnings.some((warning) => warning.includes('insert cap')),
-    `expected projected refinement to report insert cap, got: ${result.warnings.join('; ')}`)
+  assert(result.warnings.some((warning) => warning.includes('insert cap') || warning.includes('pass limit')),
+    `expected projected refinement to report a limit, got: ${result.warnings.join('; ')}`)
+}
+
+function testWaterlineMaxRingsPerBandLimitsProjectedRings(): void {
+  console.log('Testing waterline max rings per band limits adaptive passes...')
+  const { project } = makeProject()
+  project.features = [makeTaperedModelFeature()]
+  normalizeProjectFeatures(project)
+  const unrestrictedOperation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.2,
+  }
+  const limitedOperation: Operation = {
+    ...unrestrictedOperation,
+    id: 'finish-limited',
+    waterlineMaxRingsPerBand: 1,
+    debugToolpath: true,
+  }
+
+  project.operations = [unrestrictedOperation]
+  const unrestricted = generateFinishSurfaceToolpath(project, unrestrictedOperation)
+  project.operations = [limitedOperation]
+  const limited = generateFinishSurfaceToolpath(project, limitedOperation)
+  const unrestrictedProjected = projectedWaterlineCuts(unrestricted)
+  const limitedProjected = projectedWaterlineCuts(limited)
+
+  assert(limitedProjected.length > 0, 'expected limited adaptive pass to still emit projected cuts')
+  assert(limitedProjected.length < unrestrictedProjected.length,
+    `expected max rings per band to reduce projected cuts, limited=${limitedProjected.length}, unrestricted=${unrestrictedProjected.length}`)
+  assert(limited.warnings.some((warning) => warning.includes('pass limit')),
+    `expected pass limit debug warning, got: ${limited.warnings.join('; ')}`)
+}
+
+function testWaterlineQualityControlsNormalizeAndConvertUnits(): void {
+  console.log('Testing waterline quality controls normalize and convert units...')
+  const { project } = makeProject()
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    waterlineMicroStepover: 2.54,
+    waterlineRefinementThreshold: 5.08,
+    waterlineAdaptiveRefinement: false,
+    waterlineMaxRingsPerBand: 7,
+  }
+  project.operations = [operation]
+  const normalized = normalizeProject(project)
+  const normalizedOperation = normalized.operations[0]
+
+  assert(normalizedOperation.waterlineAdaptiveRefinement === false,
+    'expected explicit adaptive refinement setting to survive normalization')
+  assert(normalizedOperation.waterlineMaxRingsPerBand === 7,
+    'expected max rings per band to survive normalization')
+
+  const converted = convertProjectUnits(normalized, 'inch')
+  const convertedOperation = converted.operations[0]
+  assert(Math.abs((convertedOperation.waterlineMicroStepover ?? 0) - 0.1) < 1e-9,
+    `expected micro stepover to convert to 0.1 in, got ${convertedOperation.waterlineMicroStepover}`)
+  assert(Math.abs((convertedOperation.waterlineRefinementThreshold ?? 0) - 0.2) < 1e-9,
+    `expected refinement threshold to convert to 0.2 in, got ${convertedOperation.waterlineRefinementThreshold}`)
+  assert(convertedOperation.waterlineAdaptiveRefinement === false,
+    'expected adaptive refinement setting not to change during unit conversion')
+  assert(convertedOperation.waterlineMaxRingsPerBand === 7,
+    'expected max rings per band not to change during unit conversion')
+
+  const legacyNormalized = normalizeProject({
+    ...project,
+    operations: [makeWaterlineOperation()],
+  })
+  const legacyOperation = legacyNormalized.operations[0]
+  assert(legacyOperation.waterlineAdaptiveRefinement === true,
+    'expected missing adaptive refinement field to default to true')
+  assert(legacyOperation.waterlineMicroStepover === 0,
+    'expected missing micro stepover field to default to auto')
+  assert(legacyOperation.waterlineRefinementThreshold === 0,
+    'expected missing refinement threshold field to default to auto')
+  assert(legacyOperation.waterlineMaxRingsPerBand === 0,
+    'expected missing max rings per band field to default to auto')
+}
+
+function testWaterlineNewOperationGetsToolDerivedAdaptiveSpacing(): void {
+  console.log('Testing new waterline-capable operations get tool-derived adaptive spacing...')
+  const { project } = makeProject()
+  useProjectStore.setState({
+    project,
+    history: { past: [], future: [], transactionStart: null },
+  })
+
+  const operationId = useProjectStore.getState().addOperation(
+    'finish_surface',
+    'finish',
+    { source: 'features', featureIds: ['model1'] },
+  )
+  assert(operationId !== null, 'expected finish surface operation to be created')
+
+  const operation = useProjectStore.getState().project.operations.find((candidate) => candidate.id === operationId)
+  if (!operation) {
+    throw new Error('Assertion failed: expected created operation in project')
+  }
+  assert(operation.waterlineMicroStepover === 1,
+    `expected tool-derived adaptive spacing of 1, got ${operation.waterlineMicroStepover}`)
 }
 
 function testWaterlineLevelsAreConstantBands(): void {
@@ -1596,8 +1801,15 @@ testWaterlineRepeatIsStable()
 testWaterlineRespectsContainingPocketDepth()
 testWaterlineRegionActsAsFilterNotBoundaryContour()
 testWaterlineAdaptivelyRefinesShallowSlope()
+testWaterlineAdaptiveRefinementCanBeDisabled()
+testWaterlineMicroStepoverControlsProjectedDensity()
+testWaterlineZeroMicroStepoverUsesLegacyRatioFallback()
+testWaterlineRefinementThresholdControlsProjectedBands()
 testWaterlineAdaptiveDoesNotRefineSteepVerticalWalls()
 testWaterlineAdaptiveSubdivisionIsBounded()
+testWaterlineMaxRingsPerBandLimitsProjectedRings()
+testWaterlineQualityControlsNormalizeAndConvertUnits()
+testWaterlineNewOperationGetsToolDerivedAdaptiveSpacing()
 testWaterlineLevelsAreConstantBands()
 testWaterlineEmitsBandBoundaryLevels()
 testWaterlineBallEndmillUsesSideContactZ()

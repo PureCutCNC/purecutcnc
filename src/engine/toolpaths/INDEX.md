@@ -13,7 +13,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `finishSurface.ts` — 3D finish pass dispatcher
 - `finishSurfaceCleanup.ts` — cleanup-style 3D imported-mesh finishing that emits deepest retained wall/floor paths from rough-surface-style levels
 - `finishSurfaceParallel.ts` — parallel-line finish strategy
-- `finishSurfaceWaterline.ts` — waterline (constant-Z) finish strategy with bounded adaptive shallow-slope refinement
+- `finishSurfaceWaterline.ts` — waterline (constant-Z) finish strategy with bounded, user-tunable adaptive shallow-slope refinement
 - `surface.ts` — shared surface-toolpath helpers
 - `surfaceStepdown3d.ts` — shared imported-mesh stepdown resolver used by rough-surface and cleanup-surface operations
 - `tabs.ts` — holding-tab generation on profile cuts

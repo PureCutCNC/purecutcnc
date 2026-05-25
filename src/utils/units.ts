@@ -233,6 +233,12 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     plungeFeed: convertLength(operation.plungeFeed, from, to),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
     stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
+    waterlineMicroStepover: operation.waterlineMicroStepover === undefined
+      ? undefined
+      : convertLength(operation.waterlineMicroStepover, from, to),
+    waterlineRefinementThreshold: operation.waterlineRefinementThreshold === undefined
+      ? undefined
+      : convertLength(operation.waterlineRefinementThreshold, from, to),
   }
 }
 

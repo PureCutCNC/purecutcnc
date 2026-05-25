@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import { convertLength } from '../../utils/units'
 
 export interface IntersectingAddFeature {
   feature: SketchFeature
@@ -54,9 +55,9 @@ import { retractToSafe, rotateContourToNearestEntry, toClosedCutMoves, toOpenCut
 import { buildRegionMask, clipToolpathResultToRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
-const MIN_Z_STEP = 0.01
+const WATERLINE_LENGTH_EPSILON_MM = 0.01
 const WATERLINE_PROJECTED_MAX_RINGS_PER_BAND = 96
-const WATERLINE_PROJECTED_MAX_TOTAL_RINGS = 512
+const WATERLINE_PROJECTED_MAX_TOTAL_RINGS = 1000
 const WATERLINE_ADAPTIVE_Z_KEY_DECIMALS = 6
 const WATERLINE_PROJECTED_MIN_BBOX_OVERLAP = 0.05
 const WATERLINE_PROJECTED_PARENT_MAX_AREA_RATIO = 8
@@ -331,7 +332,7 @@ interface WaterlineRefinementMetrics {
   insertedLevels: number
   maxObservedGap: number
   gapThreshold: number
-  minZStep: number
+  microStepover: number
   hitCap: boolean
   hitPassLimit: boolean
 }
@@ -530,6 +531,9 @@ function upperPathHasHigherParent(path: ClipperPath, higherLevel: WaterlineLevel
 function generateProjectedWaterlineLevels(
   coarseBuild: WaterlineLevelBuild,
   stepoverDistance: number,
+  gapThreshold: number,
+  maxRingsPerBand: number,
+  waterlineLengthEpsilon: number,
   surfaceZAt: ((point: { x: number; y: number }) => number | null) | null,
   intersectingAdds: IntersectingAddFeature[],
   toolOffset: number,
@@ -559,7 +563,6 @@ function generateProjectedWaterlineLevels(
     if (expanded.length === 0) return paths
     return differenceClipperPaths(paths, expanded)
   }
-  const gapThreshold = Math.max(stepoverDistance, MIN_Z_STEP)
   const levels: WaterlineLevel[] = coarseBuild.levels.map((level) => ({
     ...level,
     contourPaths: [...level.contourPaths],
@@ -567,6 +570,7 @@ function generateProjectedWaterlineLevels(
   let insertedLevels = 0
   let maxObservedGap = 0
   let hitCap = false
+  let hitPassLimit = false
   const emitLevel = (level: WaterlineLevel): boolean => {
     if (insertedLevels >= WATERLINE_PROJECTED_MAX_TOTAL_RINGS) {
       hitCap = true
@@ -609,7 +613,8 @@ function generateProjectedWaterlineLevels(
     // reference for Z projection.
     const tipRings: Array<{ paths: ClipperPath[]; distance: number }> = []
     let maxInsetDistance = 0
-    for (let step = 1; step <= WATERLINE_PROJECTED_MAX_RINGS_PER_BAND; step += 1) {
+    let stoppedByCollapse = false
+    for (let step = 1; step <= maxRingsPerBand; step += 1) {
       const distance = step * stepoverDistance
       // Round joins for tip insets so small first-slice polygons don't keep
       // producing axis-aligned rectangles. The first-slice shape itself is
@@ -617,7 +622,10 @@ function generateProjectedWaterlineLevels(
       // but each successive inset under round joins replaces the corners
       // with arc segments and the visible squareness fades quickly.
       const tipInwardRaw = offsetClipperPathsRound([tipPath], -distance)
-      if (tipInwardRaw.length === 0) break
+      if (tipInwardRaw.length === 0) {
+        stoppedByCollapse = true
+        break
+      }
       // Subtract intersecting-add footprints expanded by toolOffset so the
       // cap rings don't cut through a wedge / cover / etc. that sits over
       // the mesh tip at this z. Z reference is tipZ since tip caps live in
@@ -625,9 +633,15 @@ function generateProjectedWaterlineLevels(
       // the whole model range — z-aware filtering still works for adds
       // with limited z range.
       const tipInward = clipRingsAgainstAdds(tipInwardRaw, tipZ)
-      if (tipInward.length === 0) break
+      if (tipInward.length === 0) {
+        stoppedByCollapse = true
+        break
+      }
       tipRings.push({ paths: tipInward, distance })
       maxInsetDistance = distance
+    }
+    if (!stoppedByCollapse && tipRings.length >= maxRingsPerBand) {
+      hitPassLimit = true
     }
     if (tipRings.length === 0) return true
 
@@ -637,7 +651,7 @@ function generateProjectedWaterlineLevels(
     // at the boundary to peakZ at the deepest inset if the heightmap can't
     // resolve the point (off-mesh sample, etc.) or wasn't provided.
     const zSpan = peakZ - tipZ
-    const denom = Math.max(maxInsetDistance, MIN_Z_STEP)
+    const denom = Math.max(maxInsetDistance, waterlineLengthEpsilon)
     const linearProjection = (point: { x: number; y: number }): number => {
       if (zSpan === 0) return tipZ
       const d = distanceToClipperPathBoundary(tipPath, point)
@@ -770,10 +784,14 @@ function generateProjectedWaterlineLevels(
       // tip caps still use the heightmap because their footprint is small
       // and the accuracy of following the actual surface matters most
       // there.
-      for (let step = 1; step <= WATERLINE_PROJECTED_MAX_RINGS_PER_BAND; step += 1) {
+      let stoppedByCollapse = false
+      for (let step = 1; step <= maxRingsPerBand; step += 1) {
         const distance = step * stepoverDistance
         const inward = offsetClipperPaths([lowerPath], -distance)
-        if (inward.length === 0) break
+        if (inward.length === 0) {
+          stoppedByCollapse = true
+          break
+        }
         const z = lower.z + (upper.z - lower.z) * Math.max(0, Math.min(1, distance / gap))
         // Clip band against bandPaths AND subtract intersecting-add
         // footprints (expanded by toolOffset). Mesh-only band inputs ignore
@@ -783,7 +801,10 @@ function generateProjectedWaterlineLevels(
           intersectClipperPaths(inward, bandPaths),
           z,
         )
-        if (clippedToBand.length === 0) break
+        if (clippedToBand.length === 0) {
+          stoppedByCollapse = true
+          break
+        }
         const projectZAtPoint = (point: { x: number; y: number }): number => (
           projectedBandZAtPoint(point, localUpper, localLower)
         )
@@ -793,6 +814,9 @@ function generateProjectedWaterlineLevels(
           projectZAtPoint,
           source: 'projectedBand',
         })) break
+      }
+      if (!stoppedByCollapse) {
+        hitPassLimit = true
       }
     }
   }
@@ -819,9 +843,9 @@ function generateProjectedWaterlineLevels(
       insertedLevels,
       maxObservedGap,
       gapThreshold,
-      minZStep: stepoverDistance,
+      microStepover: stepoverDistance,
       hitCap,
-      hitPassLimit: false,
+      hitPassLimit,
     },
     suppressedCoarsePaths,
   }
@@ -830,14 +854,15 @@ function generateProjectedWaterlineLevels(
 function suppressProjectedCoarsePaths(
   coarseLevels: WaterlineLevel[],
   suppressedPaths: WaterlineSuppressedPath[],
-  tolerance: number,
+  xyTolerance: number,
+  zTolerance: number,
 ): WaterlineLevel[] {
   if (suppressedPaths.length === 0) return coarseLevels
   return coarseLevels.map((level) => ({
     ...level,
     contourPaths: level.contourPaths.filter((path) => !suppressedPaths.some((suppressed) => (
-      Math.abs(suppressed.z - level.z) <= MIN_Z_STEP
-      && maxContourGap([path], [suppressed.path]) <= tolerance
+      Math.abs(suppressed.z - level.z) <= zTolerance
+      && maxContourGap([path], [suppressed.path]) <= xyTolerance
     ))),
   }))
 }
@@ -962,6 +987,7 @@ function simplifyContiguousCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
 function densifyContour(
   contour: Array<{ x: number; y: number }>,
   maxSegmentLength: number,
+  waterlineLengthEpsilon: number,
   closed: boolean,
 ): Array<{ x: number; y: number }> {
   if (contour.length < 2) return contour
@@ -972,7 +998,7 @@ function densifyContour(
     const to = contour[(i + 1) % contour.length]
     densified.push(from)
     const length = Math.hypot(to.x - from.x, to.y - from.y)
-    const steps = Math.max(1, Math.ceil(length / Math.max(maxSegmentLength, MIN_Z_STEP)))
+    const steps = Math.max(1, Math.ceil(length / Math.max(maxSegmentLength, waterlineLengthEpsilon)))
     for (let step = 1; step < steps; step += 1) {
       const t = step / steps
       densified.push({
@@ -1036,12 +1062,13 @@ function splitContourByTargetMeshSafety(
   heightMap: HeightMap,
   tool: NormalizedTool,
   maxSegmentLength: number,
+  waterlineLengthEpsilon: number,
   meshBoundaryPaths: ClipperPath[],
   meshBoundaryDistance: number,
   meshBoundaryTolerance: number,
 ): Array<{ contour: XYPoint[]; closed: boolean }> {
   if (contour.length < 2) return []
-  const dense = densifyContour(contour, maxSegmentLength, closed)
+  const dense = densifyContour(contour, maxSegmentLength, waterlineLengthEpsilon, closed)
   if (dense.length < 2) return []
 
   const tolerance = Math.max(1e-5, tool.radius * 0.05)
@@ -1119,7 +1146,32 @@ export function generateFinishSurfaceWaterline(
   const toolOffset = tool.radius + radialLeave
   const direction: CutDirection = operation.cutDirection ?? 'conventional'
   const stepoverRatio = operation.stepover ?? 0.5
-  const stepoverDistance = Math.max(stepoverRatio * tool.diameter, MIN_Z_STEP)
+  const waterlineLengthEpsilon = convertLength(WATERLINE_LENGTH_EPSILON_MM, 'mm', project.meta.units)
+  const autoStepoverDistance = stepoverRatio * tool.diameter
+  const stepoverDistance = Math.max(
+    operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0
+      ? operation.waterlineMicroStepover
+      : autoStepoverDistance,
+    waterlineLengthEpsilon,
+  )
+  const refinementGapThreshold = Math.max(
+    operation.waterlineRefinementThreshold && operation.waterlineRefinementThreshold > 0
+      ? operation.waterlineRefinementThreshold
+      : stepoverDistance,
+    waterlineLengthEpsilon,
+  )
+  const maxRingsPerBand = Math.max(
+    1,
+    Math.min(
+      WATERLINE_PROJECTED_MAX_TOTAL_RINGS,
+      Math.floor(
+        operation.waterlineMaxRingsPerBand && operation.waterlineMaxRingsPerBand > 0
+          ? operation.waterlineMaxRingsPerBand
+          : WATERLINE_PROJECTED_MAX_RINGS_PER_BAND,
+      ),
+    ),
+  )
+  const adaptiveRefinementEnabled = operation.waterlineAdaptiveRefinement ?? true
 
   const regionMask = buildRegionMask(regionFeatures)
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
@@ -1136,7 +1188,10 @@ export function generateFinishSurfaceWaterline(
 
   if (operation.debugToolpath) {
     warnings.push(
-      `Debug: waterline mode, stepover=${stepoverDistance.toFixed(4)}, toolOffset=${toolOffset.toFixed(4)}`,
+      `Debug: waterline mode, adaptive=${adaptiveRefinementEnabled ? 'on' : 'off'}, ` +
+      `spacing=${stepoverDistance.toFixed(4)}, triggerGap=${refinementGapThreshold.toFixed(4)}, ` +
+      `maxRingsPerBand=${maxRingsPerBand}, epsilon=${waterlineLengthEpsilon.toFixed(6)}, ` +
+      `toolOffset=${toolOffset.toFixed(4)}`,
     )
     warnings.push(
       `Debug: intersectingAdds=${intersectingAdds.length} ` +
@@ -1277,14 +1332,24 @@ export function generateFinishSurfaceWaterline(
     return Number.isFinite(z) ? z : null
   }
 
-  const projectedLevelBuild = regionFeatures.length === 0
-    ? generateProjectedWaterlineLevels(projectedInputBuild, stepoverDistance, surfaceZAt, intersectingAdds, toolOffset)
+  const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
+    ? generateProjectedWaterlineLevels(
+        projectedInputBuild,
+        stepoverDistance,
+        refinementGapThreshold,
+        maxRingsPerBand,
+        waterlineLengthEpsilon,
+        surfaceZAt,
+        intersectingAdds,
+        toolOffset,
+      )
     : null
   const coarseLevelsWithSuppressedCaps = projectedLevelBuild
     ? suppressProjectedCoarsePaths(
         coarseLevelBuild.levels,
         projectedLevelBuild.suppressedCoarsePaths,
-        Math.max(MIN_Z_STEP, stepoverDistance * 0.25),
+        Math.max(waterlineLengthEpsilon, stepoverDistance * 0.25),
+        waterlineLengthEpsilon,
       )
     : coarseLevelBuild.levels
   const refinedLevelBuild = projectedLevelBuild
@@ -1301,8 +1366,8 @@ export function generateFinishSurfaceWaterline(
         metrics: {
           insertedLevels: 0,
           maxObservedGap: 0,
-          gapThreshold: Math.max(stepoverDistance, MIN_Z_STEP),
-          minZStep: Math.max(MIN_Z_STEP, Math.min(operation.stepdown, tool.diameter) / 8),
+          gapThreshold: refinementGapThreshold,
+          microStepover: stepoverDistance,
           hitCap: false,
           hitPassLimit: false,
         },
@@ -1319,8 +1384,11 @@ export function generateFinishSurfaceWaterline(
     const metrics = refinedLevelBuild.metrics
     warnings.push(
       `Debug: adaptive waterline inserted ${metrics.insertedLevels} projected rings (${coarseLevelBuild.levels.length} coarse levels → ${waterlineLevels.length} projected levels), ` +
-      `maxGap=${metrics.maxObservedGap.toFixed(4)}, threshold=${metrics.gapThreshold.toFixed(4)}, stepover=${metrics.minZStep.toFixed(4)}`,
+      `maxGap=${metrics.maxObservedGap.toFixed(4)}, threshold=${metrics.gapThreshold.toFixed(4)}, spacing=${metrics.microStepover.toFixed(4)}`,
     )
+    if (!adaptiveRefinementEnabled) {
+      warnings.push('Debug: adaptive waterline skipped because adaptive refinement is disabled')
+    }
     if (regionFeatures.length > 0) {
       warnings.push('Debug: adaptive waterline skipped because region-filtered waterline clipping must not emit boundary contours')
     }
@@ -1670,7 +1738,7 @@ export function generateFinishSurfaceWaterline(
             }
           : zAtPoint
         if (ringEntry.projectZAtPoint) {
-          contour = densifyContour(contour, stepoverDistance / 2, isClosed)
+          contour = densifyContour(contour, stepoverDistance / 2, waterlineLengthEpsilon, isClosed)
           if (!isClosed && contourPolylineLength(contour, false) <= Math.max(toolOffset * 2, stepoverDistance * 2)) {
             continue
           }
@@ -1683,6 +1751,7 @@ export function generateFinishSurfaceWaterline(
               baseHeightMap,
               tool,
               Math.max(1e-5, Math.min(stepoverDistance / 2, tool.radius / 4)),
+              waterlineLengthEpsilon,
               meshBoundaryPaths,
               toolOffset,
               meshBoundaryTolerance,

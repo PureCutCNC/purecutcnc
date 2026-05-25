@@ -2098,6 +2098,10 @@ function defaultOperationName(kind: OperationKind, pass: OperationPass, operatio
   return `${baseName} ${index}`
 }
 
+function defaultWaterlineMicroStepover(tool: Tool): number {
+  return Math.max(0, tool.defaultStepover * tool.diameter)
+}
+
 function defaultOperationForTarget(
   project: Project,
   kind: OperationKind,
@@ -2135,6 +2139,10 @@ function defaultOperationForTarget(
     maxCarveDepth: convertLength(1, 'mm', project.meta.units),
     cutDirection: 'conventional',
     machiningOrder: 'feature_first',
+    waterlineAdaptiveRefinement: true,
+    waterlineMicroStepover: defaultWaterlineMicroStepover(tool),
+    waterlineRefinementThreshold: 0,
+    waterlineMaxRingsPerBand: 0,
     ...(kind === 'drilling' ? {
       drillType: 'simple' as const,
       peckDepth: convertLength(2, 'mm', project.meta.units),
@@ -2613,6 +2621,10 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
     ...defaults,
     ...operation,
     machiningOrder: operation.machiningOrder ?? 'level_first',
+    waterlineAdaptiveRefinement: operation.waterlineAdaptiveRefinement ?? true,
+    waterlineMicroStepover: operation.waterlineMicroStepover ?? 0,
+    waterlineRefinementThreshold: operation.waterlineRefinementThreshold ?? 0,
+    waterlineMaxRingsPerBand: operation.waterlineMaxRingsPerBand ?? 0,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {

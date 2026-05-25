@@ -95,6 +95,10 @@ The `work/old-man-in-box.camj` fixture exposed two separate issues around the we
 
 Leave this as an explicit follow-up rather than declaring the waterline work done. The likely next refinement is to treat intersecting-add wall cleanup as its own local 3D wall-finishing problem instead of forcing it through the same coarse waterline contour pipeline. In practical terms, that means generating the wedge/model intersection wall span from the current mesh slice boundary plus the add boundary, then projecting Z with the same tool-shape-aware surface safety used by the adaptive passes. That should blend with the surrounding finish without either gouging through the head or skipping the lower pocket wall.
 
+## Follow-up implemented in parameter-controls plan
+
+`WATERLINE_PARAMETERS_QUALITY_CONTROLS_Plan.md` now owns user-facing quality controls for this adaptive refinement: enable/disable, projected-ring spacing, trigger gap, and max rings per band. The adaptive algorithm remains here; the parameter plan controls how much of it is applied for a given waterline operation.
+
 ## Out of scope
 
 - A true 3D constant-scallop / constant-cusp finishing algorithm.

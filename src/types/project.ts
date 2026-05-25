@@ -366,6 +366,10 @@ export interface Operation {
   dwellTime?: number
   retractHeight?: number
   debugShowRejectedCorners?: boolean
+  waterlineAdaptiveRefinement?: boolean
+  waterlineMicroStepover?: number
+  waterlineRefinementThreshold?: number
+  waterlineMaxRingsPerBand?: number
 }
 
 // ============================================================

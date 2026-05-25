@@ -11,7 +11,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## Pending approval
 
 - [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
-- [WATERLINE_PARAMETERS_QUALITY_CONTROLS_Plan.md](WATERLINE_PARAMETERS_QUALITY_CONTROLS_Plan.md) — make waterline finish parameters unit-correct, documented, and user-tunable with an explicit adaptive micro stepover control
 
 ## In progress
 
