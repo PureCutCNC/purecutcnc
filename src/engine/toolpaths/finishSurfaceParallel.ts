@@ -86,7 +86,7 @@ function scanlineIntervalsForContours(contours: Point[][], y: number): Array<[nu
   return intervals
 }
 
-function computeXYBounds(positions: Float32Array): { minX: number; maxX: number; minY: number; maxY: number } {
+export function computeXYBounds(positions: Float32Array): { minX: number; maxX: number; minY: number; maxY: number } {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   for (let i = 0; i < positions.length; i += 3) {
     const x = positions[i]
@@ -191,7 +191,7 @@ function splitAndClampSurfaceSegmentToMinZ(
 
 const MAX_HEIGHT_MAP_CELLS = 1_000_000
 
-interface HeightMap {
+export interface HeightMap {
   data: Float32Array
   width: number
   height: number
@@ -203,7 +203,7 @@ interface HeightMap {
 type CoverageContours = Array<Array<[number, number]>>
 export type FinishSurfaceParallelCacheHost = { finishHeightMapCache?: Map<string, HeightMap> }
 
-function chooseHeightMapCellSize(
+export function chooseHeightMapCellSize(
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
   requestedCellSize: number,
   warnings: string[],
@@ -292,7 +292,7 @@ function heightMapCacheKey(
   ].map((value) => value.toFixed(6)).join('|')
 }
 
-function getCachedHeightMap(
+export function getCachedHeightMap(
   host: FinishSurfaceParallelCacheHost,
   positions: Float32Array,
   index: Uint32Array,
@@ -316,7 +316,7 @@ function getCachedHeightMap(
  * Same logic as `applyGougeProtection` but for a single XY query. Returns
  * `-Infinity` if no model cells fall under the tool footprint (free travel).
  */
-function safeToolTipZAt(
+export function safeToolTipZAt(
   x: number,
   y: number,
   heightMap: HeightMap,
@@ -432,7 +432,7 @@ function applyGougeProtection(
   }
 }
 
-function queryHeightMapTopZ(heightMap: HeightMap, x: number, y: number): number | null {
+export function queryHeightMapTopZ(heightMap: HeightMap, x: number, y: number): number | null {
   const gridX = (x - heightMap.originX) / heightMap.cellSize - 0.5
   const gridY = (y - heightMap.originY) / heightMap.cellSize - 0.5
 

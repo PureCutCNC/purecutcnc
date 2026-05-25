@@ -232,6 +232,28 @@ function toolMatchesLibraryEntry(tool: Tool, libraryEntry: ToolLibraryEntry): bo
   )
 }
 
+function toolInProjectUnits(tool: Tool | null, units: Project['meta']['units']): Tool | null {
+  if (!tool) return null
+  return tool.units === units ? tool : convertToolUnits(tool, units)
+}
+
+function defaultWaterlineAdaptiveSpacing(tool: Tool | null, units: Project['meta']['units']): number {
+  const normalizedTool = toolInProjectUnits(tool, units)
+  return normalizedTool ? Math.max(0, normalizedTool.defaultStepover * normalizedTool.diameter) : 0
+}
+
+function resolvedWaterlineAdaptiveSpacing(
+  operation: Project['operations'][number],
+  tool: Tool | null,
+  units: Project['meta']['units'],
+): number {
+  if (operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0) {
+    return operation.waterlineMicroStepover
+  }
+  const normalizedTool = toolInProjectUnits(tool, units)
+  return normalizedTool ? Math.max(0, operation.stepover * normalizedTool.diameter) : 0
+}
+
 function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
@@ -804,6 +826,12 @@ export function CAMPanel({
   const selectedOperation = selectedOperationId
     ? project.operations.find((operation) => operation.id === selectedOperationId) ?? null
     : null
+  const selectedOperationTool = selectedOperation?.toolRef
+    ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
+    : null
+  const selectedOperationWaterlineSpacing = selectedOperation
+    ? resolvedWaterlineAdaptiveSpacing(selectedOperation, selectedOperationTool, project.meta.units)
+    : 0
   const selectionKey = `${selection.selectedNode?.type ?? 'none'}:${selection.selectedFeatureIds.join(',')}`
 
   useEffect(() => {
@@ -1422,7 +1450,17 @@ export function CAMPanel({
                           { value: 'offset', label: pocketPatternLabel('offset') },
                           { value: 'parallel', label: pocketPatternLabel('parallel') },
                         ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
+                        onChange={(value) => {
+                          const waterlineSpacing = value === 'waterline'
+                            ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
+                            : 0
+                          updateOperation(selectedOperation.id, {
+                            pocketPattern: value,
+                            ...(waterlineSpacing > 0 && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
+                              ? { waterlineMicroStepover: waterlineSpacing }
+                              : {}),
+                          })
+                        }}
                       />
                     </label>
                   ) : null}
@@ -1645,6 +1683,9 @@ export function CAMPanel({
                           ? convertToolUnits(newTool, project.meta.units)
                           : newTool
                         const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
+                        const waterlineSpacing = selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline'
+                          ? defaultWaterlineAdaptiveSpacing(newTool, project.meta.units)
+                          : 0
                         updateOperation(selectedOperation.id, {
                           toolRef: id,
                           ...(toolInProjectUnits ? {
@@ -1657,6 +1698,9 @@ export function CAMPanel({
                             rpm: toolInProjectUnits.defaultRpm,
                             ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {
                               maxCarveDepth: toolInProjectUnits.maxCutDepth,
+                            } : {}),
+                            ...(waterlineSpacing > 0 ? {
+                              waterlineMicroStepover: waterlineSpacing,
                             } : {}),
                           } : {}),
                         })
@@ -1682,7 +1726,9 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind !== 'follow_line' && selectedOperation.kind !== 'drilling' ? (
+                  {selectedOperation.kind !== 'follow_line'
+                    && selectedOperation.kind !== 'drilling'
+                    && !(selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline') ? (
                     <label className="properties-field">
                       <span>
                         {selectedOperation.kind === 'v_carve_recursive'
@@ -1753,15 +1799,67 @@ export function CAMPanel({
                   {selectedOperation.kind === 'finish_surface' ? (
                     <>
                       {selectedOperation.pocketPattern === 'waterline' ? (
-                        <label className="properties-field">
-                          <span>Stock To Leave Radial</span>
-                          <DraftLengthInput
-                            value={selectedOperation.stockToLeaveRadial}
-                            units={project.meta.units}
-                            min={0}
-                            onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
-                          />
-                        </label>
+                        <>
+                          <label className="properties-field">
+                            <span>Stock To Leave Radial</span>
+                            <DraftLengthInput
+                              value={selectedOperation.stockToLeaveRadial}
+                              units={project.meta.units}
+                              min={0}
+                              onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
+                            />
+                          </label>
+                          <label
+                            className="properties-check"
+                            title="Adds projected waterline rings on shallow slopes and model tips."
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedOperation.waterlineAdaptiveRefinement ?? true}
+                              onChange={(event) => {
+                                const enabled = event.target.checked
+                                const waterlineSpacing = defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
+                                updateOperation(selectedOperation.id, {
+                                  waterlineAdaptiveRefinement: enabled,
+                                  ...(enabled
+                                    && waterlineSpacing > 0
+                                    && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
+                                    ? { waterlineMicroStepover: waterlineSpacing }
+                                    : {}),
+                                })
+                              }}
+                            />
+                            <span>Adaptive refinement</span>
+                          </label>
+                          {(selectedOperation.waterlineAdaptiveRefinement ?? true) ? (
+                            <>
+                              <label
+                                className="properties-field"
+                                title="Projected ring spacing in project units."
+                              >
+                                <span>Adaptive Spacing</span>
+                                <DraftLengthInput
+                                  value={selectedOperationWaterlineSpacing}
+                                  units={project.meta.units}
+                                  min={0.0001}
+                                  onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMicroStepover: value })}
+                                />
+                              </label>
+                              <label
+                                className="properties-field"
+                                title="Maximum projected rings in one band or tip. Use 0 for the default cap."
+                              >
+                                <span>Max Rings / Band</span>
+                                <DraftNumberInput
+                                  value={selectedOperation.waterlineMaxRingsPerBand ?? 0}
+                                  min={0}
+                                  max={512}
+                                  onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMaxRingsPerBand: Math.floor(value) })}
+                                />
+                              </label>
+                            </>
+                          ) : null}
+                        </>
                       ) : null}
                       <label className="properties-field">
                         <span>Stock To Leave Axial</span>

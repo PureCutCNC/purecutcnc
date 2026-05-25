@@ -168,6 +168,7 @@ export function generateFinishSurfaceToolpath(
     project,
     new Set(target.featureIds),
     modelSilhouettePaths,
+    { excludeContainingAddFeatures: operation.pocketPattern === 'waterline' },
   )
   const intersectingAddTopMax = intersectingAdds.length === 0
     ? -Infinity
@@ -261,6 +262,7 @@ export function generateFinishSurfaceToolpath(
       warnings,
       intersectingAdds,
       modelSilhouettePaths,
+      relatedSubtracts,
     )
     : generateFinishSurfaceParallel(
       project,
