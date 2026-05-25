@@ -16,12 +16,13 @@
 
 import type { OperationKind } from './project'
 
-export interface OperationDescription {
+interface OperationDescription {
   title: string
   shortSummary: string
   fullDescription: string
   keyPoints: string[]
-  exampleImageUrl?: string
+  /** File name (without path) that will be resolved from /operation-examples/ */
+  exampleImageName: string
 }
 
 export const operationDescriptions: Record<OperationKind, OperationDescription> = {
@@ -36,7 +37,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Supports rough and finish passes',
       'Works with flat endmills for clean walls',
     ],
-    exampleImageUrl: '/operation-examples/pocket-example.svg',
+    exampleImageName: 'pocket-example.png',
   },
   v_carve: {
     title: 'V-Carve Offset',
@@ -49,7 +50,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Single-pass operation',
       'Ideal for engraving and decorative edges',
     ],
-    exampleImageUrl: '/operation-examples/vcarve-offset-example.svg',
+    exampleImageName: 'vcarve-offset-example.png',
   },
   v_carve_recursive: {
     title: 'V-Carve Skeleton',
@@ -62,7 +63,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Produces smooth, flowing decorative cuts',
       'Single-pass operation',
     ],
-    exampleImageUrl: '/operation-examples/vcarve-skeleton-example.svg',
+    exampleImageName: 'vcarve-skeleton-example.png',
   },
   edge_route_inside: {
     title: 'Edge Route Inside',
@@ -75,7 +76,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Supports rough and finish passes',
       'Works with flat or ball endmills',
     ],
-    exampleImageUrl: '/operation-examples/edge-route-inside-example.svg',
+    exampleImageName: 'edge-route-inside-example.png',
   },
   edge_route_outside: {
     title: 'Edge Route Outside',
@@ -88,7 +89,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Supports rough and finish passes',
       'Works with flat or ball endmills',
     ],
-    exampleImageUrl: '/operation-examples/edge-route-outside-example.svg',
+    exampleImageName: 'edge-route-outside-example.png',
   },
   surface_clean: {
     title: 'Surface Clean',
@@ -101,7 +102,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Supports rough and finish passes',
       'Works well after pockets or inside routes',
     ],
-    exampleImageUrl: '/operation-examples/surface-clean-example.svg',
+    exampleImageName: 'surface-clean-example.png',
   },
   follow_line: {
     title: 'Engrave',
@@ -114,7 +115,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Typically shallow passes',
       'Supports rough and finish passes',
     ],
-    exampleImageUrl: '/operation-examples/engrave-example.svg',
+    exampleImageName: 'engrave-example.png',
   },
   drilling: {
     title: 'Drill',
@@ -127,7 +128,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Specify depth and peck increment',
       'Fast operation for repeated hole patterns',
     ],
-    exampleImageUrl: '/operation-examples/drilling-example.svg',
+    exampleImageName: 'drilling-example.png',
   },
   rough_surface: {
     title: '3D Surface Rough',
@@ -140,7 +141,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Aggressive cutting for speed',
       'Follow with finish surface for accuracy',
     ],
-    exampleImageUrl: '/operation-examples/rough-surface-example.svg',
+    exampleImageName: 'rough-surface-example.png',
   },
   finish_surface: {
     title: '3D Surface Finish',
@@ -153,7 +154,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Produces excellent surface finish',
       'Usually follows rough surface operation',
     ],
-    exampleImageUrl: '/operation-examples/finish-surface-example.svg',
+    exampleImageName: 'finish-surface-example.png',
   },
   finish_surface_cleanup: {
     title: '3D Surface Cleanup',
@@ -166,6 +167,6 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
       'Removes final material imperfections',
       'Usually the last operation on 3D work',
     ],
-    exampleImageUrl: '/operation-examples/finish-surface-cleanup-example.svg',
+    exampleImageName: 'finish-surface-cleanup-example.png',
   },
 }

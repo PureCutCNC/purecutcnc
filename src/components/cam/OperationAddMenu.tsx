@@ -28,9 +28,8 @@ interface OperationButton {
 interface OperationAddMenuProps {
   operationButtons: OperationButton[]
   selectedNewOperationKind: OperationKind | null
-  selectedNewOperationSupportsPass: boolean
-  selectedNewOperationTarget: boolean
   selectedNewOperationHint: string | null
+  operationSupportsPass: (kind: OperationKind) => boolean
   onChooseOperation: (kind: OperationKind) => void
   onAddOperation: (kind: OperationKind, mode: 'rough' | 'finish' | 'pair') => void
 }
@@ -38,9 +37,8 @@ interface OperationAddMenuProps {
 export function OperationAddMenu({
   operationButtons,
   selectedNewOperationKind,
-  selectedNewOperationSupportsPass,
-  selectedNewOperationTarget,
   selectedNewOperationHint,
+  operationSupportsPass,
   onChooseOperation,
   onAddOperation,
 }: OperationAddMenuProps) {
@@ -60,11 +58,6 @@ export function OperationAddMenu({
 
   function handleOperationClick(kind: OperationKind) {
     onChooseOperation(kind)
-  }
-
-  function handleAddClick(kind: OperationKind, mode: 'rough' | 'finish' | 'pair', event: React.MouseEvent) {
-    event.stopPropagation()
-    onAddOperation(kind, mode)
   }
 
   return (
@@ -93,29 +86,74 @@ export function OperationAddMenu({
                     <span className="cam-operation-label">{button.label}</span>
                   </button>
 
-                  <button
-                    className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
-                    type="button"
-                    title={button.hint ? `Add ${button.label} (${button.hint})` : `Add ${button.label}`}
-                    disabled={!!button.hint}
-                    onClick={() => handleOperationClick(button.kind)}
-                  >
-                    <Icon id="plus" size={14} />
-                  </button>
+                  {operationSupportsPass(button.kind) ? (
+                    <div className="cam-operation-pass-buttons">
+                      <button
+                        className="cam-operation-pass-btn"
+                        type="button"
+                        title={button.hint ? `Rough pass (${button.hint})` : 'Rough pass'}
+                        disabled={!!button.hint}
+                        onClick={() => onAddOperation(button.kind, 'rough')}
+                      >
+                        Rough
+                      </button>
+                      <button
+                        className="cam-operation-pass-btn"
+                        type="button"
+                        title={button.hint ? `Finish pass (${button.hint})` : 'Finish pass'}
+                        disabled={!!button.hint}
+                        onClick={() => onAddOperation(button.kind, 'finish')}
+                      >
+                        Finish
+                      </button>
+                      <button
+                        className="cam-operation-pass-btn"
+                        type="button"
+                        title={button.hint ? `Both passes (${button.hint})` : 'Both rough and finish passes'}
+                        disabled={!!button.hint}
+                        onClick={() => onAddOperation(button.kind, 'pair')}
+                      >
+                        Both
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
+                      type="button"
+                      title={button.hint ? `Add ${button.label} (${button.hint})` : `Add ${button.label}`}
+                      disabled={!!button.hint}
+                      onClick={() => handleOperationClick(button.kind)}
+                    >
+                      <Icon id="plus" size={14} />
+                    </button>
+                  )}
                 </div>
 
                 {/* Expanded card */}
                 {isExpanded && description && (
                   <div className="cam-operation-details" ref={expandedRef}>
-                    {description.exampleImageUrl && (
-                      <div className="cam-operation-details__image-container">
-                        <img
-                          src={description.exampleImageUrl}
-                          alt={`${description.title} example`}
-                          className="cam-operation-details__image"
-                        />
+                    <div className="cam-operation-details__image-container">
+                      <img
+                        src={`/operation-examples/${description.exampleImageName}`}
+                        alt={`${description.title} example`}
+                        className="cam-operation-details__image"
+                        onError={(e) => {
+                          const el = e.currentTarget
+                          el.style.display = 'none'
+                          const placeholder = el.nextElementSibling
+                          if (placeholder) {
+                            ;(placeholder as HTMLElement).style.display = 'flex'
+                          }
+                        }}
+                      />
+                      <div
+                        className="cam-operation-details__image-fallback"
+                        style={{ display: 'none' }}
+                      >
+                        Missing image:<br />
+                        <code>public/operation-examples/{description.exampleImageName}</code>
                       </div>
-                    )}
+                    </div>
 
                     <p className="cam-operation-details__description">
                       {description.fullDescription}
@@ -140,36 +178,6 @@ export function OperationAddMenu({
           })}
         </div>
       </div>
-
-      {/* Pass selection (shown when operation is selected and supports it) */}
-      {selectedNewOperationKind && selectedNewOperationSupportsPass && selectedNewOperationTarget ? (
-        <div className="cam-add-menu__section">
-          <span className="cam-add-menu__label">Pass</span>
-          <div className="cam-pass-toggle">
-            <button
-              className="cam-subtab"
-              type="button"
-              onClick={(e) => handleAddClick(selectedNewOperationKind, 'rough', e)}
-            >
-              Rough
-            </button>
-            <button
-              className="cam-subtab"
-              type="button"
-              onClick={(e) => handleAddClick(selectedNewOperationKind, 'finish', e)}
-            >
-              Finish
-            </button>
-            <button
-              className="cam-subtab"
-              type="button"
-              onClick={(e) => handleAddClick(selectedNewOperationKind, 'pair', e)}
-            >
-              Rough + finish
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       {selectedNewOperationHint ? (
         <div className="cam-field-message" role="status">

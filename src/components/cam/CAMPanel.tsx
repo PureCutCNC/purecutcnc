@@ -907,12 +907,6 @@ export function CAMPanel({
   const selectedNewOperationHint = selectedNewOperationKind
     ? getOperationAddHint(project, selection, selectedNewOperationKind)
     : null
-  const selectedNewOperationSupportsPass = selectedNewOperationKind
-    ? operationSupportsPassSelection(selectedNewOperationKind)
-    : false
-  const selectedNewOperationTarget = selectedNewOperationKind
-    ? getValidOperationTarget(project, selection, selectedNewOperationKind)
-    : null
 
   useEffect(() => {
     if (!showAddOperationMenu) {
@@ -1232,9 +1226,8 @@ export function CAMPanel({
                       <OperationAddMenu
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
-                        selectedNewOperationSupportsPass={selectedNewOperationSupportsPass}
-                        selectedNewOperationTarget={selectedNewOperationTarget !== null}
                         selectedNewOperationHint={selectedNewOperationHint}
+                        operationSupportsPass={operationSupportsPassSelection}
                         onChooseOperation={handleChooseOperationForAdd}
                         onAddOperation={handleAddOperation}
                       />

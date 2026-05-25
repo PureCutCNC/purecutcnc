@@ -3352,6 +3352,28 @@
   object-position: center;
 }
 
+.cam-operation-details__image-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  font-size: 11px;
+  color: #8899aa;
+  line-height: 1.5;
+  padding: 10px;
+}
+
+.cam-operation-details__image-fallback code {
+  font-size: 10px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
 .cam-operation-details__description {
   font-size: 12px;
   line-height: 1.5;
@@ -3390,6 +3412,43 @@
   list-style: disc;
 }
 
+.cam-operation-pass-buttons {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cam-operation-pass-btn {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.cam-operation-pass-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background-color: rgba(220, 165, 106, 0.08);
+}
+
+.cam-operation-pass-btn:active:not(:disabled) {
+  background-color: rgba(220, 165, 106, 0.15);
+}
+
+.cam-operation-pass-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* Tablet/Mobile adjustments for operation menu */
 
 @media (max-width: 768px) {
@@ -3404,6 +3463,15 @@
     min-height: 28px;
     gap: 6px;
     padding: 5px 10px;
+  }
+
+  .cam-operation-pass-buttons {
+    gap: 3px;
+  }
+
+  .cam-operation-pass-btn {
+    padding: 3px 6px;
+    font-size: 10px;
   }
 
   .cam-operation-details__image-container {
