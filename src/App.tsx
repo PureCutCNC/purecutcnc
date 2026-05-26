@@ -255,6 +255,17 @@ function App() {
 
   const effectiveToolbarOrientation: ToolbarOrientation = isToolbarForcedTop ? 'top' : toolbarOrientationPreference
 
+  const handleCenterTabChange = useCallback(
+    (tab: 'sketch' | 'preview3d' | 'simulation') => {
+      if (tab === 'simulation') {
+        startSimulationTransition(() => setCenterTab(tab))
+      } else {
+        setCenterTab(tab)
+      }
+    },
+    [startSimulationTransition]
+  )
+
   const generateToolpathForOperation = useMemo(
     () => (operation: typeof selectedOperation): ToolpathResult | null => {
       if (!operation) {
@@ -995,7 +1006,7 @@ function App() {
             onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
             isComputing={isSimulationPending}
             mode={simulationMode}
-            onModeChange={setSimulationMode}
+            onModeChange={(mode) => startSimulationTransition(() => setSimulationMode(mode))}
             operationCount={simulationOperationCount}
             clamps={visibleClamps}
             selectedClampId={selectedClampId}
@@ -1022,7 +1033,7 @@ function App() {
           />
         }
         centerTab={centerTab}
-        onCenterTabChange={setCenterTab}
+        onCenterTabChange={handleCenterTabChange}
         workspaceLayout={workspaceLayout}
         onWorkspaceLayoutChange={setWorkspaceLayout}
         toolbarOrientation={effectiveToolbarOrientation}
