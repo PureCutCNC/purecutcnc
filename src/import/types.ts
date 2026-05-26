@@ -16,6 +16,7 @@
 
 import type { SketchProfile } from '../types/project'
 import type { Units } from '../utils/units'
+import type { SimplifyOptions } from './simplify'
 
 export type ImportSourceType = 'svg' | 'dxf' | 'stl' | 'obj'
 
@@ -53,4 +54,10 @@ export interface ImportContext {
    * Shapes with a null layerName are always included regardless of this filter.
    */
   layerFilter?: string[] | null
+  /**
+   * Options for the post-import arc/circle simplification pass.
+   * Pass `false` to disable the pass entirely.
+   * Omit (or pass `undefined`) to use the defaults: minArcSegments=6, radiusToleranceFraction=0.01.
+   */
+  arcSimplifyOptions?: Partial<SimplifyOptions> | false
 }

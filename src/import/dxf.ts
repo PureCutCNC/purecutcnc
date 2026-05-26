@@ -17,6 +17,7 @@
 import { circleProfile, type Point, type SketchProfile } from '../types/project'
 import { convertLength } from '../utils/units'
 import { identityMatrix, isProfileDegenerate, multiplyMatrix, transformProfile, type AffineMatrix2D } from './normalize'
+import { DEFAULT_SIMPLIFY_OPTIONS, simplifyProfile } from './simplify'
 import type { ImportContext, ImportedShape, ImportInspection, ImportParseResult } from './types'
 
 interface DxfPair {
@@ -1498,14 +1499,23 @@ export function importDxfString(text: string, context: ImportContext): ImportPar
     ? shapes.filter((s) => layerFilter.includes(s.layerName ?? '0'))
     : shapes
 
-  return {
-    shapes: stitchShapes(
-      dedupeIdenticalShapes(visibleShapes),
-      joinTolerance,
-      allowCrossLayerJoins,
-    ),
-    warnings,
+  const stitched = stitchShapes(
+    dedupeIdenticalShapes(visibleShapes),
+    joinTolerance,
+    allowCrossLayerJoins,
+  )
+
+  const simplifyOpts = context.arcSimplifyOptions
+  if (simplifyOpts === false) {
+    return { shapes: stitched, warnings }
   }
+  const resolvedOpts = { ...DEFAULT_SIMPLIFY_OPTIONS, ...simplifyOpts }
+  const simplified = stitched.map((shape) => ({
+    ...shape,
+    profile: simplifyProfile(shape.profile, resolvedOpts),
+  }))
+
+  return { shapes: simplified, warnings }
 }
 
 // Export to avoid unused function error

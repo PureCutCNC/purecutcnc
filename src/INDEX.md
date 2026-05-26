@@ -11,7 +11,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [store/](store/INDEX.md) — Zustand state (the single source of truth for projects). **All mutations go through here.**
 - [engine/](engine/INDEX.md) — pure-logic CAM core: toolpaths, G-code, simulation, CSG, mesh import
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
-- [import/](import/) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`
+- [import/](import/INDEX.md) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`; includes post-import arc/circle simplification pass
 - [text/](text/) — text-to-geometry (font → machinable paths)
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops)
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
