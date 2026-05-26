@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: In progress
 created: 2026-05-26
 ---
 

@@ -11,7 +11,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## Pending approval
 
 - [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
-- [TOOLPATH_CACHE_DISPLAY_FIELDS_Plan.md](TOOLPATH_CACHE_DISPLAY_FIELDS_Plan.md) — skip toolpath recalculation when only display-only fields (showToolpath, enabled, name) change
 
 ## In progress
 
