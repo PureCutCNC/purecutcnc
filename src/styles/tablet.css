@@ -210,6 +210,14 @@
     min-height: var(--touch-target, 44px);
     padding: 0 14px;
   }
+
+  /* P1: restore touch target that .cam-subtab--compact overrides */
+  .cam-subtab--compact {
+    min-height: var(--touch-target, 44px);
+    padding: 0 10px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
 }
 
 /* ── Split divider: larger hit area ─────────────────────── */

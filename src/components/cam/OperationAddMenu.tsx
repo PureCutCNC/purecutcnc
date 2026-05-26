@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OperationKind } from '../../types/project'
 import { operationDescriptions } from '../../types/operationDescriptions'
+import { Icon } from '../Icon'
 
 interface OperationButton {
   kind: OperationKind
@@ -78,10 +79,11 @@ export function OperationAddMenu({
                   <button
                     className={`cam-operation-label-btn ${isExpanded ? 'cam-operation-label-btn--expanded' : ''}`}
                     type="button"
-                    title={button.hint}
+                    title={button.hint ?? (isExpanded ? `Collapse ${button.label} info` : `Expand ${button.label} info`)}
                     onClick={() => setExpandedOperationKind(isExpanded ? null : button.kind)}
                   >
                     <span className="cam-operation-label">{button.label}</span>
+                    <Icon id="chevron-down" size={12} />
                   </button>
 
                   {operationSupportsPass(button.kind) ? (
