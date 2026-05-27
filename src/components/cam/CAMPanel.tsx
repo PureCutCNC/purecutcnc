@@ -770,6 +770,7 @@ export function CAMPanel({
     selectionKey: string
     text: string
   } | null>(null)
+  const [selectionUpdateConfirm, setSelectionUpdateConfirm] = useState<string | null>(null)
   const [operationActionMessage, setOperationActionMessage] = useState<{
     operationId: string
     text: string
@@ -780,6 +781,7 @@ export function CAMPanel({
   const addOperationMenuRef = useRef<HTMLDivElement>(null)
   const dragOverOperationId = useRef<string | null>(null)
   const gripDragRef = useRef<{ operationId: string; lastSwapY: number; pointerId: number } | null>(null)
+  const selectionUpdateConfirmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const {
     project,
     selection,
@@ -964,6 +966,14 @@ export function CAMPanel({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [showAddOperationMenu])
+
+  useEffect(() => {
+    return () => {
+      if (selectionUpdateConfirmTimeoutRef.current !== null) {
+        clearTimeout(selectionUpdateConfirmTimeoutRef.current)
+      }
+    }
+  }, [])
 
   function handleAddTool() {
     const toolId = addTool()
@@ -1188,6 +1198,15 @@ export function CAMPanel({
 
     updateOperation(selectedOperation.id, { target })
     setTargetUpdateMessage(null)
+    // P5: transient confirmation
+    setSelectionUpdateConfirm(selectedOperation.id)
+    if (selectionUpdateConfirmTimeoutRef.current !== null) {
+      clearTimeout(selectionUpdateConfirmTimeoutRef.current)
+    }
+    selectionUpdateConfirmTimeoutRef.current = setTimeout(() => {
+      setSelectionUpdateConfirm(null)
+      selectionUpdateConfirmTimeoutRef.current = null
+    }, 2000)
   }
 
   function handleAutoPlaceTabs() {
@@ -1239,8 +1258,9 @@ export function CAMPanel({
                     Export
                   </button>
                   <button
-                    className="cam-header-action"
+                    className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
                     type="button"
+                    title={selection.selectedFeatureIds.length === 0 ? 'Select geometry first, then choose an operation type' : undefined}
                     aria-expanded={showAddOperationMenu}
                     aria-haspopup="dialog"
                     onClick={() => {
@@ -1376,7 +1396,7 @@ export function CAMPanel({
                                 handleDuplicateOperation(operation.id)
                               }}
                             >
-                              ⧉
+                              <Icon id="copy" size={14} />
                             </button>
                             <button
                               className="tree-action-btn tree-action-btn--delete"
@@ -1628,9 +1648,11 @@ export function CAMPanel({
                     >
                       Use current selection
                     </button>
-                    {targetUpdateMessage
-                    && targetUpdateMessage.operationId === selectedOperation.id
-                    && targetUpdateMessage.selectionKey === selectionKey ? (
+                    {selectionUpdateConfirm === selectedOperation.id ? (
+                      <span className="cam-field-message cam-field-message--success">✓ Target updated</span>
+                    ) : targetUpdateMessage
+                      && targetUpdateMessage.operationId === selectedOperation.id
+                      && targetUpdateMessage.selectionKey === selectionKey ? (
                       <span className="cam-field-message">{targetUpdateMessage.text}</span>
                     ) : null}
                   </div>
