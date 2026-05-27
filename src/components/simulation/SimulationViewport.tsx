@@ -576,6 +576,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackHeightfieldTextureRef = useRef<THREE.DataTexture | null>(null)
+  // Cached stock color for boundary geometry rebuilds during playback.
+  const playbackStockColorRef = useRef<THREE.Color>(new THREE.Color(0xb5beca))
+  useEffect(() => {
+    playbackStockColorRef.current = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+  }, [stockColor])
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
@@ -803,9 +808,29 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (!controller || !texture) {
       return
     }
+
+    // Always push the latest heightfield data to the GPU texture.
     const dirtyRegion = controller.getDirtyRegion()
     updateHeightfieldTexture(texture, dirtyRegion)
     controller.clearDirtyRegion()
+
+    // When cells have been cut all the way through, new wall faces are exposed on
+    // neighboring cells. The boundary mesh geometry (built once at playback start)
+    // doesn't include those walls, so we rebuild it from the current grid state.
+    if (controller.getBoundaryChanged()) {
+      controller.clearBoundaryChanged()
+      const scene = sceneRef.current
+      if (scene && playbackBoundaryMeshRef.current) {
+        scene.remove(playbackBoundaryMeshRef.current)
+        disposeSceneObject(playbackBoundaryMeshRef.current)
+        playbackBoundaryMeshRef.current = null
+
+        const boundaryMaterial = createDynamicBoundaryMaterial(texture, controller.liveGrid, playbackStockColorRef.current)
+        const boundary = buildDynamicProfileBoundaryObject(controller.liveGrid, boundaryMaterial)
+        scene.add(boundary)
+        playbackBoundaryMeshRef.current = boundary
+      }
+    }
   }, [])
 
 

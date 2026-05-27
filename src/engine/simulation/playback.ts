@@ -109,6 +109,12 @@ export class PlaybackController {
   private finished = false
   private lastMoveApplied = -1
   private frameDirtyRegion: DirtyRegion | null = null
+  /**
+   * Set to true when any cell transitions from material to empty (topZ hits stockBottomZ)
+   * during advance(). This signals the viewport to rebuild boundary wall geometry since
+   * new wall faces may have been exposed. Cleared by clearBoundaryChanged().
+   */
+  private boundaryChanged = false
 
   constructor(
     baseGrid: SimulationGrid,
@@ -136,6 +142,7 @@ export class PlaybackController {
     this.finished = this.moves.length === 0
     this.lastMoveApplied = -1
     this.frameDirtyRegion = null
+    this.boundaryChanged = true  // force a boundary rebuild after reset so walls reflect base state
   }
 
   getDirtyRegion(): DirtyRegion | null {
@@ -144,6 +151,14 @@ export class PlaybackController {
 
   clearDirtyRegion(): void {
     this.frameDirtyRegion = null
+  }
+
+  getBoundaryChanged(): boolean {
+    return this.boundaryChanged
+  }
+
+  clearBoundaryChanged(): void {
+    this.boundaryChanged = false
   }
 
   private expandDirtyRegion(region: DirtyRegion): void {
@@ -221,6 +236,9 @@ export class PlaybackController {
             gridChanged = true
             this.expandDirtyRegion(result.dirtyRegion!)
           }
+          if (result.anyCellCleared) {
+            this.boundaryChanged = true
+          }
           this.lastMoveApplied = this.moveIndex
         }
         this.advanceToNextMove()
@@ -242,6 +260,9 @@ export class PlaybackController {
           if (result.changedCount > 0) {
             gridChanged = true
             this.expandDirtyRegion(result.dirtyRegion!)
+          }
+          if (result.anyCellCleared) {
+            this.boundaryChanged = true
           }
           this.lastMoveApplied = this.moveIndex
         }
@@ -270,6 +291,9 @@ export class PlaybackController {
           if (result.changedCount > 0) {
             gridChanged = true
             this.expandDirtyRegion(result.dirtyRegion!)
+          }
+          if (result.anyCellCleared) {
+            this.boundaryChanged = true
           }
         }
 
