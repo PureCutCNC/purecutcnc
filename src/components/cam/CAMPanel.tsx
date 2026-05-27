@@ -781,6 +781,7 @@ export function CAMPanel({
   const addOperationMenuRef = useRef<HTMLDivElement>(null)
   const dragOverOperationId = useRef<string | null>(null)
   const gripDragRef = useRef<{ operationId: string; lastSwapY: number; pointerId: number } | null>(null)
+  const selectionUpdateConfirmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const {
     project,
     selection,
@@ -965,6 +966,14 @@ export function CAMPanel({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [showAddOperationMenu])
+
+  useEffect(() => {
+    return () => {
+      if (selectionUpdateConfirmTimeoutRef.current !== null) {
+        clearTimeout(selectionUpdateConfirmTimeoutRef.current)
+      }
+    }
+  }, [])
 
   function handleAddTool() {
     const toolId = addTool()
@@ -1191,7 +1200,13 @@ export function CAMPanel({
     setTargetUpdateMessage(null)
     // P5: transient confirmation
     setSelectionUpdateConfirm(selectedOperation.id)
-    setTimeout(() => setSelectionUpdateConfirm(null), 2000)
+    if (selectionUpdateConfirmTimeoutRef.current !== null) {
+      clearTimeout(selectionUpdateConfirmTimeoutRef.current)
+    }
+    selectionUpdateConfirmTimeoutRef.current = setTimeout(() => {
+      setSelectionUpdateConfirm(null)
+      selectionUpdateConfirmTimeoutRef.current = null
+    }, 2000)
   }
 
   function handleAutoPlaceTabs() {
