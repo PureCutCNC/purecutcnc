@@ -23,6 +23,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
+import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -113,7 +114,7 @@ function disposeObject3D(object: THREE.Object3D) {
 }
 
 function toolpathPointToWorld(point: ToolpathResult['moves'][number]['from']): THREE.Vector3 {
-  return new THREE.Vector3(point.x, point.z, point.y)
+  return new THREE.Vector3(...toolpathPointToWorldTuple(point))
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -334,24 +335,6 @@ function buildToolpathOverlay(
       continue
     }
 
-    const positions = new Float32Array(moves.length * 2 * 3)
-    let offset = 0
-    for (const move of moves) {
-      const from = toolpathPointToWorld(move.from)
-      const to = toolpathPointToWorld(move.to)
-      positions[offset] = from.x
-      positions[offset + 1] = from.y
-      positions[offset + 2] = from.z
-      positions[offset + 3] = to.x
-      positions[offset + 4] = to.y
-      positions[offset + 5] = to.z
-      offset += 6
-    }
-
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.computeBoundingSphere()
-
     const material = new THREE.LineBasicMaterial({
       color: layer.color,
       transparent: true,
@@ -360,7 +343,13 @@ function buildToolpathOverlay(
       depthTest: false,
     })
 
-    objects.push(new THREE.LineSegments(geometry, material))
+    for (const chunk of buildToolpathLinePositionChunks(moves)) {
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3))
+      geometry.computeBoundingSphere()
+
+      objects.push(new THREE.LineSegments(geometry, material))
+    }
   }
 
   if (emphasized && visibility.directions) {
