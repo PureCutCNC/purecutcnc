@@ -55,9 +55,47 @@ interface ToolpathCacheEntry {
   clamps: Clamp[]
 }
 
+// Compare only fields that affect toolpath geometry. Excluded (display-only):
+//   name, enabled, showToolpath
+// Any new computation-relevant field added to Operation must be listed here.
+function operationComputationEquals(a: Operation, b: Operation): boolean {
+  if (a === b) return true
+  return (
+    a.kind === b.kind
+    && a.pass === b.pass
+    && a.target === b.target
+    && a.toolRef === b.toolRef
+    && a.stepdown === b.stepdown
+    && a.stepover === b.stepover
+    && a.feed === b.feed
+    && a.plungeFeed === b.plungeFeed
+    && a.rpm === b.rpm
+    && a.pocketPattern === b.pocketPattern
+    && a.pocketAngle === b.pocketAngle
+    && a.stockToLeaveRadial === b.stockToLeaveRadial
+    && a.stockToLeaveAxial === b.stockToLeaveAxial
+    && a.finishWalls === b.finishWalls
+    && a.finishFloor === b.finishFloor
+    && a.carveDepth === b.carveDepth
+    && a.maxCarveDepth === b.maxCarveDepth
+    && a.cutDirection === b.cutDirection
+    && a.machiningOrder === b.machiningOrder
+    && a.drillType === b.drillType
+    && a.peckDepth === b.peckDepth
+    && a.dwellTime === b.dwellTime
+    && a.retractHeight === b.retractHeight
+    && a.debugToolpath === b.debugToolpath
+    && a.debugShowRejectedCorners === b.debugShowRejectedCorners
+    && a.waterlineAdaptiveRefinement === b.waterlineAdaptiveRefinement
+    && a.waterlineMicroStepover === b.waterlineMicroStepover
+    && a.waterlineRefinementThreshold === b.waterlineRefinementThreshold
+    && a.waterlineMaxRingsPerBand === b.waterlineMaxRingsPerBand
+  )
+}
+
 function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, project: Project): boolean {
   return (
-    entry.operation === operation
+    operationComputationEquals(entry.operation, operation)
     && entry.stock === project.stock
     && entry.features === project.features
     && entry.tools === project.tools
@@ -216,6 +254,17 @@ function App() {
       : null
 
   const effectiveToolbarOrientation: ToolbarOrientation = isToolbarForcedTop ? 'top' : toolbarOrientationPreference
+
+  const handleCenterTabChange = useCallback(
+    (tab: 'sketch' | 'preview3d' | 'simulation') => {
+      if (tab === 'simulation') {
+        startSimulationTransition(() => setCenterTab(tab))
+      } else {
+        setCenterTab(tab)
+      }
+    },
+    [startSimulationTransition]
+  )
 
   const generateToolpathForOperation = useMemo(
     () => (operation: typeof selectedOperation): ToolpathResult | null => {
@@ -957,7 +1006,7 @@ function App() {
             onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
             isComputing={isSimulationPending}
             mode={simulationMode}
-            onModeChange={setSimulationMode}
+            onModeChange={(mode) => startSimulationTransition(() => setSimulationMode(mode))}
             operationCount={simulationOperationCount}
             clamps={visibleClamps}
             selectedClampId={selectedClampId}
@@ -984,7 +1033,7 @@ function App() {
           />
         }
         centerTab={centerTab}
-        onCenterTabChange={setCenterTab}
+        onCenterTabChange={handleCenterTabChange}
         workspaceLayout={workspaceLayout}
         onWorkspaceLayoutChange={setWorkspaceLayout}
         toolbarOrientation={effectiveToolbarOrientation}
