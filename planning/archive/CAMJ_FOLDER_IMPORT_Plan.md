@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Done
 created: 2026-05-27
 ---
 
