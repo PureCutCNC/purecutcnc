@@ -14,6 +14,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [CAMJ_FOLDER_IMPORT_Plan.md](CAMJ_FOLDER_IMPORT_Plan.md) — extend Import Geometry dialog to accept .camj files and merge selected feature folders (with their features, model assets, dimensions, and targeting tools/operations) into the current project
 - [WATERLINE_ADAPTIVE_REFINEMENT_Plan.md](WATERLINE_ADAPTIVE_REFINEMENT_Plan.md) — improve imported-model waterline finishing by inserting bounded intermediate contour levels when adjacent bands have small Z separation but large XY drift
 - [WATERLINE_CONTAINING_ADD_FIX_Plan.md](WATERLINE_CONTAINING_ADD_FIX_Plan.md) — fix waterline finish emitting no paths when containing/base add features are mistaken for intersecting walls
 

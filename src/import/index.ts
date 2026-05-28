@@ -18,3 +18,10 @@ export * from './types'
 export * from './normalize'
 export { importSvgString, inspectSvgString } from './svg'
 export { importDxfString, inspectDxfString } from './dxf'
+export {
+  inspectCamjString,
+  mergeCamjFolders,
+  type CamjInspection,
+  type MergeCamjFoldersInput,
+  type MergeCamjFoldersResult,
+} from './camj'

@@ -196,6 +196,7 @@ function convertStock(stock: Stock, from: Units, to: Units): Stock {
     profile: convertProfile(stock.profile, from, to),
     thickness: convertLength(stock.thickness, from, to),
     origin: convertPoint(stock.origin, from, to),
+    sourceFeature: stock.sourceFeature ? convertFeature(stock.sourceFeature, from, to) : stock.sourceFeature,
   }
 }
 
