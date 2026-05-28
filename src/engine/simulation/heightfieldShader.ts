@@ -210,3 +210,99 @@ export function createDynamicBoundaryMaterial(
     side: THREE.DoubleSide,
   })
 }
+
+// Shader-driven walls. The mesh emits one wall quad per grid edge (interior +
+// outer) plus one floor quad per cell, all at build time. The vertex shader
+// samples both adjacent cells' heightfields, drawing the wall from the lower
+// side's height up to the higher side's height (or discarding when they're
+// equal). The floor face is discarded by the fragment shader whenever its
+// cell still has material. As a result, all wall/floor transitions during
+// playback are handled by the GPU and the mesh is never rebuilt.
+//
+// Sentinel: aLeftUv.x or aRightUv.x < 0 means "outside the grid" — treated as
+// stockBottomZ (always empty). Used by edges at the stock perimeter.
+const shaderDrivenBoundaryVertexShader = /* glsl */ `
+  uniform sampler2D uHeightfield;
+  uniform float uStockBottomZ;
+
+  attribute vec2 aLeftUv;
+  attribute vec2 aRightUv;
+  attribute float aIsTop;
+  attribute float aIsFloor;
+
+  varying vec3 vNormal;
+  varying vec2 vLeftUv;
+  varying float vIsFloor;
+  varying float vWallHeight;
+
+  void main() {
+    vLeftUv = aLeftUv;
+    vIsFloor = aIsFloor;
+
+    float hLeft = aLeftUv.x < 0.0 ? uStockBottomZ : texture2D(uHeightfield, aLeftUv).r;
+    float hRight = aRightUv.x < 0.0 ? uStockBottomZ : texture2D(uHeightfield, aRightUv).r;
+
+    vec3 pos = position;
+    if (aIsFloor > 0.5) {
+      pos.y = uStockBottomZ;
+      vNormal = normalize(normalMatrix * normal);
+      vWallHeight = 1.0;
+    } else {
+      float top = max(hLeft, hRight);
+      float bottom = max(min(hLeft, hRight), uStockBottomZ);
+      pos.y = mix(bottom, top, aIsTop);
+      // Flip the supplied perpendicular toward the lower side so the lit face
+      // is the one facing into the trough (away from the taller material).
+      float dir = sign(hLeft - hRight);
+      vec3 wallNormal = dir * normal;
+      vNormal = normalize(normalMatrix * wallNormal);
+      vWallHeight = top - bottom;
+    }
+
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`
+
+const shaderDrivenBoundaryFragmentShader = /* glsl */ `
+  uniform sampler2D uHeightfield;
+  uniform float uStockBottomZ;
+  uniform vec3 uColor;
+
+  varying vec3 vNormal;
+  varying vec2 vLeftUv;
+  varying float vIsFloor;
+  varying float vWallHeight;
+
+  ${LIGHTING_GLSL}
+
+  void main() {
+    if (vIsFloor > 0.5) {
+      float h = vLeftUv.x < 0.0 ? uStockBottomZ : texture2D(uHeightfield, vLeftUv).r;
+      // Floor shows the underside of the stock — visible while the cell still
+      // has material. Cells cut all the way through become holes (no floor).
+      if (h <= uStockBottomZ + 0.000001) discard;
+    } else if (vWallHeight < 0.0001) {
+      // Both sides have equal height — wall has zero extent, would z-fight.
+      discard;
+    }
+    vec3 lighting = calcLighting(normalize(vNormal));
+    gl_FragColor = vec4(uColor * lighting, 1.0);
+  }
+`
+
+export function createShaderDrivenBoundaryMaterial(
+  heightfieldTexture: THREE.DataTexture,
+  grid: SimulationGrid,
+  stockColor: THREE.Color,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uHeightfield: { value: heightfieldTexture },
+      uStockBottomZ: { value: grid.stockBottomZ },
+      uColor: { value: stockColor },
+    },
+    vertexShader: shaderDrivenBoundaryVertexShader,
+    fragmentShader: shaderDrivenBoundaryFragmentShader,
+    side: THREE.DoubleSide,
+  })
+}

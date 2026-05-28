@@ -18,8 +18,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
-import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProfileBoundaryGeometries, updateHeightfieldTexture } from '../../engine/simulation/gpuMesh'
-import { createDynamicBoundaryMaterial, createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
+import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProfileBoundaryGeometries, createShaderDrivenBoundaryGeometries, updateHeightfieldTexture } from '../../engine/simulation/gpuMesh'
+import { createDynamicBoundaryMaterial, createHeightfieldMaterial, createShaderDrivenBoundaryMaterial } from '../../engine/simulation/heightfieldShader'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import type { PlaybackPose } from '../../engine/simulation/playback'
@@ -118,6 +118,10 @@ interface SimulationViewportProps {
   playbackInput: SimulationPlaybackInput | null
   /** True while a new simulation result is being computed (e.g. detail slider change). */
   isComputing?: boolean
+  /** True while the simulation tab is the active centre tab. When false the
+   *  render loop skips drawing so switching to another tab isn't held up
+   *  waiting for the next heavy GPU frame. */
+  isActive?: boolean
   /** Incremented each time the project changes so the viewport can reset its camera. */
   projectKey?: number
 }
@@ -223,6 +227,22 @@ function buildDynamicProfileBoundaryObject(
   material: THREE.Material,
 ): THREE.Object3D {
   const geometries = createDynamicProfileBoundaryGeometries(grid)
+  if (geometries.length === 1) {
+    return new THREE.Mesh(geometries[0], material)
+  }
+
+  const group = new THREE.Group()
+  for (const geometry of geometries) {
+    group.add(new THREE.Mesh(geometry, material))
+  }
+  return group
+}
+
+function buildShaderDrivenBoundaryObject(
+  grid: SimulationGrid,
+  material: THREE.Material,
+): THREE.Object3D {
+  const geometries = createShaderDrivenBoundaryGeometries(grid)
   if (geometries.length === 1) {
     return new THREE.Mesh(geometries[0], material)
   }
@@ -549,6 +569,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   onZoomWindowComplete,
   playbackInput,
   isComputing = false,
+  isActive = true,
   projectKey,
 }, ref) {
   const playbackUnits = playbackInput?.units ?? 'mm'
@@ -564,9 +585,34 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   const [playbackEnabled, setPlaybackEnabled] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
+  // True between "Play tool" click and the moment the playback meshes finish
+  // building. Drives the spinner so the user has visual feedback while the
+  // heavy heightfield + shader-driven boundary mesh is allocated.
+  const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
+  // Mirror isActive into a ref so the render loop (raw RAF, not React-driven)
+  // can read it without re-binding the closure each prop change.
+  const isActiveRef = useRef(isActive)
+  useEffect(() => {
+    isActiveRef.current = isActive
+    // When becoming active again, kick a render so the scene is current
+    // immediately instead of after the next animate() tick fires (which can
+    // be up to ~16 ms away and reads stale buffers on the first paint).
+    if (isActive) {
+      const renderer = rendererRef.current
+      const scene = sceneRef.current
+      const camera = cameraRef.current
+      if (renderer && scene && camera) {
+        renderer.render(scene, camera)
+      }
+    }
+  }, [isActive])
   const [playbackMultiplier, setPlaybackMultiplier] = useState<number>(PLAYBACK_DEFAULT_MULTIPLIER)
   const [playbackMaxStep, setPlaybackMaxStep] = useState(defaultStep)
   const [playbackProgress, setPlaybackProgress] = useState(0)
+  // Latest progress fraction — written every RAF frame, flushed to React state at ~10 Hz
+  // so heavy ticks don't trigger a cascading setState loop (max-update-depth) under
+  // concurrent rendering.
+  const latestProgressRef = useRef(0)
   // Latest pose from the playback controller — written every RAF frame.
   const latestPoseRef = useRef<PlaybackPose>({ x: 0, y: 0, z: 0, moveKind: null })
   // Throttled state for the UI readout — updated at ~10 Hz to avoid re-render churn.
@@ -576,11 +622,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackHeightfieldTextureRef = useRef<THREE.DataTexture | null>(null)
-  // Cached stock color for boundary geometry rebuilds during playback.
-  const playbackStockColorRef = useRef<THREE.Color>(new THREE.Color(0xb5beca))
-  useEffect(() => {
-    playbackStockColorRef.current = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
-  }, [stockColor])
+  // Boundary mesh color is fixed at build time — the shader-driven mesh stays
+  // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
@@ -725,6 +768,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     function animate() {
       frameRef.current = requestAnimationFrame(animate)
+      // Skip the GPU draw when the simulation tab isn't visible. A tab switch
+      // would otherwise have to wait for the current frame's heavy render to
+      // finish before React could commit the new layout.
+      if (!isActiveRef.current) return
       renderer.render(scene, camera)
     }
     animate()
@@ -802,35 +849,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
 
+  // The playback boundary is a static shader-driven mesh: walls are emitted at
+  // every grid edge once, and the vertex shader samples both adjacent cells'
+  // heightfields per frame to set wall heights. The only per-tick work here is
+  // marking the heightfield texture dirty so the GPU re-uploads it.
   const rebuildPlaybackGeometry = useCallback(() => {
-    const controller = playbackControllerRef.current
     const texture = playbackHeightfieldTextureRef.current
-    if (!controller || !texture) {
+    if (!texture) {
       return
     }
-
-    // Always push the latest heightfield data to the GPU texture.
-    const dirtyRegion = controller.getDirtyRegion()
-    updateHeightfieldTexture(texture, dirtyRegion)
-    controller.clearDirtyRegion()
-
-    // When cells have been cut all the way through, new wall faces are exposed on
-    // neighboring cells. The boundary mesh geometry (built once at playback start)
-    // doesn't include those walls, so we rebuild it from the current grid state.
-    if (controller.getBoundaryChanged()) {
-      controller.clearBoundaryChanged()
-      const scene = sceneRef.current
-      if (scene && playbackBoundaryMeshRef.current) {
-        scene.remove(playbackBoundaryMeshRef.current)
-        disposeSceneObject(playbackBoundaryMeshRef.current)
-        playbackBoundaryMeshRef.current = null
-
-        const boundaryMaterial = createDynamicBoundaryMaterial(texture, controller.liveGrid, playbackStockColorRef.current)
-        const boundary = buildDynamicProfileBoundaryObject(controller.liveGrid, boundaryMaterial)
-        scene.add(boundary)
-        playbackBoundaryMeshRef.current = boundary
-      }
-    }
+    updateHeightfieldTexture(texture, playbackControllerRef.current?.getDirtyRegion() ?? null)
+    playbackControllerRef.current?.clearDirtyRegion()
   }, [])
 
 
@@ -875,52 +904,64 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
       playbackControllerRef.current = null
       setIsPlaying(false)
+      latestProgressRef.current = 0
       setPlaybackProgress(0)
+      setIsPlaybackBuilding(false)
       return
     }
 
-    const controller = new PlaybackController(
-      playbackInput.baseGrid,
-      playbackInput.moves,
-      {
+    // Defer the heavy mesh build by one RAF so React has time to commit and
+    // the browser can paint the "building" spinner before the main thread is
+    // blocked allocating the heightfield texture + shader-driven wall mesh.
+    let cancelled = false
+    const buildHandle = requestAnimationFrame(() => {
+      if (cancelled) return
+
+      const controller = new PlaybackController(
+        playbackInput.baseGrid,
+        playbackInput.moves,
+        {
+          toolType: playbackInput.toolType,
+          toolRadius: playbackInput.toolRadius,
+          vBitAngle: playbackInput.vBitAngle,
+        },
+        { maxSegmentLength: playbackInput.maxSegmentLength },
+      )
+      playbackControllerRef.current = controller
+
+      const grid = controller.liveGrid
+      const heightfieldTexture = createHeightfieldTexture(grid)
+      playbackHeightfieldTextureRef.current = heightfieldTexture
+      const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+      const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
+      const surface = buildHeightfieldSurfaceObject(grid, material)
+      scene.add(surface)
+      playbackMaterialMeshRef.current = surface
+
+      const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
+      const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
+      scene.add(boundary)
+      playbackBoundaryMeshRef.current = boundary
+
+      const tool = buildToolMesh({
         toolType: playbackInput.toolType,
         toolRadius: playbackInput.toolRadius,
         vBitAngle: playbackInput.vBitAngle,
-      },
-      { maxSegmentLength: playbackInput.maxSegmentLength },
-    )
-    playbackControllerRef.current = controller
+        cutLength: playbackInput.toolCutLength,
+        shankLength: playbackInput.toolShankLength,
+      })
+      scene.add(tool)
+      toolMeshRef.current = tool
 
-    const grid = controller.liveGrid
-    const heightfieldTexture = createHeightfieldTexture(grid)
-    playbackHeightfieldTextureRef.current = heightfieldTexture
-    const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
-    const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
-    const surface = buildHeightfieldSurfaceObject(grid, material)
-    scene.add(surface)
-    playbackMaterialMeshRef.current = surface
-
-    {
-      const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
-      const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
-      scene.add(boundary)
-      playbackBoundaryMeshRef.current = boundary
-    }
-
-    const tool = buildToolMesh({
-      toolType: playbackInput.toolType,
-      toolRadius: playbackInput.toolRadius,
-      vBitAngle: playbackInput.vBitAngle,
-      cutLength: playbackInput.toolCutLength,
-      shankLength: playbackInput.toolShankLength,
+      latestProgressRef.current = 0
+      setPlaybackProgress(0)
+      updateToolMeshPose()
+      setIsPlaybackBuilding(false)
     })
-    scene.add(tool)
-    toolMeshRef.current = tool
-
-    setPlaybackProgress(0)
-    updateToolMeshPose()
 
     return () => {
+      cancelled = true
+      cancelAnimationFrame(buildHandle)
       if (playbackMaterialMeshRef.current) {
         scene.remove(playbackMaterialMeshRef.current)
         disposeSceneObject(playbackMaterialMeshRef.current)
@@ -985,13 +1026,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         playbackLastRebuildRef.current = now
       }
 
-      setPlaybackProgress(controllerInner.totalPathLength > 0
+      latestProgressRef.current = controllerInner.totalPathLength > 0
         ? controllerInner.getDistanceTraveled() / controllerInner.totalPathLength
-        : 1)
+        : 1
 
       if (controllerInner.isFinished()) {
         rebuildPlaybackGeometry()
 
+        setPlaybackProgress(latestProgressRef.current)
         setIsPlaying(false)
         playbackFrameRef.current = 0
         return
@@ -1020,35 +1062,25 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     moveKind: pose.moveKind,
   }), [origin.x, origin.y, origin.z])
 
-  // Throttled pose state update: write to ref every RAF frame, flush to React
-  // state at ~10 Hz so the UI readout stays responsive without triggering a
-  // React re-render on every animation frame.
+  // Throttled state update: pose + progress are written to refs every RAF frame,
+  // flushed to React state at ~10 Hz so the UI readout stays responsive without
+  // triggering a React re-render on every animation frame. Coupling setState to
+  // RAF causes a max-update-depth cascade once ticks become slow (CPU-heavy ops).
   useEffect(() => {
     if (!playbackEnabled) {
       return
     }
 
     // Immediately reflect the initial pose (handles seek while paused).
-    const initPose = latestPoseRef.current
-    setDisplayPose(toOriginRelative(initPose))
+    setDisplayPose(toOriginRelative(latestPoseRef.current))
 
     const interval = setInterval(() => {
-      const pose = latestPoseRef.current
-      setDisplayPose(toOriginRelative(pose))
+      setDisplayPose(toOriginRelative(latestPoseRef.current))
+      setPlaybackProgress(latestProgressRef.current)
     }, 100)
 
     return () => clearInterval(interval)
   }, [playbackEnabled, toOriginRelative])
-
-  // Also sync the display pose when seeking/stopping (playbackProgress changes
-  // while playback may not be playing).
-  useEffect(() => {
-    if (!playbackEnabled) {
-      return
-    }
-    const pose = latestPoseRef.current
-    setDisplayPose(toOriginRelative(pose))
-  }, [playbackEnabled, playbackProgress, toOriginRelative])
 
   useEffect(() => {
     if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
@@ -1057,7 +1089,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   }, [mode, playbackEnabled, playbackInput])
 
   const handlePlaybackToggle = useCallback(() => {
-    setPlaybackEnabled((current) => !current)
+    setPlaybackEnabled((current) => {
+      const next = !current
+      // Flip the spinner on synchronously so React paints it before the
+      // playback-init useEffect runs the heavy mesh build on the next tick.
+      if (next) setIsPlaybackBuilding(true)
+      return next
+    })
   }, [])
 
   const handlePlayPause = useCallback(() => {
@@ -1068,6 +1106,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (controller.isFinished()) {
       controller.reset()
       rebuildPlaybackGeometry()
+      latestProgressRef.current = 0
       setPlaybackProgress(0)
       updateToolMeshPose()
     }
@@ -1083,6 +1122,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     controller.reset()
     rebuildPlaybackGeometry()
     updateToolMeshPose()
+    latestProgressRef.current = 0
     setPlaybackProgress(0)
   }, [rebuildPlaybackGeometry, updateToolMeshPose])
 
@@ -1094,6 +1134,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     controller.seekToFraction(fraction)
     rebuildPlaybackGeometry()
     updateToolMeshPose()
+    latestProgressRef.current = fraction
     setPlaybackProgress(fraction)
   }, [rebuildPlaybackGeometry, updateToolMeshPose])
 
@@ -1200,7 +1241,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   return (
     <div className="simulation-viewport">
       <div ref={mountRef} className="simulation-viewport__canvas" />
-      {isComputing && (
+      {(isComputing || isPlaybackBuilding) && (
         <div className="simulation-viewport__computing-overlay">
           <div className="simulation-viewport__spinner" />
         </div>

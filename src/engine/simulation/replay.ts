@@ -66,12 +66,6 @@ export function moveIsMaterialRemoving(move: ToolpathMove): boolean {
 export interface ApplyMoveResult {
   changedCount: number
   dirtyRegion: DirtyRegion | null
-  /**
-   * True if at least one cell transitioned from having material (topZ > stockBottomZ)
-   * to being cleared (topZ <= stockBottomZ). When this happens the boundary wall
-   * geometry needs to be rebuilt because new wall faces may have been exposed.
-   */
-  anyCellCleared: boolean
 }
 
 export function applyMoveToGrid(
@@ -89,7 +83,6 @@ export function applyMoveToGrid(
   const [colStart, colEnd] = pointToCellRange(minX, maxX, grid.originX, grid.cellSize, grid.cols)
   const [rowStart, rowEnd] = pointToCellRange(minY, maxY, grid.originY, grid.cellSize, grid.rows)
   let changed = 0
-  let anyCellCleared = false
   let dirtyColMin = grid.cols
   let dirtyColMax = -1
   let dirtyRowMin = grid.rows
@@ -122,10 +115,6 @@ export function applyMoveToGrid(
       const idx = indexFor(grid, col, row)
       const nextZ = Math.max(grid.stockBottomZ, cutZ)
       if (nextZ < grid.topZ[idx] - 1e-9) {
-        // Detect material → empty transitions so the caller can rebuild boundary walls.
-        if (grid.topZ[idx] > grid.stockBottomZ + 1e-6 && nextZ <= grid.stockBottomZ + 1e-6) {
-          anyCellCleared = true
-        }
         grid.topZ[idx] = nextZ
         changed += 1
         if (col < dirtyColMin) dirtyColMin = col
@@ -139,7 +128,6 @@ export function applyMoveToGrid(
   return {
     changedCount: changed,
     dirtyRegion: changed > 0 ? { colMin: dirtyColMin, colMax: dirtyColMax, rowMin: dirtyRowMin, rowMax: dirtyRowMax } : null,
-    anyCellCleared,
   }
 }
 
