@@ -134,6 +134,16 @@ const SIMULATION_DETAIL_MIN = 240
 const SIMULATION_DETAIL_MAX = 1500
 const SIMULATION_DETAIL_STEP = 40
 
+// Above this cell count the shader-driven playback boundary mesh (which emits
+// ~18 vertices × ~48 B per cell) would allocate hundreds of MB of typed
+// arrays at build time. We fall back to the static dynamic-profile mesh
+// (walls only at material/empty boundaries at build time, no cut-through
+// rebuilds) for very high detail playback. The cosmetic "missing walls at
+// cut-through" issue from before #103 reappears at the upper end of the
+// detail slider — but it's never a crash, and the perf stays smooth.
+// 500×500 ≈ 250 000 cells → ~108 MB of shader-driven attribute buffers.
+const SHADER_DRIVEN_BOUNDARY_MAX_CELLS = 500 * 500
+
 /**
  * Playback speed is a multiplier of the operation's feed rate ("1×" means "play at
  * the real cutting feed"). The UI renders a log-scaled slider so the low end (where
@@ -938,10 +948,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(surface)
       playbackMaterialMeshRef.current = surface
 
-      const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
-      const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
-      scene.add(boundary)
-      playbackBoundaryMeshRef.current = boundary
+      // Guarded fallback for very high detail: the shader-driven mesh emits
+      // ~18 verts/cell, so >SHADER_DRIVEN_BOUNDARY_MAX_CELLS would allocate
+      // hundreds of MB. Fall back to the static dynamic-profile boundary
+      // (build-once, no rebuilds) at the cost of cosmetic walls not appearing
+      // at brand-new cut-through cells. Better than OOMing.
+      const totalCells = grid.cols * grid.rows
+      if (totalCells <= SHADER_DRIVEN_BOUNDARY_MAX_CELLS) {
+        const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
+        const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
+        scene.add(boundary)
+        playbackBoundaryMeshRef.current = boundary
+      } else {
+        const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
+        const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
+        scene.add(boundary)
+        playbackBoundaryMeshRef.current = boundary
+      }
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,

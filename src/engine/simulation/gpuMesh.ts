@@ -509,6 +509,15 @@ function pushQuad(
 // compute the wall's top/bottom each frame, and the fragment shader discards
 // floors whose cell still has material. UVs of -1 are the "outside the grid"
 // sentinel (treated as stockBottomZ).
+//
+// Scaling: roughly 18 vertices per cell (3 quads × 6 un-indexed verts) plus a
+// small boundary term. Each vertex carries 12 floats (~48 B) of attributes, so
+// the per-cell cost is ~864 B. The viewport caps usage of this builder via
+// SHADER_DRIVEN_BOUNDARY_MAX_CELLS (see SimulationViewport.tsx) so we don't
+// allocate gigabytes of typed arrays at the upper end of the detail slider
+// (e.g. 1500×1500 ≈ 2.25M cells → ~1.9 GB). TODO: pack to indexed Uint16/Uint8
+// attributes to raise that ceiling.
+export const SHADER_BOUNDARY_VERTICES_PER_CELL = 18
 const SHADER_BOUNDARY_CHUNK_CELLS = 48
 
 export function createShaderDrivenBoundaryGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
