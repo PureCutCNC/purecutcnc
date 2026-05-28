@@ -26,7 +26,7 @@ import {
   type ImportedModelFormat,
 } from '../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../engine/csg'
-import { createImportedFeature, isProfileDegenerate, uniqueName } from '../import'
+import { createImportedFeature, isProfileDegenerate, mergeCamjFolders, uniqueName } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -4989,6 +4989,48 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     })
 
     return createdFeatures.map((f) => f.id)
+  },
+
+  importCamjFolders: (input) => {
+    const state = get()
+    const merge = mergeCamjFolders({
+      currentProject: state.project,
+      sourceProject: input.sourceProject,
+      selectedFolderIds: input.selectedFolderIds,
+      importStock: input.importStock,
+    })
+    if (merge.createdFeatureIds.length === 0 && !merge.stockReplaced) {
+      return []
+    }
+
+    set((s) => {
+      const nextProject = syncFeatureTreeProject(merge.project)
+      const createdIds = merge.createdFeatureIds
+      const primaryId = createdIds.at(-1) ?? null
+      const primaryFolderId = merge.createdFolderIds.at(-1) ?? null
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: primaryId,
+          selectedFeatureIds: createdIds,
+          selectedNode: primaryId
+            ? { type: 'feature', featureId: primaryId }
+            : primaryFolderId
+              ? { type: 'folder', folderId: primaryFolderId }
+              : s.selection.selectedNode,
+          mode: 'feature',
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+
+    return merge.createdFeatureIds
   },
 
   updateFeature: (id, patch) =>

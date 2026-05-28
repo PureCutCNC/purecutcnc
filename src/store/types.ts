@@ -265,6 +265,7 @@ export interface ProjectStore {
   selectFolderFeatures: (folderId: string) => void
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
+  importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   updateFeatures: (ids: string[], patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void

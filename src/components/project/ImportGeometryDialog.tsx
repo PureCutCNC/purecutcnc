@@ -17,7 +17,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent } from 'react'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
-import { importDxfString, importSvgString, inspectDxfString, inspectSvgString, type ImportInspection, type ImportSourceType } from '../../import'
+import {
+  importDxfString,
+  importSvgString,
+  inspectCamjString,
+  inspectDxfString,
+  inspectSvgString,
+  type CamjInspection,
+  type ImportInspection,
+  type ImportSourceType,
+} from '../../import'
 import {
   clampImportedMeshSilhouetteZSteps,
   extractImportedMeshProfileAndBounds,
@@ -41,6 +50,7 @@ interface LoadedImportFile {
   modelBuffer?: ArrayBuffer
   sourceType: ImportSourceType
   inspection: ImportInspection
+  camj?: CamjInspection
 }
 
 interface ImportGeometryDialogProps {
@@ -61,6 +71,7 @@ function sourceTypeLabel(sourceType: ImportSourceType): string {
   if (sourceType === 'dxf') return 'DXF'
   if (sourceType === 'stl') return 'STL'
   if (sourceType === 'obj') return 'OBJ'
+  if (sourceType === 'camj') return 'PureCutCNC Project'
   return 'Unknown'
 }
 
@@ -105,12 +116,13 @@ function detectSourceType(fileName: string): ImportSourceType | null {
   if (lowerName.endsWith('.dxf')) return 'dxf'
   if (lowerName.endsWith('.stl')) return 'stl'
   if (lowerName.endsWith('.obj')) return 'obj'
+  if (lowerName.endsWith('.camj')) return 'camj'
   return null
 }
 
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
   useRestoreCanvasFocus()
-  const { project, importShapes } = useProjectStore()
+  const { project, importShapes, importCamjFolders } = useProjectStore()
   const [loadedFile, setLoadedFile] = useState<LoadedImportFile | null>(null)
   const [sourceUnits, setSourceUnits] = useState<Units | ''>('')
   const [joinTolerance, setJoinTolerance] = useState(defaultJoinTolerance(project.meta.units))
@@ -122,6 +134,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [loadingStage, setLoadingStage] = useState<string>('Processing model')
   const [axisSwap, setAxisSwap] = useState<'none' | 'yz' | 'xz' | 'xy'>('none')
   const [silhouetteZSteps, setSilhouetteZSteps] = useState('')
+  const [importStock, setImportStock] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -144,7 +157,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       setAllowCrossLayerJoins(false)
       setSelectedLayers(new Set())
       setSilhouetteZSteps('')
-      setDialogError('Unsupported import format. Use .svg, .dxf, .stl, or .obj.')
+      setDialogError('Unsupported import format. Use .svg, .dxf, .stl, .obj, or .camj.')
       return
     }
 
@@ -163,22 +176,40 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             inspection: { layers: [], warnings: [], sourceUnitScale: 1, detectedUnits: null, unitsReliable: false, summary: `${label} file - 3D mesh imported by top-down silhouette projection` }
           })
           setSourceUnits(project.meta.units)
+          setSelectedLayers(new Set())
+        } else if (nextSourceType === 'camj') {
+          const text = String(readerEvent.target?.result ?? '')
+          const camjInspection = inspectCamjString(text)
+          if (camjInspection.folderIds.length === 0) {
+            throw new Error('No folders with features found in the selected .camj file.')
+          }
+          setLoadedFile({
+            fileName: file.name,
+            text,
+            sourceType: nextSourceType,
+            inspection: {
+              layers: camjInspection.folderIds,
+              warnings: camjInspection.warnings,
+              sourceUnitScale: 1,
+              detectedUnits: camjInspection.sourceUnits,
+              unitsReliable: true,
+              summary: `${sourceTypeLabel(nextSourceType)} - ${camjInspection.folderIds.length} importable folder${camjInspection.folderIds.length === 1 ? '' : 's'}`,
+            },
+            camj: camjInspection,
+          })
+          setSourceUnits(camjInspection.sourceUnits)
+          setSelectedLayers(new Set(camjInspection.folderIds))
         } else {
           const text = String(readerEvent.target?.result ?? '')
           const inspection = nextSourceType === 'svg' ? inspectSvgString(text) : inspectDxfString(text)
           setLoadedFile({ fileName: file.name, text, sourceType: nextSourceType, inspection })
           setSourceUnits(inspection.detectedUnits ?? '')
+          setSelectedLayers(new Set(inspection.layers))
         }
         setJoinTolerance(defaultJoinTolerance(project.meta.units))
         setAllowCrossLayerJoins(false)
         setSilhouetteZSteps('')
-        if (!isModelSourceType(nextSourceType)) {
-          const text = String(readerEvent.target?.result ?? '')
-          const inspection = nextSourceType === 'svg' ? inspectSvgString(text) : inspectDxfString(text)
-          setSelectedLayers(new Set(inspection.layers))
-        } else {
-          setSelectedLayers(new Set())
-        }
+        setImportStock(false)
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
@@ -187,6 +218,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setAllowCrossLayerJoins(false)
         setSelectedLayers(new Set())
         setSilhouetteZSteps('')
+        setImportStock(false)
         setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
       }
     }
@@ -212,7 +244,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
   async function handleImport() {
     if (!loadedFile) {
-      setDialogError('Choose an SVG, DXF, STL, or OBJ file to import.')
+      setDialogError('Choose an SVG, DXF, STL, OBJ, or .camj file to import.')
       return
     }
     if (!sourceUnits) {
@@ -240,7 +272,30 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
       let createdIds: string[] = []
 
-      if (isModelSourceType(loadedFile.sourceType)) {
+      if (loadedFile.sourceType === 'camj') {
+        const camj = loadedFile.camj
+        if (!camj) throw new Error('Missing .camj inspection data.')
+        const selectedFolderIds = [...selectedLayers]
+        const wantsStock = importStock && camj.stockIsFeatureBased
+        if (selectedFolderIds.length === 0 && !wantsStock) {
+          setDialogError('Select at least one folder to import, or check "Import stock from source".')
+          setBusy(false)
+          return
+        }
+        setLoadingStage('Merging folders')
+        createdIds = importCamjFolders({
+          fileName: loadedFile.fileName,
+          sourceProject: camj.project,
+          selectedFolderIds,
+          importStock: wantsStock,
+        })
+        if (createdIds.length === 0 && !wantsStock) {
+          setDialogError('No features were imported from the selected folders.')
+          setBusy(false)
+          return
+        }
+        setLoadingProgress(100)
+      } else if (isModelSourceType(loadedFile.sourceType)) {
         const modelFormat = loadedFile.sourceType
         const modelLabel = sourceTypeLabel(loadedFile.sourceType)
         const modelScale = sourceUnits === project.meta.units ? 1 : (sourceUnits === 'inch' ? 25.4 : 1/25.4)
@@ -412,11 +467,19 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   }
 
   const inspectionWarnings = loadedFile?.inspection.warnings ?? []
+  const isCamj = loadedFile?.sourceType === 'camj'
   const showJoinTolerance = loadedFile?.sourceType === 'dxf'
   const dxfLayers = loadedFile?.sourceType === 'dxf' ? (loadedFile.inspection.layers ?? []) : []
-  const showLayers = dxfLayers.length > 0
-  const allLayersSelected = dxfLayers.length > 0 && dxfLayers.every((l) => selectedLayers.has(l))
-  const someLayersSelected = dxfLayers.some((l) => selectedLayers.has(l))
+  const camjFolderIds = isCamj ? (loadedFile?.camj?.folderIds ?? []) : []
+  const showDxfLayers = dxfLayers.length > 0
+  const showCamjFolders = camjFolderIds.length > 0
+  const showLayers = showDxfLayers || showCamjFolders
+  const allDxfLayersSelected = dxfLayers.length > 0 && dxfLayers.every((l) => selectedLayers.has(l))
+  const someDxfLayersSelected = dxfLayers.some((l) => selectedLayers.has(l))
+  const allCamjFoldersSelected = camjFolderIds.length > 0 && camjFolderIds.every((id) => selectedLayers.has(id))
+  const someCamjFoldersSelected = camjFolderIds.some((id) => selectedLayers.has(id))
+  const allLayersSelected = showDxfLayers ? allDxfLayersSelected : allCamjFoldersSelected
+  const someLayersSelected = showDxfLayers ? someDxfLayersSelected : someCamjFoldersSelected
   const progressPercent = Math.min(100, Math.max(0, loadingProgress ?? 0))
   const progressStyle = { '--progress': String(progressPercent / 100) } as CSSProperties
 
@@ -447,9 +510,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
               >
-                {loadedFile ? 'Choose Different File' : 'Choose SVG, DXF, STL, or OBJ'}
+                {loadedFile ? 'Choose Different File' : 'Choose SVG, DXF, STL, OBJ, or .camj'}
               </button>
-              <input ref={fileInputRef} type="file" accept=".svg,.dxf,.stl,.obj" onChange={handleFileChange} style={{ display: 'none' }} />
+              <input ref={fileInputRef} type="file" accept=".svg,.dxf,.stl,.obj,.camj" onChange={handleFileChange} style={{ display: 'none' }} />
               <div className="import-dialog__file-name">
                 {loadedFile ? loadedFile.fileName : 'No file selected.'}
               </div>
@@ -469,19 +532,48 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 {/* Source Units */}
                 <div className="import-dialog__info-row">
                   <span>Source Units</span>
-                  <select
-                    value={sourceUnits}
-                    onChange={(event) => setSourceUnits(event.target.value as Units)}
-                  >
-                    <option value="">Select units</option>
-                    <option value="mm">Millimeter</option>
-                    <option value="inch">Inch</option>
-                  </select>
+                  {isCamj ? (
+                    <strong>{unitsLabel(sourceUnits as Units)}</strong>
+                  ) : (
+                    <select
+                      value={sourceUnits}
+                      onChange={(event) => setSourceUnits(event.target.value as Units)}
+                    >
+                      <option value="">Select units</option>
+                      <option value="mm">Millimeter</option>
+                      <option value="inch">Inch</option>
+                    </select>
+                  )}
                 </div>
-                {!loadedFile.inspection.detectedUnits && !isModelSourceType(loadedFile.sourceType) ? (
+                {!loadedFile.inspection.detectedUnits && !isModelSourceType(loadedFile.sourceType) && !isCamj ? (
                   <div className="import-dialog__field-note import-dialog__field-note--warn">
                     Units not detected — choose the source units before importing.
                   </div>
+                ) : null}
+                {isCamj ? (
+                  <div className="import-dialog__field-note">
+                    Backdrop, grid, machine definitions, and global constraints are not imported.
+                  </div>
+                ) : null}
+
+                {/* Stock import (only when source stock is feature-based) */}
+                {isCamj && loadedFile.camj?.stockIsFeatureBased ? (
+                  <>
+                    <label className="import-dialog__toggle-row">
+                      <span className="import-dialog__toggle-label">Import stock from source</span>
+                      <input
+                        className="import-dialog__toggle-input"
+                        type="checkbox"
+                        checked={importStock}
+                        onChange={(event) => setImportStock(event.target.checked)}
+                      />
+                    </label>
+                    {importStock ? (
+                      <div className="import-dialog__field-note import-dialog__field-note--warn">
+                        Current stock and origin will be replaced.
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
 
                 {/* Project Units */}
@@ -573,11 +665,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             {dialogError ? <div className="cam-field-message">{dialogError}</div> : null}
           </div>
 
-          {/* ── Right column: layers ── */}
+          {/* ── Right column: layers / folders ── */}
           {showLayers ? (
             <div className="import-dialog__layers-column">
               <div className="import-dialog__layers-header">
-                <label className="dialog-section-title">Layers</label>
+                <label className="dialog-section-title">{showCamjFolders ? 'Folders' : 'Layers'}</label>
                 <button
                   className="import-dialog__layers-toggle"
                   type="button"
@@ -587,19 +679,38 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 </button>
               </div>
               <div className="import-dialog__layer-list import-dialog__layer-list--fill">
-                {dxfLayers.map((layer) => (
-                  <label key={layer} className="import-dialog__layer-row">
-                    <input
-                      type="checkbox"
-                      checked={selectedLayers.has(layer)}
-                      onChange={() => toggleLayer(layer)}
-                    />
-                    <span className="import-dialog__layer-name">{layer}</span>
-                  </label>
-                ))}
+                {showCamjFolders
+                  ? camjFolderIds.map((folderId) => {
+                      const name = loadedFile?.camj?.folderNames[folderId] ?? folderId
+                      const count = loadedFile?.camj?.folderFeatureCount[folderId] ?? 0
+                      return (
+                        <label key={folderId} className="import-dialog__layer-row">
+                          <input
+                            type="checkbox"
+                            checked={selectedLayers.has(folderId)}
+                            onChange={() => toggleLayer(folderId)}
+                          />
+                          <span className="import-dialog__layer-name">
+                            {name} ({count})
+                          </span>
+                        </label>
+                      )
+                    })
+                  : dxfLayers.map((layer) => (
+                      <label key={layer} className="import-dialog__layer-row">
+                        <input
+                          type="checkbox"
+                          checked={selectedLayers.has(layer)}
+                          onChange={() => toggleLayer(layer)}
+                        />
+                        <span className="import-dialog__layer-name">{layer}</span>
+                      </label>
+                    ))}
               </div>
               {!someLayersSelected ? (
-                <div className="cam-field-message">Select at least one layer to import.</div>
+                <div className="cam-field-message">
+                  Select at least one {showCamjFolders ? 'folder' : 'layer'} to import.
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -611,7 +722,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             className="btn-primary"
             onClick={handleImport}
             type="button"
-            disabled={!loadedFile || !sourceUnits || busy || (showLayers && !someLayersSelected)}
+            disabled={!loadedFile || !sourceUnits || busy || (showLayers && !someLayersSelected && !(isCamj && importStock))}
           >
             Import
           </button>
