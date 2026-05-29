@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { DrillType, Operation, Point, Project, SketchProfile } from '../../types/project'
+import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
@@ -25,6 +25,84 @@ import {
 import { buildRegionMask, splitFeatureTargets } from './regions'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
+
+interface DrillTarget {
+  feature: SketchFeature
+  center: Point
+  span: ReturnType<typeof resolveFeatureZSpan>
+  originalIndex: number
+}
+
+function xyDistanceSquared(a: ToolpathPoint, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  return dx * dx + dy * dy
+}
+
+function precomputeDrillTargets(
+  targetFeatures: SketchFeature[],
+  project: Project,
+  regionMask: ReturnType<typeof buildRegionMask> | null,
+): { targets: DrillTarget[]; warnings: string[] } {
+  const targets: DrillTarget[] = []
+  const warnings: string[] = []
+
+  for (let i = 0; i < targetFeatures.length; i += 1) {
+    const feature = targetFeatures[i]
+    const center = getCircleCenter(feature.sketch.profile)
+    if (!center) {
+      warnings.push(`${feature.name} is marked as a circle but has no resolvable center`)
+      continue
+    }
+    if (regionMask && !regionMask.containsPoint(center)) {
+      continue
+    }
+
+    const span = resolveFeatureZSpan(project, feature)
+    const topZ = span.top
+    const bottomZ = span.bottom
+
+    if (bottomZ >= topZ) {
+      warnings.push(`${feature.name} bottom Z is not below top Z; skipping`)
+      continue
+    }
+
+    targets.push({ feature, center, span, originalIndex: i })
+  }
+
+  return { targets, warnings }
+}
+
+function sortTargetsByNearestNeighbor(targets: DrillTarget[], startPosition: ToolpathPoint | null): DrillTarget[] {
+  if (targets.length <= 1) return targets
+
+  const current = startPosition ?? { x: 0, y: 0, z: 0 }
+  const ordered: DrillTarget[] = []
+  const remaining = [...targets]
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = xyDistanceSquared(current, remaining[0].center)
+
+    for (let i = 1; i < remaining.length; i += 1) {
+      const distance = xyDistanceSquared(current, remaining[i].center)
+      if (
+        distance < bestDistance
+        || (distance === bestDistance && remaining[i].originalIndex < remaining[bestIndex].originalIndex)
+      ) {
+        bestIndex = i
+        bestDistance = distance
+      }
+    }
+
+    const [next] = remaining.splice(bestIndex, 1)
+    ordered.push(next)
+    current.x = next.center.x
+    current.y = next.center.y
+  }
+
+  return ordered
+}
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -192,14 +270,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     warnings.push('Some selected target features are not circles and were skipped')
   }
 
-  if (targetFeatures.length === 0) {
-    return {
-      operationId: operation.id,
-      moves: [],
-      warnings: [...warnings, 'No valid circle features were found for this drilling operation'],
-      bounds: null,
-    }
-  }
+
 
   const drillType: DrillType = operation.drillType ?? 'simple'
   const peckDepth = operation.peckDepth ?? 0
@@ -208,7 +279,23 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     warnings.push('Peck depth must be greater than zero for peck / chip-breaking drilling; falling back to a single plunge')
   }
 
-  const featureSpans = targetFeatures.map((feature) => resolveFeatureZSpan(project, feature))
+  // Precompute and sort targets by nearest-neighbor travel
+  const { targets: drillTargets, warnings: precomputeWarnings } = precomputeDrillTargets(targetFeatures, project, regionMask)
+  warnings.push(...precomputeWarnings)
+
+  if (drillTargets.length === 0) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: [...warnings, 'No valid circle features were found for this drilling operation'],
+      bounds: null,
+    }
+  }
+
+  // Sort by nearest-neighbor from current position
+  const sortedTargets = sortTargetsByNearestNeighbor(drillTargets, null)
+
+  const featureSpans = sortedTargets.map((target) => target.span)
   const safeZ = getOperationSafeZ(project, featureSpans)
 
   // Default retract height is just above the highest feature top, below safe Z.
@@ -221,34 +308,19 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
 
-  for (const feature of targetFeatures) {
-    const center = getCircleCenter(feature.sketch.profile)
-    if (!center) {
-      warnings.push(`${feature.name} is marked as a circle but has no resolvable center`)
-      continue
-    }
-    if (regionMask && !regionMask.containsPoint(center)) {
-      continue
-    }
-
-    const span = resolveFeatureZSpan(project, feature)
-    const topZ = span.top
-    const bottomZ = span.bottom
-
-    if (bottomZ >= topZ) {
-      warnings.push(`${feature.name} bottom Z is not below top Z; skipping`)
-      continue
-    }
+  for (const target of sortedTargets) {
+    const topZ = target.span.top
+    const bottomZ = target.span.bottom
 
     const depthWarning = checkMaxCutDepthWarning(tool, topZ - bottomZ)
     if (depthWarning) {
-      warnings.push(`${feature.name}: ${depthWarning}`)
+      warnings.push(`${target.feature.name}: ${depthWarning}`)
     }
 
     currentPosition = emitDrillCycle(
       moves,
       currentPosition,
-      center,
+      target.center,
       topZ,
       bottomZ,
       safeZ,
