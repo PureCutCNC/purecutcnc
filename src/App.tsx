@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFinishSurfaceCleanupToolpath, generateFinishSurfaceToolpath, generateFollowLineToolpath, generatePocketToolpath, generateRoughSurfaceToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
@@ -43,6 +43,11 @@ interface TreeContextMenuState {
   primaryId: string
   x: number
   y: number
+}
+
+interface MenuPosition {
+  left: number
+  top: number
 }
 
 interface ToolpathCacheEntry {
@@ -113,6 +118,28 @@ type ToolbarOrientation = 'top' | 'left'
 const TOOLBAR_ORIENTATION_STORAGE_KEY = 'camcam.toolbarOrientation'
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 const TOOLBAR_LEFT_BREAKPOINT = 920
+const CONTEXT_MENU_VIEWPORT_PADDING = 8
+const CONTEXT_MENU_INITIAL_WIDTH = 188
+const CONTEXT_MENU_INITIAL_HEIGHT = 300
+
+function clampMenuPosition(
+  x: number,
+  y: number,
+  menuWidth: number,
+  menuHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): MenuPosition {
+  const minLeft = CONTEXT_MENU_VIEWPORT_PADDING
+  const minTop = CONTEXT_MENU_VIEWPORT_PADDING
+  const maxLeft = Math.max(minLeft, viewportWidth - menuWidth - CONTEXT_MENU_VIEWPORT_PADDING)
+  const maxTop = Math.max(minTop, viewportHeight - menuHeight - CONTEXT_MENU_VIEWPORT_PADDING)
+
+  return {
+    left: Math.min(Math.max(x, minLeft), maxLeft),
+    top: Math.min(Math.max(y, minTop), maxTop),
+  }
+}
 
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
@@ -130,6 +157,7 @@ function App() {
   ))
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [isSimulationPending, startSimulationTransition] = useTransition()
@@ -716,11 +744,13 @@ function App() {
         return
       }
       setTreeContextMenu(null)
+      setMenuPosition(null)
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setTreeContextMenu(null)
+        setMenuPosition(null)
       }
     }
 
@@ -775,19 +805,23 @@ function App() {
     const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
       ? nextSelection.selectedFeatureIds
       : [featureId]
+    setMenuPosition(null)
     setTreeContextMenu({ entityType: 'feature', ids: featureIds, primaryId: featureId, x, y })
   }
 
   function openClampContextMenu(clampId: string, x: number, y: number) {
+    setMenuPosition(null)
     setTreeContextMenu({ entityType: 'clamp', ids: [clampId], primaryId: clampId, x, y })
   }
 
   function openTabContextMenu(tabId: string, x: number, y: number) {
+    setMenuPosition(null)
     setTreeContextMenu({ entityType: 'tab', ids: [tabId], primaryId: tabId, x, y })
   }
 
   function closeTreeContextMenu() {
     setTreeContextMenu(null)
+    setMenuPosition(null)
   }
 
   function handleEditSketch(featureId: string) {
@@ -904,13 +938,6 @@ function App() {
     closeTreeContextMenu()
   }
 
-  const menuPosition = treeContextMenu
-    ? {
-        left: Math.min(treeContextMenu.x, window.innerWidth - 188),
-        top: Math.min(treeContextMenu.y, window.innerHeight - 300),
-      }
-    : null
-
   const menuHasMultipleSelection = treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.length ?? 0) > 1
   const menuCanUseAsStock =
     treeContextMenu?.entityType === 'feature' &&
@@ -924,6 +951,59 @@ function App() {
     treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.some((featureId) =>
       project.features.some((feature) => feature.id === featureId && feature.locked)
     ) ?? false)
+  const fallbackMenuPosition = treeContextMenu
+    ? clampMenuPosition(
+        treeContextMenu.x,
+        treeContextMenu.y,
+        CONTEXT_MENU_INITIAL_WIDTH,
+        CONTEXT_MENU_INITIAL_HEIGHT,
+        window.innerWidth,
+        window.innerHeight,
+      )
+    : null
+  const resolvedMenuPosition = menuPosition ?? fallbackMenuPosition
+
+  const updateTreeContextMenuPosition = useCallback(() => {
+    if (!treeContextMenu || !menuRef.current) {
+      return
+    }
+
+    const rect = menuRef.current.getBoundingClientRect()
+    const nextPosition = clampMenuPosition(
+      treeContextMenu.x,
+      treeContextMenu.y,
+      rect.width,
+      rect.height,
+      window.innerWidth,
+      window.innerHeight,
+    )
+    setMenuPosition((previous) => (
+      previous?.left === nextPosition.left && previous.top === nextPosition.top
+        ? previous
+        : nextPosition
+    ))
+  }, [treeContextMenu])
+
+  useLayoutEffect(() => {
+    updateTreeContextMenuPosition()
+  }, [
+    updateTreeContextMenuPosition,
+    menuFeature,
+    menuTab,
+    menuClamp,
+    menuHasMultipleSelection,
+    menuCanUseAsStock,
+    menuHasLockedSelection,
+  ])
+
+  useEffect(() => {
+    if (!treeContextMenu) {
+      return
+    }
+
+    window.addEventListener('resize', updateTreeContextMenuPosition)
+    return () => window.removeEventListener('resize', updateTreeContextMenuPosition)
+  }, [treeContextMenu, updateTreeContextMenuPosition])
 
   const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
     <button
@@ -1104,11 +1184,11 @@ function App() {
         </div>
       )}
 
-      {treeContextMenu && menuPosition && (menuFeature || menuTab || menuClamp) ? (
+      {treeContextMenu && resolvedMenuPosition && (menuFeature || menuTab || menuClamp) ? (
         <div
           ref={menuRef}
           className="feature-context-menu"
-          style={menuPosition}
+          style={resolvedMenuPosition}
           onContextMenu={(event) => event.preventDefault()}
         >
           {menuFeature ? (
