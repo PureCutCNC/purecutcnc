@@ -2245,6 +2245,8 @@
   position: fixed;
   z-index: 1000;
   min-width: 168px;
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
   padding: 4px;
   border-radius: 10px;
   border: 1px solid rgba(94, 121, 142, 0.72);
@@ -2254,6 +2256,8 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   display: grid;
   gap: 1px;
+  box-sizing: border-box;
+  overflow-y: auto;
 }
 
 .feature-context-menu__separator {
@@ -3504,4 +3508,3 @@
 .cam-add-menu--vertical::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
-
