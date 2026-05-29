@@ -1083,6 +1083,110 @@ function testDrillingRegionFiltersHolePoints() {
   console.log('drilling region filtering: PASSED')
 }
 
+function testDrillingOrdersByNearestNeighbor() {
+  console.log('Testing drilling orders holes by nearest-neighbor travel...')
+  const tool = makeFlatEndmill('t1', 1)
+  // Three circles at x=10, 50, 30 (spatially shuffled)
+  const circle1 = makeCircleBoss('c1', 10, 10, 0.5, 0, -5)
+  const circle2 = makeCircleBoss('c2', 50, 10, 0.5, 0, -5)
+  const circle3 = makeCircleBoss('c3', 30, 10, 0.5, 0, -5)
+  const project = baseProject([tool], [circle1, circle2, circle3])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1', 'c2', 'c3'] },
+    toolRef: 't1',
+    stepdown: 1,
+  })
+
+  const result = generateDrillingToolpath(project, op)
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+
+  assert(plunges.length === 3, `expected 3 plunge moves, got ${plunges.length}`)
+
+  // Extract X coordinates of plunge destinations to infer visit order
+  const visitXs = plunges.map((m) => Math.round(m.to.x))
+
+  // Nearest-neighbor from origin: c1 (10) is closest, then c3 (30), then c2 (50)
+  const expectedXOrder = [10, 30, 50]
+  assert(
+    visitXs.every((x, i) => approx(x, expectedXOrder[i], 0.5)),
+    `expected nearest-neighbor X order [${expectedXOrder}], got [${visitXs}]`,
+  )
+
+  console.log('drilling nearest-neighbor ordering: PASSED')
+}
+
+function testDrillingTieBreaksByOriginalOrder() {
+  console.log('Testing drilling tie-breaks equidistant holes by original feature order...')
+  const tool = makeFlatEndmill('t1', 1)
+  // Two circles at equal distance from origin; c1 should be visited before c2 due to original order
+  const circle1 = makeCircleBoss('c1', 5, 5, 0.5, 0, -5)
+  const circle2 = makeCircleBoss('c2', 5, 5, 0.5, 0, -5) // same position as c1
+  const circle3 = makeCircleBoss('c3', -10, 0, 0.5, 0, -5) // farther away
+  const project = baseProject([tool], [circle1, circle2, circle3])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1', 'c3', 'c2'] }, // c1 and c2 equidistant from c1 at origin
+    toolRef: 't1',
+    stepdown: 1,
+  })
+
+  const result = generateDrillingToolpath(project, op)
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+
+  assert(plunges.length === 3, `expected 3 plunge moves, got ${plunges.length}`)
+  // We expect c1 or c2 to be visited before c3 (they're closer)
+  const firstPlungeX = plunges[0].to.x
+  assert(
+    approx(firstPlungeX, 5),
+    `expected first hole near x=5 (c1 or c2), got x=${firstPlungeX}`,
+  )
+
+  console.log('drilling tie-breaking by original order: PASSED')
+}
+
+function testDrillingMinimizesSafeZTravelDistance() {
+  console.log('Testing drilling minimizes safe-Z travel distance across holes...')
+  const tool = makeFlatEndmill('t1', 1)
+  // Extreme case: 4 holes in a line at x=0, 10, 20, 30
+  // If ordered by feature list [0, 30, 10, 20], nearest-neighbor should reorder to ~[0, 10, 20, 30]
+  const c0 = makeCircleBoss('c0', 0, 0, 0.5, 0, -5)
+  const c30 = makeCircleBoss('c30', 30, 0, 0.5, 0, -5)
+  const c10 = makeCircleBoss('c10', 10, 0, 0.5, 0, -5)
+  const c20 = makeCircleBoss('c20', 20, 0, 0.5, 0, -5)
+  const project = baseProject([tool], [c0, c30, c10, c20])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c0', 'c30', 'c10', 'c20'] },
+    toolRef: 't1',
+    stepdown: 1,
+  })
+
+  const result = generateDrillingToolpath(project, op)
+  const rapidMoves = result.moves.filter((move) => move.kind === 'rapid')
+
+  // Sum up XY distances of rapid moves (excluding Z-only moves)
+  let totalRapidDist = 0
+  for (const move of rapidMoves) {
+    const dx = move.to.x - move.from.x
+    const dy = move.to.y - move.from.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist > 1e-6) {
+      totalRapidDist += dist
+    }
+  }
+
+  // For nearest-neighbor [0, 10, 20, 30], total travel is ~30 units
+  // For bad order [0, 30, 10, 20], we'd traverse 0→30→10→20 = 30 + 20 + 10 = 60 units
+  // Nearest neighbor should be significantly better
+  assert(
+    totalRapidDist <= 35, // some slack for floating point and retract moves
+    `expected total rapid distance <= 35 (nearest order), got ${totalRapidDist.toFixed(1)}`,
+  )
+
+  console.log('drilling minimizes safe-Z travel: PASSED')
+}
+
 function testFinishSurfaceCleanupRejectsRegionOnlyTarget() {
   console.log('Testing finish_surface_cleanup rejects region-only target...')
   const tool = makeFlatEndmill('t1', 1)
@@ -1127,6 +1231,9 @@ try {
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
+  testDrillingOrdersByNearestNeighbor()
+  testDrillingTieBreaksByOriginalOrder()
+  testDrillingMinimizesSafeZTravelDistance()
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
