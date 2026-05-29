@@ -22,7 +22,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 ## Supporting modules
 - `index.ts` — barrel export — add new files here when adding a strategy
 - `types.ts` — shared toolpath types (segments, passes, parameters)
-- `geometry.ts` — toolpath-specific geometric helpers
+- `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
+- `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
 - `regions.ts` — region computation (which area belongs to which op)
 - `resolver.ts` — resolves features+operations into clipper input regions
 - `restRegions.ts` — rest-machining region computation (what a prior tool missed)
@@ -34,6 +35,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 ## Tests
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
+- arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
 
 ## Adding a new strategy
 1. New file `myStrategy.ts` exporting a generator function.

@@ -5,14 +5,16 @@
 import { polygonProfile } from '../types/project'
 import type { SketchFeature, SketchProfile, Point } from '../types/project'
 import {
-  buildSegmentAnnotations,
-  clipperContourToProfile,
-  clipperContourToProfilePreserving,
   flattenFeatureToClipperPath,
   executeClipTree,
   getClipperChildren,
   type ClipperPolyNode,
 } from './helpers/clipping'
+import {
+  buildSegmentAnnotations,
+  clipperContourToProfile,
+  clipperContourToProfilePreserving,
+} from '../engine/toolpaths/arcReconstruction'
 import { flattenProfile } from '../engine/toolpaths/geometry'
 import { splitClosedByOpen } from './helpers/polygonSplit'
 
