@@ -15,9 +15,9 @@
 import {
   flattenFeatureToClipperPath,
   offsetClipperPaths,
-  simplifyOffsetContour,
   unionClipperPaths,
 } from './clipping'
+import { simplifyOffsetContour } from '../../engine/toolpaths/arcReconstruction'
 import { sampleProfilePoints } from '../../types/project'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 

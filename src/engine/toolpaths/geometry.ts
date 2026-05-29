@@ -35,6 +35,14 @@ import type {
 
 export const DEFAULT_CLIPPER_SCALE = 10_000
 
+// Default curve-flattening parameters used when sampling profiles into
+// polylines for Clipper. These are exported (rather than left as inline
+// `flattenProfile` argument defaults) because the segment-annotation logic in
+// `arcReconstruction.ts` must flatten with the IDENTICAL parameters to map
+// Clipper integer coordinates back to their source segments — see issue #122.
+export const DEFAULT_FLATTEN_CURVE_SAMPLES = 24
+export const DEFAULT_FLATTEN_ARC_STEP = Math.PI / 36
+
 function clonePoint(point: Point): Point {
   return { x: point.x, y: point.y }
 }
@@ -95,7 +103,7 @@ export function resolveOperationTool(project: Project, operation: Operation): Re
   }
 }
 
-export function flattenProfile(profile: SketchProfile, curveSamples = 24, arcStepRadians = Math.PI / 36): FlattenedPath {
+export function flattenProfile(profile: SketchProfile, curveSamples = DEFAULT_FLATTEN_CURVE_SAMPLES, arcStepRadians = DEFAULT_FLATTEN_ARC_STEP): FlattenedPath {
   const sampled = sampleProfilePoints(profile, curveSamples, arcStepRadians)
   return {
     points: sampled.map(clonePoint),

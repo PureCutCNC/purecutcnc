@@ -27,21 +27,23 @@ import type {
 } from '../../types/project'
 import { polygonProfile } from '../../types/project'
 import {
-  buildSegmentAnnotations,
-  clipperContourToProfile,
-  clipperContourToProfilePreserving,
-  collectKnownCircles,
   executeClipTree,
   flattenFeatureToClipperPath,
   flattenOpenFeatureToClipperPath,
   getClipperChildren,
   offsetClipperPaths,
-  reconstructArcsInProfile,
-  simplifyOffsetContour,
   type ClipperPolyNode,
-  type SegmentAnnotation,
   unionClipperPaths,
 } from './clipping'
+import {
+  buildSegmentAnnotations,
+  clipperContourToProfile,
+  clipperContourToProfilePreserving,
+  collectKnownCircles,
+  reconstructArcsInProfile,
+  simplifyOffsetContour,
+  type SegmentAnnotation,
+} from '../../engine/toolpaths/arcReconstruction'
 import { splitClosedByOpen } from './polygonSplit'
 
 export interface DerivedFeatureGroup {

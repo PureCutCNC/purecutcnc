@@ -21,9 +21,9 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
   - `types.ts` — format/option interfaces
   - `assemble.ts` — manifold union → standard Z-up right-handed export mesh
   - `stl.ts` — binary + ASCII STL writers and the `stlExportFormat` entry
-- `simulation/` — voxel-based material removal sim (state, stepping, voxel grid)
+- [simulation/](simulation/INDEX.md) — heightfield-based material removal sim (grid, replay/stepping, GPU heightfield mesh + shaders)
 
 ## Conventions
 - All public exports flow through each subfolder's `index.ts`.
-- Use clipper-lib via `store/helpers/clipping.ts` (integer scaling already handled).
+- Clipper integer-scaling and profile↔path conversion are wrapped in `store/helpers/clipping.ts`; arc/curve reconstruction of Clipper output lives in `toolpaths/arcReconstruction.ts`.
 - Coordinates here are **internal** (Y-down). G-code export inverts to Cartesian.

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+export * from './arcReconstruction'
 export * from './clamps'
 export * from './carving'
 export * from './drilling'

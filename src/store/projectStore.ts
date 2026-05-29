@@ -93,12 +93,14 @@ import {
   subtractPoint,
 } from './helpers/geometry'
 import {
-  buildSegmentAnnotations,
-  clipperContourToProfile,
-  clipperContourToProfilePreserving,
   flattenFeatureToClipperPath,
   unionClipperPaths,
 } from './helpers/clipping'
+import {
+  buildSegmentAnnotations,
+  clipperContourToProfile,
+  clipperContourToProfilePreserving,
+} from '../engine/toolpaths/arcReconstruction'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../engine/toolpaths/restRegions'
 import {
   cutFeaturesByCutterGrouped,
