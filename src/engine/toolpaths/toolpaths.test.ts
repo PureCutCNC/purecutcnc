@@ -249,6 +249,16 @@ function cutZsByFeatureCluster(moves: ToolpathMove[], pivotX: number): { leftZs:
   return { leftZs, rightZs }
 }
 
+function cutClusterSequence(moves: ToolpathMove[], classifyX: (x: number) => string): string[] {
+  const sequence: string[] = []
+  for (const move of cutMoves(moves)) {
+    const cluster = classifyX((move.from.x + move.to.x) / 2)
+    const previous = sequence[sequence.length - 1]
+    if (previous !== cluster) sequence.push(cluster)
+  }
+  return sequence
+}
+
 function movesEqual(a: ToolpathMove[], b: ToolpathMove[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i += 1) {
@@ -347,6 +357,50 @@ function testMergeToolpathResults() {
   assert(mergedPocket.stepLevels.length === 3, 'stepLevels deduped')
   assert(mergedPocket.stepLevels[0] === -2 && mergedPocket.stepLevels[2] === -6, 'stepLevels sorted descending')
 
+  const partNear: ToolpathResult = {
+    operationId: 'sub-near',
+    moves: [
+      { kind: 'rapid', from: { x: 12, y: 0, z: 5 }, to: { x: 12, y: 0, z: 5 } },
+      { kind: 'cut', from: { x: 12, y: 0, z: -2 }, to: { x: 14, y: 0, z: -2 } },
+    ],
+    warnings: [],
+    bounds: null,
+  }
+  const partFar: ToolpathResult = {
+    operationId: 'sub-far',
+    moves: [
+      { kind: 'rapid', from: { x: 100, y: 0, z: 5 }, to: { x: 100, y: 0, z: 5 } },
+      { kind: 'cut', from: { x: 100, y: 0, z: -2 }, to: { x: 110, y: 0, z: -2 } },
+    ],
+    warnings: [],
+    bounds: null,
+  }
+  const ordered = mergeToolpathResults('op-parent', [partA, partFar, partNear], { orderBlocks: 'nearest' })
+  assert(ordered.moves.length === 5, 'nearest merge concatenates all moves')
+  assert(ordered.moves[1].kind === 'rapid' && ordered.moves[1].to.x === 12, 'nearest merge chooses near block before far block')
+  assert(ordered.moves[1].from.x === 10, 'nearest merge normalizes next block rapid from previous endpoint')
+
+  const tieLeft: ToolpathResult = {
+    operationId: 'sub-left',
+    moves: [{ kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 0, y: 0, z: 5 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const tieRight: ToolpathResult = {
+    operationId: 'sub-right',
+    moves: [{ kind: 'rapid', from: { x: 20, y: 0, z: 5 }, to: { x: 20, y: 0, z: 5 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const tieAnchor: ToolpathResult = {
+    operationId: 'sub-anchor',
+    moves: [{ kind: 'cut', from: { x: 9, y: 0, z: -2 }, to: { x: 10, y: 0, z: -2 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const tied = mergeToolpathResults('op-parent', [tieAnchor, tieRight, tieLeft], { orderBlocks: 'nearest' })
+  assert(tied.moves[1].to.x === 20, 'nearest merge preserves original order for equal-distance ties')
+
   console.log('mergeToolpathResults: PASSED')
 }
 
@@ -427,6 +481,35 @@ function testPocketFeatureFirstOrder() {
   }
 
   console.log('pocket feature_first: PASSED')
+}
+
+function testPocketFeatureFirstNearestBlockOrder() {
+  console.log('Testing pocket feature_first nearest block ordering...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const featA = makePocketFeature('a', 0, 0, 10, 10, 0, -4)
+  const featB = makePocketFeature('b', 30, 0, 10, 10, 0, -4)
+  const featC = makePocketFeature('c', 200, 0, 10, 10, 0, -4)
+  const project = baseProject([tool], [featA, featB, featC])
+  const operation = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a', 'c', 'b'] },
+    toolRef: 't1',
+    stepdown: 2,
+    machiningOrder: 'feature_first',
+  })
+
+  const result = generatePocketToolpath(project, operation)
+  const sequence = cutClusterSequence(result.moves, (x) => {
+    if (x < 20) return 'a'
+    if (x < 100) return 'b'
+    return 'c'
+  })
+
+  assert(sequence.join(',') === 'a,b,c', `expected nearest feature block order a,b,c, got ${sequence.join(',')}`)
+  assert(cutZTransitions(result.moves).length === 6, 'three feature blocks retain two depth passes each')
+
+  console.log('pocket feature_first nearest block ordering: PASSED')
 }
 
 function testPocketSingleFeatureParity() {
@@ -570,6 +653,34 @@ function testEdgeInsideLevelFirstVsFeatureFirst() {
   assert(tFeature.length === 4, `feature_first: expected 4 Z transitions, got ${tFeature.length} (${tFeature.join(',')})`)
 
   console.log('edge_route_inside ordering: PASSED')
+}
+
+function testEdgeInsideFeatureFirstNearestBlockOrder() {
+  console.log('Testing edge_route_inside feature_first nearest block ordering...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const featA = makePocketFeature('a', 0, 0, 20, 20, 0, -4)
+  const featB = makePocketFeature('b', 40, 0, 20, 20, 0, -4)
+  const featC = makePocketFeature('c', 200, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [featA, featB, featC])
+  const operation = makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['a', 'c', 'b'] },
+    toolRef: 't1',
+    machiningOrder: 'feature_first',
+  })
+
+  const result = generateEdgeRouteToolpath(project, operation)
+  const sequence = cutClusterSequence(result.moves, (x) => {
+    if (x < 30) return 'a'
+    if (x < 100) return 'b'
+    return 'c'
+  })
+
+  assert(sequence.join(',') === 'a,b,c', `expected nearest feature block order a,b,c, got ${sequence.join(',')}`)
+  assert(cutZTransitions(result.moves).length === 6, 'three edge feature blocks retain two depth passes each')
+
+  console.log('edge_route_inside feature_first nearest block ordering: PASSED')
 }
 
 function testEdgeInsideRegionClipsAtBoundary() {
@@ -999,12 +1110,14 @@ try {
   testMergeToolpathResults()
   testPocketLevelFirstOrder()
   testPocketFeatureFirstOrder()
+  testPocketFeatureFirstNearestBlockOrder()
   testPocketSingleFeatureParity()
   testPocketRejectsRegionOnlyTarget()
   testPocketRegionClipsMachiningArea()
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
   testEdgeInsideLevelFirstVsFeatureFirst()
+  testEdgeInsideFeatureFirstNearestBlockOrder()
   testEdgeInsideRegionClipsAtBoundary()
   testEdgeOutsideAcceptsModelSilhouette()
   testEdgeOutsideUsesStoredModelSilhouettePaths()
