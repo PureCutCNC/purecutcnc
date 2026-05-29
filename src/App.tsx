@@ -266,6 +266,21 @@ function App() {
     [startSimulationTransition]
   )
 
+  // Selecting a different operation while the simulation tab is active drives
+  // the heavy simulationResult/playbackInput recompute. Wrapping in a
+  // transition shows the existing isComputing spinner; in other views the
+  // selection is cheap so we don't pay the transition overhead.
+  const handleSelectedOperationIdChange = useCallback(
+    (id: string | null) => {
+      if (centerTab === 'simulation') {
+        startSimulationTransition(() => setSelectedOperationId(id))
+      } else {
+        setSelectedOperationId(id)
+      }
+    },
+    [centerTab, startSimulationTransition],
+  )
+
   const generateToolpathForOperation = useMemo(
     () => (operation: typeof selectedOperation): ToolpathResult | null => {
       if (!operation) {
@@ -1002,6 +1017,7 @@ function App() {
             ref={simulationViewportRef}
             operation={selectedOperation}
             simulation={simulationResult}
+            isActive={centerTab === 'simulation'}
             detailCells={simulationDetailCells}
             onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
             isComputing={isSimulationPending}
@@ -1026,7 +1042,7 @@ function App() {
           <CAMPanel
             mode={rightTab === 'tools' ? 'tools' : 'operations'}
             selectedOperationId={effectiveSelectedOperationId}
-            onSelectedOperationIdChange={setSelectedOperationId}
+            onSelectedOperationIdChange={handleSelectedOperationIdChange}
             onExport={() => setShowExportDialog(true)}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}

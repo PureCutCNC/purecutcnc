@@ -501,3 +501,182 @@ function pushQuad(
   positions.push(ax, ay, az, cx, cy, cz, dx, dy, dz)
   normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz)
 }
+
+// Static, shader-driven boundary mesh — built once, never rebuilt during
+// playback. Each interior + outer grid edge gets a vertical wall quad; each
+// cell gets a horizontal floor quad. The vertex shader (see
+// shaderDrivenBoundaryVertexShader) samples both adjacent cells' heights to
+// compute the wall's top/bottom each frame, and the fragment shader discards
+// floors whose cell still has material. UVs of -1 are the "outside the grid"
+// sentinel (treated as stockBottomZ).
+//
+// Scaling: roughly 18 vertices per cell (3 quads × 6 un-indexed verts) plus a
+// small boundary term. Each vertex carries 12 floats (~48 B) of attributes, so
+// the per-cell cost is ~864 B. The viewport caps usage of this builder via
+// SHADER_DRIVEN_BOUNDARY_MAX_CELLS (see SimulationViewport.tsx) so we don't
+// allocate gigabytes of typed arrays at the upper end of the detail slider
+// (e.g. 1500×1500 ≈ 2.25M cells → ~1.9 GB). TODO: pack to indexed Uint16/Uint8
+// attributes to raise that ceiling.
+export const SHADER_BOUNDARY_VERTICES_PER_CELL = 18
+const SHADER_BOUNDARY_CHUNK_CELLS = 48
+
+export function createShaderDrivenBoundaryGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
+  const geometries: THREE.BufferGeometry[] = []
+  for (let rowStart = 0; rowStart < grid.rows; rowStart += SHADER_BOUNDARY_CHUNK_CELLS) {
+    const chunkRows = Math.min(SHADER_BOUNDARY_CHUNK_CELLS, grid.rows - rowStart)
+    for (let colStart = 0; colStart < grid.cols; colStart += SHADER_BOUNDARY_CHUNK_CELLS) {
+      const chunkCols = Math.min(SHADER_BOUNDARY_CHUNK_CELLS, grid.cols - colStart)
+      const geometry = createShaderDrivenBoundaryGeometryChunk(grid, colStart, rowStart, chunkCols, chunkRows)
+      if (geometry.getAttribute('position').count > 0) {
+        geometries.push(geometry)
+      } else {
+        geometry.dispose()
+      }
+    }
+  }
+  return geometries
+}
+
+function createShaderDrivenBoundaryGeometryChunk(
+  grid: SimulationGrid,
+  colStart: number,
+  rowStart: number,
+  chunkCols: number,
+  chunkRows: number,
+): THREE.BufferGeometry {
+  const { originX, originY, cellSize, cols, rows, stockBottomZ } = grid
+  const positions: number[] = []
+  const normals: number[] = []
+  const leftUvs: number[] = []
+  const rightUvs: number[] = []
+  const isTops: number[] = []
+  const isFloors: number[] = []
+  const OUTSIDE_UV: [number, number] = [-1, -1]
+
+  const cellUv = (c: number, r: number): [number, number] => [(c + 0.5) / cols, (r + 0.5) / rows]
+  const edgeUv = (c: number, r: number): [number, number] =>
+    c < 0 || c >= cols || r < 0 || r >= rows ? OUTSIDE_UV : cellUv(c, r)
+
+  const pushVertex = (
+    px: number, py: number, pz: number,
+    nx: number, ny: number, nz: number,
+    lu: number, lv: number,
+    ru: number, rv: number,
+    isTop: number,
+    isFloor: number,
+  ) => {
+    positions.push(px, py, pz)
+    normals.push(nx, ny, nz)
+    leftUvs.push(lu, lv)
+    rightUvs.push(ru, rv)
+    isTops.push(isTop)
+    isFloors.push(isFloor)
+  }
+
+  // Quad helper: emits 2 triangles (a,b,c) + (a,c,d). All 4 verts share the
+  // wall's left/right UVs and normal; only position + aIsTop differ.
+  const pushWallQuad = (
+    ax: number, az: number, aTop: number,
+    bx: number, bz: number, bTop: number,
+    cx: number, cz: number, cTop: number,
+    dx: number, dz: number, dTop: number,
+    nx: number, ny: number, nz: number,
+    leftUv: [number, number],
+    rightUv: [number, number],
+  ) => {
+    const [lu, lv] = leftUv
+    const [ru, rv] = rightUv
+    pushVertex(ax, 0, az, nx, ny, nz, lu, lv, ru, rv, aTop, 0)
+    pushVertex(bx, 0, bz, nx, ny, nz, lu, lv, ru, rv, bTop, 0)
+    pushVertex(cx, 0, cz, nx, ny, nz, lu, lv, ru, rv, cTop, 0)
+    pushVertex(ax, 0, az, nx, ny, nz, lu, lv, ru, rv, aTop, 0)
+    pushVertex(cx, 0, cz, nx, ny, nz, lu, lv, ru, rv, cTop, 0)
+    pushVertex(dx, 0, dz, nx, ny, nz, lu, lv, ru, rv, dTop, 0)
+  }
+
+  const rowEnd = Math.min(rows, rowStart + chunkRows)
+  const colEnd = Math.min(cols, colStart + chunkCols)
+
+  for (let row = rowStart; row < rowEnd; row += 1) {
+    for (let col = colStart; col < colEnd; col += 1) {
+      const x0 = originX + col * cellSize
+      const x1 = x0 + cellSize
+      const z0 = originY + row * cellSize
+      const z1 = z0 + cellSize
+      const cellUvHere = cellUv(col, row)
+      const [cu, cv] = cellUvHere
+
+      // Floor face — y forced to stockBottomZ in vertex shader, fragment
+      // discards while the cell still has material.
+      pushVertex(x0, stockBottomZ, z0, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+      pushVertex(x1, stockBottomZ, z0, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+      pushVertex(x1, stockBottomZ, z1, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+      pushVertex(x0, stockBottomZ, z0, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+      pushVertex(x1, stockBottomZ, z1, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+      pushVertex(x0, stockBottomZ, z1, 0, -1, 0, cu, cv, cu, cv, 0, 1)
+
+      // Each cell owns the wall on its LEFT and TOP edges (so interior edges
+      // are emitted exactly once). The cells on the right/bottom boundary of
+      // the grid additionally emit their RIGHT/BOTTOM walls.
+
+      // Left wall at x = x0, between (col-1, row) and (col, row).
+      pushWallQuad(
+        x0, z1, 0,
+        x0, z1, 1,
+        x0, z0, 1,
+        x0, z0, 0,
+        1, 0, 0,
+        edgeUv(col - 1, row),
+        cellUvHere,
+      )
+
+      // Top (z-) wall at z = z0, between (col, row-1) and (col, row).
+      pushWallQuad(
+        x0, z0, 0,
+        x0, z0, 1,
+        x1, z0, 1,
+        x1, z0, 0,
+        0, 0, 1,
+        edgeUv(col, row - 1),
+        cellUvHere,
+      )
+
+      // Outer right wall at x = x1, only on grid right edge.
+      if (col === cols - 1) {
+        pushWallQuad(
+          x1, z0, 0,
+          x1, z0, 1,
+          x1, z1, 1,
+          x1, z1, 0,
+          1, 0, 0,
+          cellUvHere,
+          edgeUv(col + 1, row),
+        )
+      }
+
+      // Outer bottom (z+) wall at z = z1, only on grid bottom edge.
+      if (row === rows - 1) {
+        pushWallQuad(
+          x1, z1, 0,
+          x1, z1, 1,
+          x0, z1, 1,
+          x0, z1, 0,
+          0, 0, 1,
+          cellUvHere,
+          edgeUv(col, row + 1),
+        )
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geometry.setAttribute('aLeftUv', new THREE.Float32BufferAttribute(leftUvs, 2))
+  geometry.setAttribute('aRightUv', new THREE.Float32BufferAttribute(rightUvs, 2))
+  geometry.setAttribute('aIsTop', new THREE.Float32BufferAttribute(isTops, 1))
+  geometry.setAttribute('aIsFloor', new THREE.Float32BufferAttribute(isFloors, 1))
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  return geometry
+}

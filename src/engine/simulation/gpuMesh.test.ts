@@ -4,7 +4,13 @@
  * Run with: npx tsx src/engine/simulation/gpuMesh.test.ts
  */
 
-import { createDynamicProfileBoundaryGeometries, createStockPlaneGeometries, createStockPlaneGeometry } from './gpuMesh'
+import {
+  SHADER_BOUNDARY_VERTICES_PER_CELL,
+  createDynamicProfileBoundaryGeometries,
+  createShaderDrivenBoundaryGeometries,
+  createStockPlaneGeometries,
+  createStockPlaneGeometry,
+} from './gpuMesh'
 import type { SimulationGrid } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -57,7 +63,37 @@ function testChunksLargeDynamicProfileBoundaries(): void {
   }
 }
 
+// The shader-driven playback boundary mesh emits a fixed number of vertices
+// per cell (3 quads × 6 un-indexed verts per cell + a small boundary term for
+// outer right/bottom walls). The viewport's high-detail guard
+// (SHADER_DRIVEN_BOUNDARY_MAX_CELLS in SimulationViewport.tsx) sizes itself
+// against SHADER_BOUNDARY_VERTICES_PER_CELL, so a regression that bumps the
+// per-cell vertex count would silently raise memory usage at every detail
+// level. Pin both the constant and the chunk shape.
+function testShaderDrivenBoundaryVertexCountScales(): void {
+  for (const size of [16, 24, 48]) {
+    const geometries = createShaderDrivenBoundaryGeometries(makeGrid(size, size))
+    const totalVerts = geometries.reduce((sum, g) => sum + g.getAttribute('position').count, 0)
+    const cells = size * size
+    const expectedMin = SHADER_BOUNDARY_VERTICES_PER_CELL * cells
+    // Boundary cells emit extra right/bottom walls; cap at 22 verts/cell to
+    // catch accidental quadratic growth without being so tight that the
+    // boundary surcharge for tiny grids fails the test.
+    const expectedMax = 22 * cells + 6 * 4 * size
+    assert(
+      totalVerts >= expectedMin && totalVerts <= expectedMax,
+      `shader-driven boundary vertex count for ${size}x${size} should be in [${expectedMin}, ${expectedMax}], got ${totalVerts}`,
+    )
+    for (const geometry of geometries) {
+      const position = geometry.getAttribute('position')
+      assert(position.count <= 65535, `expected shader-driven chunk to stay under Uint16 limit, got ${position.count}`)
+      geometry.dispose()
+    }
+  }
+}
+
 testUsesUint16WhenVertexIdsFit()
 testChunksLargePlanesIntoUint16Geometry()
 testChunksLargeDynamicProfileBoundaries()
+testShaderDrivenBoundaryVertexCountScales()
 console.log('gpu mesh tests passed')
