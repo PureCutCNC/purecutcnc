@@ -54,6 +54,23 @@ body,
   overflow: hidden;
 }
 
+#root,
+#root * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#root input,
+#root select,
+#root textarea,
+#root [contenteditable]:not([contenteditable='false']),
+#root [contenteditable]:not([contenteditable='false']) * {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 body {
   min-height: 100svh;
 }
