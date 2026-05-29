@@ -126,7 +126,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateVCarveToolpathSingle(project, subOp),
     )
-    return mergeToolpathResults(operation.id, parts)
+    return mergeToolpathResults(operation.id, parts, { orderBlocks: 'nearest' })
   }
   return generateVCarveToolpathSingle(project, operation)
 }

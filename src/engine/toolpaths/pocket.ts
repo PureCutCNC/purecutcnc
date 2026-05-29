@@ -1062,7 +1062,7 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generatePocketToolpathSingle(project, subOp),
     )
-    return mergePocketToolpathResults(operation.id, parts)
+    return mergePocketToolpathResults(operation.id, parts, { orderBlocks: 'nearest' })
   }
   return generatePocketToolpathSingle(project, operation)
 }
