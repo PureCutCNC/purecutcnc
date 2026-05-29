@@ -37,6 +37,7 @@ import {
   getClipperChildren,
   offsetClipperPaths,
   reconstructArcsInProfile,
+  simplifyOffsetContour,
   type ClipperPolyNode,
   type SegmentAnnotation,
   unionClipperPaths,
@@ -382,7 +383,7 @@ export function previewOffsetFeatures(
   const createdFeatures: SketchFeature[] = []
 
   for (const [index, path] of offsetPaths.entries()) {
-    const profile = clipperContourToProfile(path)
+    const profile = simplifyOffsetContour(path, selectedFeatures, distance)
     if (!profile) {
       continue
     }

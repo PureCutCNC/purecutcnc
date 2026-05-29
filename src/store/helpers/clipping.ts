@@ -763,3 +763,449 @@ export function clipperContourToProfilePreserving(
 
   return { start: startVertex, segments, closed: true }
 }
+
+// ── Offset polyline simplification ────────────────────────────────────────────
+// Clipper offset emits dense polylines (a flattened source curve stays flat
+// after offsetting, and Clipper rebuilds the polygon from integer vertices).
+// This pass converts those polylines back into arcs/circles where possible.
+//
+// Two strategies layered together:
+//   1. Known-circle reconstruction. Any source `arc`/`circle` of radius R at
+//      center C produces an offset arc with the same center and radius
+//      R ± |delta|. We feed those candidate circles to reconstructArcsInProfile
+//      to recover exact original centers.
+//   2. Generic Kasa least-squares arc fit, for offsets of curves whose centers
+//      are not in the source feature set (e.g. arcs introduced by another
+//      simplification pass, or offsets of dense polylines).
+// Followed by collinear-line merge and a single-arc → circle promotion.
+
+interface OffsetFitOptions {
+  minArcSegments: number
+  radiusToleranceFraction: number
+  maxSegmentAngleDeg: number
+}
+
+const DEFAULT_OFFSET_FIT_OPTIONS: OffsetFitOptions = {
+  minArcSegments: 6,
+  radiusToleranceFraction: 0.01,
+  maxSegmentAngleDeg: 20,
+}
+
+function dist2D(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+// Kasa least-squares circle fit. Returns null on near-collinear input.
+function fitCircleLeastSquares(points: Point[]): { center: Point; radius: number } | null {
+  const n = points.length
+  if (n < 3) return null
+
+  let cx = 0
+  let cy = 0
+  for (const p of points) {
+    cx += p.x
+    cy += p.y
+  }
+  cx /= n
+  cy /= n
+
+  let Suu = 0
+  let Suv = 0
+  let Svv = 0
+  let Arhs = 0
+  let Brhs = 0
+  for (const p of points) {
+    const u = p.x - cx
+    const v = p.y - cy
+    const r2 = u * u + v * v
+    Suu += u * u
+    Suv += u * v
+    Svv += v * v
+    Arhs -= u * r2
+    Brhs -= v * r2
+  }
+
+  const det = Suu * Svv - Suv * Suv
+  if (Math.abs(det) < 1e-12) return null
+
+  const A = (Arhs * Svv - Brhs * Suv) / det
+  const B = (Suu * Brhs - Suv * Arhs) / det
+  const cu = -A / 2
+  const cv = -B / 2
+
+  let Sr2 = 0
+  for (const p of points) {
+    const u = p.x - cx
+    const v = p.y - cy
+    Sr2 += u * u + v * v
+  }
+  const radius2 = cu * cu + cv * cv + Sr2 / n
+  if (radius2 <= 0) return null
+
+  return { center: { x: cu + cx, y: cv + cy }, radius: Math.sqrt(radius2) }
+}
+
+function arcSweepClockwise(points: Point[], center: Point): boolean {
+  let cross = 0
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const v0x = points[i].x - center.x
+    const v0y = points[i].y - center.y
+    const v1x = points[i + 1].x - center.x
+    const v1y = points[i + 1].y - center.y
+    cross += v0x * v1y - v0y * v1x
+  }
+  // Match the project convention used by arcIsClockwise: negative cross sum
+  // is clockwise. Using the wrong sign makes long arcs render as their
+  // (much shorter) complement.
+  return cross < 0
+}
+
+function pointsCollinear(a: Point, b: Point, c: Point): boolean {
+  const abx = b.x - a.x
+  const aby = b.y - a.y
+  const bcx = c.x - b.x
+  const bcy = c.y - b.y
+  const dot = abx * bcx + aby * bcy
+  if (dot <= 0) return false
+  const cross = abx * bcy - aby * bcx
+  const abLen2 = abx * abx + aby * aby
+  const bcLen2 = bcx * bcx + bcy * bcy
+  return cross * cross < 1e-8 * abLen2 * bcLen2
+}
+
+function mergeCollinearLinesClosed(profile: SketchProfile): SketchProfile {
+  if (profile.segments.length < 2) return profile
+
+  // Walk segments and merge adjacent collinear line-line pairs. Also rotate the
+  // start point if the closing line is collinear with the first line.
+  const segs = profile.segments
+  const merged: Segment[] = []
+  let currentStart = profile.start
+  let current: Segment = segs[0]
+
+  for (let i = 1; i < segs.length; i += 1) {
+    const next = segs[i]
+    if (
+      current.type === 'line'
+      && next.type === 'line'
+      && pointsCollinear(currentStart, current.to, next.to)
+    ) {
+      current = { type: 'line', to: next.to }
+    } else {
+      merged.push(current)
+      currentStart = current.to
+      current = next
+    }
+  }
+  merged.push(current)
+
+  if (!profile.closed || merged.length < 2) {
+    return { ...profile, segments: merged }
+  }
+
+  // Wrap-around merge: if the closing line and the leading line are collinear
+  // through profile.start, shift the start point so the three collinear
+  // segments collapse into one and the trailing point becomes a new start.
+  if (merged.length >= 3) {
+    const lastSeg = merged[merged.length - 1]
+    const firstSeg = merged[0]
+    if (lastSeg.type === 'line' && firstSeg.type === 'line') {
+      const lastStart = merged[merged.length - 2].to
+      if (pointsCollinear(lastStart, lastSeg.to, firstSeg.to)) {
+        const newStart = lastStart
+        const rotated: Segment[] = [
+          { type: 'line', to: firstSeg.to },
+          ...merged.slice(1, -1),
+        ]
+        return { ...profile, start: newStart, segments: rotated }
+      }
+    }
+  }
+
+  return { ...profile, segments: merged }
+}
+
+interface ArcFitOutcome {
+  center: Point
+  clockwise: boolean
+}
+
+function tryFitArcRun(
+  points: Point[],
+  opts: OffsetFitOptions,
+  sourceCenters: Point[],
+): ArcFitOutcome | null {
+  if (points.length < opts.minArcSegments + 1) return null
+  if (sourceCenters.length === 0) return null
+
+  const fit = fitCircleLeastSquares(points)
+  if (!fit) return null
+
+  const { center, radius } = fit
+  const tolerance = Math.min(opts.radiusToleranceFraction * radius, 0.05)
+
+  for (const p of points) {
+    if (Math.abs(dist2D(p, center) - radius) > tolerance) return null
+  }
+
+  // Every legitimate offset arc is concentric with a source arc/circle. A
+  // Kasa fit whose center is far from any source center is geometrically
+  // valid math but spurious — typically a huge-radius circle fitted to a
+  // slightly-bowed straight run. Reject it.
+  const centerProximity = Math.min(0.01, radius * 0.001)
+  let nearSource = false
+  for (const sc of sourceCenters) {
+    if (dist2D(center, sc) <= centerProximity) { nearSource = true; break }
+  }
+  if (!nearSource) return null
+
+  const maxSegmentAngle = (opts.maxSegmentAngleDeg * Math.PI) / 180
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a1 = Math.atan2(points[i].y - center.y, points[i].x - center.x)
+    const a2 = Math.atan2(points[i + 1].y - center.y, points[i + 1].x - center.x)
+    let da = Math.abs(a2 - a1)
+    if (da > Math.PI) da = 2 * Math.PI - da
+    if (da > maxSegmentAngle) return null
+  }
+
+  const chord = dist2D(points[0], points[points.length - 1])
+  const isFullCircle = chord <= radius * 1e-6
+  if (!isFullCircle && chord < radius * 0.15) return null
+
+  return { center, clockwise: arcSweepClockwise(points, center) }
+}
+
+function sliceLineRunVertices(profile: SketchProfile, startSeg: number, endSeg: number): Point[] {
+  const origin: Point = startSeg === 0 ? profile.start : profile.segments[startSeg - 1].to
+  const pts: Point[] = [origin]
+  for (let i = startSeg; i < endSeg; i += 1) {
+    pts.push(profile.segments[i].to)
+  }
+  return pts
+}
+
+// Fit arcs into contiguous runs of line segments. Non-line segments (existing
+// arcs/circles/beziers) are passed through unchanged. Operates on a sequential
+// walk and does not attempt to merge an arc across the start/end boundary of a
+// closed profile.
+function fitArcsInLineRuns(
+  profile: SketchProfile,
+  opts: OffsetFitOptions,
+  sourceCenters: Point[],
+): SketchProfile {
+  const segs = profile.segments
+  if (segs.length < opts.minArcSegments) return profile
+  if (sourceCenters.length === 0) return profile
+
+  const out: Segment[] = []
+  let i = 0
+  while (i < segs.length) {
+    if (segs[i].type !== 'line') {
+      out.push(segs[i])
+      i += 1
+      continue
+    }
+
+    let runEnd = i + 1
+    while (runEnd < segs.length && segs[runEnd].type === 'line') {
+      runEnd += 1
+    }
+
+    let consumed = false
+    for (let end = runEnd; end >= i + opts.minArcSegments; end -= 1) {
+      const pts = sliceLineRunVertices(profile, i, end)
+      const fit = tryFitArcRun(pts, opts, sourceCenters)
+      if (fit) {
+        out.push({
+          type: 'arc',
+          to: pts[pts.length - 1],
+          center: fit.center,
+          clockwise: fit.clockwise,
+        })
+        i = end
+        consumed = true
+        break
+      }
+    }
+
+    if (!consumed) {
+      out.push(segs[i])
+      i += 1
+    }
+  }
+
+  return { ...profile, segments: out }
+}
+
+// ── Douglas-Peucker simplification for residual line runs ────────────────────
+// Applied to contiguous runs of `line` segments only — arcs and other curves
+// are anchors that bound runs. A fully-closed line-only profile is split at
+// the vertex farthest from start so neither RDP half degenerates.
+
+function perpendicularDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-18) return Math.hypot(p.x - a.x, p.y - a.y)
+  // Perpendicular distance to the infinite line through a,b (standard RDP).
+  return Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / Math.sqrt(len2)
+}
+
+function rdpSimplifyOpenRun(points: Point[], tolerance: number): Point[] {
+  const n = points.length
+  if (n < 3) return points
+
+  // Iterative stack-based RDP to avoid stack overflow on long runs.
+  const keep = new Uint8Array(n)
+  keep[0] = 1
+  keep[n - 1] = 1
+  const stack: [number, number][] = [[0, n - 1]]
+  while (stack.length > 0) {
+    const [lo, hi] = stack.pop()!
+    let maxDist = 0
+    let maxIdx = -1
+    for (let i = lo + 1; i < hi; i += 1) {
+      const d = perpendicularDistance(points[i], points[lo], points[hi])
+      if (d > maxDist) { maxDist = d; maxIdx = i }
+    }
+    if (maxDist > tolerance && maxIdx >= 0) {
+      keep[maxIdx] = 1
+      stack.push([lo, maxIdx])
+      stack.push([maxIdx, hi])
+    }
+  }
+
+  const result: Point[] = []
+  for (let i = 0; i < n; i += 1) {
+    if (keep[i]) result.push(points[i])
+  }
+  return result
+}
+
+function applyRDPToLineRuns(profile: SketchProfile, tolerance: number): SketchProfile {
+  if (tolerance <= 0 || profile.segments.length === 0) return profile
+
+  const segs = profile.segments
+  const out: Segment[] = []
+  let i = 0
+  let cursor: Point = profile.start
+
+  while (i < segs.length) {
+    if (segs[i].type !== 'line') {
+      out.push(segs[i])
+      cursor = segs[i].to
+      i += 1
+      continue
+    }
+
+    // Collect a contiguous run of line segments. runPts[0] is the anchor at
+    // the start of the run; runPts[N] is the anchor at the end.
+    const runPts: Point[] = [cursor]
+    let j = i
+    while (j < segs.length && segs[j].type === 'line') {
+      runPts.push(segs[j].to)
+      j += 1
+    }
+
+    let simplified: Point[]
+    const isFullClosed = profile.closed
+      && i === 0
+      && j === segs.length
+      && dist2D(runPts[0], runPts[runPts.length - 1]) < 1e-9
+
+    if (isFullClosed) {
+      // No external anchors — RDP would collapse the loop. Pick the vertex
+      // farthest from the start as a second anchor and RDP each half.
+      let splitIdx = 0
+      let maxD = 0
+      for (let k = 1; k < runPts.length - 1; k += 1) {
+        const d = dist2D(runPts[k], runPts[0])
+        if (d > maxD) { maxD = d; splitIdx = k }
+      }
+      if (splitIdx < 2 || splitIdx > runPts.length - 3) {
+        simplified = runPts
+      } else {
+        const left = rdpSimplifyOpenRun(runPts.slice(0, splitIdx + 1), tolerance)
+        const right = rdpSimplifyOpenRun(runPts.slice(splitIdx), tolerance)
+        simplified = [...left.slice(0, -1), ...right]
+      }
+    } else {
+      simplified = rdpSimplifyOpenRun(runPts, tolerance)
+    }
+
+    for (let k = 1; k < simplified.length; k += 1) {
+      out.push({ type: 'line', to: simplified[k] })
+    }
+    cursor = simplified[simplified.length - 1]
+    i = j
+  }
+
+  return { ...profile, segments: out }
+}
+
+function bboxDiagonal(points: Point[]): number {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const p of points) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return Math.hypot(maxX - minX, maxY - minY)
+}
+
+// If a closed profile reduces to a single arc whose endpoint coincides with
+// the start, promote it to a `circle` segment.
+function promoteClosedArcToCircle(profile: SketchProfile): SketchProfile {
+  if (!profile.closed || profile.segments.length !== 1) return profile
+  const seg = profile.segments[0]
+  if (seg.type !== 'arc') return profile
+
+  const radius = dist2D(profile.start, seg.center)
+  if (radius <= 0) return profile
+  if (dist2D(seg.to, profile.start) > 0.01 * radius) return profile
+
+  return {
+    start: profile.start,
+    segments: [{
+      type: 'circle',
+      center: seg.center,
+      to: profile.start,
+      clockwise: seg.clockwise,
+    }],
+    closed: true,
+  }
+}
+
+export function simplifyOffsetContour(
+  contour: ReturnType<typeof flattenFeatureToClipperPath>,
+  sourceFeatures: SketchFeature[],
+  _delta: number,
+  scale: number = DEFAULT_CLIPPER_SCALE,
+): SketchProfile | null {
+  // Offset output is a closed polyline. We collapse runs of collinear chords
+  // back into single lines and re-fit dense chord runs to arcs, but only when
+  // the fitted center matches a source arc/circle center — every legitimate
+  // offset arc is concentric with its source, so any fit whose center wanders
+  // is a spurious match (typically a slightly-bowed straight run fitted to a
+  // huge-radius circle).
+  const points = fromClipperPath(contour, scale)
+  if (points.length < 3) return null
+
+  const first = points[0]
+  const last = points[points.length - 1]
+  const vertices = Math.abs(first.x - last.x) <= 1e-9 && Math.abs(first.y - last.y) <= 1e-9
+    ? points.slice(0, -1)
+    : points
+  if (vertices.length < 3) return null
+
+  const sourceCenters = collectKnownCircles(sourceFeatures).map((c) => c.center)
+  const rdpTolerance = bboxDiagonal(vertices) * 0.001
+
+  let profile: SketchProfile = polygonProfile(vertices)
+  profile = mergeCollinearLinesClosed(profile)
+  profile = fitArcsInLineRuns(profile, DEFAULT_OFFSET_FIT_OPTIONS, sourceCenters)
+  profile = applyRDPToLineRuns(profile, rdpTolerance)
+  profile = promoteClosedArcToCircle(profile)
+  return profile
+}
