@@ -10,7 +10,12 @@ import { defaultTool, newProject, rectProfile, type Operation, type Project, typ
 import { normalizeProject, useProjectStore } from '../../store/projectStore'
 import { convertProjectUnits } from '../../utils/units'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
-import { snapClosedContourEntryToAnchor } from './finishSurfaceWaterline'
+import {
+  snapClosedContourEntryToAnchor,
+  generateProjectedWaterlineLevels,
+  type WaterlineLevelBuild,
+} from './finishSurfaceWaterline'
+import ClipperLib from 'clipper-lib'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide, isClockwise, normalizeToolForProject } from './geometry'
 import { loadSTLTransformedGeometry } from '../csg'
@@ -133,6 +138,41 @@ function makeTaperedStlDataUrl(): string {
   return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
 }
 
+// Square pyramid: 20×10 base at z=0 rising to a single apex at (10,5,4). Each
+// horizontal slice is a shrinking rectangle that collapses to the apex point,
+// so the upper levels are handled by `processTipPath` (the tip-cap path) — the
+// fixture exercises convex-peak cap quality from issue #127.
+function makePyramidStlDataUrl(): string {
+  const lines = ['solid pyramid']
+  const vertices = {
+    b0: [0, 0, 0],
+    b1: [20, 0, 0],
+    b2: [20, 10, 0],
+    b3: [0, 10, 0],
+    apex: [10, 5, 4],
+  } as const
+  const faces: Array<[keyof typeof vertices, keyof typeof vertices, keyof typeof vertices]> = [
+    ['b0', 'b2', 'b1'], ['b0', 'b3', 'b2'],
+    ['b0', 'b1', 'apex'],
+    ['b1', 'b2', 'apex'],
+    ['b2', 'b3', 'apex'],
+    ['b3', 'b0', 'apex'],
+  ]
+
+  for (const face of faces) {
+    lines.push('  facet normal 0 0 0')
+    lines.push('    outer loop')
+    for (const key of face) {
+      lines.push(`      vertex ${vertices[key].join(' ')}`)
+    }
+    lines.push('    endloop')
+    lines.push('  endfacet')
+  }
+
+  lines.push('endsolid pyramid')
+  return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
+}
+
 function makePocketBlockStlDataUrl(): string {
   const lines = ['solid pocket_block']
   const minX = 0, minY = 0, minZ = 0
@@ -250,6 +290,26 @@ function makeTaperedModelFeature(): SketchFeature {
     stl: {
       format: 'stl',
       fileData: makeTaperedStlDataUrl(),
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 10 },
+        { x: 0, y: 10 },
+      ]],
+    },
+  }
+}
+
+function makePyramidModelFeature(): SketchFeature {
+  return {
+    ...makeModelFeature(),
+    id: 'model1',
+    name: 'Pyramid STL',
+    stl: {
+      format: 'stl',
+      fileData: makePyramidStlDataUrl(),
       scale: 1,
       axisSwap: 'none',
       silhouettePaths: [[
@@ -1293,6 +1353,119 @@ function testWaterlineReachesModelTop(): void {
   assert(maxZ >= topZ - 1e-6, `expected waterline to reach top ${topZ}, got ${maxZ}`)
 }
 
+// Build a square clipper contour centred at (cx, cy) with the given half-width,
+// wound so ClipperLib.Clipper.Area is positive (a CCW outer ring — the shape
+// the tip-cap detector treats as an island top rather than a hole).
+function makeSquareCcwContour(cx: number, cy: number, half: number): ClipperPath {
+  const corners = [
+    { x: cx - half, y: cy - half },
+    { x: cx + half, y: cy - half },
+    { x: cx + half, y: cy + half },
+    { x: cx - half, y: cy + half },
+  ]
+  const path = toClipperPath(corners, DEFAULT_CLIPPER_SCALE)
+  return ClipperLib.Clipper.Area(path) >= 0 ? path : ([...path].reverse() as ClipperPath)
+}
+
+// Synthetic tip-cap regression for issue #127. A topmost island tip (no higher
+// coarse level) whose true surface rises well above its first-slice Z used to
+// produce a dead-flat crown — `peakZ` was clamped to the tip's own slice Z, so
+// the projected cap rings had zero Z span — and the outermost ring inherited
+// the miter-derived square first slice. After the fix the cap rings climb to
+// the sampled apex and the outermost ring is round.
+function testWaterlineTipCapRingsClimbAndAreRound(): void {
+  console.log('Testing waterline tip-cap rings climb to the sampled apex and are round...')
+  const tipZ = 3
+  const apexZ = 3.9
+  const centre = { x: 10, y: 5 }
+  // Coarse levels descending in Z, each a larger square than the one above —
+  // a cone/pyramid. The top level is the island tip.
+  const coarseBuild: WaterlineLevelBuild = {
+    levels: [
+      { z: tipZ, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 2)] },
+      { z: 2, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 4)] },
+      { z: 1, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 6)] },
+    ],
+    sliceMaterialByZ: new Map([
+      // Raw mesh slice at the tip's Z, slightly smaller than the offset contour
+      // ring — offsetting it outward by the tool radius reproduces the ring.
+      [tipZ, [makeSquareCcwContour(centre.x, centre.y, 1.5)]],
+      [2, [makeSquareCcwContour(centre.x, centre.y, 3.5)]],
+      [1, [makeSquareCcwContour(centre.x, centre.y, 5.5)]],
+    ]),
+  }
+  // Cone surface: peaks at the centre, falls off with radius. Always resolves
+  // (never null) so the cap follows it exactly.
+  const surfaceZAt = (point: { x: number; y: number }): number | null => {
+    const d = Math.hypot(point.x - centre.x, point.y - centre.y)
+    return Math.max(tipZ, apexZ - 0.2 * d)
+  }
+  const build = generateProjectedWaterlineLevels(
+    coarseBuild,
+    0.3, // stepoverDistance
+    100, // gapThreshold — large so no band fills are emitted, isolating caps
+    50, // maxRingsPerBand
+    0.01, // waterlineLengthEpsilon
+    surfaceZAt,
+    [], // intersectingAdds
+    0.5, // toolOffset
+  )
+  const caps = build.levels
+    .filter((level) => level.source === 'projectedCap')
+    .sort((a, b) => a.z - b.z)
+
+  assert(caps.length >= 3, `expected multiple projected cap rings, got ${caps.length}`)
+
+  // Rings climb: representative Z strictly increases from the outer ring inward,
+  // and the crown reaches well above the tip's first-slice Z (the flat-crown bug
+  // would pin every ring at tipZ).
+  for (let i = 1; i < caps.length; i += 1) {
+    assert(caps[i].z > caps[i - 1].z + 1e-4,
+      `expected cap ring Z to strictly increase, got ${caps[i - 1].z} then ${caps[i].z}`)
+  }
+  const maxCapZ = caps[caps.length - 1].z
+  assert(maxCapZ > tipZ + 0.3,
+    `expected cap crown to climb above the tip slice Z toward the apex, got max ${maxCapZ}`)
+  assert(maxCapZ <= apexZ + 1e-6,
+    `expected cap crown not to exceed the sampled apex, got ${maxCapZ}`)
+
+  // Outermost ring (lowest Z) is re-derived from the mesh slice with round
+  // joins, so it is no longer the 4-corner miter square.
+  const outerRing = caps[0].contourPaths[0] ?? []
+  assert(outerRing.length > 4,
+    `expected re-derived round outermost cap ring (>4 vertices), got ${outerRing.length}`)
+
+  // Per-vertex projection also honours the climb: the projected Z at the centre
+  // resolves to the sampled apex, not the flat tip Z.
+  const centreZ = caps[caps.length - 1].projectZAtPoint?.(centre) ?? tipZ
+  assert(centreZ > tipZ + 0.3,
+    `expected per-vertex projected Z near the centre to reach the apex, got ${centreZ}`)
+}
+
+// Integration-level companion: a real pyramid mesh through the full waterline
+// pipeline should produce projected cap rings that vary in Z (a true 3D crown)
+// and climb toward the apex, rather than a flat terraced cap.
+function testWaterlineTipCapClimbsToApexOnPyramid(): void {
+  console.log('Testing waterline tip cap climbs to the apex on a pyramid mesh...')
+  const { project } = makeProject()
+  project.features = [makePyramidModelFeature()]
+  normalizeProjectFeatures(project)
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepover: 0.3,
+  }
+  project.operations = [operation]
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const capCuts = projectedWaterlineCuts(result, 'projectedCap')
+
+  assert(capCuts.length > 0, 'expected projected cap cut moves on the pyramid apex')
+  const has3DCapMove = capCuts.some((move) => Math.abs(move.from.z - move.to.z) > 1e-6)
+  assert(has3DCapMove, 'expected pyramid cap rings to vary Z (a sloped crown, not a flat cap)')
+  const maxCapZ = Math.max(...capCuts.map((move) => Math.max(move.from.z, move.to.z)))
+  assert(maxCapZ > 3.5,
+    `expected pyramid cap rings to climb toward the apex (z≈4), got max ${maxCapZ.toFixed(3)}`)
+}
+
 function testWaterlineBlendsWithRoughInCombinedSimulation(): void {
   console.log('Testing rough + waterline combined replay remains stable...')
   const { project } = makeProject()
@@ -1836,6 +2009,8 @@ testWaterlineLevelsAreConstantBands()
 testWaterlineEmitsBandBoundaryLevels()
 testWaterlineBallEndmillUsesSideContactZ()
 testWaterlineReachesModelTop()
+testWaterlineTipCapRingsClimbAndAreRound()
+testWaterlineTipCapClimbsToApexOnPyramid()
 testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()
 testWaterlineIgnoresContainingAddAsIntersectingWall()

@@ -92,6 +92,109 @@ function offsetClipperPathsRound(paths: ClipperPath[], delta: number): ClipperPa
 }
 
 /**
+ * Bilinearly-interpolated kinematic-safe tool-tip Z at (x, y).
+ *
+ * `safeToolTipZAt` returns the single most-constraining cell's tip Z, so a tiny
+ * lateral move can flip which neighbour cell wins — that nearest-cell step is
+ * exactly the staircase/ring-banding texture seen on small tip caps (e.g., the
+ * cone apex, the OldMan nose). This evaluates `safeToolTipZAt` at the four cell
+ * centres surrounding the query point and blends the results, so the sampled
+ * surface varies smoothly across cell boundaries instead of stepping.
+ *
+ * Only used for tip-cap sampling (small XY footprint); the 4× cost per query is
+ * bounded there. Band fills keep their smooth linear projection and never call
+ * this. Returns `null` when no model cell falls under any of the four samples
+ * (off-mesh), matching the contract the tip-cap caller expects.
+ */
+function bilinearSafeToolTipZAt(
+  x: number,
+  y: number,
+  heightMap: HeightMap,
+  tool: NormalizedTool,
+): number | null {
+  const { originX, originY, cellSize, width, height } = heightMap
+  const gridX = (x - originX) / cellSize - 0.5
+  const gridY = (y - originY) / cellSize - 0.5
+  const col0 = Math.floor(gridX)
+  const row0 = Math.floor(gridY)
+  const tx = gridX - col0
+  const ty = gridY - row0
+  const sampleCellCentre = (col: number, row: number): number => {
+    const clampedCol = Math.min(width - 1, Math.max(0, col))
+    const clampedRow = Math.min(height - 1, Math.max(0, row))
+    const cx = originX + (clampedCol + 0.5) * cellSize
+    const cy = originY + (clampedRow + 0.5) * cellSize
+    return safeToolTipZAt(cx, cy, heightMap, tool)
+  }
+  const z00 = sampleCellCentre(col0, row0)
+  const z10 = sampleCellCentre(col0 + 1, row0)
+  const z01 = sampleCellCentre(col0, row0 + 1)
+  const z11 = sampleCellCentre(col0 + 1, row0 + 1)
+  let weightedSum = 0
+  let weightTotal = 0
+  const accumulate = (z: number, weight: number): void => {
+    if (weight > 0 && Number.isFinite(z)) {
+      weightedSum += z * weight
+      weightTotal += weight
+    }
+  }
+  accumulate(z00, (1 - tx) * (1 - ty))
+  accumulate(z10, tx * (1 - ty))
+  accumulate(z01, (1 - tx) * ty)
+  accumulate(z11, tx * ty)
+  if (weightTotal <= 0) return null
+  return weightedSum / weightTotal
+}
+
+/**
+ * Estimate the true surface peak Z inside a tip-cap footprint by sampling the
+ * (already tool-safe, bilinearly interpolated) surface on a small grid spanning
+ * the footprint's bounding box and keeping the highest in-footprint sample.
+ *
+ * Used to raise the per-vertex Z clamp ceiling above the next coarse level for
+ * sharp/small tips: clamping at `higher.z` (or, on the topmost level, at the
+ * tip's own first-slice Z) leaves a flat plateau / boxy crown around the apex.
+ * Returns `null` when no in-footprint sample resolves to a finite surface Z.
+ */
+function estimateTipPeakZ(
+  paths: ClipperPath[],
+  sampleZAt: (point: { x: number; y: number }) => number | null,
+): number | null {
+  if (paths.length === 0) return null
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const path of paths) {
+    const bounds = clipperPathBounds(path)
+    if (bounds.minX < minX) minX = bounds.minX
+    if (bounds.maxX > maxX) maxX = bounds.maxX
+    if (bounds.minY < minY) minY = bounds.minY
+    if (bounds.maxY > maxY) maxY = bounds.maxY
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+    return null
+  }
+  const minWorldX = minX / DEFAULT_CLIPPER_SCALE
+  const maxWorldX = maxX / DEFAULT_CLIPPER_SCALE
+  const minWorldY = minY / DEFAULT_CLIPPER_SCALE
+  const maxWorldY = maxY / DEFAULT_CLIPPER_SCALE
+  const steps = 6 // 7×7 grid across the footprint bbox
+  let peak: number | null = null
+  for (let i = 0; i <= steps; i += 1) {
+    const px = minWorldX + ((maxWorldX - minWorldX) * i) / steps
+    for (let j = 0; j <= steps; j += 1) {
+      const py = minWorldY + ((maxWorldY - minWorldY) * j) / steps
+      if (!pointInClipperPaths(paths, { x: px, y: py })) continue
+      const z = sampleZAt({ x: px, y: py })
+      if (z === null) continue
+      if (peak === null || z > peak) peak = z
+    }
+  }
+  return peak
+}
+
+/**
  * Return a copy of `baseHeightMap` with each intersecting add's `topZ`
  * rasterised into cells whose centres lie inside the add's footprint
  * (max-take). The base heightmap is built from mesh triangles only, so
@@ -316,14 +419,14 @@ export function maxContourGap(pathsA: ClipperPath[], pathsB: ClipperPath[]): num
   return maxWidth
 }
 
-interface WaterlineLevel {
+export interface WaterlineLevel {
   z: number
   contourPaths: ClipperPath[]
   projectZAtPoint?: (point: { x: number; y: number }) => number
   source?: string
 }
 
-interface WaterlineLevelBuild {
+export interface WaterlineLevelBuild {
   levels: WaterlineLevel[]
   sliceMaterialByZ: Map<number, ClipperPath[]>
 }
@@ -528,7 +631,7 @@ function upperPathHasHigherParent(path: ClipperPath, higherLevel: WaterlineLevel
   return false
 }
 
-function generateProjectedWaterlineLevels(
+export function generateProjectedWaterlineLevels(
   coarseBuild: WaterlineLevelBuild,
   stepoverDistance: number,
   gapThreshold: number,
@@ -593,35 +696,75 @@ function generateProjectedWaterlineLevels(
   // emerged island found as an unmatched lower in the previous pair).
   const processedTipPaths = new Set<ClipperPath>()
 
+  // Re-derive the outermost cap ring directly from the raw mesh slice at this
+  // z with round joins, instead of inheriting the miter-derived first-slice
+  // contour. `buildWaterlineLevels` offsets the cumulative shadow with miter
+  // joins, so the cap's outer ring is as polygonal as that slice (a 4-corner
+  // rectangle on a small nose tip, a coarse polygon on a cone) and every inset
+  // shrinks off it. The raw mesh slice lives in `sliceMaterialByZ`; offsetting
+  // the slice path(s) that sit inside the tip by `toolOffset` with round joins
+  // gives a smooth tool-centre boundary for the whole cap. Returns the original
+  // `tipPath` (defensive) when no slice path matches this tip.
+  const deriveRoundCapBaseRing = (tipPath: ClipperPath, tipZ: number): ClipperPath[] => {
+    const slice = coarseBuild.sliceMaterialByZ.get(tipZ) ?? []
+    if (slice.length === 0) return [tipPath]
+    const matched = slice.filter((slicePath) => (
+      pointInClipperPaths([tipPath], clipperPathCentroid(slicePath))
+    ))
+    if (matched.length === 0) return [tipPath]
+    const rounded = offsetClipperPathsRound(matched, toolOffset)
+    return rounded.length > 0 ? rounded : [tipPath]
+  }
+
   const processTipPath = (
     levelIndex: number,
     tipPath: ClipperPath,
     tipZ: number,
     peakZ: number,
+    hasHigherLevel: boolean,
   ): boolean => {
     if (processedTipPaths.has(tipPath)) return true
     processedTipPaths.add(tipPath)
-    // Suppress the boxy first-slice coarse ring at this z — the inset rings
-    // below will replace it and the ball nose rounds whatever crown remains
-    // after the offsets collapse.
+    // Suppress the boxy first-slice coarse ring at this z — the round cap rings
+    // below replace it and the ball nose rounds whatever crown remains after
+    // the offsets collapse. Suppression targets the original miter ring object
+    // that lives in the coarse level; the replacement uses the re-derived round
+    // boundary.
     suppressCoarsePath(levelIndex, tipPath)
     suppressedCoarsePaths.push({ z: tipZ, path: tipPath })
 
-    // First sweep: collect the inward offsets and remember the deepest
-    // inset that still produced geometry. That distance approximates the
-    // tip's inradius and serves as the "fully collapsed → at the peak"
-    // reference for Z projection.
+    const capBaseRing = deriveRoundCapBaseRing(tipPath, tipZ)
+
+    // Refine the per-vertex Z ceiling to the actual sampled mesh peak inside
+    // the cap footprint. The caller passes `peakZ = higher.z` (or the tip's own
+    // first-slice z on the topmost level). Clamping there leaves a flat plateau
+    // / boxy crown around sharp apices: on the topmost level the ceiling equals
+    // the floor so the crown is dead flat, and below it the next-coarse rim sits
+    // above the real peak. Sampling the surface lets the rings climb to the true
+    // apex. The refined ceiling is kept within [tipZ, higher.z] when a higher
+    // coarse rim exists (never cut above an already-finished rim) and is allowed
+    // to climb freely toward the sampled apex on the topmost level.
+    const sampledPeakZ = surfaceZAt ? estimateTipPeakZ(capBaseRing, surfaceZAt) : null
+    let effectivePeakZ = peakZ
+    if (sampledPeakZ !== null) {
+      effectivePeakZ = hasHigherLevel
+        ? Math.min(peakZ, Math.max(tipZ, sampledPeakZ))
+        : Math.max(tipZ, sampledPeakZ)
+    }
+
+    // First sweep: collect the round outer ring (step 0) plus inward offsets,
+    // and remember the deepest inset that still produced geometry. That distance
+    // approximates the tip's inradius and serves as the "fully collapsed → at
+    // the peak" reference for Z projection.
     const tipRings: Array<{ paths: ClipperPath[]; distance: number }> = []
     let maxInsetDistance = 0
     let stoppedByCollapse = false
-    for (let step = 1; step <= maxRingsPerBand; step += 1) {
+    for (let step = 0; step <= maxRingsPerBand; step += 1) {
       const distance = step * stepoverDistance
-      // Round joins for tip insets so small first-slice polygons don't keep
-      // producing axis-aligned rectangles. The first-slice shape itself is
-      // miter-derived upstream — we can't undo that here without re-slicing,
-      // but each successive inset under round joins replaces the corners
-      // with arc segments and the visible squareness fades quickly.
-      const tipInwardRaw = offsetClipperPathsRound([tipPath], -distance)
+      // Round joins so the outer ring and every inset stay smooth (step 0 is the
+      // round outer ring itself; offsetClipperPathsRound returns it unchanged
+      // for a zero delta).
+      const tipInwardRaw = offsetClipperPathsRound(capBaseRing, -distance)
       if (tipInwardRaw.length === 0) {
         stoppedByCollapse = true
         break
@@ -645,28 +788,26 @@ function generateProjectedWaterlineLevels(
     }
     if (tipRings.length === 0) return true
 
-    // Per-point Z. First choice is to sample the actual mesh surface via
-    // the heightmap — that follows the real shape of the island so the
-    // rings climb the flank exactly. Fall back to a linear ramp from tipZ
-    // at the boundary to peakZ at the deepest inset if the heightmap can't
-    // resolve the point (off-mesh sample, etc.) or wasn't provided.
-    const zSpan = peakZ - tipZ
+    // Per-point Z. First choice is to sample the actual mesh surface via the
+    // bilinearly-interpolated heightmap — that follows the real shape of the
+    // island so the rings climb the flank smoothly. Fall back to a linear ramp
+    // from tipZ at the boundary to effectivePeakZ at the deepest inset if the
+    // heightmap can't resolve the point (off-mesh sample, etc.).
+    const zSpan = effectivePeakZ - tipZ
     const denom = Math.max(maxInsetDistance, waterlineLengthEpsilon)
     const linearProjection = (point: { x: number; y: number }): number => {
       if (zSpan === 0) return tipZ
-      const d = distanceToClipperPathBoundary(tipPath, point)
+      const d = distanceToClipperPathsBoundary(capBaseRing, point)
       return tipZ + Math.min(1, d / denom) * zSpan
     }
     const projectZAtPoint = (point: { x: number; y: number }): number => {
       const sampled = surfaceZAt ? surfaceZAt(point) : null
       if (sampled === null) return linearProjection(point)
-      // Clamp into [tipZ, peakZ] so a noisy heightmap sample on the steep
-      // flank can't drive the cut above the next-coarse-level rim (which
-      // would already have been finished by the coarse waterline pass) or
-      // below the tip's own first-slice z (which is the floor for this
-      // island cap).
-      const upper = peakZ >= tipZ ? peakZ : tipZ
-      const lower = peakZ >= tipZ ? tipZ : peakZ
+      // Clamp into [tipZ, effectivePeakZ] so a noisy heightmap sample on the
+      // steep flank can't drive the cut above the refined apex ceiling (or the
+      // next-coarse rim) or below the tip's own first-slice z (the cap floor).
+      const upper = effectivePeakZ >= tipZ ? effectivePeakZ : tipZ
+      const lower = effectivePeakZ >= tipZ ? tipZ : effectivePeakZ
       return Math.min(upper, Math.max(lower, sampled))
     }
 
@@ -750,7 +891,7 @@ function generateProjectedWaterlineLevels(
       // so the inset rings stay flat at upper.z (which is already model
       // top, so there's nothing to ramp toward).
       const peakZ = higher ? higher.z : upper.z
-      if (!processTipPath(i, upperPath, upper.z, peakZ)) break
+      if (!processTipPath(i, upperPath, upper.z, peakZ, Boolean(higher))) break
     }
 
     for (const [lowerIndex, matchedUpperPaths] of matches) {
@@ -832,7 +973,7 @@ function generateProjectedWaterlineLevels(
       if (hitCap) break
       if (processedTipPaths.has(path)) continue
       if (!forcedLocalTopPaths.has(path)) continue
-      if (!processTipPath(lastIndex, path, lastLevel.z, peakZForLast)) break
+      if (!processTipPath(lastIndex, path, lastLevel.z, peakZForLast, Boolean(higherForLast))) break
     }
   }
 
@@ -1348,10 +1489,16 @@ export function generateFinishSurfaceWaterline(
   // the raw geometric surface Z (queryHeightMapTopZ) would put the cut
   // below the safe tip Z on every slope — producing the chewed-up "rough"
   // surface we saw before this fix.
-  const surfaceZAt = (point: { x: number; y: number }): number | null => {
-    const z = safeToolTipZAt(point.x, point.y, heightMap, tool)
-    return Number.isFinite(z) ? z : null
-  }
+  //
+  // Bilinearly interpolated across the four surrounding cell centres so the
+  // tip-cap rings vary smoothly instead of stepping to whichever single cell
+  // wins the nearest-cell scan — that nearest-cell step is exactly the
+  // concentric ring banding seen on the cone apex and the terraced texture on
+  // the OldMan tips. Only tip caps call this; band fills use a smooth linear
+  // projection and are unaffected.
+  const surfaceZAt = (point: { x: number; y: number }): number | null => (
+    bilinearSafeToolTipZAt(point.x, point.y, heightMap, tool)
+  )
 
   const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
     ? generateProjectedWaterlineLevels(
