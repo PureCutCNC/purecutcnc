@@ -10,6 +10,7 @@ import { defaultTool, newProject, rectProfile, type Operation, type Project, typ
 import { normalizeProject, useProjectStore } from '../../store/projectStore'
 import { convertProjectUnits } from '../../utils/units'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
+import { snapClosedContourEntryToAnchor } from './finishSurfaceWaterline'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide, isClockwise, normalizeToolForProject } from './geometry'
 import { loadSTLTransformedGeometry } from '../csg'
@@ -1782,6 +1783,27 @@ function testWaterlineConventionalWindsOppositeOfClimb(): void {
   }
 }
 
+function testWaterlineSnapsDriftedClosedRingEntryToPreviousEndpoint(): void {
+  console.log('Testing waterline snaps drifted closed-ring entries to previous XY...')
+  const previousEndpoint = { x: 6.5, y: 3.5 }
+  const contour: Point[] = [
+    { x: 6.503, y: 3.498 },
+    { x: 13.5, y: 3.5 },
+    { x: 13.5, y: 6.5 },
+    { x: 6.5, y: 6.5 },
+  ]
+
+  const snapped = snapClosedContourEntryToAnchor(contour, previousEndpoint, 0.01)
+  assert(snapped.length === contour.length + 1,
+    `expected snap to insert an exact entry point, got ${snapped.length} points`)
+  assert(snapped[0].x === previousEndpoint.x && snapped[0].y === previousEndpoint.y,
+    `expected snapped entry to equal previous endpoint, got (${snapped[0].x}, ${snapped[0].y})`)
+  assert(snapped[1] === contour[0], 'expected original contour geometry to be preserved after inserted entry')
+
+  const unsnapped = snapClosedContourEntryToAnchor(contour, previousEndpoint, 0.001)
+  assert(unsnapped === contour, 'expected contour outside tolerance to remain unchanged')
+}
+
 // ── Run all tests ────────────────────────────────────────────────────────
 
 testFinishSurfaceCoversLowerTopPlateau()
@@ -1829,6 +1851,7 @@ testApplyContourDirectionBySideReversesOpenPolylinesWhenNeeded()
 testApplyContourDirectionBySideAcceptsNaturalWindingHint()
 testWaterlineClimbWindsCorrectlyOnBothSides()
 testWaterlineConventionalWindsOppositeOfClimb()
+testWaterlineSnapsDriftedClosedRingEntryToPreviousEndpoint()
 
 function testWaterlineFinishesOneColumnBeforeNext(): void {
   console.log('Testing waterline finishes one column top-to-bottom before moving to the next...')
