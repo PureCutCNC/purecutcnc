@@ -1051,7 +1051,7 @@ export function snapClosedContourEntryToAnchor(
     return contour
   }
 
-  return [{ x: anchor.x, y: anchor.y }, ...contour]
+  return [{ x: anchor.x, y: anchor.y }, ...contour.slice(1)]
 }
 
 function toProjectedCutMoves(

@@ -1794,11 +1794,11 @@ function testWaterlineSnapsDriftedClosedRingEntryToPreviousEndpoint(): void {
   ]
 
   const snapped = snapClosedContourEntryToAnchor(contour, previousEndpoint, 0.01)
-  assert(snapped.length === contour.length + 1,
-    `expected snap to insert an exact entry point, got ${snapped.length} points`)
+  assert(snapped.length === contour.length,
+    `expected snap to replace the entry point, got ${snapped.length} points`)
   assert(snapped[0].x === previousEndpoint.x && snapped[0].y === previousEndpoint.y,
     `expected snapped entry to equal previous endpoint, got (${snapped[0].x}, ${snapped[0].y})`)
-  assert(snapped[1] === contour[0], 'expected original contour geometry to be preserved after inserted entry')
+  assert(snapped[1] === contour[1], 'expected snap to preserve the rest of the contour vertices')
 
   const unsnapped = snapClosedContourEntryToAnchor(contour, previousEndpoint, 0.001)
   assert(unsnapped === contour, 'expected contour outside tolerance to remain unchanged')
@@ -1928,19 +1928,48 @@ function testWaterlineColumnDescentReusesSameXYWithPlunge(): void {
   // the same XY. Each such plunge is one column-step that did not retract to
   // safe Z. With column ordering + ring rotation, most Z transitions inside
   // a column should be of this kind.
+  type Col = 'outer' | 'pocket' | 'other'
+  const classifyPoint = (point: { x: number; y: number }): Col => {
+    if (point.x < 0 || point.x > 20 || point.y < 0 || point.y > 10) return 'outer'
+    if (point.x > 5.5 && point.x < 14.5 && point.y > 2.5 && point.y < 7.5) return 'pocket'
+    return 'other'
+  }
+  const safeZ = Math.max(...result.moves.flatMap((move) => [move.from.z, move.to.z]))
   let columnPlunges = 0
+  let sameColumnSafeZRoundTrips = 0
   const eps = 1e-3
   for (let i = 0; i < result.moves.length; i += 1) {
     const m = result.moves[i]
-    if (m.kind !== 'plunge') continue
-    // A "column plunge" lands directly from a previous cut Z (m.from.z is well
-    // below safeZ — i.e., not coming from the safe-Z lane).
-    if (m.from.z > 10 - eps) continue
-    if (m.from.z - m.to.z <= 0) continue
-    columnPlunges += 1
+    if (m.kind === 'plunge') {
+      // A "column plunge" lands directly from a previous cut Z (m.from.z is well
+      // below safeZ — i.e., not coming from the safe-Z lane).
+      if (m.from.z <= safeZ - eps && m.from.z - m.to.z > 0) {
+        columnPlunges += 1
+      }
+      continue
+    }
+
+    if (m.kind !== 'rapid' || m.from.z >= safeZ - eps || m.to.z < safeZ - eps) continue
+    const previousCut = result.moves.slice(0, i).findLast((candidate) => candidate.kind === 'cut')
+    const nextPlungeIndex = result.moves.findIndex((candidate, index) => (
+      index > i && candidate.kind === 'plunge'
+    ))
+    if (!previousCut || nextPlungeIndex < 0) continue
+    const nextPlunge = result.moves[nextPlungeIndex]
+    if (nextPlunge.kind !== 'plunge' || nextPlunge.to.z >= previousCut.to.z - eps) continue
+
+    const nextCut = result.moves.slice(nextPlungeIndex + 1).find((candidate) => candidate.kind === 'cut')
+    if (!nextCut) continue
+    const previousColumn = classifyPoint(previousCut.to)
+    const nextColumn = classifyPoint(nextCut.from)
+    if (previousColumn !== 'other' && previousColumn === nextColumn) {
+      sameColumnSafeZRoundTrips += 1
+    }
   }
   assert(columnPlunges >= 1,
     `expected at least one column-descent plunge (cut-Z to cut-Z), got ${columnPlunges}; column ordering is not reusing XY between Z levels`)
+  assert(sameColumnSafeZRoundTrips === 0,
+    `expected no safe-Z retract/rapid/plunge cycles between adjacent rings in the same column, got ${sameColumnSafeZRoundTrips}`)
 }
 
 testWaterlineFinishesOneColumnBeforeNext()
