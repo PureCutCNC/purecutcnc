@@ -1033,6 +1033,27 @@ function projectedContourStartPoint(
   return { x: first.x, y: first.y, z: zAtPoint(first) }
 }
 
+export function snapClosedContourEntryToAnchor(
+  contour: Array<{ x: number; y: number }>,
+  anchor: { x: number; y: number } | null,
+  tolerance: number,
+): Array<{ x: number; y: number }> {
+  if (contour.length < 3 || anchor === null || tolerance <= 0) {
+    return contour
+  }
+
+  const first = contour[0]
+  const distance = Math.hypot(first.x - anchor.x, first.y - anchor.y)
+  if (distance <= 1e-9) {
+    return contour
+  }
+  if (distance > tolerance) {
+    return contour
+  }
+
+  return [{ x: anchor.x, y: anchor.y }, ...contour.slice(1)]
+}
+
 function toProjectedCutMoves(
   contour: Array<{ x: number; y: number }>,
   closed: boolean,
@@ -1530,6 +1551,14 @@ export function generateFinishSurfaceWaterline(
 
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(modelTopZ - effectiveBottom))
   if (depthWarning) warnings.push(depthWarning)
+  const maxEntrySnapTolerance = Math.max(
+    waterlineLengthEpsilon,
+    Math.min(tool.radius * 0.25, convertLength(0.25, 'mm', project.meta.units)),
+  )
+  const entrySnapTolerance = Math.min(
+    Math.max(waterlineLengthEpsilon, stepoverDistance * 0.5),
+    maxEntrySnapTolerance,
+  )
 
   // Intersecting-add proximity test for plunge safety. Build the union of
   // all intersecting-add footprints once, then for each ring entry test
@@ -1710,13 +1739,8 @@ export function generateFinishSurfaceWaterline(
         const isClosed = pathClosed[i] && contour.length >= 3
 
         if (isClosed && currentPosition) {
-          // TODO: For vertical-wall pockets (e.g. round pocket), rings at different Z
-          // levels should share the same XY start point, enabling direct plunge descent.
-          // Currently, floating-point drift in Clipper offset or simplification can shift
-          // the nearest vertex slightly between levels, breaking XY alignment and causing
-          // unnecessary retract+plunge cycles mid-column. Consider snapping the entry
-          // point to the previous ring's endpoint when distance is below stepover/2.
           contour = rotateContourToNearestEntry(contour, { x: currentPosition.x, y: currentPosition.y })
+          contour = snapClosedContourEntryToAnchor(contour, currentPosition, entrySnapTolerance)
         }
 
         const meshBoundaryPaths = intersectingAdds.length > 0 ? sliceMeshOnlyAtZ(ringEntry.z) : []
