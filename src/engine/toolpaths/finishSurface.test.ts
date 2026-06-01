@@ -1442,6 +1442,87 @@ function testWaterlineTipCapRingsClimbAndAreRound(): void {
     `expected per-vertex projected Z near the centre to reach the apex, got ${centreZ}`)
 }
 
+// Issue #127 follow-up: when the bilinearly-sampled safe-tool-tip Z dips below
+// `tipZ` in the cap's outer annulus (because the cap base ring is `slice +
+// toolOffset`, extending past the slice footprint), the per-vertex projection
+// must NOT floor at `tipZ` — that floored a band of outer rings flat at
+// exactly `tipZ`, producing the visible concentric plateau at the first-step-
+// down z. After the fix the floor is the linear ramp (tipZ at the boundary →
+// peakZ at the apex), so the outermost ring stays at tipZ (band join preserved)
+// but the rings inside rise continuously.
+function testWaterlineTipCapOuterRingsClimbAlongLinearRamp(): void {
+  console.log('Testing waterline tip-cap outer rings climb along the linear ramp instead of stacking flat at tipZ...')
+  const tipZ = 3
+  const apexZ = 3.6
+  const centre = { x: 10, y: 5 }
+  const coarseBuild: WaterlineLevelBuild = {
+    levels: [
+      { z: tipZ, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 2)] },
+      { z: 2, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 4)] },
+      { z: 1, contourPaths: [makeSquareCcwContour(centre.x, centre.y, 6)] },
+    ],
+    sliceMaterialByZ: new Map([
+      [tipZ, [makeSquareCcwContour(centre.x, centre.y, 1.5)]],
+      [2, [makeSquareCcwContour(centre.x, centre.y, 3.5)]],
+      [1, [makeSquareCcwContour(centre.x, centre.y, 5.5)]],
+    ]),
+  }
+  // Surface drops linearly with radius from the centre — mirrors the real cone
+  // case where the slice + toolOffset cap base ring sits outside the slice
+  // footprint and `safeToolTipZAt` returns values below `tipZ` there.
+  const surfaceZAt = (point: { x: number; y: number }): number | null => {
+    const d = Math.hypot(point.x - centre.x, point.y - centre.y)
+    return apexZ - 0.3 * d
+  }
+  const build = generateProjectedWaterlineLevels(
+    coarseBuild,
+    0.3,
+    100,
+    50,
+    0.01,
+    surfaceZAt,
+    [],
+    0.5,
+  )
+  const caps = build.levels
+    .filter((level) => level.source === 'projectedCap')
+    .sort((a, b) => a.z - b.z)
+  assert(caps.length >= 4, `expected multiple projected cap rings, got ${caps.length}`)
+
+  // Sample the per-vertex projected Z on each ring and reduce to the ring's
+  // minimum projected Z — that is the "floor" value the bug used to pin to
+  // tipZ. The outermost ring's min must equal tipZ (boundary match with the
+  // band fill). Every inner ring's min must be STRICTLY above the previous
+  // ring's min — no two adjacent rings stack flat at the same z.
+  const ringMinZs: number[] = []
+  for (const cap of caps) {
+    let minZ = Number.POSITIVE_INFINITY
+    for (const path of cap.contourPaths) {
+      for (const pt of path) {
+        const worldX = pt.X / DEFAULT_CLIPPER_SCALE
+        const worldY = pt.Y / DEFAULT_CLIPPER_SCALE
+        const z = cap.projectZAtPoint?.({ x: worldX, y: worldY }) ?? cap.z
+        if (z < minZ) minZ = z
+      }
+    }
+    ringMinZs.push(minZ)
+  }
+
+  // Outermost (lowest sort key) ring must floor at tipZ — band join preserved.
+  assert(Math.abs(ringMinZs[0] - tipZ) < 1e-3,
+    `expected outermost cap ring's min projected Z to equal tipZ (band-join boundary), got ${ringMinZs[0]} vs tipZ ${tipZ}`)
+
+  // No two consecutive rings stack at the same Z — plateau eliminated. Allow
+  // the inner-cap ball-wrap region (where sampled > linear and varies slowly)
+  // to have a small floor difference, but the outer rings must climb visibly.
+  let plateauRings = 0
+  for (let i = 1; i < ringMinZs.length; i += 1) {
+    if (ringMinZs[i] <= ringMinZs[i - 1] + 1e-5) plateauRings += 1
+  }
+  assert(plateauRings === 0,
+    `expected no adjacent cap rings to stack flat at the same z, found ${plateauRings} (ring min Zs: ${ringMinZs.map((z) => z.toFixed(4)).join(', ')})`)
+}
+
 // Integration-level companion: a real pyramid mesh through the full waterline
 // pipeline should produce projected cap rings that vary in Z (a true 3D crown)
 // and climb toward the apex, rather than a flat terraced cap.
@@ -2010,6 +2091,7 @@ testWaterlineEmitsBandBoundaryLevels()
 testWaterlineBallEndmillUsesSideContactZ()
 testWaterlineReachesModelTop()
 testWaterlineTipCapRingsClimbAndAreRound()
+testWaterlineTipCapOuterRingsClimbAlongLinearRamp()
 testWaterlineTipCapClimbsToApexOnPyramid()
 testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()

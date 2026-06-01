@@ -803,12 +803,20 @@ export function generateProjectedWaterlineLevels(
     const projectZAtPoint = (point: { x: number; y: number }): number => {
       const sampled = surfaceZAt ? surfaceZAt(point) : null
       if (sampled === null) return linearProjection(point)
-      // Clamp into [tipZ, effectivePeakZ] so a noisy heightmap sample on the
-      // steep flank can't drive the cut above the refined apex ceiling (or the
-      // next-coarse rim) or below the tip's own first-slice z (the cap floor).
+      // Floor at the linear ramp (tipZ at the cap boundary → effectivePeakZ at
+      // the apex), not at a flat tipZ. The cap base ring is `slice + toolOffset`
+      // so its outer annulus sits OUTSIDE the slice footprint, where the
+      // bilinearly-sampled safe tool-tip Z dips below tipZ — flooring at tipZ
+      // there stacks the outer rings flat at the first-step-down z (the visible
+      // ring on the cone tip in issue #127). The linear ramp is exactly tipZ
+      // at the boundary so the cap↔band join stays flat, and rises toward the
+      // peak so the outer rings climb continuously. The sampled value still
+      // wins where it exceeds the ramp — the inner-cap natural ball-wrap dome
+      // is preserved as-is. Upper-clamped at effectivePeakZ so a noisy sample
+      // on the steep flank can't drive the cut above the apex ceiling.
+      const linearZ = linearProjection(point)
       const upper = effectivePeakZ >= tipZ ? effectivePeakZ : tipZ
-      const lower = effectivePeakZ >= tipZ ? tipZ : effectivePeakZ
-      return Math.min(upper, Math.max(lower, sampled))
+      return Math.min(upper, Math.max(linearZ, sampled))
     }
 
     // Emit one level per ring so each concentric ring carries its own

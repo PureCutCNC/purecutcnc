@@ -16,6 +16,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 - [WATERLINE_ADAPTIVE_REFINEMENT_Plan.md](WATERLINE_ADAPTIVE_REFINEMENT_Plan.md) — improve imported-model waterline finishing by inserting bounded intermediate contour levels when adjacent bands have small Z separation but large XY drift
 - [WATERLINE_CONTAINING_ADD_FIX_Plan.md](WATERLINE_CONTAINING_ADD_FIX_Plan.md) — fix waterline finish emitting no paths when containing/base add features are mistaken for intersecting walls
+- [WATERLINE_TIP_CAP_PLATEAU_FIX_Plan.md](WATERLINE_TIP_CAP_PLATEAU_FIX_Plan.md) — replace the `tipZ` lower-clamp in `processTipPath` with a floor at the linear ramp so outer cap rings climb instead of stacking flat at the first-step-down z (issue #127 follow-up)
 
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
