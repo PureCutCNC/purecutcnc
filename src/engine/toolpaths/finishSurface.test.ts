@@ -90,6 +90,21 @@ function addQuad(
   lines.push('  endfacet')
 }
 
+function addTriangle(
+  lines: string[],
+  a: [number, number, number],
+  b: [number, number, number],
+  c: [number, number, number],
+): void {
+  lines.push('  facet normal 0 0 0')
+  lines.push('    outer loop')
+  for (const point of [a, b, c]) {
+    lines.push(`      vertex ${point.join(' ')}`)
+  }
+  lines.push('    endloop')
+  lines.push('  endfacet')
+}
+
 function makeSteppedStlDataUrl(): string {
   const lines = ['solid stepped']
   addBoxFaces(lines, 0, 0, 0, 20, 10, 1)
@@ -130,6 +145,68 @@ function makeTaperedStlDataUrl(): string {
   }
 
   lines.push('endsolid tapered')
+  return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
+}
+
+function makeConeStlDataUrl(): string {
+  const lines = ['solid cone']
+  const cx = 10
+  const cy = 5
+  const radius = 5
+  const baseZ = 0
+  const apexZ = 4
+  const segments = 64
+  const apex: [number, number, number] = [cx, cy, apexZ]
+  const center: [number, number, number] = [cx, cy, baseZ]
+
+  for (let i = 0; i < segments; i += 1) {
+    const a0 = (i / segments) * Math.PI * 2
+    const a1 = ((i + 1) / segments) * Math.PI * 2
+    const p0: [number, number, number] = [
+      cx + Math.cos(a0) * radius,
+      cy + Math.sin(a0) * radius,
+      baseZ,
+    ]
+    const p1: [number, number, number] = [
+      cx + Math.cos(a1) * radius,
+      cy + Math.sin(a1) * radius,
+      baseZ,
+    ]
+    addTriangle(lines, center, p1, p0)
+    addTriangle(lines, p0, p1, apex)
+  }
+
+  lines.push('endsolid cone')
+  return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
+}
+
+function makeUnevenTwinConeStlDataUrl(): string {
+  const lines = ['solid uneven_twin_cone']
+  const segments = 64
+  const addCone = (cx: number, cy: number, radius: number, baseZ: number, apexZ: number): void => {
+    const apex: [number, number, number] = [cx, cy, apexZ]
+    const center: [number, number, number] = [cx, cy, baseZ]
+    for (let i = 0; i < segments; i += 1) {
+      const a0 = (i / segments) * Math.PI * 2
+      const a1 = ((i + 1) / segments) * Math.PI * 2
+      const p0: [number, number, number] = [
+        cx + Math.cos(a0) * radius,
+        cy + Math.sin(a0) * radius,
+        baseZ,
+      ]
+      const p1: [number, number, number] = [
+        cx + Math.cos(a1) * radius,
+        cy + Math.sin(a1) * radius,
+        baseZ,
+      ]
+      addTriangle(lines, center, p1, p0)
+      addTriangle(lines, p0, p1, apex)
+    }
+  }
+
+  addCone(8.8, 5, 4, 0, 3)
+  addCone(11.2, 5, 4, 0, 4)
+  lines.push('endsolid uneven_twin_cone')
   return `data:model/stl;base64,${btoa(`${lines.join('\n')}\n`)}`
 }
 
@@ -258,6 +335,56 @@ function makeTaperedModelFeature(): SketchFeature {
         { x: 20, y: 10 },
         { x: 0, y: 10 },
       ]],
+    },
+  }
+}
+
+function makeConeModelFeature(): SketchFeature {
+  const silhouette = Array.from({ length: 64 }, (_, i) => {
+    const angle = (i / 64) * Math.PI * 2
+    return {
+      x: 10 + Math.cos(angle) * 5,
+      y: 5 + Math.sin(angle) * 5,
+    }
+  })
+  return {
+    ...makeModelFeature(),
+    id: 'model1',
+    name: 'Cone STL',
+    stl: {
+      format: 'stl',
+      fileData: makeConeStlDataUrl(),
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [silhouette],
+    },
+    sketch: {
+      ...makeModelFeature().sketch,
+      profile: rectProfile(5, 0, 10, 10),
+    },
+  }
+}
+
+function makeUnevenTwinConeModelFeature(): SketchFeature {
+  return {
+    ...makeModelFeature(),
+    id: 'model1',
+    name: 'Uneven Twin Cone STL',
+    stl: {
+      format: 'stl',
+      fileData: makeUnevenTwinConeStlDataUrl(),
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 4.8, y: 1 },
+        { x: 15.2, y: 1 },
+        { x: 15.2, y: 9 },
+        { x: 4.8, y: 9 },
+      ]],
+    },
+    sketch: {
+      ...makeModelFeature().sketch,
+      profile: rectProfile(4.8, 1, 10.4, 8),
     },
   }
 }
@@ -987,6 +1114,113 @@ function testWaterlineAdaptivelyRefinesShallowSlope(): void {
   assert(has3DProjectedMove, 'expected projected micro-offset moves to vary Z along the cut')
   assert(insertedDebug.length > 0 && !insertedDebug.includes('inserted 0 projected rings'),
     `expected debug metrics for inserted adaptive levels, got: ${insertedDebug}`)
+}
+
+function testWaterlineTipCapSmoothsConePeak(): void {
+  console.log('Testing waterline projected cap smooths a cone peak...')
+  const { project } = makeProject()
+  project.features = [makeConeModelFeature()]
+  normalizeProjectFeatures(project)
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepdown: 1,
+    stepover: 0.2,
+    waterlineMicroStepover: 0.2,
+    waterlineMaxRingsPerBand: 64,
+    debugToolpath: true,
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const capCuts = projectedWaterlineCuts(result, 'projectedCap')
+  assert(capCuts.length > 0,
+    `expected projected cap cuts on cone peak, got none; debug: ${result.warnings.join('; ')}`)
+
+  const cuts = cutMoves(result.moves)
+  const firstRealWaterlineIndex = cuts.findIndex((move) => !move.source)
+  const firstProjectedCapIndex = cuts.findIndex((move) => move.source === 'projectedCap')
+  assert(firstRealWaterlineIndex >= 0 && firstProjectedCapIndex > firstRealWaterlineIndex,
+    `expected real cone waterline before projected cap fill, real=${firstRealWaterlineIndex}, cap=${firstProjectedCapIndex}`)
+  const firstProjectedCapMoveIndex = result.moves.findIndex((move) => move.kind === 'cut' && move.source === 'projectedCap')
+  const moveBeforeFirstCap = result.moves[firstProjectedCapMoveIndex - 1]
+  const safeZ = Math.max(...result.moves.flatMap((move) => [move.from.z, move.to.z]))
+  assert(
+    !moveBeforeFirstCap || moveBeforeFirstCap.kind !== 'plunge' || moveBeforeFirstCap.from.z < safeZ - 1e-6,
+    'expected nearby projected cap fill to link from the preceding ring without a safe-Z plunge',
+  )
+
+  const capPoints = capCuts.flatMap((move) => [move.from, move.to])
+  const capZs = capPoints.map((point) => point.z)
+  const capRadii = capPoints.map((point) => Math.hypot(point.x - 10, point.y - 5))
+  const maxCapRadius = Math.max(...capRadii)
+  const maxCapZ = Math.max(...capZs)
+  const minCapZ = Math.min(...capZs)
+  assert(maxCapZ > 3.6,
+    `expected projected cap to reach near cone peak, got max Z ${maxCapZ}; debug: ${result.warnings.join('; ')}`)
+  assert(maxCapZ - minCapZ > 0.4,
+    `expected projected cap to form a Z ramp instead of a flat crown, got range ${maxCapZ - minCapZ}`)
+  assert(minCapZ >= 2 - 1e-6,
+    `expected cone cap projection not to cut below the matched lower step Z=2, got min Z ${minCapZ}`)
+  assert(maxCapRadius > 2.5,
+    `expected projected cap to absorb the first lower cone boundary, got max radius ${maxCapRadius}`)
+
+  const nonCapInsideCrown = cutMoves(result.moves).filter((move) => (
+    move.source !== 'projectedCap'
+    && (
+      Math.hypot(move.from.x - 10, move.from.y - 5) < maxCapRadius - 0.05
+      || Math.hypot(move.to.x - 10, move.to.y - 5) < maxCapRadius - 0.05
+    )
+  ))
+  assert(nonCapInsideCrown.length === 0,
+    `expected no coarse/projected-band ring inside the cone cap crown, got ${nonCapInsideCrown.length}`)
+
+  const radii = capRadii
+    .sort((a, b) => a - b)
+  const innerRadius = radii[Math.floor(radii.length * 0.25)]
+  const outerRadius = radii[Math.floor(radii.length * 0.75)]
+  const inner = capPoints.filter((point) => Math.hypot(point.x - 10, point.y - 5) <= innerRadius)
+  const outer = capPoints.filter((point) => Math.hypot(point.x - 10, point.y - 5) >= outerRadius)
+  assert(inner.length > 0 && outer.length > 0,
+    `expected inner and outer cone-cap samples, inner=${inner.length}, outer=${outer.length}`)
+  const avgZ = (points: typeof capPoints): number => (
+    points.reduce((sum, point) => sum + point.z, 0) / points.length
+  )
+  assert(avgZ(inner) > avgZ(outer) + 0.4,
+    `expected cone cap Z to rise smoothly toward center, inner=${avgZ(inner)}, outer=${avgZ(outer)}`)
+}
+
+function testWaterlineTipCapFillsCollapsedBranch(): void {
+  console.log('Testing waterline projected cap fills a collapsed branch...')
+  const { project } = makeProject()
+  project.features = [makeUnevenTwinConeModelFeature()]
+  normalizeProjectFeatures(project)
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepdown: 1,
+    stepover: 0.2,
+    waterlineMicroStepover: 0.2,
+    waterlineTipStepdown: 0.5,
+    waterlineMaxRingsPerBand: 64,
+    debugToolpath: true,
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const capCuts = projectedWaterlineCuts(result, 'projectedCap')
+  const lowerPeakCenter = { x: 8.8, y: 5 }
+  const lowerPeakInnerCuts = capCuts.filter((move) => (
+    Math.max(
+      Math.hypot(move.from.x - lowerPeakCenter.x, move.from.y - lowerPeakCenter.y),
+      Math.hypot(move.to.x - lowerPeakCenter.x, move.to.y - lowerPeakCenter.y),
+    ) < 0.65
+    && Math.max(move.from.z, move.to.z) > 2.55
+  ))
+  const hasRisingInnerMove = lowerPeakInnerCuts.some((move) => Math.abs(move.from.z - move.to.z) > 1e-6)
+
+  assert(lowerPeakInnerCuts.length > 0,
+    `expected projected cap cuts inside the lower collapsed peak, got none; debug: ${result.warnings.join('; ')}`)
+  assert(hasRisingInnerMove,
+    'expected collapsed peak cap to use projected Z interpolation instead of a flat fill')
 }
 
 function testWaterlineAdaptiveRefinementCanBeDisabled(): void {
@@ -1823,6 +2057,8 @@ testWaterlineRepeatIsStable()
 testWaterlineRespectsContainingPocketDepth()
 testWaterlineRegionActsAsFilterNotBoundaryContour()
 testWaterlineAdaptivelyRefinesShallowSlope()
+testWaterlineTipCapSmoothsConePeak()
+testWaterlineTipCapFillsCollapsedBranch()
 testWaterlineAdaptiveRefinementCanBeDisabled()
 testWaterlineMicroStepoverControlsProjectedDensity()
 testWaterlineZeroMicroStepoverUsesLegacyRatioFallback()
