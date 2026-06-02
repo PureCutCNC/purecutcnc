@@ -16,7 +16,7 @@
 
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { profileVertices, rectProfile } from '../../types/project'
-import type { Point, Project, SketchProfile } from '../../types/project'
+import type { AnchorTarget, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
 import { distance2 } from './hitTest'
 import {
   nearestPointOnPolyline,
@@ -41,6 +41,10 @@ interface SnapCandidate {
   priority: number
   guide?: SnapGuide
   perpendicularSegment?: { a: Point; b: Point }
+  // Provenance: what geometry produced this snap, so a dimension placed here can
+  // anchor to it and follow the geometry when it moves. Absent for grid/line/
+  // perpendicular snaps (no stable geometry identity).
+  anchor?: DimensionAnchor
 }
 
 export interface ResolvedSnap {
@@ -49,6 +53,8 @@ export interface ResolvedSnap {
   mode: SnapMode | null
   guide?: SnapGuide
   perpendicularSegment?: { a: Point; b: Point }
+  /** Anchor describing the snapped geometry, when the snap has stable identity. */
+  anchor?: DimensionAnchor
 }
 
 function distanceToCanvas(a: { cx: number; cy: number }, b: { cx: number; cy: number }): number {
@@ -84,6 +90,7 @@ function pushSnapCandidate(
   point: Point,
   guide?: SnapGuide,
   perpendicularSegment?: { a: Point; b: Point },
+  anchor?: DimensionAnchor,
 ) {
   const distancePx = distanceToCanvas(worldToCanvas(rawPoint, vt), worldToCanvas(point, vt))
   if (distancePx > snapRadiusPx) {
@@ -97,6 +104,7 @@ function pushSnapCandidate(
     priority: snapPriority(mode),
     guide,
     perpendicularSegment,
+    anchor,
   })
 }
 
@@ -108,11 +116,15 @@ function addProfileSnapCandidates(
   snapRadiusPx: number,
   activeModes: Set<SnapMode>,
   referencePoint: Point | null,
+  source: AnchorTarget | null = null,
 ) {
   const vertices = profileVertices(profile)
   if (activeModes.has('point')) {
-    for (const vertex of vertices) {
-      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', vertex)
+    for (let v = 0; v < vertices.length; v += 1) {
+      const anchor: DimensionAnchor | undefined = source
+        ? { kind: 'vertex', target: source, vertexIndex: v }
+        : undefined
+      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', vertices[v], undefined, undefined, anchor)
     }
   }
 
@@ -121,11 +133,17 @@ function addProfileSnapCandidates(
     const segment = profile.segments[index]
 
     if (activeModes.has('midpoint')) {
-      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'midpoint', segmentMidpoint(start, segment))
+      const anchor: DimensionAnchor | undefined = source
+        ? { kind: 'midpoint', target: source, segmentIndex: index }
+        : undefined
+      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'midpoint', segmentMidpoint(start, segment), undefined, undefined, anchor)
     }
 
     if (activeModes.has('center') && (segment.type === 'arc' || segment.type === 'circle')) {
-      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'center', segment.center)
+      const anchor: DimensionAnchor | undefined = source
+        ? { kind: 'center', target: source, segmentIndex: index }
+        : undefined
+      pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'center', segment.center, undefined, undefined, anchor)
     }
 
     if (!activeModes.has('line') && !(activeModes.has('perpendicular') && referencePoint)) {
@@ -228,13 +246,13 @@ export function resolveSketchSnap(input: {
     pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'grid', gridPoint)
   }
 
-  addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+  addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
 
   for (const feature of project.features) {
     if (!feature.visible || feature.id === excludeFeatureId) {
       continue
     }
-    addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'feature', featureId: feature.id })
   }
 
   for (const tab of project.tabs) {
@@ -252,7 +270,7 @@ export function resolveSketchSnap(input: {
   }
 
   if (activeModes.has('point') && project.origin.visible) {
-    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y })
+    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y }, undefined, undefined, { kind: 'origin' })
   }
 
   if (candidates.length === 0) {
@@ -271,5 +289,6 @@ export function resolveSketchSnap(input: {
     mode: best.mode,
     guide: best.guide,
     perpendicularSegment: best.perpendicularSegment,
+    anchor: best.anchor,
   }
 }

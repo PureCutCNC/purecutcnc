@@ -20,6 +20,9 @@ import type { SnapMode } from '../sketch/snapping'
 import type {
   BackdropImage,
   Clamp,
+  DimensionAnchor,
+  DimensionAnnotation,
+  DimensionType,
   FeatureFolder,
   FeatureTreeEntry,
   GridSettings,
@@ -117,6 +120,29 @@ export type PendingAddTool =
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'region'
 
+/**
+ * Transient tape-measure state. Not persisted, not in undo history.
+ * `first` is the anchored start of an in-progress measurement; `frozen` is the
+ * last completed A→B measurement, shown until the next click starts a new one.
+ */
+export interface TapeMeasureState {
+  first: Point | null
+  frozen: { a: Point; b: Point } | null
+}
+
+/**
+ * Transient permanent-dimension placement tool. Anchors accumulate as the user
+ * clicks (a, then b, then c for angles); the canvas then enters an offset-pick
+ * phase and commits via `addDimensionAnnotation`. Not in undo history.
+ */
+export interface PendingDimensionTool {
+  type: DimensionType
+  a: DimensionAnchor | null
+  b: DimensionAnchor | null
+  c: DimensionAnchor | null
+  session: number
+}
+
 export interface PendingMoveTool {
   mode: 'move' | 'copy'
   entityType: 'feature' | 'clamp' | 'tab' | 'backdrop'
@@ -197,6 +223,11 @@ export interface ProjectStore {
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   pendingConstraint: PendingConstraint | null
+  // ---- Measure & dimensions (transient tool state, not persisted) ----
+  tapeMeasure: TapeMeasureState | null
+  pendingDimension: PendingDimensionTool | null
+  /** Currently selected dimension annotation, or null. Not in undo history. */
+  selectedAnnotationId: string | null
   history: ProjectHistory
 
   // ---- Session state (not persisted in .camj) ----
@@ -244,6 +275,22 @@ export interface ProjectStore {
   beginHistoryTransaction: () => void
   commitHistoryTransaction: () => void
   cancelHistoryTransaction: () => void
+
+  // ---- Measure & dimensions ----
+  /** Persistent dimension annotation actions (history-tracked). */
+  addDimensionAnnotation: (annotation: Omit<DimensionAnnotation, 'id'>) => string
+  updateDimensionAnnotation: (id: string, patch: Partial<DimensionAnnotation>) => void
+  deleteDimensionAnnotation: (id: string) => void
+  selectAnnotation: (id: string | null) => void
+  /** Transient tape-measure tool. */
+  startTapeMeasure: () => void
+  tapeMeasureClick: (point: Point) => void
+  clearTapeMeasure: () => void
+  /** Transient permanent-dimension placement tool. */
+  startDimensionTool: (type: DimensionType) => void
+  setPendingDimensionType: (type: DimensionType) => void
+  pendingDimensionPick: (anchor: DimensionAnchor) => void
+  cancelPendingDimension: () => void
 
   setStock: (stock: Stock) => void
   setStockSourceFeature: (featureId: string | null) => void

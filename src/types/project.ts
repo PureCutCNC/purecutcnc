@@ -75,6 +75,52 @@ export interface NamedDimension {
 }
 
 // ============================================================
+// Dimension annotations (measure / drawing dimensions)
+//
+// These are *drawing* annotations (distances, radii, angles) shown on the
+// sketch canvas. They are inert: toolpaths, G-code, CSG and simulation ignore
+// them. Distinct from `Project.dimensions` (parametric NamedDimension values
+// that drive feature Z-depths). A dimension never stores its measured value —
+// the value is recomputed live from its anchors so it follows geometry edits.
+// ============================================================
+
+// What a non-free anchor points at. v1: features + stock + machine origin.
+export type AnchorTarget =
+  | { source: 'feature'; featureId: string }
+  | { source: 'stock' }
+
+// A reference to a live point in the scene. Resolves to a world Point each frame.
+export type DimensionAnchor =
+  | { kind: 'free'; point: Point }                                  // unattached, fixed world point
+  | { kind: 'vertex'; target: AnchorTarget; vertexIndex: number }   // profile vertex (profileVertices order)
+  | { kind: 'midpoint'; target: AnchorTarget; segmentIndex: number }
+  | { kind: 'center'; target: AnchorTarget; segmentIndex: number }  // arc / circle centre
+  | { kind: 'origin' }                                              // machine origin
+
+export type DimensionType =
+  | 'aligned'     // true distance, dimension line parallel to the two points
+  | 'horizontal'  // |Δx| between two points
+  | 'vertical'    // |Δy| between two points
+  | 'radius'      // R of an arc/circle (anchor a = center, anchor b = edge)
+  | 'diameter'    // Ø of an arc/circle
+  | 'angle'       // angle at vertex a between rays to b and c
+
+export interface DimensionAnnotation {
+  id: string                    // 'dim0001'
+  type: DimensionType
+  a: DimensionAnchor            // primary anchor (linear start / arc center / angle vertex)
+  b?: DimensionAnchor           // second anchor (linear end / arc edge / angle ray-1)
+  c?: DimensionAnchor           // third anchor (angle ray-2)
+  offset: number                // perpendicular distance of the dimension line from the
+                                // measured points (world units); sign chooses the side
+  labelOffset?: number          // optional slide of the label along the dimension line (world units)
+  textOverride?: string | null  // optional manual label text (value still computed for tooltip)
+  precisionOverride?: number | null
+  visible: boolean
+  locked: boolean
+}
+
+// ============================================================
 // Constraints
 // ============================================================
 
@@ -458,6 +504,7 @@ export interface Project {
   origin: MachineOrigin
   backdrop: BackdropImage | null
   dimensions: Record<string, NamedDimension>
+  annotations: DimensionAnnotation[]
   modelAssets: Record<string, PersistedImportedMesh>
   features: SketchFeature[]
   featureFolders: FeatureFolder[]
@@ -1106,6 +1153,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
     origin: defaultOrigin(stock),
     backdrop: null,
     dimensions: {},
+    annotations: [],
     modelAssets: {},
     features: [],
     featureFolders: [],

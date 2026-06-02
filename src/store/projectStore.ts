@@ -122,6 +122,8 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
+import { createDimensionsSlice } from './slices/dimensionsSlice'
+import { createDimensionToolSlice } from './slices/dimensionToolSlice'
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput, type FeatureOffset } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
@@ -2880,6 +2882,7 @@ export function normalizeProject(project: Project): Project {
     ...project,
     meta,
     modelAssets,
+    annotations: project.annotations ?? [],
     stock: {
       ...project.stock,
       profile: {
@@ -2932,6 +2935,7 @@ function instantiateProjectTemplate(template?: Project, name?: string): Project 
     },
     backdrop: null,
     dimensions: {},
+    annotations: [],
     modelAssets: {},
     features: [],
     featureFolders: [],
@@ -3147,6 +3151,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     resolveOpenCompositeDraftSegments,
     cloneSegment,
   }),
+  ...createDimensionsSlice(set, get, { cloneProject }),
+  ...createDimensionToolSlice(set, get),
 
   // ── Project ──────────────────────────────────────────────
 

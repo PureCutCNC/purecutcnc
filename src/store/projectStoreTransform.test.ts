@@ -182,6 +182,7 @@ endsolid tri
     origin: { name: 'Origin', x: 0, y: 0, z: 5, visible: true },
     backdrop: null,
     dimensions: {},
+    annotations: [],
     modelAssets: {},
     features: [makeFeature('stl')].map((feature) => ({
       ...feature,
