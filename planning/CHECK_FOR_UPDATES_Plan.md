@@ -49,12 +49,19 @@ Desktop flow on "Check for Updates…":
      browser via `@tauri-apps/plugin-opener`.
    - fetch/parse failure → `message("Couldn't check for updates. …")`.
 
-**Release channel (stable + snapshot):** add an **"Update Channel"** native
-submenu with two `CheckMenuItem`s (Stable / Snapshot), default **Stable**. The
-choice persists in `localStorage`; on startup the frontend reads it and sets the
-check state, and toggling updates both the persisted value and the checkmarks.
-This is the main bit of new plumbing (accessing menu items by id to toggle
-`checked`).
+**Release channel (stable + snapshot):** **confirmed required.** Add an
+**"Update Channel"** native submenu with two `CheckMenuItem`s (Stable /
+Snapshot). The choice persists in `localStorage`; on startup the frontend reads
+it and sets the check state, and toggling updates both the persisted value and
+the checkmarks. This is the main bit of new plumbing (accessing menu items by id
+to toggle `checked`).
+
+**Default channel:** since only snapshot desktop builds are published today
+(stable release publishing isn't set up yet), the **default channel is
+`snapshot`** so the check works out of the box. When the stable manifest is
+absent, a stable-channel check degrades to a clear "No stable release is
+published yet" message rather than a generic error. The default constant is a
+one-line change to flip to `stable` once stable releases exist.
 
 **Web About dialog:** a React modal (following existing dialog patterns, e.g.
 `NewProjectDialog.tsx`) showing version (from the startup `version.json` already
@@ -108,10 +115,10 @@ Rendered only in the browser (desktop uses its native About).
 ## Open questions / risks
 
 - **Native `CheckMenuItem` sync:** toggling/reading channel checkmarks from the
-  frontend requires resolving menu items by id at runtime. If this proves
-  fiddly, the fallback is a plain `localStorage` channel with a single
-  "Check for Updates (incl. pre-releases)" alternate item — flagged, not
-  blocking.
+  frontend requires resolving menu items by id at runtime. Confirmed in scope
+  (channel toggle is required). If runtime checkmark sync proves fiddly, the
+  checkmark visuals can fall back to being set once at startup from the
+  persisted value — the toggle behavior itself still works.
 - **Manifest availability:** a missing channel/platform manifest degrades to the
   "couldn't check" state rather than erroring. No deploy-workflow change needed.
 - **Snapshot semver compare:** prerelease tags must order correctly so a stable
