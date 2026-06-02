@@ -11,7 +11,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## Pending approval
 
 - [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
-- [CHECK_FOR_UPDATES_Plan.md](CHECK_FOR_UPDATES_Plan.md) — user-initiated "check for new version" for web + desktop, surfaced via a new About dialog (web reload prompt; desktop opens download page, with stable/snapshot channel toggle)
+- [CHECK_FOR_UPDATES_Plan.md](CHECK_FOR_UPDATES_Plan.md) — user-initiated "Check for Updates" on desktop (native menu item + stable/snapshot channel, opens download page); web gets only a new About dialog (no update check, since web always loads fresh). Desktop native About left untouched.
 
 ## In progress
 

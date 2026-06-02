@@ -7,115 +7,122 @@ created: 2026-06-02
 
 ## Goal
 
-Let the user manually check whether a newer version of PureCutCNC is available,
-on both the web and desktop (Tauri) builds. The check is **always user-initiated**
-— no automatic or background polling. The user-visible outcome is an **About
-PureCutCNC** dialog that shows the running version and a **Check for updates**
-button which reports one of: "up to date", "a new version is available"
-(with an action to get it), or "couldn't check" (offline/error).
+Let the desktop (Tauri) user manually check whether a newer version of
+PureCutCNC is available, and give the web user an About surface. The check is
+**always user-initiated** — no automatic or background polling.
+
+Scope was refined after review:
+
+- **Web** always loads the freshly deployed bundle on start, so an update check
+  is redundant there. Web gets only a new **About** dialog (version, links,
+  license) — no update check.
+- **Desktop** already has a **native** "About PureCutCNC" item
+  (`PredefinedMenuItem::about` in `src-tauri/src/lib.rs`). We **keep that
+  untouched** and add a separate, user-initiated **"Check for Updates…"** native
+  menu action that reports "up to date", "a new version is available" (with an
+  action to open the download page), or "couldn't check" (offline/error).
 
 ## Approach
 
-Reuse the version infrastructure that already exists:
+Reuse existing infrastructure and the existing native-menu event pattern:
 
-- **Web** is deployed to `purecutcnc.github.io/app/` and `deploy.yml` writes
-  `version.json` (`{version, name, date, url}`) at the app root on every
-  published release. `src/utils/version.ts` already fetches it at startup.
-- **Desktop** stamps `package.json` at build time (`npm version`), and
-  `tauri.conf.json` reads `version` from it, so the running version is available
-  via `@tauri-apps/api/app` `getVersion()`. The mac/win/linux deploy workflows
+- **Desktop running version** comes from `@tauri-apps/api/app` `getVersion()`
+  (Tauri reads it from the `package.json` version stamped at build time).
+- **Desktop "latest" manifest:** the mac/win/linux deploy workflows already
   publish `downloads/{channel}/{platform}.json` (`{version, tag, releaseUrl,
-  assets[]}`, channels `stable`/`snapshot`) to the pages repo — a CORS-friendly
-  "latest release" manifest.
+  assets[]}`, channels `stable`/`snapshot`) to the pages repo. The check fetches
+  `https://purecutcnc.github.io/downloads/{channel}/{platform}.json` — a
+  CORS-friendly, rate-limit-free source.
+- **Native menu wiring:** the Rust shell already forwards menu clicks to the
+  frontend as a `"menu"` event handled by a `switch` in
+  `useDesktopIntegration.ts`. Add a `"check_updates"` menu item (plus a channel
+  submenu, see below) and a matching `case` — no new IPC mechanism.
 
-High-level strategy:
+Desktop flow on "Check for Updates…":
+1. Read current version via `getVersion()`.
+2. Detect platform from the webview `navigator.userAgent` (no OS plugin needed).
+3. Fetch the channel/platform manifest; `compareVersions` against current.
+4. Show the result with the **native dialog** (`@tauri-apps/plugin-dialog`):
+   - up to date → `message("You're on the latest version (x.y.z).")`
+   - newer available → `ask("Version x.y.z is available. Open the download
+     page?")`; on confirm, open `releaseUrl`/first asset URL in the external
+     browser via `@tauri-apps/plugin-opener`.
+   - fetch/parse failure → `message("Couldn't check for updates. …")`.
 
-- Add a platform-agnostic **update-check core** with a semver comparison helper
-  and a `checkForUpdate()` that resolves to a discriminated result
-  (`up-to-date` | `update-available` | `offline`).
-- **Web flow:** capture the startup `version.json` value as the "running"
-  version; on demand, re-fetch `version.json` cache-busted (`cache: 'no-store'`)
-  and compare. If the server version is newer, the loaded bundle is stale →
-  offer **Reload** (`location.reload()`). Standard SPA-update pattern; reliable
-  because GH Pages serves hashed asset filenames + a fresh `version.json`.
-- **Desktop flow:** current version from `getVersion()`; fetch
-  `https://purecutcnc.github.io/downloads/{channel}/{platform}.json`, where
-  platform is detected from the webview `navigator.userAgent` (no OS plugin
-  needed) and channel comes from a user setting (**stable** default, with a
-  **snapshot** opt-in toggle). If newer → offer **Open download page**
-  (`releaseUrl` / first asset URL) in the external browser.
-- **Channel setting:** persist a `updateChannel: 'stable' | 'snapshot'`
-  preference (localStorage-backed, desktop-only UI). Default `stable`.
-- **External-open + version on desktop** require the
-  `@tauri-apps/plugin-opener` plugin (new dep + capability entry). This is the
-  same plugin the `revealInFileManager` stub in `desktop.ts` is already waiting
-  on, so wiring it also unblocks that stub (will be implemented as part of this
-  change since it becomes trivial).
-- **UI:** a new **About PureCutCNC** dialog (version, build date, links,
-  license line) containing the **Check for updates** button and result state.
-  Triggered from a new entry in the existing global/overflow menu in
-  `TopCommandBar`.
+**Release channel (stable + snapshot):** add an **"Update Channel"** native
+submenu with two `CheckMenuItem`s (Stable / Snapshot), default **Stable**. The
+choice persists in `localStorage`; on startup the frontend reads it and sets the
+check state, and toggling updates both the persisted value and the checkmarks.
+This is the main bit of new plumbing (accessing menu items by id to toggle
+`checked`).
+
+**Web About dialog:** a React modal (following existing dialog patterns, e.g.
+`NewProjectDialog.tsx`) showing version (from the startup `version.json` already
+loaded by `version.ts`), build date, project links, and the license line. Opened
+from a new "About" entry in the existing `TopCommandBar` overflow/global menu.
+Rendered only in the browser (desktop uses its native About).
 
 ## Files affected
 
 - *(new)* `src/utils/updateCheck.ts` — `compareVersions()` semver helper,
-  `UpdateResult` type, `checkForUpdate(opts)` orchestrating web vs desktop.
+  `UpdateResult` type, and `checkDesktopUpdate(channel)` that fetches the
+  manifest and classifies the result. (Desktop-only logic; kept pure/injectable
+  for testing.)
 - *(new)* `src/utils/updateCheck.test.ts` — unit tests for `compareVersions`
-  and result classification (newer/older/equal, prerelease tags, malformed).
-- `src/utils/version.ts` — expose the startup version value (cache it) and a
-  helper to re-fetch `version.json` cache-busted; small refactor, no behavior
-  change to `applyVersionToTitle`.
+  (patch/minor/major, prerelease `1.0.0-rc.1 < 1.0.0`, `v`-prefix, malformed)
+  and result classification given injected current/latest values (no network).
 - `src/platform/api.ts` — add `getAppVersion(): Promise<string>` and
   `openExternal(url: string): Promise<void>` to `PlatformApi`.
 - `src/platform/desktop.ts` — implement `getAppVersion` via
-  `@tauri-apps/api/app` `getVersion`, `openExternal` + `revealInFileManager`
-  via `@tauri-apps/plugin-opener`.
-- `src/platform/browser.ts` — `getAppVersion` returns the web running version;
+  `@tauri-apps/api/app`; `openExternal` (+ the existing `revealInFileManager`
+  stub, which this unblocks) via `@tauri-apps/plugin-opener`.
+- `src/platform/browser.ts` — `getAppVersion` returns the web version;
   `openExternal` via `window.open(url, '_blank', 'noopener')`.
-- *(new)* `src/components/about/AboutDialog.tsx` — modal (follows existing
-  dialog patterns, e.g. `NewProjectDialog.tsx`): shows version/build info,
-  Check-for-updates button, result message + contextual action (Reload /
-  Open download page), and (desktop only) the stable/snapshot channel toggle.
-- *(new)* `src/components/about/about.css` (or reuse existing dialog styles) —
-  minimal styling consistent with current dialogs.
-- `src/components/layout/TopCommandBar.tsx` — add an "About / Check for
-  updates" entry to the existing overflow/global menu that opens the dialog.
-- `src/store/` (a small UI slice or existing settings location) — persist
-  `updateChannel` preference. Exact location confirmed during implementation
-  to match how other UI prefs are stored.
-- `src-tauri/capabilities/default.json` — add the `opener` plugin permissions.
-- `src-tauri/Cargo.toml` + `src-tauri/src/lib.rs` — register
-  `tauri-plugin-opener`.
-- `package.json` — add `@tauri-apps/plugin-opener` dependency.
-- `INDEX.md` updates for any new folders (`src/components/about/`).
+- `src/platform/useDesktopIntegration.ts` — add `case 'check_updates'` (run the
+  check + native dialogs) and `case 'channel_stable' | 'channel_snapshot'`
+  (persist + update checkmarks) to the existing menu `switch`; set initial
+  checkmarks from persisted channel during desktop setup.
+- *(new)* `src/components/about/AboutDialog.tsx` — **web** About modal.
+- *(new)* `src/components/about/about.css` *(or reuse existing dialog styles)*.
+- `src/components/layout/TopCommandBar.tsx` — add an "About" entry (web) to the
+  existing overflow/global menu that opens the dialog.
+- `src/utils/version.ts` — expose the cached startup version for the About
+  dialog / `browser.getAppVersion` (small refactor; no behavior change to
+  `applyVersionToTitle`).
+- `src-tauri/src/lib.rs` — add the "Check for Updates…" menu item and the
+  "Update Channel" submenu with two `CheckMenuItem`s; they emit through the
+  existing `on_menu_event` path.
+- `src-tauri/capabilities/default.json` — add `opener` plugin permissions.
+- `src-tauri/Cargo.toml` — register `tauri-plugin-opener`.
+- `package.json` — add `@tauri-apps/plugin-opener`.
+- `INDEX.md` — note the new `src/components/about/` folder.
 
 ## Tests
 
-- `src/utils/updateCheck.test.ts` (runs under the existing `npm test` /
-  `scripts/run-tests.ts` harness): `compareVersions` ordering incl. equal,
-  patch/minor/major, prerelease (`1.0.0-rc.1` < `1.0.0`), `v`-prefix
-  tolerance, and malformed input; classification of `checkForUpdate` results
-  given injected current/latest values (network fetch mocked/injected so the
-  test stays offline).
+- `src/utils/updateCheck.test.ts` under the existing `npm test` /
+  `scripts/run-tests.ts` harness: `compareVersions` ordering incl. equality,
+  prerelease precedence, `v`-prefix tolerance, malformed input; and
+  classification of `checkDesktopUpdate` results from injected current/latest
+  values (network fetch injected so tests stay offline).
 
 ## Open questions / risks
 
-- **Desktop `version.json` is not present in the Tauri bundle** (only
-  `deploy.yml` writes it for the web). Resolved by sourcing the desktop running
-  version from `getVersion()` instead — already reflected above.
-- **Pages-repo manifest availability:** the desktop check depends on
-  `downloads/{channel}/{platform}.json` existing on the pages site. If a
-  channel/platform manifest is missing, the check degrades to the "couldn't
-  check" state rather than erroring. (No code change needed in the deploy
-  workflows for this feature.)
-- **Snapshot semver compare:** prerelease tags must compare correctly so a
-  stable user isn't told a `-snapshot` build is "newer". Covered by tests.
+- **Native `CheckMenuItem` sync:** toggling/reading channel checkmarks from the
+  frontend requires resolving menu items by id at runtime. If this proves
+  fiddly, the fallback is a plain `localStorage` channel with a single
+  "Check for Updates (incl. pre-releases)" alternate item — flagged, not
+  blocking.
+- **Manifest availability:** a missing channel/platform manifest degrades to the
+  "couldn't check" state rather than erroring. No deploy-workflow change needed.
+- **Snapshot semver compare:** prerelease tags must order correctly so a stable
+  user isn't told a `-snapshot` build is "newer". Covered by tests.
 
 ## Out of scope
 
-- Automatic / background update checks or notifications (explicitly excluded —
-  feature is user-initiated only).
-- Tauri's native auto-download/-install updater (would require code-signing
-  keys + signed update manifests not currently set up).
+- Any change to the **desktop native About** dialog (kept as-is).
+- An update check on **web** (redundant — always loads fresh).
+- Automatic / background update checks or notifications.
+- Tauri's native auto-download/-install updater (needs code-signing keys not set
+  up today).
 - Changes to the release/deploy GitHub workflows.
-- In-app changelog rendering (the dialog links to the release page instead).
+- In-app changelog rendering (link to the release page instead).
