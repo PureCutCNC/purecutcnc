@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef } from 'react'
+import { readTextFile } from '@tauri-apps/plugin-fs'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
 
@@ -93,10 +94,9 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
     const cleanups: (() => void)[] = []
 
     async function setup() {
-      const [{ getCurrentWindow }, { listen }, { readTextFile }, { invoke }] = await Promise.all([
+      const [{ getCurrentWindow }, { listen }, { invoke }] = await Promise.all([
         import('@tauri-apps/api/window'),
         import('@tauri-apps/api/event'),
-        import('@tauri-apps/plugin-fs'),
         import('@tauri-apps/api/core'),
       ])
       if (isCancelled) return
