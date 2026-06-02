@@ -55,6 +55,8 @@ import {
 import type { DimensionEditState, OperationDimEdit } from './manualEntry'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
+import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
+import { offsetForCursor } from '../../sketch/dimensions'
 import {
   drawFeature,
   drawMoveGuide,
@@ -104,7 +106,7 @@ import {
   profileVertices,
   rectProfile,
 } from '../../types/project'
-import type { Clamp, Point, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, DimensionAnchor, DimensionAnnotation, Point, SketchFeature, Tab } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
@@ -268,6 +270,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const suppressClickRef = useRef(false)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const activeSnapRef = useRef<ResolvedSnap | null>(null)
+  const draggingDimensionIdRef = useRef<string | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
@@ -326,6 +329,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingOffset,
     pendingShapeAction,
     pendingConstraint,
+    tapeMeasure,
+    pendingDimension,
+    selectedAnnotationId,
+    tapeMeasureClick,
+    clearTapeMeasure,
+    pendingDimensionPick,
+    cancelPendingDimension,
+    addDimensionAnnotation,
+    updateDimensionAnnotation,
+    deleteDimensionAnnotation,
+    selectAnnotation,
     creationTarget,
     selection,
     selectFeature,
@@ -427,6 +441,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const collidingClampIdsRef = useRef(collidingClampIds)
   const snapSettingsRef = useRef(snapSettings)
   const copyCountDraftRef = useRef(copyCountDraft)
+  const tapeMeasureRef = useRef(tapeMeasure)
+  const pendingDimensionRef = useRef(pendingDimension)
+  const selectedAnnotationIdRef = useRef(selectedAnnotationId)
 
   projectRef.current = project
   selectionRef.current = selection
@@ -444,6 +461,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   collidingClampIdsRef.current = collidingClampIds
   snapSettingsRef.current = snapSettings
   copyCountDraftRef.current = copyCountDraft
+  tapeMeasureRef.current = tapeMeasure
+  pendingDimensionRef.current = pendingDimension
+  selectedAnnotationIdRef.current = selectedAnnotationId
   dimensionEditRef.current = dimensionEdit
   constraintEditRef.current = constraintEdit
 
@@ -1024,6 +1044,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       onActiveSnapModeChange?.(null)
     }
   }, [onActiveSnapModeChange])
+
+  // Redraw when measure/dimension transient state changes.
+  useEffect(() => {
+    scheduleDraw()
+  }, [tapeMeasure, pendingDimension, selectedAnnotationId, project.annotations])
 
   useEffect(() => {
     scheduleDraw()
@@ -1950,6 +1975,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
+    // Permanent dimension annotations — resolved live so they follow geometry.
+    drawDimensions(ctx, project, vt, project.meta.units, { selectedId: selectedAnnotationIdRef.current })
+
+    // Transient tape measure overlay.
+    const tape = tapeMeasureRef.current
+    if (tape) {
+      const liveTapePoint = activeSnapRef.current?.point ?? livePointerWorldRef.current
+      drawTapeMeasure(ctx, tape, liveTapePoint, vt, project.meta.units)
+    }
+
+    // In-progress permanent dimension: preview from picked anchors to cursor.
+    const pendingDim = pendingDimensionRef.current
+    if (pendingDim) {
+      const livePreviewPoint = activeSnapRef.current?.point ?? livePointerWorldRef.current
+      drawPendingDimensionPreview(ctx, pendingDim, livePreviewPoint, vt, project, project.meta.units)
+    }
+
     drawSnapIndicator(ctx, activeSnapRef.current, vt)
   }
 
@@ -2640,6 +2682,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    // Measure/dimension placement is handled on click — don't start marquee here.
+    if (event.button === 0 && !pendingAddRef.current && (tapeMeasureRef.current || pendingDimensionRef.current)) {
+      return
+    }
+
     if (selection.mode === 'sketch_edit' && selection.sketchEditTool) {
       return
     }
@@ -2651,6 +2698,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+
+    // ── Begin dragging a dimension annotation to reposition it ──
+    if (
+      event.button === 0 && selection.mode === 'feature'
+      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
+      && !pendingOffset && !pendingShapeAction && !pendingConstraintRef.current
+      && !tapeMeasureRef.current && !pendingDimensionRef.current
+    ) {
+      const hitDim = pickDimensionAt(project, vt, point, 8)
+      if (hitDim) {
+        const dim = project.annotations.find((d) => d.id === hitDim)
+        if (dim && !dim.locked && offsetForCursor(dim, project, world) !== null) {
+          selectAnnotation(hitDim)
+          draggingDimensionIdRef.current = hitDim
+          beginHistoryTransaction()
+          suppressClickRef.current = true
+          return
+        }
+      }
+    }
+
     const control = hitEditableControl(point)
     const hitClampId = findHitClampId(world, project.clamps)
     const hitTabId = findHitTabId(world, project.tabs)
@@ -2737,6 +2805,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
 
+    // ── Dragging a dimension: update its offset to follow the cursor ──
+    if (draggingDimensionIdRef.current) {
+      const dim = project.annotations.find((d) => d.id === draggingDimensionIdRef.current)
+      if (dim) {
+        const off = offsetForCursor(dim, project, world)
+        if (off !== null) {
+          updateDimensionAnnotation(dim.id, { offset: off })
+        }
+      }
+      scheduleDraw()
+      return
+    }
+
     if (touchDragPendingRef.current) {
       const pending = touchDragPendingRef.current
       const dx = point.cx - pending.canvasPoint.cx
@@ -2807,6 +2888,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         || !!pendingMove
         || !!pendingTransform
         || !!pendingOffset
+        || !!tapeMeasureRef.current
+        || !!pendingDimensionRef.current
         || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
         || isDraggingNodeRef.current
         || constraintPicking
@@ -3130,6 +3213,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
+    if (draggingDimensionIdRef.current) {
+      draggingDimensionIdRef.current = null
+      commitHistoryTransaction()
+      scheduleDraw()
+      return
+    }
+
     const canvas = canvasRef.current
     const project = projectRef.current
     const selection = selectionRef.current
@@ -3206,6 +3296,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
     longPressStartRef.current = null
     touchDragPendingRef.current = null
+
+    if (draggingDimensionIdRef.current) {
+      draggingDimensionIdRef.current = null
+      commitHistoryTransaction()
+    }
 
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
@@ -3291,6 +3386,67 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       excludeActiveEditGeometry: constraintRefPickingClick,
     })
     const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
+
+    // ── Tape measure: each click sets/advances the transient measurement ──
+    if (!pendingAdd && tapeMeasureRef.current) {
+      tapeMeasureClick(resolvedSnap.point)
+      return
+    }
+
+    // ── Permanent dimension placement ──
+    const pendingDim = pendingAdd ? null : pendingDimensionRef.current
+    if (pendingDim) {
+      const anchor: DimensionAnchor = resolvedSnap.anchor ?? { kind: 'free', point: resolvedSnap.point }
+      const need = pendingDim.type === 'angle' ? 3 : 2
+      const picked = [pendingDim.a, pendingDim.b, pendingDim.c].filter(Boolean).length
+      if (picked < need) {
+        pendingDimensionPick(anchor)
+        return
+      }
+      // All anchors picked → this click chooses the offset and commits.
+      const temp: DimensionAnnotation = {
+        id: '__commit__',
+        type: pendingDim.type,
+        a: pendingDim.a!,
+        b: pendingDim.b ?? undefined,
+        c: pendingDim.c ?? undefined,
+        offset: 0,
+        visible: true,
+        locked: false,
+        textOverride: null,
+        precisionOverride: null,
+      }
+      const off = offsetForCursor(temp, project, world) ?? 0
+      addDimensionAnnotation({
+        type: pendingDim.type,
+        a: pendingDim.a!,
+        b: pendingDim.b ?? undefined,
+        c: pendingDim.c ?? undefined,
+        offset: off,
+        visible: true,
+        locked: false,
+        textOverride: null,
+        precisionOverride: null,
+      })
+      cancelPendingDimension()
+      return
+    }
+
+    // ── Select an existing dimension annotation (plain select mode) ──
+    if (
+      selection.mode === 'feature'
+      && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset
+      && !pendingShapeAction && !pendingConstraint
+    ) {
+      const hitDim = pickDimensionAt(project, vt, point, 8)
+      if (hitDim) {
+        selectAnnotation(hitDim)
+        return
+      }
+      if (selectedAnnotationIdRef.current) {
+        selectAnnotation(null)
+      }
+    }
 
     if (pendingConstraint && !pendingConstraint.anchor) {
       if (!pickedPoint) {
@@ -4031,6 +4187,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
     const viewState = viewStateRef.current
+
+    // ── Measure & dimension tools ──
+    if (event.key === 'Escape' && tapeMeasureRef.current) {
+      event.preventDefault()
+      clearTapeMeasure()
+      return
+    }
+    if (event.key === 'Escape' && pendingDimensionRef.current) {
+      event.preventDefault()
+      cancelPendingDimension()
+      return
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedAnnotationIdRef.current) {
+      event.preventDefault()
+      deleteDimensionAnnotation(selectedAnnotationIdRef.current)
+      return
+    }
 
     if (event.key === 'Tab' && pendingAdd) {
       const currentEdit = dimensionEditRef.current

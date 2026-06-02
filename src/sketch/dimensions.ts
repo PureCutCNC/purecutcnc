@@ -285,9 +285,9 @@ export function dimensionLayout(dim: DimensionAnnotation, project: Project): Dim
   }
 
   if (dim.type === 'horizontal') {
+    // Dimension line is horizontal, placed `offset` from the points' mid Y.
     const b = resolveAnchor(dim.b!, project)!
-    const anchorY = offset >= 0 ? Math.max(a.y, b.y) : Math.min(a.y, b.y)
-    const yLine = anchorY + offset
+    const yLine = (a.y + b.y) / 2 + offset
     const lineStart = { x: a.x, y: yLine }
     const lineEnd = { x: b.x, y: yLine }
     const mid = lerp(lineStart, lineEnd, 0.5)
@@ -305,9 +305,9 @@ export function dimensionLayout(dim: DimensionAnnotation, project: Project): Dim
   }
 
   if (dim.type === 'vertical') {
+    // Dimension line is vertical, placed `offset` from the points' mid X.
     const b = resolveAnchor(dim.b!, project)!
-    const anchorX = offset >= 0 ? Math.max(a.x, b.x) : Math.min(a.x, b.x)
-    const xLine = anchorX + offset
+    const xLine = (a.x + b.x) / 2 + offset
     const lineStart = { x: xLine, y: a.y }
     const lineEnd = { x: xLine, y: b.y }
     const mid = lerp(lineStart, lineEnd, 0.5)
@@ -373,6 +373,38 @@ export function dimensionLayout(dim: DimensionAnnotation, project: Project): Dim
     startAngle,
     endAngle,
   }
+}
+
+/**
+ * Compute the `offset` value that would place a dimension's line at the given
+ * world cursor position. Used while dragging a dimension to reposition it.
+ * Returns `null` for types whose offset is not cursor-driven (radius/diameter).
+ */
+export function offsetForCursor(dim: DimensionAnnotation, project: Project, cursor: Point): number | null {
+  const a = resolveAnchor(dim.a, project)
+  if (!a) return null
+
+  if (dim.type === 'aligned') {
+    const b = dim.b ? resolveAnchor(dim.b, project) : null
+    if (!b) return null
+    const dir = normalize({ x: b.x - a.x, y: b.y - a.y })
+    const nrm = { x: -dir.y, y: dir.x }
+    return (cursor.x - a.x) * nrm.x + (cursor.y - a.y) * nrm.y
+  }
+  if (dim.type === 'horizontal') {
+    const b = dim.b ? resolveAnchor(dim.b, project) : null
+    if (!b) return null
+    return cursor.y - (a.y + b.y) / 2
+  }
+  if (dim.type === 'vertical') {
+    const b = dim.b ? resolveAnchor(dim.b, project) : null
+    if (!b) return null
+    return cursor.x - (a.x + b.x) / 2
+  }
+  if (dim.type === 'angle') {
+    return Math.hypot(cursor.x - a.x, cursor.y - a.y)
+  }
+  return null
 }
 
 /**
