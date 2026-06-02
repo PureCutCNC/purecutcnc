@@ -457,6 +457,70 @@ function uniqueDescendingZLevels(zLevels: number[]): number[] {
   return [...unique.values()].sort((a, b) => b - a)
 }
 
+/**
+ * Insert micro-Z step levels above each tip in `stepLevels`. A tip is a step
+ * level whose mesh slice has material but where the slice "above" it (the next
+ * step level up, or +∞ if it's the topmost) is empty — that's where the
+ * model's tip first emerges going down. Adds levels at zLower + k * microStepZ
+ * for k = 1, 2, …, stopping as soon as the slice at that Z is empty or the
+ * next step would reach/cross the upper bound. Capped at a defensive maximum
+ * so a degenerate slice can't drive unbounded insertions.
+ *
+ * The augmented step levels let band fills between adjacent micro-Z slices
+ * follow the actual surface slope (Z interpolated between two REAL mesh slice
+ * contours), so the wide shallow-slope cap shoulder that issue #127 surfaces
+ * shrinks to a narrow remaining region around the apex.
+ */
+export function densifyStepLevelsAboveTips(
+  stepLevels: number[],
+  sliceAtZ: (z: number) => ClipperPath[],
+  microStepZ: number,
+): number[] {
+  if (microStepZ <= 0 || stepLevels.length === 0) return stepLevels
+  const sorted = uniqueDescendingZLevels(stepLevels)
+  const inserted: number[] = []
+  const MAX_INSERTIONS_PER_TIP = 100
+
+  const insertAbove = (zLower: number, zUpperBound: number): void => {
+    for (let k = 1; k <= MAX_INSERTIONS_PER_TIP; k += 1) {
+      const z = zLower + k * microStepZ
+      if (z >= zUpperBound - 1e-9) return
+      if (sliceAtZ(z).length === 0) return
+      inserted.push(z)
+    }
+  }
+
+  // Pre-compute slice non-emptiness per level so each level is sliced at most
+  // once during pair scanning.
+  const hasMaterial = sorted.map((z) => sliceAtZ(z).length > 0)
+
+  // Case A: above the topmost-with-material level (the "global" tip). Most
+  // models have one of these; in `Cone.camj` it's z = 1.69 with empty z = 1.75
+  // already present in stepLevels; in `Old-man-simple.camj` the topmost level
+  // 0.75 itself has material and there's no empty level above, so we need to
+  // insert into open air.
+  const firstWithMaterialIdx = hasMaterial.indexOf(true)
+  if (firstWithMaterialIdx >= 0) {
+    const zUpperBound = firstWithMaterialIdx > 0 ? sorted[firstWithMaterialIdx - 1] : Number.POSITIVE_INFINITY
+    insertAbove(sorted[firstWithMaterialIdx], zUpperBound)
+  }
+
+  // Case B: adjacent pair where upper is empty but lower has material — a
+  // secondary tip that emerges below another feature (less common; the global
+  // tip above is handled by case A). Skip the pair that's already case A.
+  for (let i = 0; i + 1 < sorted.length; i += 1) {
+    if (i + 1 === firstWithMaterialIdx) continue
+    if (hasMaterial[i] || !hasMaterial[i + 1]) continue
+    const zUpper = sorted[i]
+    const zLower = sorted[i + 1]
+    if (zUpper - zLower <= microStepZ * 1.001) continue
+    insertAbove(zLower, zUpper)
+  }
+
+  if (inserted.length === 0) return sorted
+  return uniqueDescendingZLevels([...sorted, ...inserted])
+}
+
 function buildWaterlineLevels(
   zLevels: number[],
   sliceAtZ: (z: number) => ClipperPath[],
@@ -1460,9 +1524,22 @@ export function generateFinishSurfaceWaterline(
       : subtractMask
   }
 
-  const coarseLevelBuild = buildWaterlineLevels(stepLevels, sliceAtZ, toolOffset)
+  // Densify the step levels above each tip region with real mesh slices at
+  // microStepZ stepover. The added bands between adjacent micro-Z slices give
+  // cone-matching slope through the linear `projectedBandZAtPoint`
+  // interpolation between two real coarse contours — no heightmap sampling in
+  // the band, so the band-fill bumpy-texture trade-off stays unchanged. The
+  // remaining tip-cap area shrinks to whatever sits above the new topmost
+  // micro-Z level. Gated on the adaptive-refinement flag: when adaptive is
+  // off, the user has asked for pure-coarse stepdown rings only, so the
+  // densifier doesn't add levels the user didn't ask for.
+  const microStepZ = Math.max(0, operation.stepdown / 2)
+  const refinedStepLevels = adaptiveRefinementEnabled
+    ? densifyStepLevelsAboveTips(stepLevels, sliceMeshOnlyAtZ, microStepZ)
+    : stepLevels
+  const coarseLevelBuild = buildWaterlineLevels(refinedStepLevels, sliceAtZ, toolOffset)
   const projectedInputBuild = intersectingAdds.length > 0
-    ? buildWaterlineLevels(stepLevels, sliceMeshOnlyAtZ, toolOffset)
+    ? buildWaterlineLevels(refinedStepLevels, sliceMeshOnlyAtZ, toolOffset)
     : coarseLevelBuild
 
   // Build (or reuse) the mesh heightmap so tip-cap rings can sample the

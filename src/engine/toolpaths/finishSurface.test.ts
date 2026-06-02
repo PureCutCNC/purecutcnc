@@ -13,6 +13,7 @@ import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
 import {
   snapClosedContourEntryToAnchor,
   generateProjectedWaterlineLevels,
+  densifyStepLevelsAboveTips,
   type WaterlineLevelBuild,
 } from './finishSurfaceWaterline'
 import ClipperLib from 'clipper-lib'
@@ -1523,6 +1524,62 @@ function testWaterlineTipCapOuterRingsClimbAlongLinearRamp(): void {
     `expected no adjacent cap rings to stack flat at the same z, found ${plateauRings} (ring min Zs: ${ringMinZs.map((z) => z.toFixed(4)).join(', ')})`)
 }
 
+// Issue #127 follow-up — micro-Z step-up: between the topmost-with-material
+// step level and the apex (where the slice would be empty), insert
+// micro-Z step levels at the configured fine stepover. Each inserted Z must
+// have a real mesh slice; insertions stop when the slice collapses.
+function testDensifyStepLevelsAboveTipsInsertsLevelsUntilSliceCollapses(): void {
+  console.log('Testing densifyStepLevelsAboveTips inserts micro-Z above tips until the slice collapses...')
+  // Synthetic cone-like model: material present for z in [0, 1.75]; empty above.
+  const sliceAtZ = (z: number): ClipperPath[] => {
+    if (z >= 1.75 - 1e-9) return []
+    return [makeSquareCcwContour(10, 5, 1)]
+  }
+  const stepLevels = [1.95, 1.89, 1.83, 1.77, 1.75, 1.69, 1.63] // descending
+  const densified = densifyStepLevelsAboveTips(stepLevels, sliceAtZ, 0.03)
+  // Expect 1.72 inserted between 1.75 (empty) and 1.69 (material). The next
+  // step (1.72 + 0.03 = 1.75) reaches the upper bound, so insertion stops.
+  const expectedInserts = [1.72]
+  for (const z of expectedInserts) {
+    assert(densified.some((v) => Math.abs(v - z) < 1e-9),
+      `expected micro-Z level ${z} to be inserted, got [${densified.join(', ')}]`)
+  }
+  // Original step levels must still be present.
+  for (const z of stepLevels) {
+    assert(densified.some((v) => Math.abs(v - z) < 1e-9),
+      `expected original step level ${z} to be preserved`)
+  }
+  // No NEW insertions in regions where both adjacent levels are empty (above the model).
+  // Original step levels at 1.77, 1.83, 1.89, 1.95 are pre-existing and expected to be preserved.
+  const originalSet = new Set(stepLevels)
+  const newInsertions = densified.filter((v) => !originalSet.has(v))
+  assert(!newInsertions.some((v) => v > 1.75 + 1e-9),
+    `expected no new insertions above modelTopZ, got [${newInsertions.filter((v) => v > 1.75).join(', ')}]`)
+}
+
+// Companion test: when the topmost step level itself has material (the
+// model's tip sits exactly at an existing step level — common when modelTopZ
+// is added to step levels but is also the start of material), the densifier
+// inserts micro-Z levels going up into open air until the slice collapses.
+function testDensifyStepLevelsAboveTipsAtTopmostMaterialLevel(): void {
+  console.log('Testing densifyStepLevelsAboveTips inserts above the topmost-with-material level...')
+  // Material present for z in [0, 0.78]; empty above.
+  const sliceAtZ = (z: number): ClipperPath[] => {
+    if (z >= 0.78 - 1e-9) return []
+    return [makeSquareCcwContour(10, 5, 1)]
+  }
+  // Topmost step level is at 0.75, which has material. No empty level above
+  // it in the array.
+  const stepLevels = [0.75, 0.69, 0.63]
+  const densified = densifyStepLevelsAboveTips(stepLevels, sliceAtZ, 0.02)
+  // Expect insertions at 0.77 (slice at 0.78 empty so stops there).
+  assert(densified.some((v) => Math.abs(v - 0.77) < 1e-9),
+    `expected insertion at 0.77, got [${densified.join(', ')}]`)
+  // Should NOT insert at 0.79 or higher (slice empty there).
+  assert(!densified.some((v) => v > 0.78),
+    `expected no insertions above 0.78, got [${densified.filter((v) => v > 0.78).join(', ')}]`)
+}
+
 // Integration-level companion: a real pyramid mesh through the full waterline
 // pipeline should produce projected cap rings that vary in Z (a true 3D crown)
 // and climb toward the apex, rather than a flat terraced cap.
@@ -2092,6 +2149,8 @@ testWaterlineBallEndmillUsesSideContactZ()
 testWaterlineReachesModelTop()
 testWaterlineTipCapRingsClimbAndAreRound()
 testWaterlineTipCapOuterRingsClimbAlongLinearRamp()
+testDensifyStepLevelsAboveTipsInsertsLevelsUntilSliceCollapses()
+testDensifyStepLevelsAboveTipsAtTopmostMaterialLevel()
 testWaterlineTipCapClimbsToApexOnPyramid()
 testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()

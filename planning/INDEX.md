@@ -11,6 +11,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## Pending approval
 
 - [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
+- [WATERLINE_TIP_MICRO_Z_STEPUP_Plan.md](WATERLINE_TIP_MICRO_Z_STEPUP_Plan.md) — densify the step-levels above tips with real mesh slices at micro-Z stepover so band fills give cone-matching slope and the cap shoulder shrinks (issue #127 follow-up)
 
 ## In progress
 
