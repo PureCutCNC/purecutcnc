@@ -289,19 +289,21 @@ Rendering and pointer interaction in `SketchCanvas.tsx` are validated manually
 
 ## Open questions / risks
 
-1. **Dimension types for v1.** Proposed set: aligned/parallel, horizontal,
-   vertical, radius, diameter, angle. Is that the right scope, or should any be
-   cut/added (e.g. ordinate, baseline/chain) for the first pass?
-2. **Behaviour when an anchored feature is deleted.** Proposed: keep the dimension
-   as *dangling* (drawn muted, with a warning) rather than auto-deleting it, so a
-   delete is non-destructive and re-anchorable. Acceptable, or should deleting a
-   feature also delete its dimensions?
-3. **Tape-measure readout content.** Proposed: distance + Δx + Δy + angle. Too
-   much — just the straight distance — or right?
+**Resolved (confirmed by user 2026-06-02):**
+
+1. **Dimension types for v1.** ✅ Full set — aligned/parallel, horizontal,
+   vertical, radius, diameter, angle.
+2. **Behaviour when an anchored feature is deleted.** ✅ Keep the dimension as
+   *dangling* (drawn muted, with a warning); deleting a feature is non-destructive
+   to its dimensions, which can be re-anchored or deleted.
+3. **Tape-measure readout content.** ✅ Distance + Δx + Δy + angle.
+
+**Still open (sensible defaults proposed; speak up to change):**
+
 4. **Circle default.** When dimensioning a circle, default to diameter (Ø) or
-   radius (R)? (Both available; this is just the default.)
-5. **Anchor targets in v1.** Proposed: features + stock + machine origin. Should
-   tabs/clamps be snappable dimension targets now, or is "later" fine?
+   radius (R)? (Both available; this is just the default. Proposed: diameter.)
+5. **Anchor targets in v1.** Proposed: features + stock + machine origin; tabs and
+   clamps come later. OK to defer tabs/clamps?
 6. **3D / export.** Confirm dimensions stay 2D-sketch-only and are excluded from
    the 3D viewport and any export in v1.
 7. **Field name.** Confirm the new top-level field is `annotations` (kept distinct
