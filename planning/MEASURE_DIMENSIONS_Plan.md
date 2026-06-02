@@ -235,6 +235,27 @@ Annotations are drawing-only. They are ignored by toolpath generation, G-code
 export, the 3D viewport, and simulation in v1. The engine never reads
 `project.annotations`.
 
+## Implementation notes (deviations from the original design)
+
+Captured as built, per the AGENTS mid-flight-update rule:
+
+- **Selection state** is held as a top-level store field `selectedAnnotationId`
+  (plus `tapeMeasure` / `pendingDimension` transient tools) rather than nested in
+  `SelectionState`. This avoids touching the feature-selection sanitize logic and
+  keeps annotation selection isolated.
+- **Toolbar surface**: instead of a button group inside `CreationActions`, the
+  tools live in a self-contained `DimensionPopover` (mirrors `SnapPopover`)
+  rendered in `TopCommandBar`. It exposes a tape-measure toggle and a
+  dimension-type picker (aligned/horizontal/vertical/radius/diameter/angle).
+- **Icon**: the popover uses a small inline SVG ruler glyph, so no change to the
+  `icons.camj` → `icons.svg` build pipeline was required.
+- **Layout offset model**: horizontal/vertical dimension lines are offset from the
+  measured points' *midpoint* (not min/max), which makes drag-to-reposition
+  natural and keeps the offset a single signed scalar.
+- Added `formatAngle` to `src/utils/units.ts` for degree labels.
+- After committing a dimension the placement tool deactivates (one dimension per
+  activation); re-pick a type to place another.
+
 ## Files affected
 
 - `src/types/project.ts` — add `DimensionAnnotation`, `DimensionAnchor`,
@@ -258,11 +279,10 @@ export, the 3D viewport, and simulation in v1. The engine never reads
 - `src/store/projectStore.ts` — wire the new slices into the store.
 - `src/utils/units.ts` — convert `annotations` in `convertProjectUnits`; add
   `formatAngle` if not present.
-- `src/components/layout/Toolbar.tsx` — Measure tool group + buttons.
-- `src/assets/icons.camj` (+ regenerate `public/icons.svg` via `npm run sync-icons`)
-  — `measure` and `dimension` icons.
-- `INDEX.md` files: `src/sketch/`, `src/components/canvas/`, `src/store/slices/`
-  updated for the new files (per the maintenance rule).
+- *(new)* `src/components/layout/DimensionPopover.tsx` — tape toggle + dimension
+  type picker; rendered from `src/components/layout/TopCommandBar.tsx`.
+- `INDEX.md` files: `src/store/INDEX.md` and `src/components/INDEX.md` updated for
+  the new files (per the maintenance rule).
 
 ## Tests
 
