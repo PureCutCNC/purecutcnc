@@ -247,6 +247,7 @@ export interface ProjectStore {
   createNewProject: (template?: Project, name?: string) => void
   setProjectName: (name: string) => void
   setShowFeatureInfo: (visible: boolean) => void
+  setShowDimensions: (visible: boolean) => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void

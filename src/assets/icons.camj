@@ -22610,6 +22610,1143 @@
       "visible": false,
       "locked": false,
       "text": null
+    },
+    {
+      "id": "icon_measure_0",
+      "name": "measure_shape_0",
+      "kind": "composite",
+      "folderId": "folder_measure",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 2,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 22,
+                "y": 8
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 22,
+                "y": 16
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 2,
+                "y": 16
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 2,
+                "y": 8
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_measure_1",
+      "name": "measure_shape_1",
+      "kind": "composite",
+      "folderId": "folder_measure",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 6,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 6,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_measure_2",
+      "name": "measure_shape_2",
+      "kind": "composite",
+      "folderId": "folder_measure",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 10,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 10,
+                "y": 13
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_measure_3",
+      "name": "measure_shape_3",
+      "kind": "composite",
+      "folderId": "folder_measure",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 14,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 14,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_measure_4",
+      "name": "measure_shape_4",
+      "kind": "composite",
+      "folderId": "folder_measure",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 18,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 13
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-aligned_0",
+      "name": "dim-aligned_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-aligned",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5,
+            "y": 19
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 5
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-aligned_1",
+      "name": "dim-aligned_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-aligned",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9.2,
+            "y": 17.6
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 5,
+                "y": 19
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6.4,
+                "y": 14.8
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-aligned_2",
+      "name": "dim-aligned_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-aligned",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 17.6,
+            "y": 9.2
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 5
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 14.8,
+                "y": 6.4
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-horizontal_0",
+      "name": "dim-horizontal_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-horizontal",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 4,
+            "y": 7
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 4,
+                "y": 17
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-horizontal_1",
+      "name": "dim-horizontal_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-horizontal",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 20,
+            "y": 7
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 20,
+                "y": 17
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-horizontal_2",
+      "name": "dim-horizontal_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-horizontal",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 4,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 20,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-horizontal_3",
+      "name": "dim-horizontal_shape_3",
+      "kind": "composite",
+      "folderId": "folder_dim-horizontal",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 8,
+            "y": 9
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 4,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 8,
+                "y": 15
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-horizontal_4",
+      "name": "dim-horizontal_shape_4",
+      "kind": "composite",
+      "folderId": "folder_dim-horizontal",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 16,
+            "y": 9
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 20,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 16,
+                "y": 15
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-vertical_0",
+      "name": "dim-vertical_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-vertical",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 7,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 17,
+                "y": 4
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-vertical_1",
+      "name": "dim-vertical_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-vertical",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 7,
+            "y": 20
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 17,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-vertical_2",
+      "name": "dim-vertical_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-vertical",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-vertical_3",
+      "name": "dim-vertical_shape_3",
+      "kind": "composite",
+      "folderId": "folder_dim-vertical",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 4
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 8
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-vertical_4",
+      "name": "dim-vertical_shape_4",
+      "kind": "composite",
+      "folderId": "folder_dim-vertical",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 9,
+            "y": 16
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 20
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 15,
+                "y": 16
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-radius_0",
+      "name": "dim-radius_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-radius",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 21,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 12,
+                "y": 12
+              },
+              "to": {
+                "x": 21,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-radius_1",
+      "name": "dim-radius_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-radius",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-radius_2",
+      "name": "dim-radius_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-radius",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 18,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-diameter_0",
+      "name": "dim-diameter_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-diameter",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 21,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 12,
+                "y": 12
+              },
+              "to": {
+                "x": 21,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-diameter_1",
+      "name": "dim-diameter_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-diameter",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-diameter_2",
+      "name": "dim-diameter_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-diameter",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 6,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 3,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 6,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-diameter_3",
+      "name": "dim-diameter_shape_3",
+      "kind": "composite",
+      "folderId": "folder_dim-diameter",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 18,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-angle_0",
+      "name": "dim-angle_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-angle",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5,
+            "y": 18
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 21,
+                "y": 18
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-angle_1",
+      "name": "dim-angle_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-angle",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5,
+            "y": 18
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 17,
+                "y": 5
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-angle_2",
+      "name": "dim-angle_shape_2",
+      "kind": "composite",
+      "folderId": "folder_dim-angle",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 18
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 11.4,
+                "y": 15.2
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 9.8,
+                "y": 12.9
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
@@ -23027,6 +24164,41 @@
       "id": "fd0082",
       "name": "constraint",
       "collapsed": true
+    },
+    {
+      "id": "folder_measure",
+      "name": "measure",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-aligned",
+      "name": "dim-aligned",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-horizontal",
+      "name": "dim-horizontal",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-vertical",
+      "name": "dim-vertical",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-radius",
+      "name": "dim-radius",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-diameter",
+      "name": "dim-diameter",
+      "collapsed": true
+    },
+    {
+      "id": "folder_dim-angle",
+      "name": "dim-angle",
+      "collapsed": true
     }
   ],
   "featureTree": [
@@ -23361,6 +24533,34 @@
     {
       "type": "folder",
       "folderId": "fd0082"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_measure"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-aligned"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-horizontal"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-vertical"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-radius"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-diameter"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-angle"
     }
   ],
   "global_constraints": [],

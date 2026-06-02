@@ -447,4 +447,46 @@
     <path d="M 9 10 L 9 12" />
     <path d="M 9 2.0277876989464443 L 9 3" />
   </symbol>
+  <symbol id="measure" viewBox="0 0 24 24">
+    <path d="M 2 8 L 22 8 L 22 16 L 2 16 L 2 8 Z" />
+    <path d="M 6 8 L 6 12" />
+    <path d="M 10 8 L 10 13" />
+    <path d="M 14 8 L 14 12" />
+    <path d="M 18 8 L 18 13" />
+  </symbol>
+  <symbol id="dim-aligned" viewBox="0 0 24 24">
+    <path d="M 5 19 L 19 5" />
+    <path d="M 9.2 17.6 L 5 19 L 6.4 14.8" />
+    <path d="M 17.6 9.2 L 19 5 L 14.8 6.4" />
+  </symbol>
+  <symbol id="dim-horizontal" viewBox="0 0 24 24">
+    <path d="M 4 7 L 4 17" />
+    <path d="M 20 7 L 20 17" />
+    <path d="M 4 12 L 20 12" />
+    <path d="M 8 9 L 4 12 L 8 15" />
+    <path d="M 16 9 L 20 12 L 16 15" />
+  </symbol>
+  <symbol id="dim-vertical" viewBox="0 0 24 24">
+    <path d="M 7 4 L 17 4" />
+    <path d="M 7 20 L 17 20" />
+    <path d="M 12 4 L 12 20" />
+    <path d="M 9 8 L 12 4 L 15 8" />
+    <path d="M 9 16 L 12 20 L 15 16" />
+  </symbol>
+  <symbol id="dim-radius" viewBox="0 0 24 24">
+    <path d="M 21 12 A 9 9 0 1 0 3 12 A 9 9 0 1 0 21 12 Z" />
+    <path d="M 12 12 L 21 12" />
+    <path d="M 18 10 L 21 12 L 18 14" />
+  </symbol>
+  <symbol id="dim-diameter" viewBox="0 0 24 24">
+    <path d="M 21 12 A 9 9 0 1 0 3 12 A 9 9 0 1 0 21 12 Z" />
+    <path d="M 3 12 L 21 12" />
+    <path d="M 6 10 L 3 12 L 6 14" />
+    <path d="M 18 10 L 21 12 L 18 14" />
+  </symbol>
+  <symbol id="dim-angle" viewBox="0 0 24 24">
+    <path d="M 5 18 L 21 18" />
+    <path d="M 5 18 L 17 5" />
+    <path d="M 12 18 L 11.4 15.2 L 9.8 12.9" />
+  </symbol>
 </svg>

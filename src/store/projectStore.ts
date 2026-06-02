@@ -2862,6 +2862,7 @@ export function normalizeProject(project: Project): Project {
   const meta = {
     ...project.meta,
     showFeatureInfo: project.meta.showFeatureInfo ?? true,
+    showDimensions: project.meta.showDimensions ?? true,
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
@@ -3207,6 +3208,32 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         meta: {
           ...s.project.meta,
           ...patch,
+          modified: new Date().toISOString(),
+        },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setShowDimensions: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          showDimensions: visible,
           modified: new Date().toISOString(),
         },
       }

@@ -15,27 +15,18 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
 import type { DimensionType } from '../../types/project'
 
-const DIMENSION_TYPES: { type: DimensionType; label: string; hint: string }[] = [
-  { type: 'aligned', label: 'Aligned', hint: 'Parallel distance between two points' },
-  { type: 'horizontal', label: 'Horizontal', hint: 'Horizontal distance (Δx)' },
-  { type: 'vertical', label: 'Vertical', hint: 'Vertical distance (Δy)' },
-  { type: 'radius', label: 'Radius', hint: 'Radius of an arc/circle' },
-  { type: 'diameter', label: 'Diameter', hint: 'Diameter of an arc/circle' },
-  { type: 'angle', label: 'Angle', hint: 'Angle at a vertex between two points' },
+const DIMENSION_TYPES: { type: DimensionType; icon: string; label: string; hint: string }[] = [
+  { type: 'aligned', icon: 'dim-aligned', label: 'Aligned', hint: 'Parallel distance between two points' },
+  { type: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal', hint: 'Horizontal distance (Δx)' },
+  { type: 'vertical', icon: 'dim-vertical', label: 'Vertical', hint: 'Vertical distance (Δy)' },
+  { type: 'radius', icon: 'dim-radius', label: 'Radius', hint: 'Radius of an arc/circle' },
+  { type: 'diameter', icon: 'dim-diameter', label: 'Diameter', hint: 'Diameter of an arc/circle' },
+  { type: 'angle', icon: 'dim-angle', label: 'Angle', hint: 'Angle at a vertex between two points' },
 ]
-
-/** Small inline ruler glyph so we don't depend on the icon sprite pipeline. */
-function RulerGlyph() {
-  return (
-    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
-      <rect x={2.5} y={7} width={19} height={10} rx={1.5} />
-      <path d="M6.5 7v3M10 7v4M13.5 7v3M17 7v4" />
-    </svg>
-  )
-}
 
 export function DimensionPopover() {
   const [open, setOpen] = useState(false)
@@ -47,6 +38,9 @@ export function DimensionPopover() {
   const clearTapeMeasure = useProjectStore((s) => s.clearTapeMeasure)
   const startDimensionTool = useProjectStore((s) => s.startDimensionTool)
   const cancelPendingDimension = useProjectStore((s) => s.cancelPendingDimension)
+  const showDimensions = useProjectStore((s) => s.project.meta.showDimensions)
+  const setShowDimensions = useProjectStore((s) => s.setShowDimensions)
+  const dimensionCount = useProjectStore((s) => s.project.annotations.length)
 
   const tapeActive = tapeMeasure !== null
   const dimType = pendingDimension?.type ?? null
@@ -90,7 +84,7 @@ export function DimensionPopover() {
           aria-expanded={open}
           onClick={() => setOpen((prev) => !prev)}
         >
-          <RulerGlyph />
+          <Icon id="measure" />
         </button>
         <span className="toolbar-tooltip toolbar-tooltip--bottom" role="tooltip">
           Measure &amp; dimensions
@@ -106,9 +100,18 @@ export function DimensionPopover() {
             >
               {tapeActive ? 'Tape measure on' : 'Tape measure'}
             </button>
+            <button
+              className={`snap-popover-enable-btn ${showDimensions ? 'snap-popover-enable-btn--active' : ''}`}
+              type="button"
+              aria-pressed={showDimensions}
+              title={dimensionCount > 0 ? `${dimensionCount} dimension${dimensionCount === 1 ? '' : 's'}` : 'No dimensions yet'}
+              onClick={() => setShowDimensions(!showDimensions)}
+            >
+              {showDimensions ? 'Dimensions shown' : 'Dimensions hidden'}
+            </button>
           </div>
           <div className="snap-popover-grid">
-            {DIMENSION_TYPES.map(({ type, label, hint }) => {
+            {DIMENSION_TYPES.map(({ type, icon, label, hint }) => {
               const active = dimType === type
               return (
                 <button
@@ -121,6 +124,7 @@ export function DimensionPopover() {
                   title={hint}
                   onClick={() => pickType(type)}
                 >
+                  <Icon id={icon} />
                   <span className="snap-popover-item-label">{label}</span>
                 </button>
               )

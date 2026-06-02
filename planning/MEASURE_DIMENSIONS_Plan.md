@@ -247,8 +247,15 @@ Captured as built, per the AGENTS mid-flight-update rule:
   tools live in a self-contained `DimensionPopover` (mirrors `SnapPopover`)
   rendered in `TopCommandBar`. It exposes a tape-measure toggle and a
   dimension-type picker (aligned/horizontal/vertical/radius/diameter/angle).
-- **Icon**: the popover uses a small inline SVG ruler glyph, so no change to the
-  `icons.camj` → `icons.svg` build pipeline was required.
+- **Icons**: added `measure` + `dim-aligned`/`dim-horizontal`/`dim-vertical`/
+  `dim-radius`/`dim-diameter`/`dim-angle` to `src/assets/icons.camj` and
+  regenerated `public/icons.svg` via `npm run sync-icons`. The popover button and
+  type picker use these via the `Icon` component.
+- **Global show/hide**: `project.meta.showDimensions` (defaults true, persists in
+  `.camj`) gates rendering and hit-testing of all dimensions; toggled from the
+  Measure popover. `setShowDimensions` store action mirrors `setShowFeatureInfo`.
+  Per-dimension visibility (`DimensionAnnotation.visible`) is honored by the
+  renderer but has no dedicated per-item UI yet (future: feature-tree entries).
 - **Layout offset model**: horizontal/vertical dimension lines are offset from the
   measured points' *midpoint* (not min/max), which makes drag-to-reposition
   natural and keeps the offset a single signed scalar.

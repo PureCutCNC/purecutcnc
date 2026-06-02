@@ -1976,7 +1976,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     // Permanent dimension annotations — resolved live so they follow geometry.
-    drawDimensions(ctx, project, vt, project.meta.units, { selectedId: selectedAnnotationIdRef.current })
+    // Hidden entirely when the project-level show-dimensions flag is off.
+    if (project.meta.showDimensions) {
+      drawDimensions(ctx, project, vt, project.meta.units, { selectedId: selectedAnnotationIdRef.current })
+    }
 
     // Transient tape measure overlay.
     const tape = tapeMeasureRef.current
@@ -2705,6 +2708,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
       && !pendingOffset && !pendingShapeAction && !pendingConstraintRef.current
       && !tapeMeasureRef.current && !pendingDimensionRef.current
+      && project.meta.showDimensions
     ) {
       const hitDim = pickDimensionAt(project, vt, point, 8)
       if (hitDim) {
@@ -3437,6 +3441,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       selection.mode === 'feature'
       && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset
       && !pendingShapeAction && !pendingConstraint
+      && project.meta.showDimensions
     ) {
       const hitDim = pickDimensionAt(project, vt, point, 8)
       if (hitDim) {
