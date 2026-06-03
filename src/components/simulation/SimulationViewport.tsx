@@ -27,6 +27,8 @@ import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 
+const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null }
+
 const DEFAULT_CAMERA_SPHERICAL = {
   theta: Math.PI / 4,
   phi: Math.PI / 3,
@@ -599,6 +601,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // building. Drives the spinner so the user has visual feedback while the
   // heavy heightfield + shader-driven boundary mesh is allocated.
   const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
+  const [isPlaybackReady, setIsPlaybackReady] = useState(false)
   // Mirror isActive into a ref so the render loop (raw RAF, not React-driven)
   // can read it without re-binding the closure each prop change.
   const isActiveRef = useRef(isActive)
@@ -624,9 +627,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // concurrent rendering.
   const latestProgressRef = useRef(0)
   // Latest pose from the playback controller — written every RAF frame.
-  const latestPoseRef = useRef<PlaybackPose>({ x: 0, y: 0, z: 0, moveKind: null })
+  const latestPoseRef = useRef<PlaybackPose>(EMPTY_PLAYBACK_POSE)
   // Throttled state for the UI readout — updated at ~10 Hz to avoid re-render churn.
-  const [displayPose, setDisplayPose] = useState<PlaybackPose>({ x: 0, y: 0, z: 0, moveKind: null })
+  const [displayPose, setDisplayPose] = useState<PlaybackPose>(EMPTY_PLAYBACK_POSE)
   const playbackControllerRef = useRef<PlaybackController | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
@@ -886,6 +889,21 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     tool.position.set(pose.x, pose.z, pose.y)
   }, [])
 
+  const resetPlaybackRuntime = useCallback((building: boolean) => {
+    cancelAnimationFrame(playbackFrameRef.current)
+    playbackFrameRef.current = 0
+    playbackLastTimeRef.current = 0
+    playbackLastRebuildRef.current = 0
+    isPlayingRef.current = false
+    setIsPlaying(false)
+    setIsPlaybackReady(false)
+    setIsPlaybackBuilding(building)
+    latestProgressRef.current = 0
+    latestPoseRef.current = EMPTY_PLAYBACK_POSE
+    setPlaybackProgress(0)
+    setDisplayPose(EMPTY_PLAYBACK_POSE)
+  }, [])
+
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) {
@@ -913,12 +931,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         toolMeshRef.current = null
       }
       playbackControllerRef.current = null
-      setIsPlaying(false)
-      latestProgressRef.current = 0
-      setPlaybackProgress(0)
-      setIsPlaybackBuilding(false)
+      resetPlaybackRuntime(false)
       return
     }
+
+    playbackControllerRef.current = null
+    resetPlaybackRuntime(true)
 
     // Defer the heavy mesh build by one RAF so React has time to commit and
     // the browser can paint the "building" spinner before the main thread is
@@ -979,6 +997,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       latestProgressRef.current = 0
       setPlaybackProgress(0)
       updateToolMeshPose()
+      setIsPlaybackReady(true)
       setIsPlaybackBuilding(false)
     })
 
@@ -1005,8 +1024,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         toolMeshRef.current = null
       }
       playbackControllerRef.current = null
+      setIsPlaybackReady(false)
     }
-  }, [playbackEnabled, playbackInput, stockColor, updateToolMeshPose])
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -1120,6 +1140,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return next
     })
   }, [])
+
+  const playbackControlsDisabled = isPlaybackBuilding || !isPlaybackReady
 
   const handlePlayPause = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -1382,6 +1404,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               type="button"
               className="simulation-playback-bar__btn simulation-playback-bar__btn--primary"
               onClick={handlePlayPause}
+              disabled={playbackControlsDisabled}
               title={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying ? '❚❚' : '▶'}
@@ -1390,6 +1413,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               type="button"
               className="simulation-playback-bar__btn"
               onClick={handleStop}
+              disabled={playbackControlsDisabled}
               title="Stop & reset"
             >
               ■
@@ -1406,6 +1430,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               step={1}
               value={Math.round(playbackProgress * 1000)}
               onChange={(event) => handleSeek(Number(event.target.value) / 1000)}
+              disabled={playbackControlsDisabled}
               aria-label="Playback progress"
             />
           </div>
@@ -1425,6 +1450,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               step={1}
               value={multiplierToSliderPosition(playbackMultiplier)}
               onChange={(event) => setPlaybackMultiplier(sliderPositionToMultiplier(Number(event.target.value)))}
+              disabled={playbackControlsDisabled}
               aria-label="Playback speed multiplier"
             />
           </label>
@@ -1436,6 +1462,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             <select
               value={playbackMaxStep}
               onChange={(event) => setPlaybackMaxStep(Number(event.target.value))}
+              disabled={playbackControlsDisabled}
             >
               {stepSizes.map((value) => (
                 <option key={value} value={value}>{value} {playbackUnits}</option>
