@@ -14,7 +14,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-- [CHECK_FOR_UPDATES_Plan.md](CHECK_FOR_UPDATES_Plan.md) — user-initiated "Check for Updates" on desktop (native menu item + stable/snapshot channel, opens download page); web gets only a new About dialog (no update check, since web always loads fresh). Desktop native About left untouched.
 - [WATERLINE_ADAPTIVE_REFINEMENT_Plan.md](WATERLINE_ADAPTIVE_REFINEMENT_Plan.md) — improve imported-model waterline finishing by inserting bounded intermediate contour levels when adjacent bands have small Z separation but large XY drift
 - [WATERLINE_CONTAINING_ADD_FIX_Plan.md](WATERLINE_CONTAINING_ADD_FIX_Plan.md) — fix waterline finish emitting no paths when containing/base add features are mistaken for intersecting walls
 
