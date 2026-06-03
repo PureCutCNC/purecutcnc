@@ -240,6 +240,9 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     waterlineRefinementThreshold: operation.waterlineRefinementThreshold === undefined
       ? undefined
       : convertLength(operation.waterlineRefinementThreshold, from, to),
+    waterlineTipStepdown: operation.waterlineTipStepdown === undefined
+      ? undefined
+      : convertLength(operation.waterlineTipStepdown, from, to),
   }
 }
 

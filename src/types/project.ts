@@ -370,6 +370,7 @@ export interface Operation {
   waterlineMicroStepover?: number
   waterlineRefinementThreshold?: number
   waterlineMaxRingsPerBand?: number
+  waterlineTipStepdown?: number
 }
 
 // ============================================================

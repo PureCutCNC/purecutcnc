@@ -95,6 +95,7 @@ function operationComputationEquals(a: Operation, b: Operation): boolean {
     && a.waterlineMicroStepover === b.waterlineMicroStepover
     && a.waterlineRefinementThreshold === b.waterlineRefinementThreshold
     && a.waterlineMaxRingsPerBand === b.waterlineMaxRingsPerBand
+    && a.waterlineTipStepdown === b.waterlineTipStepdown
   )
 }
 

@@ -2145,6 +2145,7 @@ function defaultOperationForTarget(
     waterlineMicroStepover: defaultWaterlineMicroStepover(tool),
     waterlineRefinementThreshold: 0,
     waterlineMaxRingsPerBand: 0,
+    waterlineTipStepdown: 0,
     ...(kind === 'drilling' ? {
       drillType: 'simple' as const,
       peckDepth: convertLength(2, 'mm', project.meta.units),
@@ -2627,6 +2628,7 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
     waterlineMicroStepover: operation.waterlineMicroStepover ?? 0,
     waterlineRefinementThreshold: operation.waterlineRefinementThreshold ?? 0,
     waterlineMaxRingsPerBand: operation.waterlineMaxRingsPerBand ?? 0,
+    waterlineTipStepdown: operation.waterlineTipStepdown ?? 0,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {

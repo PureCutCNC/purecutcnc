@@ -67,49 +67,18 @@ interface XYPoint {
   y: number
 }
 
-/**
- * Inset a polygon with ROUND joins instead of the project-wide miter joins.
- * Used for tip-cap inset rings so small first-slice polygons (e.g., the nose
- * tip) don't keep getting offset into axis-aligned rectangles. Round joins
- * approximate corners with arc segments whose chord error is bounded by
- * `arcTolerance` — set tight relative to the requested inset distance so the
- * cap rings stay smooth-looking at fine scales.
- */
-function offsetClipperPathsRound(paths: ClipperPath[], delta: number): ClipperPath[] {
-  if (paths.length === 0) return []
-  if (Math.abs(delta) <= 1e-9) return paths
-  // The bundled .d.ts omits ArcTolerance on ClipperOffset; cast to set it.
-  const offset = new ClipperLib.ClipperOffset() as unknown as {
-    ArcTolerance: number
-    AddPaths: (paths: ClipperPath[], joinType: unknown, endType: unknown) => void
-    Execute: (solution: unknown, delta: number) => void
-  }
-  offset.ArcTolerance = Math.max(0.005 * DEFAULT_CLIPPER_SCALE, Math.abs(delta) * DEFAULT_CLIPPER_SCALE * 0.01)
-  offset.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
-  return solution as ClipperPath[]
-}
-
-/**
- * Return a copy of `baseHeightMap` with each intersecting add's `topZ`
- * rasterised into cells whose centres lie inside the add's footprint
- * (max-take). The base heightmap is built from mesh triangles only, so
- * `safeToolTipZAt` queries near an add wall would otherwise see the head's
- * z and let the tool body gouge the add wall above the head's surface.
- *
- * The base heightmap may be cached and shared with the parallel-finish
- * pipeline; we never mutate `baseHeightMap.data` directly — we allocate a
- * fresh `Float32Array`.
- */
 function heightMapWithIntersectingAddTops(
   baseHeightMap: HeightMap,
   intersectingAdds: IntersectingAddFeature[],
 ): HeightMap {
+  if (intersectingAdds.length === 0) return baseHeightMap
+
   const data = new Float32Array(baseHeightMap.data)
   const { width, height, originX, originY, cellSize } = baseHeightMap
+
   for (const add of intersectingAdds) {
     if (add.paths.length === 0) continue
+
     let minX = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
@@ -124,21 +93,22 @@ function heightMapWithIntersectingAddTops(
         if (y > maxY) maxY = y
       }
     }
+
     const colStart = Math.max(0, Math.floor((minX - originX) / cellSize))
     const colEnd = Math.min(width - 1, Math.floor((maxX - originX) / cellSize))
     const rowStart = Math.max(0, Math.floor((minY - originY) / cellSize))
     const rowEnd = Math.min(height - 1, Math.floor((maxY - originY) / cellSize))
-    const topZ = add.topZ
     for (let row = rowStart; row <= rowEnd; row += 1) {
       for (let col = colStart; col <= colEnd; col += 1) {
-        const cx = originX + (col + 0.5) * cellSize
-        const cy = originY + (row + 0.5) * cellSize
-        if (!pointInClipperPaths(add.paths, { x: cx, y: cy })) continue
-        const idx = row * width + col
-        if (topZ > data[idx]) data[idx] = topZ
+        const x = originX + (col + 0.5) * cellSize
+        const y = originY + (row + 0.5) * cellSize
+        if (!pointInClipperPaths(add.paths, { x, y })) continue
+        const index = row * width + col
+        if (add.topZ > data[index]) data[index] = add.topZ
       }
     }
   }
+
   return { ...baseHeightMap, data }
 }
 
@@ -534,9 +504,10 @@ function generateProjectedWaterlineLevels(
   gapThreshold: number,
   maxRingsPerBand: number,
   waterlineLengthEpsilon: number,
-  surfaceZAt: ((point: { x: number; y: number }) => number | null) | null,
   intersectingAdds: IntersectingAddFeature[],
   toolOffset: number,
+  tipStepdownDistance: number,
+  sliceProjectedAtZ: (z: number) => ClipperPath[],
 ): WaterlineLevelBuild & { metrics: WaterlineRefinementMetrics; suppressedCoarsePaths: WaterlineSuppressedPath[] } {
   // Active intersecting-add footprints expanded by toolOffset, so projected
   // band/cap rings can be subtracted away from areas occupied by add features
@@ -593,101 +564,132 @@ function generateProjectedWaterlineLevels(
   // emerged island found as an unmatched lower in the previous pair).
   const processedTipPaths = new Set<ClipperPath>()
 
-  const processTipPath = (
-    levelIndex: number,
-    tipPath: ClipperPath,
-    tipZ: number,
-    peakZ: number,
-  ): boolean => {
-    if (processedTipPaths.has(tipPath)) return true
-    processedTipPaths.add(tipPath)
-    // Suppress the boxy first-slice coarse ring at this z — the inset rings
-    // below will replace it and the ball nose rounds whatever crown remains
-    // after the offsets collapse.
-    suppressCoarsePath(levelIndex, tipPath)
-    suppressedCoarsePaths.push({ z: tipZ, path: tipPath })
+  const projectedContourPathsAtZ = (z: number): ClipperPath[] => {
+    const slice = sliceProjectedAtZ(z)
+    if (slice.length === 0) return []
+    return clipRingsAgainstAdds(offsetClipperPaths(slice, toolOffset), z)
+  }
 
-    // First sweep: collect the inward offsets and remember the deepest
-    // inset that still produced geometry. That distance approximates the
-    // tip's inradius and serves as the "fully collapsed → at the peak"
-    // reference for Z projection.
-    const tipRings: Array<{ paths: ClipperPath[]; distance: number }> = []
-    let maxInsetDistance = 0
+  const emitProjectedBandFill = (
+    upper: WaterlineLevel,
+    lower: WaterlineLevel,
+    lowerPath: ClipperPath,
+    matchedUpperPaths: ClipperPath[],
+    source: 'projectedBand' | 'projectedCap',
+    minimumGap: number,
+  ): boolean => {
+    const gap = maxContourGap(matchedUpperPaths, [lowerPath])
+    if (gap > maxObservedGap) maxObservedGap = gap
+    if (gap <= minimumGap) return true
+
+    const bandPaths = differenceClipperPaths([lowerPath], matchedUpperPaths)
+    if (bandPaths.length === 0) return true
+
     let stoppedByCollapse = false
     for (let step = 1; step <= maxRingsPerBand; step += 1) {
       const distance = step * stepoverDistance
-      // Round joins for tip insets so small first-slice polygons don't keep
-      // producing axis-aligned rectangles. The first-slice shape itself is
-      // miter-derived upstream — we can't undo that here without re-slicing,
-      // but each successive inset under round joins replaces the corners
-      // with arc segments and the visible squareness fades quickly.
-      const tipInwardRaw = offsetClipperPathsRound([tipPath], -distance)
-      if (tipInwardRaw.length === 0) {
+      const inward = offsetClipperPaths([lowerPath], -distance)
+      if (inward.length === 0) {
         stoppedByCollapse = true
         break
       }
-      // Subtract intersecting-add footprints expanded by toolOffset so the
-      // cap rings don't cut through a wedge / cover / etc. that sits over
-      // the mesh tip at this z. Z reference is tipZ since tip caps live in
-      // the tipZ→peakZ band, and the add features in old-man-in-box span
-      // the whole model range — z-aware filtering still works for adds
-      // with limited z range.
-      const tipInward = clipRingsAgainstAdds(tipInwardRaw, tipZ)
-      if (tipInward.length === 0) {
+      const z = lower.z + (upper.z - lower.z) * Math.max(0, Math.min(1, distance / gap))
+      const clippedToBand = clipRingsAgainstAdds(
+        intersectClipperPaths(inward, bandPaths),
+        z,
+      )
+      if (clippedToBand.length === 0) {
         stoppedByCollapse = true
         break
       }
-      tipRings.push({ paths: tipInward, distance })
-      maxInsetDistance = distance
-    }
-    if (!stoppedByCollapse && tipRings.length >= maxRingsPerBand) {
-      hitPassLimit = true
-    }
-    if (tipRings.length === 0) return true
-
-    // Per-point Z. First choice is to sample the actual mesh surface via
-    // the heightmap — that follows the real shape of the island so the
-    // rings climb the flank exactly. Fall back to a linear ramp from tipZ
-    // at the boundary to peakZ at the deepest inset if the heightmap can't
-    // resolve the point (off-mesh sample, etc.) or wasn't provided.
-    const zSpan = peakZ - tipZ
-    const denom = Math.max(maxInsetDistance, waterlineLengthEpsilon)
-    const linearProjection = (point: { x: number; y: number }): number => {
-      if (zSpan === 0) return tipZ
-      const d = distanceToClipperPathBoundary(tipPath, point)
-      return tipZ + Math.min(1, d / denom) * zSpan
-    }
-    const projectZAtPoint = (point: { x: number; y: number }): number => {
-      const sampled = surfaceZAt ? surfaceZAt(point) : null
-      if (sampled === null) return linearProjection(point)
-      // Clamp into [tipZ, peakZ] so a noisy heightmap sample on the steep
-      // flank can't drive the cut above the next-coarse-level rim (which
-      // would already have been finished by the coarse waterline pass) or
-      // below the tip's own first-slice z (which is the floor for this
-      // island cap).
-      const upper = peakZ >= tipZ ? peakZ : tipZ
-      const lower = peakZ >= tipZ ? tipZ : peakZ
-      return Math.min(upper, Math.max(lower, sampled))
-    }
-
-    // Emit one level per ring so each concentric ring carries its own
-    // representative z. Clustering by bbox IoU keeps them in a single
-    // column and the column walker descends them top-down.
-    for (const { paths, distance } of tipRings) {
-      // Representative z for clustering — use the linear estimate so the
-      // sort still gives top-down ring order even when the heightmap-driven
-      // per-vertex projection produces non-monotonic z within a single
-      // ring (e.g., the ring crosses a saddle).
-      const ringZ = zSpan === 0
-        ? tipZ
-        : tipZ + Math.min(1, distance / denom) * zSpan
+      const projectZAtPoint = (point: { x: number; y: number }): number => (
+        matchedUpperPaths.length > 0
+          ? projectedBandZAtPoint(point, upper, lower)
+          : lower.z + (upper.z - lower.z) * Math.max(
+              0,
+              Math.min(1, distanceToClipperPathBoundary(lowerPath, point) / Math.max(gap, waterlineLengthEpsilon)),
+            )
+      )
       if (!emitLevel({
-        z: ringZ,
-        contourPaths: paths,
+        z,
+        contourPaths: clippedToBand,
         projectZAtPoint,
-        source: 'projectedCap',
+        source,
       })) return false
     }
+    if (!stoppedByCollapse) {
+      hitPassLimit = true
+    }
+    return true
+  }
+
+  const processTipStack = (
+    basePath: ClipperPath,
+    baseZ: number,
+    peakZ: number,
+  ): boolean => {
+    type ActiveTipPath = { path: ClipperPath; z: number }
+    let active: ActiveTipPath[] = [{ path: basePath, z: baseZ }]
+    let currentZ = baseZ
+
+    while (!hitCap && currentZ < peakZ - waterlineLengthEpsilon) {
+      const nextZ = Math.min(peakZ, currentZ + tipStepdownDistance)
+      if (nextZ <= currentZ + waterlineLengthEpsilon) break
+      const queryZ = nextZ >= peakZ - waterlineLengthEpsilon
+        ? Math.max(currentZ + waterlineLengthEpsilon, peakZ - waterlineLengthEpsilon)
+        : nextZ
+      const nextContours = projectedContourPathsAtZ(queryZ)
+      if (nextContours.length === 0) {
+        for (const activePath of active) {
+          if (!emitProjectedBandFill(
+            { z: nextZ, contourPaths: [] },
+            { z: activePath.z, contourPaths: [activePath.path] },
+            activePath.path,
+            [],
+            'projectedCap',
+            waterlineLengthEpsilon,
+          )) return false
+        }
+        break
+      }
+
+      const nextActive: ActiveTipPath[] = []
+      const claimedNextContours = new Set<ClipperPath>()
+      for (const activePath of active) {
+        const related = nextContours.filter((path) => (
+          !claimedNextContours.has(path)
+          && pathsAreRelatedForProjectedBand(path, activePath.path)
+        ))
+        if (related.length === 0) {
+          if (!emitProjectedBandFill(
+            { z: nextZ, contourPaths: [] },
+            { z: activePath.z, contourPaths: [activePath.path] },
+            activePath.path,
+            [],
+            'projectedCap',
+            waterlineLengthEpsilon,
+          )) return false
+          continue
+        }
+        if (!emitProjectedBandFill(
+          { z: nextZ, contourPaths: related },
+          { z: activePath.z, contourPaths: [activePath.path] },
+          activePath.path,
+          related,
+          'projectedCap',
+          waterlineLengthEpsilon,
+        )) return false
+        for (const path of related) {
+          claimedNextContours.add(path)
+          nextActive.push({ path, z: nextZ })
+        }
+      }
+
+      if (nextActive.length === 0) break
+      active = nextActive
+      currentZ = nextZ
+    }
+
     return true
   }
 
@@ -705,28 +707,28 @@ function generateProjectedWaterlineLevels(
       }
     }
 
-    // Build a quick lookup so we can size-compare each upper ring against
-    // its matched lower ring when deciding whether it's really an island
-    // tip vs. a vertical-wall continuation.
+    // Build a quick lookup so each local top can start from the first real
+    // stepdown shape below it, then climb back upward through real sliced
+    // micro-levels.
     const upperToMatchedLower = new Map<ClipperPath, ClipperPath>()
+    const upperToMatchedLowerIndex = new Map<ClipperPath, number>()
     for (const [lowerIndex, matchedUpperPaths] of matches) {
       const matchedLower = lower.contourPaths[lowerIndex]
       for (const upperPath of matchedUpperPaths) {
         upperToMatchedLower.set(upperPath, matchedLower)
+        upperToMatchedLowerIndex.set(upperPath, lowerIndex)
       }
     }
+    const capBaseLowerIndices = new Set<number>()
+    const capBaseGroups = new Map<number, { lowerPath: ClipperPath; upperPaths: ClipperPath[]; peakZ: number }>()
+    const unbasedLocalTopPaths: ClipperPath[] = []
 
     // Tip processing for upper-level rings. A ring qualifies as an island
-    // top when:
-    //   (a) it's a CCW outer ring (positive signed area) — CW hole/pocket
-    //       rims are depressions, not bumps, and must not be inset, and
-    //   (b) either it was marked forced (lower had no upper match in the
-    //       previous pair → island birth) or it has no analog at the
-    //       higher level AND its matched lower ring is significantly
-    //       larger (the island grows going down, which is what
-    //       distinguishes a tip from a vertical-walled feature).
-    // When it qualifies, suppress the boxy first-slice ring and emit inward
-    // concentric offsets of the tip itself to collapse.
+    // top when it is an outer ring and either it was born at this level or
+    // it has no higher-level parent while growing as Z descends. Instead of
+    // inventing inward cap offsets from the tiny first-slice contour, start
+    // from the first real stepdown shape and insert real sliced micro-levels
+    // upward until the island collapses into air.
     for (const upperPath of upper.contourPaths) {
       if (hitCap) break
       if (processedTipPaths.has(upperPath)) continue
@@ -742,82 +744,51 @@ function generateProjectedWaterlineLevels(
       const isLocalTop = forcedLocalTopPaths.has(upperPath)
         || (!upperPathHasHigherParent(upperPath, higher) && isShrinkingFromLower)
       if (!isLocalTop) continue
-      // Peak-Z estimate: the next coarse level UP is the first z where the
-      // tip had no material — the actual peak sits in (upper.z, higher.z].
-      // Using higher.z as the upper bound gives the inset rings a sensible
-      // ramp from tipZ at the boundary up toward the level above. When the
-      // tip sits at the topmost level there's no higher level to ramp to,
-      // so the inset rings stay flat at upper.z (which is already model
-      // top, so there's nothing to ramp toward).
+
+      processedTipPaths.add(upperPath)
       const peakZ = higher ? higher.z : upper.z
-      if (!processTipPath(i, upperPath, upper.z, peakZ)) break
+      suppressCoarsePath(i, upperPath)
+      suppressedCoarsePaths.push({ z: upper.z, path: upperPath })
+      if (matchedLowerPath) {
+        const matchedLowerIndex = upperToMatchedLowerIndex.get(upperPath)
+        if (matchedLowerIndex !== undefined) {
+          const group = capBaseGroups.get(matchedLowerIndex) ?? {
+            lowerPath: matchedLowerPath,
+            upperPaths: [],
+            peakZ,
+          }
+          group.upperPaths.push(upperPath)
+          group.peakZ = Math.max(group.peakZ, peakZ)
+          capBaseGroups.set(matchedLowerIndex, group)
+        }
+      } else {
+        unbasedLocalTopPaths.push(upperPath)
+      }
+    }
+
+    for (const [lowerIndex, group] of capBaseGroups) {
+      if (hitCap) break
+      capBaseLowerIndices.add(lowerIndex)
+      if (!processTipStack(group.lowerPath, lower.z, group.peakZ)) break
+    }
+
+    for (const upperPath of unbasedLocalTopPaths) {
+      if (hitCap) break
+      const peakZ = higher ? higher.z : upper.z
+      if (!processTipStack(upperPath, upper.z, peakZ)) break
     }
 
     for (const [lowerIndex, matchedUpperPaths] of matches) {
       if (hitCap) break
+      if (capBaseLowerIndices.has(lowerIndex)) continue
       const lowerPath = lower.contourPaths[lowerIndex]
-      const gap = maxContourGap(matchedUpperPaths, [lowerPath])
-      if (gap > maxObservedGap) maxObservedGap = gap
-      if (gap <= gapThreshold) continue
-
-      const bandPaths = differenceClipperPaths([lowerPath], matchedUpperPaths)
-      if (bandPaths.length === 0) continue
-
-      const localUpper: WaterlineLevel = {
+      if (!emitProjectedBandFill({
         ...upper,
         contourPaths: matchedUpperPaths,
-      }
-      const localLower: WaterlineLevel = {
+      }, {
         ...lower,
         contourPaths: [lowerPath],
-      }
-      // Band fill: project micro-offset rings into the band between the
-      // matched upper and lower contours. Tip caps are handled separately in
-      // the local-top pass above, so this loop emits band rings only.
-      //
-      // Per-vertex Z uses the existing linear XY interpolation between
-      // upper and lower contour boundaries (`projectedBandZAtPoint`). We
-      // tried switching this to a heightmap-derived per-vertex Z too, but
-      // bands cover most of the model surface and the heightmap's cell-size
-      // quantization shows up as visible roughness across the entire face.
-      // The linear ramp is visually smoother for the large band areas; the
-      // tip caps still use the heightmap because their footprint is small
-      // and the accuracy of following the actual surface matters most
-      // there.
-      let stoppedByCollapse = false
-      for (let step = 1; step <= maxRingsPerBand; step += 1) {
-        const distance = step * stepoverDistance
-        const inward = offsetClipperPaths([lowerPath], -distance)
-        if (inward.length === 0) {
-          stoppedByCollapse = true
-          break
-        }
-        const z = lower.z + (upper.z - lower.z) * Math.max(0, Math.min(1, distance / gap))
-        // Clip band against bandPaths AND subtract intersecting-add
-        // footprints (expanded by toolOffset). Mesh-only band inputs ignore
-        // the wedge/cover, so without this subtraction the band rings cut
-        // through any intersecting add that sits on top of the mesh.
-        const clippedToBand = clipRingsAgainstAdds(
-          intersectClipperPaths(inward, bandPaths),
-          z,
-        )
-        if (clippedToBand.length === 0) {
-          stoppedByCollapse = true
-          break
-        }
-        const projectZAtPoint = (point: { x: number; y: number }): number => (
-          projectedBandZAtPoint(point, localUpper, localLower)
-        )
-        if (!emitLevel({
-          z,
-          contourPaths: clippedToBand,
-          projectZAtPoint,
-          source: 'projectedBand',
-        })) break
-      }
-      if (!stoppedByCollapse) {
-        hitPassLimit = true
-      }
+      }, lowerPath, matchedUpperPaths, 'projectedBand', gapThreshold)) break
     }
   }
 
@@ -832,7 +803,8 @@ function generateProjectedWaterlineLevels(
       if (hitCap) break
       if (processedTipPaths.has(path)) continue
       if (!forcedLocalTopPaths.has(path)) continue
-      if (!processTipPath(lastIndex, path, lastLevel.z, peakZForLast)) break
+      processedTipPaths.add(path)
+      if (!processTipStack(path, lastLevel.z, peakZForLast)) break
     }
   }
 
@@ -1192,6 +1164,12 @@ export function generateFinishSurfaceWaterline(
       ),
     ),
   )
+  const tipStepdownDistance = Math.max(
+    operation.waterlineTipStepdown && operation.waterlineTipStepdown > 0
+      ? operation.waterlineTipStepdown
+      : operation.stepdown / 2,
+    waterlineLengthEpsilon,
+  )
   const adaptiveRefinementEnabled = operation.waterlineAdaptiveRefinement ?? true
 
   const regionMask = buildRegionMask(regionFeatures)
@@ -1211,6 +1189,7 @@ export function generateFinishSurfaceWaterline(
     warnings.push(
       `Debug: waterline mode, adaptive=${adaptiveRefinementEnabled ? 'on' : 'off'}, ` +
       `spacing=${stepoverDistance.toFixed(4)}, triggerGap=${refinementGapThreshold.toFixed(4)}, ` +
+      `tipStepdown=${tipStepdownDistance.toFixed(4)}, ` +
       `maxRingsPerBand=${maxRingsPerBand}, epsilon=${waterlineLengthEpsilon.toFixed(6)}, ` +
       `toolOffset=${toolOffset.toFixed(4)}`,
     )
@@ -1312,14 +1291,14 @@ export function generateFinishSurfaceWaterline(
   }
 
   const coarseLevelBuild = buildWaterlineLevels(stepLevels, sliceAtZ, toolOffset)
+  const projectedSliceAtZ = intersectingAdds.length > 0 ? sliceMeshOnlyAtZ : sliceAtZ
   const projectedInputBuild = intersectingAdds.length > 0
-    ? buildWaterlineLevels(stepLevels, sliceMeshOnlyAtZ, toolOffset)
+    ? buildWaterlineLevels(stepLevels, projectedSliceAtZ, toolOffset)
     : coarseLevelBuild
 
-  // Build (or reuse) the mesh heightmap so tip-cap rings can sample the
-  // actual surface Z instead of relying on a linear ramp between adjacent
-  // coarse levels. Cell size mirrors the parallel-finish choice so a project
-  // that runs both strategies pays the build cost once.
+  // Build (or reuse) the mesh heightmap for intersecting-add plunge/split
+  // safety later in this function. Cell size mirrors the parallel-finish
+  // choice so a project that runs both strategies pays the build cost once.
   const heightMapBbox = computeXYBounds(stlData.positions)
   const requestedCellSize = Math.min(tool.radius / 3, stepoverDistance * 0.5)
   const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, requestedCellSize, warnings)
@@ -1330,29 +1309,7 @@ export function generateFinishSurfaceWaterline(
     heightMapBbox,
     heightMapCellSize,
   )
-  // The base heightmap is built from the mesh only. For an intersecting add
-  // that stands taller than the local mesh surface (e.g., the wedge in
-  // old-man-in-box.camj rising to z=0.75 above the head's mesh), the raw
-  // heightmap returns the head's z under the wedge — so safeToolTipZAt
-  // sampling near the wedge wall sees only the head's z and the tool body
-  // gouges the wedge wall. Rasterise each intersecting add's topZ into
-  // cells whose centres fall inside the add's footprint (max-take) so the
-  // wedge becomes a constraint in the kinematic safety scan.
-  const heightMap = intersectingAdds.length > 0
-    ? heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
-    : baseHeightMap
-  // Kinematic-safe tool-tip Z, NOT the geometric surface Z. For a ball-end
-  // tool, the tool body would gouge any nearby surface that's higher than
-  // the tool tip; safeToolTipZAt scans every cell within toolRadius and
-  // returns the most-constraining tip Z (cellZ - R + sqrt(R² - d²)). Using
-  // the raw geometric surface Z (queryHeightMapTopZ) would put the cut
-  // below the safe tip Z on every slope — producing the chewed-up "rough"
-  // surface we saw before this fix.
-  const surfaceZAt = (point: { x: number; y: number }): number | null => {
-    const z = safeToolTipZAt(point.x, point.y, heightMap, tool)
-    return Number.isFinite(z) ? z : null
-  }
-
+  const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
   const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
     ? generateProjectedWaterlineLevels(
         projectedInputBuild,
@@ -1360,9 +1317,10 @@ export function generateFinishSurfaceWaterline(
         refinementGapThreshold,
         maxRingsPerBand,
         waterlineLengthEpsilon,
-        surfaceZAt,
         intersectingAdds,
         toolOffset,
+        tipStepdownDistance,
+        projectedSliceAtZ,
       )
     : null
   const coarseLevelsWithSuppressedCaps = projectedLevelBuild
@@ -1425,8 +1383,8 @@ export function generateFinishSurfaceWaterline(
 
   // Flatten waterlineLevels into individual closed-ring entries. Each level may
   // carry multiple disjoint paths (outer-wall + pocket-walls + island-walls);
-  // we machine each column (cluster of rings sharing an XY locus) top-to-bottom
-  // so the tool finishes one feature before traveling to the next.
+  // we machine each column (cluster of rings sharing an XY locus) as a unit so
+  // the tool finishes one feature before traveling to the next.
   interface RingEntry {
     z: number
     path: ClipperPath
@@ -1509,7 +1467,13 @@ export function generateFinishSurfaceWaterline(
   }
   const clusters: RingEntry[][] = [...clusterMap.values()]
   for (const cluster of clusters) {
-    cluster.sort((a, b) => b.z - a.z)
+    const realWaterlines = cluster
+      .filter((entry) => !entry.source)
+      .sort((a, b) => b.z - a.z)
+    const projectedFills = cluster
+      .filter((entry) => entry.source)
+      .sort((a, b) => a.z - b.z)
+    cluster.splice(0, cluster.length, ...realWaterlines, ...projectedFills)
   }
 
   const machiningEnvelopePaths = unionClipperPaths(
@@ -1558,6 +1522,10 @@ export function generateFinishSurfaceWaterline(
   const entrySnapTolerance = Math.min(
     Math.max(waterlineLengthEpsilon, stepoverDistance * 0.5),
     maxEntrySnapTolerance,
+  )
+  const columnLinkDistance = Math.max(
+    waterlineLengthEpsilon,
+    Math.min(stepoverDistance * 1.5, tool.radius * 0.5),
   )
 
   // Intersecting-add proximity test for plunge safety. Build the union of
@@ -1608,11 +1576,13 @@ export function generateFinishSurfaceWaterline(
     }
     const cluster = remainingClusters.splice(chosenIdx, 1)[0]
 
-    // Walk this column top → bottom. Each ring's start is rotated to the
-    // vertex closest to the previous ring's end so the descent between Z
-    // levels lands at the same XY → transitionToCutEntry emits a single
-    // plunge (phase 2) instead of retract+rapid+plunge.
+    // Walk this column with real waterline boundaries first, followed by
+    // generated projected fill rings. Each ring's start is rotated to the
+    // vertex closest to the previous ring's end so nearby column transitions
+    // can reuse XY instead of retracting to safe Z.
+    let previousRingHadCut = false
     for (const ringEntry of cluster) {
+      let emittedRingCut = false
       const protectionQueryZ = ringEntry.z
       const protectedAtLevel = protectedPathsAtZ(protectionQueryZ)
       const envelopeClippedRaw = contourClipEnvelope
@@ -1625,7 +1595,10 @@ export function generateFinishSurfaceWaterline(
             ringEntry.projectZAtPoint ? Math.max(toolOffset * 2, stepoverDistance * 4) : toolOffset * 2,
           )
         : envelopeClippedRaw
-      if (envelopeClipped.paths.length === 0) continue
+      if (envelopeClipped.paths.length === 0) {
+        previousRingHadCut = false
+        continue
+      }
 
       // Additionally clip to the containing-subtract pocket active at this
       // ring's z. For stepped-pocket setups (old-man-in-box.camj), at z
@@ -1636,7 +1609,10 @@ export function generateFinishSurfaceWaterline(
       const machiningClipped = activeMachiningRegion
         ? clipContourBoundariesToRegion(envelopeClipped.paths, activeMachiningRegion)
         : envelopeClipped
-      if (machiningClipped.paths.length === 0) continue
+      if (machiningClipped.paths.length === 0) {
+        previousRingHadCut = false
+        continue
+      }
       const machiningClippedTrimmed = activeMachiningRegion
         ? trimOpenContourCaps(
             machiningClipped.paths,
@@ -1644,7 +1620,10 @@ export function generateFinishSurfaceWaterline(
             ringEntry.projectZAtPoint ? Math.max(toolOffset * 2, stepoverDistance * 4) : toolOffset * 2,
           )
         : machiningClipped
-      if (machiningClippedTrimmed.paths.length === 0) continue
+      if (machiningClippedTrimmed.paths.length === 0) {
+        previousRingHadCut = false
+        continue
+      }
       // Clip the contour boundary (treated as a polyline) against protected
       // regions. Where a contour passes through an add-feature / clamp / tab,
       // the resulting OPEN polyline segments break around the protected region
@@ -1658,7 +1637,10 @@ export function generateFinishSurfaceWaterline(
           )
         : machiningClippedTrimmed
 
-      if (clippedPaths.length === 0) continue
+      if (clippedPaths.length === 0) {
+        previousRingHadCut = false
+        continue
+      }
 
       const pointContours = clipperPathsToPointContoursForWaterline(clippedPaths)
 
@@ -1755,7 +1737,7 @@ export function generateFinishSurfaceWaterline(
           ? (point: XYPoint): number => {
               const baseZ = zAtPoint(point)
               if (isNearMeshBoundary(point)) return baseZ
-              const safeMeshZ = safeToolTipZAt(point.x, point.y, baseHeightMap, tool)
+              const safeMeshZ = safeToolTipZAt(point.x, point.y, safetyHeightMap, tool)
               return Number.isFinite(safeMeshZ)
                 ? Math.max(baseZ, safeMeshZ + stepoverDistance * 0.5)
                 : baseZ
@@ -1772,7 +1754,7 @@ export function generateFinishSurfaceWaterline(
               contour,
               isClosed,
               zAtPoint,
-              baseHeightMap,
+              safetyHeightMap,
               tool,
               Math.max(1e-5, Math.min(stepoverDistance / 2, tool.radius / 4)),
               waterlineLengthEpsilon,
@@ -1782,6 +1764,7 @@ export function generateFinishSurfaceWaterline(
             )
           : [{ contour, closed: isClosed }]
 
+        let canLinkFromPreviousRing = previousRingHadCut && protectedAtLevel.length === 0
         for (const safeRun of safeRuns) {
           if (safeRun.contour.length < 2) continue
           if (!safeRun.closed && contourPolylineLength(safeRun.contour, false) <= Math.max(toolOffset * 0.5, stepoverDistance)) {
@@ -1804,7 +1787,19 @@ export function generateFinishSurfaceWaterline(
           ) {
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
           }
-          currentPosition = transitionToCutEntry(allMoves, currentPosition, entry, safeZ, 0)
+          const moveCountBeforeTransition = allMoves.length
+          currentPosition = transitionToCutEntry(
+            allMoves,
+            currentPosition,
+            entry,
+            safeZ,
+            canLinkFromPreviousRing ? columnLinkDistance : 0,
+          )
+          const transitionMove = allMoves[moveCountBeforeTransition]
+          if (transitionMove?.kind === 'cut' && ringEntry.source) {
+            transitionMove.source = ringEntry.source
+          }
+          canLinkFromPreviousRing = false
           const cutMovesForContour = intersectingAdds.length > 0 || ringEntry.projectZAtPoint
             ? toProjectedCutMoves(safeRun.contour, safeRun.closed, liftedZAtPoint, ringEntry.source)
             : safeRun.closed
@@ -1817,8 +1812,10 @@ export function generateFinishSurfaceWaterline(
             allStepLevels.add(move.to.z)
           }
           currentPosition = simplified.at(-1)?.to ?? entry
+          emittedRingCut = emittedRingCut || simplified.length > 0
         }
       }
+      previousRingHadCut = emittedRingCut
     }
   }
 
