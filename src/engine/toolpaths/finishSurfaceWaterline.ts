@@ -67,6 +67,51 @@ interface XYPoint {
   y: number
 }
 
+function heightMapWithIntersectingAddTops(
+  baseHeightMap: HeightMap,
+  intersectingAdds: IntersectingAddFeature[],
+): HeightMap {
+  if (intersectingAdds.length === 0) return baseHeightMap
+
+  const data = new Float32Array(baseHeightMap.data)
+  const { width, height, originX, originY, cellSize } = baseHeightMap
+
+  for (const add of intersectingAdds) {
+    if (add.paths.length === 0) continue
+
+    let minX = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    for (const path of add.paths) {
+      for (const point of path) {
+        const x = point.X / DEFAULT_CLIPPER_SCALE
+        const y = point.Y / DEFAULT_CLIPPER_SCALE
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+
+    const colStart = Math.max(0, Math.floor((minX - originX) / cellSize))
+    const colEnd = Math.min(width - 1, Math.floor((maxX - originX) / cellSize))
+    const rowStart = Math.max(0, Math.floor((minY - originY) / cellSize))
+    const rowEnd = Math.min(height - 1, Math.floor((maxY - originY) / cellSize))
+    for (let row = rowStart; row <= rowEnd; row += 1) {
+      for (let col = colStart; col <= colEnd; col += 1) {
+        const x = originX + (col + 0.5) * cellSize
+        const y = originY + (row + 0.5) * cellSize
+        if (!pointInClipperPaths(add.paths, { x, y })) continue
+        const index = row * width + col
+        if (add.topZ > data[index]) data[index] = add.topZ
+      }
+    }
+  }
+
+  return { ...baseHeightMap, data }
+}
+
 /**
  * Clip contour/polyline boundaries against `clipPaths`, preserving either the
  * parts that lie INSIDE or OUTSIDE the clip region.
@@ -1264,6 +1309,7 @@ export function generateFinishSurfaceWaterline(
     heightMapBbox,
     heightMapCellSize,
   )
+  const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
   const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
     ? generateProjectedWaterlineLevels(
         projectedInputBuild,
@@ -1479,7 +1525,7 @@ export function generateFinishSurfaceWaterline(
   )
   const columnLinkDistance = Math.max(
     waterlineLengthEpsilon,
-    Math.min(stepoverDistance * 1.5, tool.radius),
+    Math.min(stepoverDistance * 1.5, tool.radius * 0.5),
   )
 
   // Intersecting-add proximity test for plunge safety. Build the union of
@@ -1691,7 +1737,7 @@ export function generateFinishSurfaceWaterline(
           ? (point: XYPoint): number => {
               const baseZ = zAtPoint(point)
               if (isNearMeshBoundary(point)) return baseZ
-              const safeMeshZ = safeToolTipZAt(point.x, point.y, baseHeightMap, tool)
+              const safeMeshZ = safeToolTipZAt(point.x, point.y, safetyHeightMap, tool)
               return Number.isFinite(safeMeshZ)
                 ? Math.max(baseZ, safeMeshZ + stepoverDistance * 0.5)
                 : baseZ
@@ -1708,7 +1754,7 @@ export function generateFinishSurfaceWaterline(
               contour,
               isClosed,
               zAtPoint,
-              baseHeightMap,
+              safetyHeightMap,
               tool,
               Math.max(1e-5, Math.min(stepoverDistance / 2, tool.radius / 4)),
               waterlineLengthEpsilon,

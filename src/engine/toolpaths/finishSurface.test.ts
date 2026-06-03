@@ -1216,9 +1216,14 @@ function testWaterlineTipCapFillsCollapsedBranch(): void {
     && Math.max(move.from.z, move.to.z) > 2.55
   ))
   const hasRisingInnerMove = lowerPeakInnerCuts.some((move) => Math.abs(move.from.z - move.to.z) > 1e-6)
+  const maxLowerPeakInnerZ = lowerPeakInnerCuts.length > 0
+    ? Math.max(...lowerPeakInnerCuts.flatMap((move) => [move.from.z, move.to.z]))
+    : Number.NEGATIVE_INFINITY
 
   assert(lowerPeakInnerCuts.length > 0,
     `expected projected cap cuts inside the lower collapsed peak, got none; debug: ${result.warnings.join('; ')}`)
+  assert(maxLowerPeakInnerZ > 2.85,
+    `expected collapsed peak cap to reach near the lower apex, got max Z ${maxLowerPeakInnerZ}`)
   assert(hasRisingInnerMove,
     'expected collapsed peak cap to use projected Z interpolation instead of a flat fill')
 }
