@@ -122,6 +122,8 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
+import { createDimensionsSlice } from './slices/dimensionsSlice'
+import { createDimensionToolSlice } from './slices/dimensionToolSlice'
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput, type FeatureOffset } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
@@ -2862,6 +2864,7 @@ export function normalizeProject(project: Project): Project {
   const meta = {
     ...project.meta,
     showFeatureInfo: project.meta.showFeatureInfo ?? true,
+    showDimensions: project.meta.showDimensions ?? true,
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
@@ -2882,6 +2885,7 @@ export function normalizeProject(project: Project): Project {
     ...project,
     meta,
     modelAssets,
+    annotations: project.annotations ?? [],
     stock: {
       ...project.stock,
       profile: {
@@ -2934,6 +2938,7 @@ function instantiateProjectTemplate(template?: Project, name?: string): Project 
     },
     backdrop: null,
     dimensions: {},
+    annotations: [],
     modelAssets: {},
     features: [],
     featureFolders: [],
@@ -3149,6 +3154,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     resolveOpenCompositeDraftSegments,
     cloneSegment,
   }),
+  ...createDimensionsSlice(set, get, { cloneProject }),
+  ...createDimensionToolSlice(set, get),
 
   // ── Project ──────────────────────────────────────────────
 
@@ -3203,6 +3210,32 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         meta: {
           ...s.project.meta,
           ...patch,
+          modified: new Date().toISOString(),
+        },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      if (s.history.transactionStart) {
+        return { project: nextProject }
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setShowDimensions: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        meta: {
+          ...s.project.meta,
+          showDimensions: visible,
           modified: new Date().toISOString(),
         },
       }

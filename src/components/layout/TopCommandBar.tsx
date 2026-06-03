@@ -6,6 +6,7 @@ import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { SnapPopover } from './SnapPopover'
+import { DimensionPopover } from './DimensionPopover'
 
 interface TopCommandBarProps {
   centerTab: 'sketch' | 'preview3d' | 'simulation'
@@ -198,6 +199,7 @@ export function TopCommandBar({
             onToggleSnapEnabled={onToggleSnapEnabled}
             onToggleSnapMode={onToggleSnapMode}
           />
+          <DimensionPopover />
           <button
             className="top-cmd-btn top-cmd-btn--operations"
             type="button"

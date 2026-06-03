@@ -892,6 +892,10 @@
   text-overflow: ellipsis;
 }
 
+.snap-popover-grid--icon-only .snap-popover-item {
+  justify-content: center;
+}
+
 /* ── Left drawer (tablet) ──────────────────────────────── */
 
 [data-shell-mode="tablet"] .panel-left,

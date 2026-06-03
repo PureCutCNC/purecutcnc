@@ -13,7 +13,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `useIconIds.ts` — hook listing available icon IDs
 
 ## Subfolders (by area)
-- `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling
+- `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`)
 - `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
 - `simulation/` — voxel toolpath simulation viewport and playback controls
 - `cam/` — CAM panels (tools, operations, parameters)

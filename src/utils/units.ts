@@ -17,6 +17,8 @@
 import type {
   BackdropImage,
   Clamp,
+  DimensionAnchor,
+  DimensionAnnotation,
   DimensionRef,
   GlobalConstraint,
   GridSettings,
@@ -65,6 +67,13 @@ export function formatLength(
   const maximumFractionDigits = options?.maximumFractionDigits ?? (units === 'inch' ? 4 : 3)
   const fixed = value.toFixed(maximumFractionDigits)
   return fixed.replace(/(\.\d*?[1-9])0+$/u, '$1').replace(/\.0+$/u, '')
+}
+
+export function formatAngle(degrees: number, options?: { maximumFractionDigits?: number }): string {
+  const maximumFractionDigits = options?.maximumFractionDigits ?? 1
+  const fixed = degrees.toFixed(maximumFractionDigits)
+  const trimmed = fixed.replace(/(\.\d*?[1-9])0+$/u, '$1').replace(/\.0+$/u, '')
+  return `${trimmed}°`
 }
 
 function convertPoint(point: Point, from: Units, to: Units): Point {
@@ -158,6 +167,30 @@ function convertLocalConstraint(constraint: LocalConstraint, from: Units, to: Un
   }
 
   return constraint
+}
+
+function convertDimensionAnchor(anchor: DimensionAnchor, from: Units, to: Units): DimensionAnchor {
+  // Only `free` anchors store a literal coordinate; anchored kinds resolve from
+  // geometry at render time and need no conversion.
+  if (anchor.kind === 'free') {
+    return { ...anchor, point: convertPoint(anchor.point, from, to) }
+  }
+  return anchor
+}
+
+function convertDimensionAnnotation(annotation: DimensionAnnotation, from: Units, to: Units): DimensionAnnotation {
+  return {
+    ...annotation,
+    a: convertDimensionAnchor(annotation.a, from, to),
+    b: annotation.b ? convertDimensionAnchor(annotation.b, from, to) : annotation.b,
+    c: annotation.c ? convertDimensionAnchor(annotation.c, from, to) : annotation.c,
+    // offset/labelOffset are world lengths regardless of dimension type. Angle
+    // dimensions carry no length value (it is computed live), so nothing else converts.
+    offset: convertLength(annotation.offset, from, to),
+    labelOffset: annotation.labelOffset === undefined
+      ? annotation.labelOffset
+      : convertLength(annotation.labelOffset, from, to),
+  }
 }
 
 function convertGlobalConstraint(constraint: GlobalConstraint, from: Units, to: Units): GlobalConstraint {
@@ -301,6 +334,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
         convertNamedDimension(dimension, fromUnits, toUnits),
       ]),
     ),
+    annotations: project.annotations.map((annotation) => convertDimensionAnnotation(annotation, fromUnits, toUnits)),
     features: project.features.map((feature) => convertFeature(feature, fromUnits, toUnits)),
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,

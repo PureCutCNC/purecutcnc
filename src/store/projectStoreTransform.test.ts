@@ -170,6 +170,7 @@ endsolid tri
       modified: '2026-01-01T00:00:00.000Z',
       units: 'mm',
       showFeatureInfo: true,
+      showDimensions: true,
       maxTravelZ: 10,
       operationClearanceZ: 3,
       clampClearanceXY: 2,
@@ -182,6 +183,7 @@ endsolid tri
     origin: { name: 'Origin', x: 0, y: 0, z: 5, visible: true },
     backdrop: null,
     dimensions: {},
+    annotations: [],
     modelAssets: {},
     features: [makeFeature('stl')].map((feature) => ({
       ...feature,
