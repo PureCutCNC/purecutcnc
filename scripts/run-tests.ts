@@ -15,6 +15,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
 const srcRoot = join(repoRoot, 'src')
+const npxExecutable = process.platform === 'win32' ? 'npx.cmd' : 'npx'
 
 // Tests that are known-failing for reasons unrelated to the build's freshness.
 // Each entry should be paired with a follow-up issue/task tracking its fix.
@@ -57,12 +58,15 @@ for (const file of testFiles) {
     continue
   }
   process.stdout.write(`\n── ${rel} ─────────────────────────\n`)
-  const result = spawnSync('npx', ['tsx', file], {
+  const result = spawnSync(npxExecutable, ['tsx', file], {
     cwd: repoRoot,
     stdio: 'inherit',
   })
   if (result.status !== 0) {
     failed += 1
+    if (result.error) {
+      console.error(`run-tests: failed to launch ${npxExecutable}: ${result.error.message}`)
+    }
     console.error(`run-tests: FAILED ${rel} (exit ${result.status})`)
   }
 }
