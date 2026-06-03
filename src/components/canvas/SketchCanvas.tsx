@@ -331,11 +331,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingConstraint,
     tapeMeasure,
     pendingDimension,
+    dimensionDeleteArmed,
     selectedAnnotationId,
     tapeMeasureClick,
     clearTapeMeasure,
     pendingDimensionPick,
     cancelPendingDimension,
+    setDimensionDeleteArmed,
     addDimensionAnnotation,
     updateDimensionAnnotation,
     deleteDimensionAnnotation,
@@ -443,7 +445,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const copyCountDraftRef = useRef(copyCountDraft)
   const tapeMeasureRef = useRef(tapeMeasure)
   const pendingDimensionRef = useRef(pendingDimension)
+  const dimensionDeleteArmedRef = useRef(dimensionDeleteArmed)
   const selectedAnnotationIdRef = useRef(selectedAnnotationId)
+  const deleteHoverDimIdRef = useRef<string | null>(null)
 
   projectRef.current = project
   selectionRef.current = selection
@@ -463,7 +467,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   copyCountDraftRef.current = copyCountDraft
   tapeMeasureRef.current = tapeMeasure
   pendingDimensionRef.current = pendingDimension
+  dimensionDeleteArmedRef.current = dimensionDeleteArmed
   selectedAnnotationIdRef.current = selectedAnnotationId
+  if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
   dimensionEditRef.current = dimensionEdit
   constraintEditRef.current = constraintEdit
 
@@ -557,6 +563,50 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
   })
+
+  // ── Measure & dimension workflow panels (instruction popups) ──
+  const dimensionPickedCount = pendingDimension
+    ? [pendingDimension.a, pendingDimension.b, pendingDimension.c].filter(Boolean).length
+    : 0
+  const tapeWorkflowPanel = useCanvasWorkflowPanel({
+    open: !!tapeMeasure,
+    phaseKey: tapeMeasure?.first ? 'second' : 'first',
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+  const dimensionWorkflowPanel = useCanvasWorkflowPanel({
+    open: !!pendingDimension,
+    phaseKey: pendingDimension ? `${pendingDimension.type}:${dimensionPickedCount}` : null,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+  const dimensionDeleteWorkflowPanel = useCanvasWorkflowPanel({
+    open: dimensionDeleteArmed,
+    phaseKey: 'delete',
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+  const dimensionTitle = pendingDimension
+    ? `${pendingDimension.type.charAt(0).toUpperCase()}${pendingDimension.type.slice(1)} dimension`
+    : ''
+  const dimensionStep = (() => {
+    if (!pendingDimension) return ''
+    const t = pendingDimension.type
+    const n = dimensionPickedCount
+    if (t === 'radius' || t === 'diameter') {
+      return n === 0 ? 'Click the circle / arc center' : n === 1 ? 'Click a point on the edge' : 'Click to place'
+    }
+    if (t === 'angle') {
+      return n === 0 ? 'Click the vertex'
+        : n === 1 ? 'Click the first ray point'
+        : n === 2 ? 'Click the second ray point'
+        : 'Click to place'
+    }
+    return n === 0 ? 'Click the first point' : n === 1 ? 'Click the second point' : 'Click to set the offset'
+  })()
 
   function updateActiveSnap(nextSnap: ResolvedSnap | null) {
     activeSnapRef.current = nextSnap?.mode ? nextSnap : null
@@ -1048,7 +1098,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // Redraw when measure/dimension transient state changes.
   useEffect(() => {
     scheduleDraw()
-  }, [tapeMeasure, pendingDimension, selectedAnnotationId, project.annotations])
+  }, [tapeMeasure, pendingDimension, dimensionDeleteArmed, selectedAnnotationId, project.annotations])
 
   useEffect(() => {
     scheduleDraw()
@@ -1978,7 +2028,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Permanent dimension annotations — resolved live so they follow geometry.
     // Hidden entirely when the project-level show-dimensions flag is off.
     if (project.meta.showDimensions) {
-      drawDimensions(ctx, project, vt, project.meta.units, { selectedId: selectedAnnotationIdRef.current })
+      drawDimensions(ctx, project, vt, project.meta.units, {
+        selectedId: selectedAnnotationIdRef.current,
+        deleteHoverId: dimensionDeleteArmedRef.current ? deleteHoverDimIdRef.current : null,
+      })
     }
 
     // Transient tape measure overlay.
@@ -2686,7 +2739,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     // Measure/dimension placement is handled on click — don't start marquee here.
-    if (event.button === 0 && !pendingAddRef.current && (tapeMeasureRef.current || pendingDimensionRef.current)) {
+    if (event.button === 0 && !pendingAddRef.current && (tapeMeasureRef.current || pendingDimensionRef.current || dimensionDeleteArmedRef.current)) {
       return
     }
 
@@ -2808,6 +2861,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const world = canvasToWorld(point.cx, point.cy, vt)
     livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
+
+    // ── Delete-dimension mode: highlight the dimension under the cursor ──
+    if (dimensionDeleteArmedRef.current) {
+      const hit = project.meta.showDimensions ? pickDimensionAt(project, vt, point, 8) : null
+      if (hit !== deleteHoverDimIdRef.current) {
+        deleteHoverDimIdRef.current = hit
+        scheduleDraw()
+      }
+      return
+    }
 
     // ── Dragging a dimension: update its offset to follow the cursor ──
     if (draggingDimensionIdRef.current) {
@@ -3390,6 +3453,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       excludeActiveEditGeometry: constraintRefPickingClick,
     })
     const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
+
+    // ── Delete-dimension mode: click a dimension to remove it (stays armed) ──
+    if (!pendingAdd && dimensionDeleteArmedRef.current) {
+      if (project.meta.showDimensions) {
+        const hit = pickDimensionAt(project, vt, point, 8)
+        if (hit) {
+          deleteDimensionAnnotation(hit)
+          deleteHoverDimIdRef.current = null
+        }
+      }
+      return
+    }
 
     // ── Tape measure: each click sets/advances the transient measurement ──
     if (!pendingAdd && tapeMeasureRef.current) {
@@ -4202,6 +4277,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (event.key === 'Escape' && pendingDimensionRef.current) {
       event.preventDefault()
       cancelPendingDimension()
+      return
+    }
+    if (event.key === 'Escape' && dimensionDeleteArmedRef.current) {
+      event.preventDefault()
+      setDimensionDeleteArmed(false)
       return
     }
     if ((event.key === 'Delete' || event.key === 'Backspace') && selectedAnnotationIdRef.current) {
@@ -5801,6 +5881,54 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               )}
             </>
           )}
+        </CanvasWorkflowPanel>
+      )}
+      {tapeMeasure && (
+        <CanvasWorkflowPanel
+          title="Tape measure"
+          step={tapeMeasure.first ? 'Click the second point' : 'Click the first point'}
+          position={tapeWorkflowPanel.position}
+          panelRef={tapeWorkflowPanel.panelRef}
+          handleProps={tapeWorkflowPanel.handleProps}
+          actions={(
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={() => { clearTapeMeasure(); tapeWorkflowPanel.focusCanvasAfterAction() }}>Done</button>
+          )}
+        >
+          <div className="canvas-workflow-panel__summary">
+            Snaps to geometry. The measurement stays until your next click — Esc or Done to exit.
+          </div>
+        </CanvasWorkflowPanel>
+      )}
+      {pendingDimension && (
+        <CanvasWorkflowPanel
+          title={dimensionTitle}
+          step={dimensionStep}
+          position={dimensionWorkflowPanel.position}
+          panelRef={dimensionWorkflowPanel.panelRef}
+          handleProps={dimensionWorkflowPanel.handleProps}
+          actions={(
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={() => { cancelPendingDimension(); dimensionWorkflowPanel.focusCanvasAfterAction() }}>Cancel</button>
+          )}
+        >
+          <div className="canvas-workflow-panel__summary">
+            Click points to anchor the dimension to geometry — it follows when features move. Esc to cancel.
+          </div>
+        </CanvasWorkflowPanel>
+      )}
+      {dimensionDeleteArmed && (
+        <CanvasWorkflowPanel
+          title="Delete dimension"
+          step="Click a dimension to delete"
+          position={dimensionDeleteWorkflowPanel.position}
+          panelRef={dimensionDeleteWorkflowPanel.panelRef}
+          handleProps={dimensionDeleteWorkflowPanel.handleProps}
+          actions={(
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={() => { setDimensionDeleteArmed(false); dimensionDeleteWorkflowPanel.focusCanvasAfterAction() }}>Done</button>
+          )}
+        >
+          <div className="canvas-workflow-panel__summary">
+            Click each dimension you want to remove. Esc or Done to finish.
+          </div>
         </CanvasWorkflowPanel>
       )}
       {editModeActive && (

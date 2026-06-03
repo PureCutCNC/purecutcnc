@@ -226,6 +226,8 @@ export interface ProjectStore {
   // ---- Measure & dimensions (transient tool state, not persisted) ----
   tapeMeasure: TapeMeasureState | null
   pendingDimension: PendingDimensionTool | null
+  /** When true, the next canvas click on a dimension deletes it. */
+  dimensionDeleteArmed: boolean
   /** Currently selected dimension annotation, or null. Not in undo history. */
   selectedAnnotationId: string | null
   history: ProjectHistory
@@ -292,6 +294,8 @@ export interface ProjectStore {
   setPendingDimensionType: (type: DimensionType) => void
   pendingDimensionPick: (anchor: DimensionAnchor) => void
   cancelPendingDimension: () => void
+  /** Transient "click a dimension to delete it" mode. */
+  setDimensionDeleteArmed: (armed: boolean) => void
 
   setStock: (stock: Stock) => void
   setStockSourceFeature: (featureId: string | null) => void

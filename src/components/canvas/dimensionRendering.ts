@@ -124,9 +124,10 @@ export function drawDimensions(
   project: Project,
   vt: ViewTransform,
   units: Units,
-  opts?: { selectedId?: string | null },
+  opts?: { selectedId?: string | null; deleteHoverId?: string | null },
 ): void {
   const selectedId = opts?.selectedId ?? null
+  const deleteHoverId = opts?.deleteHoverId ?? null
   const lenFmt = fmtLen(units)
 
   for (const dim of project.annotations) {
@@ -154,7 +155,9 @@ export function drawDimensions(
     const value = measureValue(dim, project)
     if (value === null) continue
     const labelText = dimensionLabelText(dim, value, lenFmt, formatAngle)
-    const color = dim.id === selectedId ? SELECTED_COLOR : LINE_COLOR
+    const color = dim.id === deleteHoverId
+      ? WARNING_COLOR
+      : dim.id === selectedId ? SELECTED_COLOR : LINE_COLOR
     drawLayout(ctx, layout, vt, units, labelText, color)
   }
 }

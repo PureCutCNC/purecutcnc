@@ -41,10 +41,12 @@ export function DimensionPopover() {
   const showDimensions = useProjectStore((s) => s.project.meta.showDimensions)
   const setShowDimensions = useProjectStore((s) => s.setShowDimensions)
   const dimensionCount = useProjectStore((s) => s.project.annotations.length)
+  const dimensionDeleteArmed = useProjectStore((s) => s.dimensionDeleteArmed)
+  const setDimensionDeleteArmed = useProjectStore((s) => s.setDimensionDeleteArmed)
 
   const tapeActive = tapeMeasure !== null
   const dimType = pendingDimension?.type ?? null
-  const anyActive = tapeActive || pendingDimension !== null
+  const anyActive = tapeActive || pendingDimension !== null || dimensionDeleteArmed
 
   useEffect(() => {
     if (!open) return
@@ -108,6 +110,15 @@ export function DimensionPopover() {
               onClick={() => setShowDimensions(!showDimensions)}
             >
               {showDimensions ? 'Dimensions shown' : 'Dimensions hidden'}
+            </button>
+            <button
+              className={`snap-popover-enable-btn ${dimensionDeleteArmed ? 'snap-popover-enable-btn--active' : ''}`}
+              type="button"
+              aria-pressed={dimensionDeleteArmed}
+              disabled={dimensionCount === 0}
+              onClick={() => setDimensionDeleteArmed(!dimensionDeleteArmed)}
+            >
+              {dimensionDeleteArmed ? 'Click a dimension…' : 'Delete dimension'}
             </button>
           </div>
           <div className="snap-popover-grid">

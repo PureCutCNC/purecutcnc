@@ -142,6 +142,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     clearTapeMeasure,
     startDimensionTool,
     cancelPendingDimension,
+    dimensionDeleteArmed,
+    setDimensionDeleteArmed,
     setShowDimensions,
   } = useProjectStore()
 
@@ -215,6 +217,11 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
 
   function handleToggleShowDimensions() {
     setShowDimensions(!project.meta.showDimensions)
+  }
+
+  function handleDeleteDimension() {
+    if (pendingAdd) cancelPendingAdd()
+    setDimensionDeleteArmed(!dimensionDeleteArmed)
   }
 
   const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
@@ -450,10 +457,12 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleTextTool,
     tapeActive: tapeMeasure !== null,
     pendingDimensionType: pendingDimension?.type ?? null,
+    dimensionDeleteArmed,
     showDimensions: project.meta.showDimensions,
     dimensionCount: project.annotations.length,
     handleTapeMeasure,
     handleDimensionType,
+    handleDeleteDimension,
     handleToggleShowDimensions,
     creationTarget,
     setCreationTarget,
@@ -1224,20 +1233,24 @@ const DIMENSION_TOOLS: { type: DimensionType; icon: string; label: string }[] = 
 function MeasureActions({
   tapeActive,
   pendingDimensionType,
+  dimensionDeleteArmed,
   showDimensions,
   dimensionCount,
   tooltipSide,
   onTapeMeasure,
   onDimensionType,
+  onDeleteDimension,
   onToggleShowDimensions,
 }: {
   tapeActive: boolean
   pendingDimensionType: DimensionType | null
+  dimensionDeleteArmed: boolean
   showDimensions: boolean
   dimensionCount: number
   tooltipSide?: 'bottom' | 'right'
   onTapeMeasure: () => void
   onDimensionType: (type: DimensionType) => void
+  onDeleteDimension: () => void
   onToggleShowDimensions: () => void
 }) {
   return (
@@ -1259,6 +1272,14 @@ function MeasureActions({
           onClick={() => onDimensionType(type)}
         />
       ))}
+      <ToolbarActionButton
+        icon="trash"
+        label={dimensionDeleteArmed ? 'Delete dimension (click one)' : 'Delete dimension'}
+        active={dimensionDeleteArmed}
+        disabled={dimensionCount === 0}
+        tooltipSide={tooltipSide}
+        onClick={onDeleteDimension}
+      />
       <ToolbarActionButton
         icon="dim-visibility"
         label={dimensionCount === 0
@@ -1391,11 +1412,13 @@ export function CreationToolbar({
         <MeasureActions
           tapeActive={toolbar.tapeActive}
           pendingDimensionType={toolbar.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
           showDimensions={toolbar.showDimensions}
           dimensionCount={toolbar.dimensionCount}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
           onTapeMeasure={toolbar.handleTapeMeasure}
           onDimensionType={toolbar.handleDimensionType}
+          onDeleteDimension={toolbar.handleDeleteDimension}
           onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions
@@ -1532,10 +1555,12 @@ export function Toolbar({
         <MeasureActions
           tapeActive={toolbar.tapeActive}
           pendingDimensionType={toolbar.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
           showDimensions={toolbar.showDimensions}
           dimensionCount={toolbar.dimensionCount}
           onTapeMeasure={toolbar.handleTapeMeasure}
           onDimensionType={toolbar.handleDimensionType}
+          onDeleteDimension={toolbar.handleDeleteDimension}
           onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions

@@ -26,6 +26,7 @@ export type DimensionToolSlice = Pick<
   ProjectStore,
   | 'tapeMeasure'
   | 'pendingDimension'
+  | 'dimensionDeleteArmed'
   | 'startTapeMeasure'
   | 'tapeMeasureClick'
   | 'clearTapeMeasure'
@@ -33,6 +34,7 @@ export type DimensionToolSlice = Pick<
   | 'setPendingDimensionType'
   | 'pendingDimensionPick'
   | 'cancelPendingDimension'
+  | 'setDimensionDeleteArmed'
 >
 
 /** Anchors required before a dimension of the given type can be committed. */
@@ -60,11 +62,13 @@ export function createDimensionToolSlice(
   return {
     tapeMeasure: null,
     pendingDimension: null,
+    dimensionDeleteArmed: false,
 
     startTapeMeasure: () =>
       set(() => ({
         ...clearOtherTools(),
         pendingDimension: null,
+        dimensionDeleteArmed: false,
         tapeMeasure: { first: null, frozen: null },
       })),
 
@@ -88,6 +92,7 @@ export function createDimensionToolSlice(
       set(() => ({
         ...clearOtherTools(),
         tapeMeasure: null,
+        dimensionDeleteArmed: false,
         pendingDimension: { type, a: null, b: null, c: null, session: nextPlacementSession() },
       })),
 
@@ -119,5 +124,12 @@ export function createDimensionToolSlice(
       }),
 
     cancelPendingDimension: () => set(() => ({ pendingDimension: null })),
+
+    setDimensionDeleteArmed: (armed) =>
+      set(() =>
+        armed
+          ? { ...clearOtherTools(), tapeMeasure: null, pendingDimension: null, dimensionDeleteArmed: true }
+          : { dimensionDeleteArmed: false },
+      ),
   }
 }
