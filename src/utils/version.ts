@@ -14,11 +14,49 @@
  * limitations under the License.
  */
 
-interface VersionInfo {
+export interface VersionInfo {
   version: string
   name?: string
   date?: string
   url?: string
+}
+
+const DEV_VERSION: VersionInfo = { version: 'dev' }
+
+let cachedInfo: VersionInfo | null = null
+let inFlight: Promise<VersionInfo> | null = null
+
+/**
+ * Fetches version.json from the app root and caches the result for the lifetime
+ * of the page. version.json is written by the deploy workflow; in local dev it
+ * is absent, so this resolves to `{ version: 'dev' }`.
+ */
+export async function loadVersionInfo(): Promise<VersionInfo> {
+  if (cachedInfo) return cachedInfo
+  if (!inFlight) {
+    inFlight = (async () => {
+      try {
+        const res = await fetch('./version.json', { cache: 'no-store' })
+        if (!res.ok) return DEV_VERSION
+        const data = (await res.json()) as VersionInfo
+        return data?.version ? data : DEV_VERSION
+      } catch {
+        return DEV_VERSION
+      }
+    })().then((info) => {
+      cachedInfo = info
+      return info
+    })
+  }
+  return inFlight
+}
+
+/**
+ * The version.json value captured earlier this session, or null if it has not
+ * been loaded yet. Synchronous — for callers that already triggered a load.
+ */
+export function getCachedVersionInfo(): VersionInfo | null {
+  return cachedInfo
 }
 
 /**
@@ -26,14 +64,7 @@ interface VersionInfo {
  * Returns the version string, or "dev" if the file is absent (local dev).
  */
 export async function loadVersion(): Promise<string> {
-  try {
-    const res = await fetch('./version.json', { cache: 'no-store' })
-    if (!res.ok) return 'dev'
-    const data: VersionInfo = await res.json()
-    return data.version ?? 'dev'
-  } catch {
-    return 'dev'
-  }
+  return (await loadVersionInfo()).version ?? 'dev'
 }
 
 /**

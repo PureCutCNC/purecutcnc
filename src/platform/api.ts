@@ -108,6 +108,21 @@ export interface PlatformApi {
    */
   confirmDiscardChanges(): Promise<boolean>
 
+  /**
+   * The running application version.
+   * - Desktop: read from the bundle via Tauri (`@tauri-apps/api/app`).
+   * - Browser: the version baked into the deployed build (version.json), or
+   *   'dev' in local development.
+   */
+  getAppVersion(): Promise<string>
+
+  /**
+   * Open a URL in the user's default external browser.
+   * - Desktop: via the Tauri opener plugin.
+   * - Browser: a new tab/window.
+   */
+  openExternal(url: string): Promise<void>
+
   /** True when running inside Tauri, false in a plain browser. */
   isDesktop: boolean
 }

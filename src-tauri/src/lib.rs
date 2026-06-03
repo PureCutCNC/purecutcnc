@@ -6,6 +6,28 @@ struct ExitCoordinator {
   exit_request_pending: AtomicBool,
 }
 
+/// Handles to the two "Update Channel" check items so their checked state can be
+/// driven as a radio group. The channel preference itself is persisted by the
+/// frontend (localStorage); Rust only mirrors it onto the native menu.
+struct ChannelMenuItems {
+  stable: tauri::menu::CheckMenuItem<tauri::Wry>,
+  snapshot: tauri::menu::CheckMenuItem<tauri::Wry>,
+}
+
+impl ChannelMenuItems {
+  fn apply(&self, channel: &str) {
+    let _ = self.stable.set_checked(channel == "stable");
+    let _ = self.snapshot.set_checked(channel == "snapshot");
+  }
+}
+
+/// Mirror the frontend's persisted update channel onto the native menu.
+/// Called once on startup so the checkmark reflects a previously saved choice.
+#[tauri::command]
+fn set_update_channel(channel: String, items: tauri::State<ChannelMenuItems>) {
+  items.apply(&channel);
+}
+
 #[tauri::command]
 fn request_app_exit(app: tauri::AppHandle, exit_coordinator: tauri::State<ExitCoordinator>) {
   exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
@@ -34,7 +56,8 @@ pub fn run() {
       // -----------------------------------------------------------------------
       // Native menu
       // -----------------------------------------------------------------------
-      use tauri::menu::{Menu, MenuItem, Submenu, PredefinedMenuItem};
+      use tauri::Manager;
+      use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu, PredefinedMenuItem};
 
       let new_i        = MenuItem::with_id(app, "new",         "New",              true, Some("CmdOrCtrl+N"))?;
       let open_i       = MenuItem::with_id(app, "open",        "Open\u{2026}",     true, Some("CmdOrCtrl+O"))?;
@@ -45,10 +68,30 @@ pub fn run() {
       let redo_i       = MenuItem::with_id(app, "redo",        "Redo",             true, Some("CmdOrCtrl+Shift+Z"))?;
       let quit_i       = MenuItem::with_id(app, "quit",        "Quit PureCutCNC",  true, Some("CmdOrCtrl+Q"))?;
 
+      // Update items. The native "About" panel is left untouched; "Check for
+      // Updates…" is a separate, user-initiated action handled by the frontend.
+      // The channel check state defaults to "snapshot" (the only published
+      // desktop channel today); the frontend re-syncs both checkmarks on mount
+      // from the persisted preference.
+      let check_updates_i = MenuItem::with_id(app, "check_updates", "Check for Updates\u{2026}", true, None::<&str>)?;
+      let channel_stable_i   = CheckMenuItem::with_id(app, "channel_stable",   "Stable",   true, false, None::<&str>)?;
+      let channel_snapshot_i = CheckMenuItem::with_id(app, "channel_snapshot", "Snapshot", true, true,  None::<&str>)?;
+      let channel_menu = Submenu::with_id_and_items(app, "update_channel", "Update Channel", true, &[
+        &channel_stable_i,
+        &channel_snapshot_i,
+      ])?;
+
+      app.manage(ChannelMenuItems {
+        stable: channel_stable_i.clone(),
+        snapshot: channel_snapshot_i.clone(),
+      });
+
       // macOS app menu — must be the FIRST submenu; macOS replaces its label
       // with the running app name automatically.
       let app_menu = Submenu::with_id_and_items(app, "app", "PureCutCNC", true, &[
         &PredefinedMenuItem::about(app, None, None)?,
+        &check_updates_i,
+        &channel_menu,
         &PredefinedMenuItem::separator(app)?,
         &PredefinedMenuItem::services(app, None)?,
         &PredefinedMenuItem::separator(app)?,
@@ -89,13 +132,22 @@ pub fn run() {
     .on_menu_event(|app, event| {
       // Forward menu item ID to the frontend as a "menu" event.
       use tauri::{Emitter, Manager};
+      let id = event.id().0.as_str();
+
+      // Update Channel acts as a radio group; mirror the choice onto the native
+      // menu immediately. The frontend persists it (and uses it for the check).
+      if id == "channel_stable" || id == "channel_snapshot" {
+        app.state::<ChannelMenuItems>().apply(id.trim_start_matches("channel_"));
+      }
+
       if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("menu", event.id().0.as_str().to_string());
+        let _ = window.emit("menu", id.to_string());
       }
     })
-    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request])
+    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request, set_update_channel])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_opener::init())
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
 

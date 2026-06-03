@@ -16,6 +16,8 @@
 
 import { open, save, confirm } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
+import { getVersion } from '@tauri-apps/api/app'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
 
 // ---------------------------------------------------------------------------
@@ -118,8 +120,8 @@ export const desktopPlatform: PlatformApi = {
     return { name, content }
   },
 
-  async revealInFileManager(_path: string): Promise<void> {
-    // Phase 5 — requires tauri-plugin-opener
+  async revealInFileManager(path: string): Promise<void> {
+    await revealItemInDir(path)
   },
 
   async confirmDiscardChanges(): Promise<boolean> {
@@ -127,5 +129,13 @@ export const desktopPlatform: PlatformApi = {
       title: 'PureCutCNC',
       kind: 'warning',
     })
+  },
+
+  async getAppVersion(): Promise<string> {
+    return getVersion()
+  },
+
+  async openExternal(url: string): Promise<void> {
+    await openUrl(url)
   },
 }

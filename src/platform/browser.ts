@@ -15,6 +15,7 @@
  */
 
 import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
+import { loadVersion } from '../utils/version'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -185,5 +186,13 @@ export const browserPlatform: PlatformApi = {
 
   async confirmDiscardChanges(): Promise<boolean> {
     return window.confirm('You have unsaved changes. Discard them and continue?')
+  },
+
+  async getAppVersion(): Promise<string> {
+    return loadVersion()
+  },
+
+  async openExternal(url: string): Promise<void> {
+    window.open(url, '_blank', 'noopener,noreferrer')
   },
 }
