@@ -489,4 +489,8 @@
     <path d="M 5 18 L 17 5" />
     <path d="M 12 18 L 11.4 15.2 L 9.8 12.9" />
   </symbol>
+  <symbol id="dim-visibility" viewBox="0 0 24 24">
+    <path d="M 3 12 C 9 6, 15 6, 21 12 C 15 18, 9 18, 3 12 Z" />
+    <path d="M 15 12 A 3 3 0 1 0 9 12 A 3 3 0 1 0 15 12 Z" />
+  </symbol>
 </svg>

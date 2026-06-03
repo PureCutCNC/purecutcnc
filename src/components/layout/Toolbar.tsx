@@ -22,6 +22,7 @@ import { TextToolDialog } from '../project/TextToolDialog'
 import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { CreationTarget, FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
+import type { DimensionType } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
 import { useFileActions } from '../../platform/useFileActions'
@@ -135,6 +136,13 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     cancelPendingOffset,
     cancelPendingShapeAction,
     selection,
+    tapeMeasure,
+    pendingDimension,
+    startTapeMeasure,
+    clearTapeMeasure,
+    startDimensionTool,
+    cancelPendingDimension,
+    setShowDimensions,
   } = useProjectStore()
 
   const [editingName, setEditingName] = useState(false)
@@ -185,6 +193,28 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   function confirmTextTool(config: TextToolConfig) {
     startAddTextPlacement(config)
     setShowTextDialog(false)
+  }
+
+  function handleTapeMeasure() {
+    if (tapeMeasure) {
+      clearTapeMeasure()
+      return
+    }
+    if (pendingAdd) cancelPendingAdd()
+    startTapeMeasure()
+  }
+
+  function handleDimensionType(type: DimensionType) {
+    if (pendingDimension?.type === type) {
+      cancelPendingDimension()
+      return
+    }
+    if (pendingAdd) cancelPendingAdd()
+    startDimensionTool(type)
+  }
+
+  function handleToggleShowDimensions() {
+    setShowDimensions(!project.meta.showDimensions)
   }
 
   const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
@@ -418,6 +448,13 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
     handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
     handleTextTool,
+    tapeActive: tapeMeasure !== null,
+    pendingDimensionType: pendingDimension?.type ?? null,
+    showDimensions: project.meta.showDimensions,
+    dimensionCount: project.annotations.length,
+    handleTapeMeasure,
+    handleDimensionType,
+    handleToggleShowDimensions,
     creationTarget,
     setCreationTarget,
     confirmTextTool,
@@ -1175,6 +1212,66 @@ function SnapActions({
   )
 }
 
+const DIMENSION_TOOLS: { type: DimensionType; icon: string; label: string }[] = [
+  { type: 'aligned', icon: 'dim-aligned', label: 'Aligned dimension' },
+  { type: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal dimension' },
+  { type: 'vertical', icon: 'dim-vertical', label: 'Vertical dimension' },
+  { type: 'radius', icon: 'dim-radius', label: 'Radius dimension' },
+  { type: 'diameter', icon: 'dim-diameter', label: 'Diameter dimension' },
+  { type: 'angle', icon: 'dim-angle', label: 'Angle dimension' },
+]
+
+function MeasureActions({
+  tapeActive,
+  pendingDimensionType,
+  showDimensions,
+  dimensionCount,
+  tooltipSide,
+  onTapeMeasure,
+  onDimensionType,
+  onToggleShowDimensions,
+}: {
+  tapeActive: boolean
+  pendingDimensionType: DimensionType | null
+  showDimensions: boolean
+  dimensionCount: number
+  tooltipSide?: 'bottom' | 'right'
+  onTapeMeasure: () => void
+  onDimensionType: (type: DimensionType) => void
+  onToggleShowDimensions: () => void
+}) {
+  return (
+    <div className="toolbar-group">
+      <ToolbarActionButton
+        icon="measure"
+        label={tapeActive ? 'Tape measure (on)' : 'Tape measure'}
+        active={tapeActive}
+        tooltipSide={tooltipSide}
+        onClick={onTapeMeasure}
+      />
+      {DIMENSION_TOOLS.map(({ type, icon, label }) => (
+        <ToolbarActionButton
+          key={type}
+          icon={icon}
+          label={label}
+          active={pendingDimensionType === type}
+          tooltipSide={tooltipSide}
+          onClick={() => onDimensionType(type)}
+        />
+      ))}
+      <ToolbarActionButton
+        icon="dim-visibility"
+        label={dimensionCount === 0
+          ? 'Show/hide dimensions'
+          : showDimensions ? `Hide dimensions (${dimensionCount})` : `Show dimensions (${dimensionCount})`}
+        active={showDimensions}
+        tooltipSide={tooltipSide}
+        onClick={onToggleShowDimensions}
+      />
+    </div>
+  )
+}
+
 function ToolbarDialog({
   showNewProjectDialog,
   showImportDialog,
@@ -1290,6 +1387,16 @@ export function CreationToolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
           onText={toolbar.handleTextTool}
+        />
+        <MeasureActions
+          tapeActive={toolbar.tapeActive}
+          pendingDimensionType={toolbar.pendingDimensionType}
+          showDimensions={toolbar.showDimensions}
+          dimensionCount={toolbar.dimensionCount}
+          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
+          onTapeMeasure={toolbar.handleTapeMeasure}
+          onDimensionType={toolbar.handleDimensionType}
+          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
@@ -1421,6 +1528,15 @@ export function Toolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
           onText={toolbar.handleTextTool}
+        />
+        <MeasureActions
+          tapeActive={toolbar.tapeActive}
+          pendingDimensionType={toolbar.pendingDimensionType}
+          showDimensions={toolbar.showDimensions}
+          dimensionCount={toolbar.dimensionCount}
+          onTapeMeasure={toolbar.handleTapeMeasure}
+          onDimensionType={toolbar.handleDimensionType}
+          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}

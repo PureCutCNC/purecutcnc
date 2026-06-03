@@ -23747,6 +23747,108 @@
       "visible": false,
       "locked": false,
       "text": null
+    },
+    {
+      "id": "icon_dim-visibility_0",
+      "name": "dim-visibility_shape_0",
+      "kind": "composite",
+      "folderId": "folder_dim-visibility",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 9,
+                "y": 6
+              },
+              "control2": {
+                "x": 15,
+                "y": 6
+              },
+              "to": {
+                "x": 21,
+                "y": 12
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 15,
+                "y": 18
+              },
+              "control2": {
+                "x": 9,
+                "y": 18
+              },
+              "to": {
+                "x": 3,
+                "y": 12
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_dim-visibility_1",
+      "name": "dim-visibility_shape_1",
+      "kind": "composite",
+      "folderId": "folder_dim-visibility",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 15,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "circle",
+              "center": {
+                "x": 12,
+                "y": 12
+              },
+              "to": {
+                "x": 15,
+                "y": 12
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
@@ -24199,6 +24301,11 @@
       "id": "folder_dim-angle",
       "name": "dim-angle",
       "collapsed": true
+    },
+    {
+      "id": "folder_dim-visibility",
+      "name": "dim-visibility",
+      "collapsed": true
     }
   ],
   "featureTree": [
@@ -24561,6 +24668,10 @@
     {
       "type": "folder",
       "folderId": "folder_dim-angle"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_dim-visibility"
     }
   ],
   "global_constraints": [],
