@@ -2317,6 +2317,25 @@
   box-sizing: border-box;
 }
 
+.statusbar-about {
+  appearance: none;
+  margin-left: auto;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.statusbar-about:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .statusbar-visibility {
   display: inline-flex;
   align-items: center;

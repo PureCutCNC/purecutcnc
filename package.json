@@ -16,9 +16,10 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "~2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
+    "@tauri-apps/plugin-opener": "^2.5.0",
     "@types/three": "^0.183.1",
     "clipper-lib": "^6.4.2",
     "manifold-3d": "^3.3.2",

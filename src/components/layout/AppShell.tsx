@@ -18,6 +18,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
+import { platform } from '../../platform'
+import { loadVersion } from '../../utils/version'
 import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
 import { TopCommandBar } from './TopCommandBar'
@@ -54,6 +56,8 @@ interface AppShellProps {
   activeSnapMode?: SnapMode | null
   onToggleSnapEnabled: () => void
   onToggleSnapMode: (mode: SnapMode) => void
+  /** Web only: open the About dialog. Desktop uses the native About menu. */
+  onShowAbout?: () => void
 }
 
 function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 | -1): T {
@@ -91,12 +95,27 @@ export function AppShell({
   activeSnapMode,
   onToggleSnapEnabled,
   onToggleSnapMode,
+  onShowAbout,
 }: AppShellProps) {
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [statusBarExpanded, setStatusBarExpanded] = useState(false)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+
+  // Web only: surface the running version as an "About" affordance. The desktop
+  // build has a native About menu, so we skip it there.
+  useEffect(() => {
+    if (platform.isDesktop || !onShowAbout) return
+    let active = true
+    loadVersion().then((v) => {
+      if (active) setAppVersion(v)
+    })
+    return () => {
+      active = false
+    }
+  }, [onShowAbout])
 
   const LC_STORAGE_KEY = 'panel-split:left-center'
   const CR_STORAGE_KEY = 'panel-split:center-right'
@@ -711,6 +730,16 @@ export function AppShell({
           </button>
         </div>
         {statusBarExtras}
+        {!platform.isDesktop && onShowAbout && (
+          <button
+            className="statusbar-about"
+            type="button"
+            onClick={onShowAbout}
+            title="About PureCutCNC"
+          >
+            PureCutCNC{appVersion ? ` ${appVersion}` : ''}
+          </button>
+        )}
         {import.meta.env.DEV && (
           <span className="statusbar-shell-mode" title="Shell mode (dev only)">{shellMode}</span>
         )}

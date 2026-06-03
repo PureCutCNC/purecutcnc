@@ -17,6 +17,59 @@
 import { useEffect, useRef } from 'react'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
+import { checkDesktopUpdate, loadChannel, saveChannel } from '../utils/updateCheck'
+
+/**
+ * Run the user-initiated desktop update check and report the result via native
+ * dialogs. Invoked from the "Check for Updates…" native menu item.
+ */
+async function runDesktopUpdateCheck(): Promise<void> {
+  const { message, ask } = await import('@tauri-apps/plugin-dialog')
+  const channel = loadChannel()
+
+  let current = 'dev'
+  try {
+    current = await platform.getAppVersion()
+  } catch {
+    // Fall back to 'dev'; the check will simply treat everything as newer.
+  }
+
+  const result = await checkDesktopUpdate(channel, { currentVersion: current })
+
+  switch (result.kind) {
+    case 'up-to-date':
+      await message(
+        `You're on the latest ${channel} version (${result.current}).`,
+        { title: 'PureCutCNC', kind: 'info' }
+      )
+      break
+    case 'update-available': {
+      const proceed = await ask(
+        `A newer ${channel} version is available.\n\n` +
+          `Installed: ${result.current}\nLatest: ${result.latest}\n\n` +
+          'Open the download page?',
+        { title: 'Update available', kind: 'info' }
+      )
+      if (proceed) await platform.openExternal(result.url)
+      break
+    }
+    case 'no-release':
+      await message(
+        channel === 'stable'
+          ? 'No stable release has been published yet. Switch the update channel to ' +
+              'Snapshot to check for pre-release builds.'
+          : 'No snapshot build is available to check right now.',
+        { title: 'PureCutCNC', kind: 'info' }
+      )
+      break
+    case 'error':
+      await message(
+        `Couldn't check for updates.\n\n${result.message}`,
+        { title: 'PureCutCNC', kind: 'warning' }
+      )
+      break
+  }
+}
 
 // Cached window handle — loaded once on first desktop title update.
 let _setWindowTitle: ((title: string) => void) | null = null
@@ -218,10 +271,25 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
           case 'redo':
             store.redo()
             break
+          case 'check_updates':
+            await runDesktopUpdateCheck()
+            break
+          case 'channel_stable':
+            // Rust mirrors the checkmark; the frontend owns persistence.
+            saveChannel('stable')
+            break
+          case 'channel_snapshot':
+            saveChannel('snapshot')
+            break
         }
       })
       if (isCancelled) { unlistenMenu(); return }
       cleanups.push(unlistenMenu)
+
+      // -- Mirror the persisted update channel onto the native menu ----------
+      // The native menu defaults to "snapshot"; reflect a previously saved
+      // choice so the checkmark is correct from launch.
+      invoke('set_update_channel', { channel: loadChannel() }).catch(() => {})
 
       // -- Drag-and-drop .camj open ------------------------------------------
       const unlistenDrop = await win.onDragDropEvent(async (event) => {

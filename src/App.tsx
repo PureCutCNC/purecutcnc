@@ -33,6 +33,7 @@ import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './componen
 import { ExportDialog } from './components/export/ExportDialog'
 import { ModelExportDialog } from './components/export/ModelExportDialog'
 import { NewProjectDialog } from './components/project/NewProjectDialog'
+import { AboutDialog } from './components/about/AboutDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
@@ -166,6 +167,7 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showModelExportDialog, setShowModelExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
+  const [showAboutDialog, setShowAboutDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
 
@@ -1148,7 +1150,10 @@ function App() {
         activeSnapMode={activeSnapMode}
         onToggleSnapEnabled={handleToggleSnapEnabled}
         onToggleSnapMode={handleToggleSnapMode}
+        onShowAbout={() => setShowAboutDialog(true)}
       />
+
+      {showAboutDialog && <AboutDialog onClose={() => setShowAboutDialog(false)} />}
 
       {showModelExportDialog && (
         <ModelExportDialog onClose={() => setShowModelExportDialog(false)} />

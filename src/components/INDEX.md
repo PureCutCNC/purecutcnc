@@ -21,6 +21,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `layout/` — app shell (toolbars, sidebars, mode switching)
 - `project/` — project-level UI (new/open/save, stock, machine, units)
 - `export/` — export dialogs (G-code, SVG, DXF, STL preview)
+- `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)
 
 ## Conventions

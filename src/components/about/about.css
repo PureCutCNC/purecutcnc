@@ -1,0 +1,87 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.dialog--about {
+  max-width: 440px;
+}
+
+.dialog-body--about {
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+.about-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.about-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.about-version {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.about-tagline {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.about-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.about-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.about-meta-row strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.about-link {
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.about-link:hover {
+  text-decoration: underline;
+}
+
+.about-copyright {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
