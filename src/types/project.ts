@@ -95,6 +95,14 @@ export type DimensionAnchor =
   | { kind: 'vertex'; target: AnchorTarget; vertexIndex: number }   // profile vertex (profileVertices order)
   | { kind: 'midpoint'; target: AnchorTarget; segmentIndex: number }
   | { kind: 'center'; target: AnchorTarget; segmentIndex: number }  // arc / circle centre
+  // Point on an arc/circle boundary identified by an angle (radians) relative
+  // to the segment's radius-handle direction. Lets a radius/diameter dimension
+  // keep its drawn direction when the feature moves, rotates, or resizes.
+  | { kind: 'circleEdge'; target: AnchorTarget; segmentIndex: number; relativeAngle: number }
+  // Point along a straight segment at parameter t∈[0,1]. Lets a line-snap edge
+  // pick on a line segment follow the feature instead of staying frozen in
+  // world space (e.g. angle dimensions whose rays land on a rectangle edge).
+  | { kind: 'segmentPoint'; target: AnchorTarget; segmentIndex: number; t: number }
   | { kind: 'origin' }                                              // machine origin
 
 export type DimensionType =

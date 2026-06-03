@@ -23849,6 +23849,109 @@
       "visible": false,
       "locked": false,
       "text": null
+    },
+    {
+      "id": "icon_tape-measure_0",
+      "name": "tape-measure_shape_0",
+      "kind": "composite",
+      "folderId": "folder_tape-measure",
+      "sketch": {
+        "profile": {
+          "start": { "x": 13, "y": 12 },
+          "segments": [
+            { "type": "circle", "center": { "x": 7, "y": 12 }, "to": { "x": 13, "y": 12 }, "clockwise": true }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_tape-measure_1",
+      "name": "tape-measure_shape_1",
+      "kind": "composite",
+      "folderId": "folder_tape-measure",
+      "sketch": {
+        "profile": {
+          "start": { "x": 9, "y": 12 },
+          "segments": [
+            { "type": "circle", "center": { "x": 7, "y": 12 }, "to": { "x": 9, "y": 12 }, "clockwise": true }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_tape-measure_2",
+      "name": "tape-measure_shape_2",
+      "kind": "composite",
+      "folderId": "folder_tape-measure",
+      "sketch": {
+        "profile": {
+          "start": { "x": 13, "y": 10 },
+          "segments": [
+            { "type": "line", "to": { "x": 22, "y": 10 } },
+            { "type": "line", "to": { "x": 22, "y": 14 } },
+            { "type": "line", "to": { "x": 13, "y": 14 } },
+            { "type": "line", "to": { "x": 13, "y": 10 } }
+          ],
+          "closed": true
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_tape-measure_3",
+      "name": "tape-measure_shape_3",
+      "kind": "composite",
+      "folderId": "folder_tape-measure",
+      "sketch": {
+        "profile": {
+          "start": { "x": 22, "y": 8 },
+          "segments": [
+            { "type": "line", "to": { "x": 22, "y": 16 } }
+          ],
+          "closed": false
+        },
+        "origin": { "x": 0, "y": 0 },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
@@ -24306,6 +24409,11 @@
       "id": "folder_dim-visibility",
       "name": "dim-visibility",
       "collapsed": true
+    },
+    {
+      "id": "folder_tape-measure",
+      "name": "tape-measure",
+      "collapsed": true
     }
   ],
   "featureTree": [
@@ -24672,6 +24780,10 @@
     {
       "type": "folder",
       "folderId": "folder_dim-visibility"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_tape-measure"
     }
   ],
   "global_constraints": [],

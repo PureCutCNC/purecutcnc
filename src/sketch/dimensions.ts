@@ -148,6 +148,30 @@ export function resolveAnchor(anchor: DimensionAnchor, project: Project): Point 
       return { x: segment.center.x, y: segment.center.y }
     }
 
+    case 'circleEdge': {
+      const profile = profileForTarget(anchor.target, project)
+      if (!profile) return null
+      const segment = profile.segments[anchor.segmentIndex]
+      if (!segment || (segment.type !== 'arc' && segment.type !== 'circle')) return null
+      const start = anchorPointForIndex(profile, anchor.segmentIndex)
+      const radius = Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+      const baseAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+      const a = baseAngle + anchor.relativeAngle
+      return {
+        x: segment.center.x + Math.cos(a) * radius,
+        y: segment.center.y + Math.sin(a) * radius,
+      }
+    }
+
+    case 'segmentPoint': {
+      const profile = profileForTarget(anchor.target, project)
+      if (!profile) return null
+      const segment = profile.segments[anchor.segmentIndex]
+      if (!segment || segment.type !== 'line') return null
+      const start = anchorPointForIndex(profile, anchor.segmentIndex)
+      return lerp(start, segment.to, anchor.t)
+    }
+
     default:
       return null
   }
@@ -174,6 +198,52 @@ export function angleBetween(vertex: Point, p1: Point, p2: Point): number {
   return Math.abs(delta)
 }
 
+/**
+ * If `anchor` is tied to an arc/circle (its center or a point on its edge),
+ * return that segment's true radius (from its stored geometry, not the distance
+ * between two picked points). Used so radius/diameter dimensions show the exact
+ * value instead of a number perturbed by polyline-tessellated edge snaps.
+ */
+function trueRadiusFromCircleAnchor(anchor: DimensionAnchor, project: Project): number | null {
+  if (anchor.kind !== 'center' && anchor.kind !== 'circleEdge') return null
+  const profile = profileForTarget(anchor.target, project)
+  if (!profile) return null
+  const segment = profile.segments[anchor.segmentIndex]
+  if (!segment || (segment.type !== 'arc' && segment.type !== 'circle')) return null
+  const start = anchorPointForIndex(profile, anchor.segmentIndex)
+  return Math.hypot(start.x - segment.center.x, start.y - segment.center.y)
+}
+
+/**
+ * If `centerAnchor` is a `center` anchor on an arc/circle, build a `circleEdge`
+ * anchor for the picked world point. The point's exact distance to the center
+ * doesn't matter — only the angle is captured, so the resulting anchor sits on
+ * the true circle and rotates/translates with the feature.
+ */
+export function circleEdgeAnchorFromPoint(
+  point: Point,
+  centerAnchor: DimensionAnchor,
+  project: Project,
+): DimensionAnchor | null {
+  if (centerAnchor.kind !== 'center') return null
+  const profile = profileForTarget(centerAnchor.target, project)
+  if (!profile) return null
+  const segment = profile.segments[centerAnchor.segmentIndex]
+  if (!segment || (segment.type !== 'arc' && segment.type !== 'circle')) return null
+  const start = anchorPointForIndex(profile, centerAnchor.segmentIndex)
+  const baseAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
+  const pickedAngle = Math.atan2(point.y - segment.center.y, point.x - segment.center.x)
+  let rel = pickedAngle - baseAngle
+  while (rel <= -Math.PI) rel += Math.PI * 2
+  while (rel > Math.PI) rel -= Math.PI * 2
+  return {
+    kind: 'circleEdge',
+    target: centerAnchor.target,
+    segmentIndex: centerAnchor.segmentIndex,
+    relativeAngle: rel,
+  }
+}
+
 /** Live measured value, or `null` if any required anchor is dangling. */
 export function measureValue(dim: DimensionAnnotation, project: Project): number | null {
   const a = resolveAnchor(dim.a, project)
@@ -198,12 +268,14 @@ export function measureValue(dim: DimensionAnnotation, project: Project): number
     case 'radius': {
       const b = dim.b ? resolveAnchor(dim.b, project) : null
       if (!b) return null
-      return dist(a, b)
+      const trueR = trueRadiusFromCircleAnchor(dim.a, project) ?? (dim.b ? trueRadiusFromCircleAnchor(dim.b, project) : null)
+      return trueR ?? dist(a, b)
     }
     case 'diameter': {
       const b = dim.b ? resolveAnchor(dim.b, project) : null
       if (!b) return null
-      return dist(a, b) * 2
+      const trueR = trueRadiusFromCircleAnchor(dim.a, project) ?? (dim.b ? trueRadiusFromCircleAnchor(dim.b, project) : null)
+      return trueR !== null ? trueR * 2 : dist(a, b) * 2
     }
     case 'angle': {
       const b = dim.b ? resolveAnchor(dim.b, project) : null
@@ -327,17 +399,21 @@ export function dimensionLayout(dim: DimensionAnnotation, project: Project): Dim
   if (dim.type === 'radius' || dim.type === 'diameter') {
     const edge = resolveAnchor(dim.b!, project)!
     const dir = normalize({ x: edge.x - a.x, y: edge.y - a.y })
-    // For diameter, draw straight across the circle through the center.
+    // Trim the dimension line to the true boundary (radius == value, diameter
+    // spans value across the center). When the value is derived purely from
+    // dist(a, b) this is a no-op; when a center anchor pinned the true radius,
+    // the line snaps to the actual circle instead of the picked-off-edge point.
+    const radius = dim.type === 'diameter' ? value / 2 : value
     const lineStart = dim.type === 'diameter'
-      ? { x: a.x - dir.x * (value / 2), y: a.y - dir.y * (value / 2) }
+      ? { x: a.x - dir.x * radius, y: a.y - dir.y * radius }
       : { x: a.x, y: a.y }
-    const lineEnd = edge
+    const lineEnd = { x: a.x + dir.x * radius, y: a.y + dir.y * radius }
     const mid = lerp(lineStart, lineEnd, 0.5)
     return {
       type: dim.type,
       value,
       from: a,
-      to: edge,
+      to: lineEnd,
       lineStart,
       lineEnd,
       extensions: [],

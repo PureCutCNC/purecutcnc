@@ -81,6 +81,13 @@ function snapValue(value: number, step: number): number {
   return Math.round(value / step) * step
 }
 
+function normalizeAngle(rad: number): number {
+  let v = rad
+  while (v <= -Math.PI) v += Math.PI * 2
+  while (v > Math.PI) v -= Math.PI * 2
+  return v
+}
+
 function pushSnapCandidate(
   candidates: SnapCandidate[],
   rawPoint: Point,
@@ -153,6 +160,15 @@ function addProfileSnapCandidates(
     if (segment.type === 'line') {
       if (activeModes.has('line')) {
         const projected = projectPointOntoSegment(rawPoint, start, segment.to)
+        const dx = segment.to.x - start.x
+        const dy = segment.to.y - start.y
+        const lenSq = dx * dx + dy * dy
+        const t = lenSq > 1e-9
+          ? Math.max(0, Math.min(1, ((projected.x - start.x) * dx + (projected.y - start.y) * dy) / lenSq))
+          : 0
+        const anchor: DimensionAnchor | undefined = source
+          ? { kind: 'segmentPoint', target: source, segmentIndex: index, t }
+          : undefined
         pushSnapCandidate(
           candidates,
           rawPoint,
@@ -161,6 +177,8 @@ function addProfileSnapCandidates(
           'line',
           projected,
           { kind: 'projection', from: rawPoint, to: projected },
+          undefined,
+          anchor,
         )
       }
       if (activeModes.has('perpendicular') && referencePoint) {
@@ -183,6 +201,18 @@ function addProfileSnapCandidates(
 
     if (activeModes.has('line')) {
       const projected = nearestPointOnPolyline(rawPoint, polyline)
+      const anchor: DimensionAnchor | undefined =
+        source && (segment.type === 'arc' || segment.type === 'circle')
+          ? {
+              kind: 'circleEdge',
+              target: source,
+              segmentIndex: index,
+              relativeAngle: normalizeAngle(
+                Math.atan2(projected.y - segment.center.y, projected.x - segment.center.x)
+                  - Math.atan2(start.y - segment.center.y, start.x - segment.center.x),
+              ),
+            }
+          : undefined
       pushSnapCandidate(
         candidates,
         rawPoint,
@@ -191,6 +221,8 @@ function addProfileSnapCandidates(
         'line',
         projected,
         { kind: 'projection', from: rawPoint, to: projected },
+        undefined,
+        anchor,
       )
     }
 

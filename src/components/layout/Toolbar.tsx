@@ -145,6 +145,8 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     dimensionDeleteArmed,
     setDimensionDeleteArmed,
     setShowDimensions,
+    selectedAnnotationId,
+    deleteDimensionAnnotation,
   } = useProjectStore()
 
   const [editingName, setEditingName] = useState(false)
@@ -221,6 +223,13 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
 
   function handleDeleteDimension() {
     if (pendingAdd) cancelPendingAdd()
+    // If a dimension is already selected, just delete it — no need to arm the
+    // pick-a-dimension mode for a second click.
+    if (selectedAnnotationId) {
+      deleteDimensionAnnotation(selectedAnnotationId)
+      if (dimensionDeleteArmed) setDimensionDeleteArmed(false)
+      return
+    }
     setDimensionDeleteArmed(!dimensionDeleteArmed)
   }
 
@@ -1221,13 +1230,13 @@ function SnapActions({
   )
 }
 
-const DIMENSION_TOOLS: { type: DimensionType; icon: string; label: string }[] = [
-  { type: 'aligned', icon: 'dim-aligned', label: 'Aligned dimension' },
-  { type: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal dimension' },
-  { type: 'vertical', icon: 'dim-vertical', label: 'Vertical dimension' },
-  { type: 'radius', icon: 'dim-radius', label: 'Radius dimension' },
-  { type: 'diameter', icon: 'dim-diameter', label: 'Diameter dimension' },
-  { type: 'angle', icon: 'dim-angle', label: 'Angle dimension' },
+const DIMENSION_TYPE_OPTIONS: PopoverMenuOption<DimensionType>[] = [
+  { value: 'aligned', icon: 'dim-aligned', label: 'Aligned dimension' },
+  { value: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal dimension' },
+  { value: 'vertical', icon: 'dim-vertical', label: 'Vertical dimension' },
+  { value: 'radius', icon: 'dim-radius', label: 'Radius dimension' },
+  { value: 'diameter', icon: 'dim-diameter', label: 'Diameter dimension' },
+  { value: 'angle', icon: 'dim-angle', label: 'Angle dimension' },
 ]
 
 function MeasureActions({
@@ -1253,25 +1262,34 @@ function MeasureActions({
   onDeleteDimension: () => void
   onToggleShowDimensions: () => void
 }) {
+  // Reflect a pending dimension placement in the popover trigger so the user
+  // can see which type is in progress without expanding the menu.
+  const activeDimOption = pendingDimensionType
+    ? DIMENSION_TYPE_OPTIONS.find((option) => option.value === pendingDimensionType) ?? null
+    : null
+  const triggerIcon = activeDimOption?.icon ?? 'measure'
+  const triggerLabelClosed = activeDimOption
+    ? `Cancel ${activeDimOption.label.toLowerCase()}`
+    : 'Add dimension'
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
-        icon="measure"
+        icon="tape-measure"
         label={tapeActive ? 'Tape measure (on)' : 'Tape measure'}
         active={tapeActive}
         tooltipSide={tooltipSide}
         onClick={onTapeMeasure}
       />
-      {DIMENSION_TOOLS.map(({ type, icon, label }) => (
-        <ToolbarActionButton
-          key={type}
-          icon={icon}
-          label={label}
-          active={pendingDimensionType === type}
-          tooltipSide={tooltipSide}
-          onClick={() => onDimensionType(type)}
-        />
-      ))}
+      <ToolbarPopoverMenu
+        triggerIcon={triggerIcon}
+        triggerLabelOpen="Close dimension menu"
+        triggerLabelClosed={triggerLabelClosed}
+        enabled
+        tooltipSide={tooltipSide}
+        columns={3}
+        options={DIMENSION_TYPE_OPTIONS}
+        onSelect={onDimensionType}
+      />
       <ToolbarActionButton
         icon="trash"
         label={dimensionDeleteArmed ? 'Delete dimension (click one)' : 'Delete dimension'}
@@ -1281,7 +1299,7 @@ function MeasureActions({
         onClick={onDeleteDimension}
       />
       <ToolbarActionButton
-        icon="dim-visibility"
+        icon={showDimensions ? 'eye' : 'eye-off'}
         label={dimensionCount === 0
           ? 'Show/hide dimensions'
           : showDimensions ? `Hide dimensions (${dimensionCount})` : `Show dimensions (${dimensionCount})`}
@@ -1367,6 +1385,17 @@ export function GlobalToolbar({
           onToggleSnapEnabled={onToggleSnapEnabled}
           onToggleSnapMode={onToggleSnapMode}
         />
+        <MeasureActions
+          tapeActive={toolbar.tapeActive}
+          pendingDimensionType={toolbar.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
+          showDimensions={toolbar.showDimensions}
+          dimensionCount={toolbar.dimensionCount}
+          onTapeMeasure={toolbar.handleTapeMeasure}
+          onDimensionType={toolbar.handleDimensionType}
+          onDeleteDimension={toolbar.handleDeleteDimension}
+          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
+        />
       </div>
       <ToolbarDialog
         showNewProjectDialog={toolbar.showNewProjectDialog}
@@ -1408,18 +1437,6 @@ export function CreationToolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
           onText={toolbar.handleTextTool}
-        />
-        <MeasureActions
-          tapeActive={toolbar.tapeActive}
-          pendingDimensionType={toolbar.pendingDimensionType}
-          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
-          showDimensions={toolbar.showDimensions}
-          dimensionCount={toolbar.dimensionCount}
-          tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onTapeMeasure={toolbar.handleTapeMeasure}
-          onDimensionType={toolbar.handleDimensionType}
-          onDeleteDimension={toolbar.handleDeleteDimension}
-          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
@@ -1540,6 +1557,17 @@ export function Toolbar({
           onToggleSnapEnabled={onToggleSnapEnabled}
           onToggleSnapMode={onToggleSnapMode}
         />
+        <MeasureActions
+          tapeActive={toolbar.tapeActive}
+          pendingDimensionType={toolbar.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
+          showDimensions={toolbar.showDimensions}
+          dimensionCount={toolbar.dimensionCount}
+          onTapeMeasure={toolbar.handleTapeMeasure}
+          onDimensionType={toolbar.handleDimensionType}
+          onDeleteDimension={toolbar.handleDeleteDimension}
+          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
+        />
         <CreationActions
           pendingShape={toolbar.pendingAdd?.shape ?? null}
           creationTarget={toolbar.creationTarget}
@@ -1551,17 +1579,6 @@ export function Toolbar({
           onSpline={toolbar.handleSpline}
           onComposite={toolbar.handleComposite}
           onText={toolbar.handleTextTool}
-        />
-        <MeasureActions
-          tapeActive={toolbar.tapeActive}
-          pendingDimensionType={toolbar.pendingDimensionType}
-          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
-          showDimensions={toolbar.showDimensions}
-          dimensionCount={toolbar.dimensionCount}
-          onTapeMeasure={toolbar.handleTapeMeasure}
-          onDimensionType={toolbar.handleDimensionType}
-          onDeleteDimension={toolbar.handleDeleteDimension}
-          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}

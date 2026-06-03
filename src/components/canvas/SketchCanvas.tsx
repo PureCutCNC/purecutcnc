@@ -56,7 +56,7 @@ import type { DimensionEditState, OperationDimEdit } from './manualEntry'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
-import { offsetForCursor } from '../../sketch/dimensions'
+import { circleEdgeAnchorFromPoint, offsetForCursor } from '../../sketch/dimensions'
 import {
   drawFeature,
   drawMoveGuide,
@@ -597,7 +597,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const t = pendingDimension.type
     const n = dimensionPickedCount
     if (t === 'radius' || t === 'diameter') {
-      return n === 0 ? 'Click the circle / arc center' : n === 1 ? 'Click a point on the edge' : 'Click to place'
+      return n === 0 ? 'Click the circle / arc center' : 'Click a point on the edge'
     }
     if (t === 'angle') {
       return n === 0 ? 'Click the vertex'
@@ -3478,6 +3478,38 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const anchor: DimensionAnchor = resolvedSnap.anchor ?? { kind: 'free', point: resolvedSnap.point }
       const need = pendingDim.type === 'angle' ? 3 : 2
       const picked = [pendingDim.a, pendingDim.b, pendingDim.c].filter(Boolean).length
+      // Radius/diameter have no cursor-driven offset (line is always center→edge),
+      // so commit immediately on the final anchor click instead of asking for an
+      // extra "click to place" step.
+      const isRadial = pendingDim.type === 'radius' || pendingDim.type === 'diameter'
+      // For radius/diameter the first click MUST identify a circle/arc center —
+      // otherwise the dimension would be measured between arbitrary points and
+      // the value would be meaningless. Silently ignore non-center clicks; the
+      // CanvasWorkflowPanel already says "Click the circle / arc center".
+      if (isRadial && picked === 0 && anchor.kind !== 'center') {
+        return
+      }
+      if (isRadial && picked === need - 1) {
+        // If the edge click landed off-circle (or via a non-anchored snap), but
+        // anchor a pins the circle's center, project onto that circle and store
+        // an angle-relative anchor so the dim direction follows the feature.
+        const edgeAnchor =
+          anchor.kind === 'free' && pendingDim.a
+            ? (circleEdgeAnchorFromPoint(anchor.point, pendingDim.a, project) ?? anchor)
+            : anchor
+        addDimensionAnnotation({
+          type: pendingDim.type,
+          a: pendingDim.a!,
+          b: edgeAnchor,
+          offset: 0,
+          visible: true,
+          locked: false,
+          textOverride: null,
+          precisionOverride: null,
+        })
+        cancelPendingDimension()
+        return
+      }
       if (picked < need) {
         pendingDimensionPick(anchor)
         return
@@ -5911,7 +5943,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           )}
         >
           <div className="canvas-workflow-panel__summary">
-            Click points to anchor the dimension to geometry — it follows when features move. Esc to cancel.
+            Click points to anchor the dimension to geometry. Esc to cancel.
           </div>
         </CanvasWorkflowPanel>
       )}

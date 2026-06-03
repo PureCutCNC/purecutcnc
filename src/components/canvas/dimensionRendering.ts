@@ -237,8 +237,11 @@ export function drawPendingDimensionPreview(
   const picked = [pending.a, pending.b, pending.c].filter(Boolean).length
 
   if (picked < need) {
-    // Rubber-band from the last picked anchor to the cursor.
-    const last = c ?? b ?? a
+    // Rubber-band to the cursor from the most relevant anchor: for angle
+    // dimensions both rays emanate from the vertex (a), so always anchor there
+    // once it is picked. For other types the trailing line just follows the
+    // most recently placed anchor.
+    const last = pending.type === 'angle' ? (a ?? c ?? b) : (c ?? b ?? a)
     if (last && livePoint) {
       ctx.save()
       ctx.strokeStyle = ACTIVE_COLOR

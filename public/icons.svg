@@ -493,4 +493,10 @@
     <path d="M 3 12 C 9 6, 15 6, 21 12 C 15 18, 9 18, 3 12 Z" />
     <path d="M 15 12 A 3 3 0 1 0 9 12 A 3 3 0 1 0 15 12 Z" />
   </symbol>
+  <symbol id="tape-measure" viewBox="0 0 24 24">
+    <path d="M 13 12 A 6 6 0 1 0 1 12 A 6 6 0 1 0 13 12 Z" />
+    <path d="M 9 12 A 2 2 0 1 0 5 12 A 2 2 0 1 0 9 12 Z" />
+    <path d="M 13 10 L 22 10 L 22 14 L 13 14 L 13 10 Z" />
+    <path d="M 22 8 L 22 16" />
+  </symbol>
 </svg>

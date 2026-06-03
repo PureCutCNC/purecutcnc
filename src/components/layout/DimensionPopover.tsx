@@ -19,13 +19,13 @@ import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
 import type { DimensionType } from '../../types/project'
 
-const DIMENSION_TYPES: { type: DimensionType; icon: string; label: string; hint: string }[] = [
-  { type: 'aligned', icon: 'dim-aligned', label: 'Aligned', hint: 'Parallel distance between two points' },
-  { type: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal', hint: 'Horizontal distance (Δx)' },
-  { type: 'vertical', icon: 'dim-vertical', label: 'Vertical', hint: 'Vertical distance (Δy)' },
-  { type: 'radius', icon: 'dim-radius', label: 'Radius', hint: 'Radius of an arc/circle' },
-  { type: 'diameter', icon: 'dim-diameter', label: 'Diameter', hint: 'Diameter of an arc/circle' },
-  { type: 'angle', icon: 'dim-angle', label: 'Angle', hint: 'Angle at a vertex between two points' },
+const DIMENSION_TYPES: { type: DimensionType; icon: string; hint: string }[] = [
+  { type: 'aligned', icon: 'dim-aligned', hint: 'Aligned dimension' },
+  { type: 'horizontal', icon: 'dim-horizontal', hint: 'Horizontal dimension' },
+  { type: 'vertical', icon: 'dim-vertical', hint: 'Vertical dimension' },
+  { type: 'radius', icon: 'dim-radius', hint: 'Radius dimension' },
+  { type: 'diameter', icon: 'dim-diameter', hint: 'Diameter dimension' },
+  { type: 'angle', icon: 'dim-angle', hint: 'Angle dimension' },
 ]
 
 export function DimensionPopover() {
@@ -94,35 +94,41 @@ export function DimensionPopover() {
       </div>
       {open && (
         <div className="snap-popover" role="menu">
-          <div className="snap-popover-header">
+          <div className="snap-popover-grid snap-popover-grid--icon-only" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
             <button
-              className={`snap-popover-enable-btn ${tapeActive ? 'snap-popover-enable-btn--active' : ''}`}
+              className={`snap-popover-item ${tapeActive ? 'snap-popover-item--active' : ''}`}
               type="button"
+              aria-label="Tape measure"
+              aria-pressed={tapeActive}
+              title={tapeActive ? 'Stop tape measure' : 'Tape measure'}
               onClick={toggleTape}
             >
-              {tapeActive ? 'Tape measure on' : 'Tape measure'}
+              <Icon id="tape-measure" />
             </button>
             <button
-              className={`snap-popover-enable-btn ${showDimensions ? 'snap-popover-enable-btn--active' : ''}`}
+              className={`snap-popover-item ${showDimensions ? 'snap-popover-item--active' : ''}`}
               type="button"
+              aria-label="Show or hide dimensions"
               aria-pressed={showDimensions}
-              title={dimensionCount > 0 ? `${dimensionCount} dimension${dimensionCount === 1 ? '' : 's'}` : 'No dimensions yet'}
+              title={dimensionCount > 0
+                ? `${showDimensions ? 'Hide' : 'Show'} dimensions (${dimensionCount})`
+                : 'Show/hide dimensions'}
               onClick={() => setShowDimensions(!showDimensions)}
             >
-              {showDimensions ? 'Dimensions shown' : 'Dimensions hidden'}
+              <Icon id={showDimensions ? 'eye' : 'eye-off'} />
             </button>
             <button
-              className={`snap-popover-enable-btn ${dimensionDeleteArmed ? 'snap-popover-enable-btn--active' : ''}`}
+              className={`snap-popover-item ${dimensionDeleteArmed ? 'snap-popover-item--active' : ''}`}
               type="button"
+              aria-label="Delete dimension"
               aria-pressed={dimensionDeleteArmed}
               disabled={dimensionCount === 0}
+              title={dimensionDeleteArmed ? 'Click a dimension to delete' : 'Delete dimension'}
               onClick={() => setDimensionDeleteArmed(!dimensionDeleteArmed)}
             >
-              {dimensionDeleteArmed ? 'Click a dimension…' : 'Delete dimension'}
+              <Icon id="trash" />
             </button>
-          </div>
-          <div className="snap-popover-grid">
-            {DIMENSION_TYPES.map(({ type, icon, label, hint }) => {
+            {DIMENSION_TYPES.map(({ type, icon, hint }) => {
               const active = dimType === type
               return (
                 <button
@@ -136,7 +142,6 @@ export function DimensionPopover() {
                   onClick={() => pickType(type)}
                 >
                   <Icon id={icon} />
-                  <span className="snap-popover-item-label">{label}</span>
                 </button>
               )
             })}
