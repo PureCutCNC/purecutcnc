@@ -140,7 +140,7 @@ export function OperationAddMenu({
                         </div>
                       ) : (
                         <img
-                          src={`/operation-examples/${description.exampleImageName}`}
+                          src={`${import.meta.env.BASE_URL}operation-examples/${description.exampleImageName}`}
                           alt={`${description.title} example`}
                           className="cam-operation-details__image"
                           onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
