@@ -30,6 +30,11 @@
       "{unitsCommand}",
       "{wcsCommand}"
     ],
+    "operationHeader": [
+      "( Operation {operationIndex}: {operationName} )",
+      "( Description: {operationDescription} )",
+      "( Tool {toolNumber}: {toolName} )"
+    ],
     "footer": [
       "M5",
       "G0 G53 Z0"

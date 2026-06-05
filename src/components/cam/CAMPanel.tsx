@@ -24,6 +24,7 @@ import { OperationAddMenu } from './OperationAddMenu'
 import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
+  Operation,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -32,6 +33,11 @@ import type {
   Tool,
   ToolType,
 } from '../../types/project'
+import type { ToolpathResult } from '../../engine/toolpaths'
+import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
+import { createOperationBookletPdf } from '../../engine/operationBooklet'
+import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
+import { platform } from '../../platform'
 import { featureHasClosedGeometry } from '../../text'
 import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
@@ -44,6 +50,7 @@ interface CAMPanelProps {
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
   onExport: () => void
+  generateToolpath: (operation: Operation) => ToolpathResult | null
   toolpathWarnings?: string[] | null
   generatingOperationIds?: Set<string>
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
@@ -80,6 +87,34 @@ function DraftTextInput({ value, onCommit }: DraftTextInputProps) {
           return
         }
 
+        if (event.key === 'Escape') {
+          reset(event.currentTarget)
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
+function DraftTextArea({ value, onCommit }: DraftTextInputProps) {
+  function reset(element: HTMLTextAreaElement) {
+    element.value = value
+  }
+
+  function commit(element: HTMLTextAreaElement) {
+    if (element.value !== value) {
+      onCommit(element.value)
+    } else {
+      reset(element)
+    }
+  }
+
+  return (
+    <textarea
+      defaultValue={value}
+      spellCheck
+      onBlur={(event) => commit(event.currentTarget)}
+      onKeyDown={(event) => {
         if (event.key === 'Escape') {
           reset(event.currentTarget)
           event.currentTarget.blur()
@@ -539,6 +574,7 @@ export function CAMPanel({
   selectedOperationId: selectedOperationIdProp,
   onSelectedOperationIdChange,
   onExport,
+  generateToolpath,
   toolpathWarnings,
   generatingOperationIds,
   onOperationHighlightChange,
@@ -562,6 +598,11 @@ export function CAMPanel({
     operationId: string
     text: string
   } | null>(null)
+  const [bookletExportMessage, setBookletExportMessage] = useState<{
+    operationId: string
+    text: string
+  } | null>(null)
+  const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
@@ -1010,6 +1051,50 @@ export function CAMPanel({
     autoPlaceTabsForOperation(selectedOperation.id)
   }
 
+  async function handleExportBooklet() {
+    if (!selectedOperation) {
+      return
+    }
+
+    setExportingBookletOperationId(selectedOperation.id)
+    setBookletExportMessage({ operationId: selectedOperation.id, text: 'Building booklet...' })
+
+    try {
+      const toolpath = generateToolpath(selectedOperation)
+      const toolRecord = selectedOperation.toolRef
+        ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
+        : null
+      const tool = toolRecord ? normalizeToolForProject(toolRecord, project) : null
+      const snapshotPng = await renderOperationSnapshotPng(project, selectedOperation, toolpath)
+      const pdfBytes = await createOperationBookletPdf({
+        project,
+        operation: selectedOperation,
+        tool,
+        toolpath,
+        snapshotPng,
+      })
+      const safeProjectName = project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
+      const safeOperationName = selectedOperation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
+      const exportedPath = await platform.saveBinaryFile(
+        `${safeProjectName}_${safeOperationName}_booklet`,
+        pdfBytes,
+        'pdf',
+        'application/pdf',
+      )
+      setBookletExportMessage({
+        operationId: selectedOperation.id,
+        text: exportedPath ? `Booklet exported: ${exportedPath}` : 'Booklet export cancelled',
+      })
+    } catch (error) {
+      setBookletExportMessage({
+        operationId: selectedOperation.id,
+        text: error instanceof Error ? error.message : 'Failed to export booklet',
+      })
+    } finally {
+      setExportingBookletOperationId(null)
+    }
+  }
+
   return (
     <div className="cam-panel">
       {mode === 'operations' ? (
@@ -1227,6 +1312,13 @@ export function CAMPanel({
                     <span>Name</span>
                     <DraftTextInput value={selectedOperation.name} onCommit={(value) => updateOperation(selectedOperation.id, { name: value })} />
                   </label>
+                  <label className="properties-field properties-field--textarea">
+                    <span>Description</span>
+                    <DraftTextArea
+                      value={selectedOperation.description ?? ''}
+                      onCommit={(value) => updateOperation(selectedOperation.id, { description: value })}
+                    />
+                  </label>
                   <label className="properties-field">
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
@@ -1276,6 +1368,20 @@ export function CAMPanel({
                       <span>Regions limit where this operation may cut — not shapes to machine.</span>
                     </div>
                   ) : null}
+                  <div className="properties-field">
+                    <span>Booklet</span>
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      onClick={handleExportBooklet}
+                      disabled={exportingBookletOperationId === selectedOperation.id}
+                    >
+                      {exportingBookletOperationId === selectedOperation.id ? 'Exporting...' : 'Export PDF'}
+                    </button>
+                    {bookletExportMessage?.operationId === selectedOperation.id ? (
+                      <span className="cam-field-message">{bookletExportMessage.text}</span>
+                    ) : null}
+                  </div>
                   <div className="properties-field">
                     <span>Target Source</span>
                     <button

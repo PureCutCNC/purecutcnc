@@ -10,9 +10,9 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
-- [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
-
 ## In progress
+
+- [OPERATION_DESCRIPTION_BOOKLET_Plan.md](OPERATION_DESCRIPTION_BOOKLET_Plan.md) — add operation descriptions, expose them to per-operation G-code headers, and export per-operation PDF booklets
 
 - [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change
 

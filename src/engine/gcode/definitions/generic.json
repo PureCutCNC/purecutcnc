@@ -30,6 +30,11 @@
       "{unitsCommand}",
       "{wcsCommand}"
     ],
+    "operationHeader": [
+      "( Operation {operationIndex}: {operationName} )",
+      "( Description: {operationDescription} )",
+      "( Tool {toolNumber}: {toolName} )"
+    ],
     "footer": [],
     "commentPrefix": "(",
     "commentSuffix": ")",
