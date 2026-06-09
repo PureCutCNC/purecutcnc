@@ -13,6 +13,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `useIconIds.ts` — hook listing available icon IDs
 
 ## Subfolders (by area)
+- `common/` — shared cross-panel UI primitives. `DisclosureSection` is the reusable collapsible "Advanced" section (progressive disclosure); its open/collapsed state persists via the pure helpers in `common/disclosureState.ts`.
 - `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`)
 - `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
 - `simulation/` — voxel toolpath simulation viewport and playback controls

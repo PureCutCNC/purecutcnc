@@ -106,7 +106,8 @@ import {
   profileVertices,
   rectProfile,
 } from '../../types/project'
-import type { Clamp, DimensionAnchor, DimensionAnnotation, Point, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, DimensionAnchor, DimensionAnnotation, OperationKind, Point, SketchFeature, Tab } from '../../types/project'
+import { compatibleFeatureIdsForOperation } from '../cam/operationValidity'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
@@ -165,6 +166,12 @@ interface SketchCanvasProps {
   onToggleDepthLegend?: () => void
   toolpathVisibility?: ToolpathVisibility
   onToolpathVisibilityChange?: (visibility: ToolpathVisibility) => void
+  /**
+   * A1.3: when an operation kind is armed/hovered in the CAM "Add operation"
+   * menu, the canvas highlights features that operation could act on and dims
+   * the rest. Null when nothing is armed.
+   */
+  operationHighlightKind?: OperationKind | null
 }
 
 function drawStlTopViewImage(
@@ -250,6 +257,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     onToggleDepthLegend,
     toolpathVisibility,
     onToolpathVisibilityChange,
+    operationHighlightKind = null,
   },
   ref
 ) {
@@ -448,6 +456,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const dimensionDeleteArmedRef = useRef(dimensionDeleteArmed)
   const selectedAnnotationIdRef = useRef(selectedAnnotationId)
   const deleteHoverDimIdRef = useRef<string | null>(null)
+  const operationHighlightKindRef = useRef(operationHighlightKind)
 
   projectRef.current = project
   selectionRef.current = selection
@@ -469,6 +478,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingDimensionRef.current = pendingDimension
   dimensionDeleteArmedRef.current = dimensionDeleteArmed
   selectedAnnotationIdRef.current = selectedAnnotationId
+  operationHighlightKindRef.current = operationHighlightKind
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
   dimensionEditRef.current = dimensionEdit
   constraintEditRef.current = constraintEdit
@@ -1102,7 +1112,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility])
+  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility, operationHighlightKind])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -1301,6 +1311,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const selectedOperationId = selectedOperationIdRef.current
     const collidingClampIds = collidingClampIdsRef.current
     const copyCountDraft = copyCountDraftRef.current
+    const operationHighlightKind = operationHighlightKindRef.current
+    // A1.3: features the armed operation could act on (null = nothing armed).
+    const operationHighlightIds = operationHighlightKind
+      ? new Set(compatibleFeatureIdsForOperation(project, operationHighlightKind))
+      : null
 
     const width = canvas.width
     const height = canvas.height
@@ -1349,6 +1364,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
 
       drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
+
+      // A1.3: when an operation is armed in the CAM menu, ring the features it
+      // could act on and veil the rest, so "what would this operate on?" is visible.
+      if (operationHighlightIds) {
+        traceProfilePath(ctx, feature.sketch.profile, vt)
+        ctx.save()
+        if (operationHighlightIds.has(feature.id)) {
+          ctx.lineWidth = 3
+          ctx.strokeStyle = 'rgba(123, 199, 246, 0.95)'
+          ctx.shadowColor = 'rgba(123, 199, 246, 0.85)'
+          ctx.shadowBlur = 8
+          ctx.stroke()
+        } else if (feature.sketch.profile.closed) {
+          ctx.fillStyle = 'rgba(8, 12, 18, 0.5)'
+          ctx.fill()
+        }
+        ctx.restore()
+      }
 
       const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null
       const stlTopViewImage = stlTopViewUrl ? stlImageCacheRef.current.get(stlTopViewUrl) : null

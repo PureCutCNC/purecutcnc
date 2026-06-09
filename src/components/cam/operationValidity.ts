@@ -25,7 +25,7 @@
  */
 
 import type { SelectionState } from '../../store/types'
-import type { OperationKind, OperationPass, Project } from '../../types/project'
+import type { Operation, OperationKind, OperationPass, Project } from '../../types/project'
 import { featureHasClosedGeometry } from '../../text'
 
 export function operationKindLabel(kind: OperationKind): string {
@@ -336,4 +336,30 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
   return QUICK_OPERATION_KINDS
     .filter((kind) => getOperationAddHint(project, selection, kind) === null)
     .map((kind) => ({ kind, pass: 'rough' as OperationPass, label: quickOperationLabel(kind) }))
+}
+
+/**
+ * Returns the ids of the features an operation kind could act on, using the
+ * same validity rules as the CAM panel (a feature is compatible when
+ * `getOperationAddHint` reports it valid on its own). Drives the A1.3 canvas
+ * highlight that shows "what would this operation operate on?" while an
+ * operation is armed in the "Add operation" menu.
+ */
+export function compatibleFeatureIdsForOperation(project: Project, kind: OperationKind): string[] {
+  return project.features
+    .filter((feature) => getOperationAddHint(project, singleFeatureSelection(feature.id), kind) === null)
+    .map((feature) => feature.id)
+}
+
+/**
+ * True when an operation's target list includes at least one `region` feature.
+ * Used by the CAM panel (A1.4) to show a plain-language note clarifying that a
+ * region limits where the operation may cut rather than being machined itself.
+ */
+export function operationTargetsRegion(project: Project, operation: Operation): boolean {
+  if (operation.target.source !== 'features') {
+    return false
+  }
+  return operation.target.featureIds.some((featureId) =>
+    project.features.find((feature) => feature.id === featureId)?.operation === 'region')
 }

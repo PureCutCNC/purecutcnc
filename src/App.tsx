@@ -22,7 +22,7 @@ import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/Sketc
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFinishSurfaceCleanupToolpath, generateFinishSurfaceToolpath, generateFollowLineToolpath, generatePocketToolpath, generateRoughSurfaceToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
 import type { ToolpathResult } from './engine/toolpaths'
-import type { Clamp, Operation, Project, SketchFeature, Stock, Tab, Tool } from './types/project'
+import type { Clamp, Operation, OperationKind, Project, SketchFeature, Stock, Tab, Tool } from './types/project'
 import { createSimulationGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield, type SimulationReplayItem } from './engine/simulation'
 import type { SimulationPlaybackInput } from './components/simulation/SimulationViewport'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
@@ -183,6 +183,9 @@ function App() {
   const [showAboutDialog, setShowAboutDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
+  // A1.3: operation kind armed in the CAM "Add operation" menu (on hover), so the
+  // sketch canvas can highlight the features that operation could act on.
+  const [operationHighlightKind, setOperationHighlightKind] = useState<OperationKind | null>(null)
 
   // Native menu "New" dispatches this after the dirty check — handled once here
   // rather than in each toolbar variant (GlobalToolbar / CreationToolbar / Toolbar).
@@ -1165,6 +1168,7 @@ function App() {
               onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
               toolpathVisibility={toolpathVisibility}
               onToolpathVisibilityChange={setToolpathVisibility}
+              operationHighlightKind={operationHighlightKind}
             />
             {project.features.length === 0 && !pendingAdd && !emptyStateEngaged ? (
               <EmptyStateOverlay
@@ -1222,6 +1226,7 @@ function App() {
             onExport={() => setShowExportDialog(true)}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
+            onOperationHighlightChange={setOperationHighlightKind}
           />
         }
         centerTab={centerTab}

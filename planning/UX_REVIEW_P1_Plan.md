@@ -1,5 +1,5 @@
 ---
-status: Draft   # Draft → Approved → In progress → Done | Abandoned
+status: In progress   # Draft → Approved → In progress → Done | Abandoned
 created: 2026-06-08
 ---
 
@@ -7,6 +7,16 @@ created: 2026-06-08
 
 > Derived from [`reviews/CONSOLIDATED_REVIEW_2026-06-08.md`](reviews/CONSOLIDATED_REVIEW_2026-06-08.md), section "P1".
 > Five items that lower the cognitive load that makes a capable app feel complex. Each is independently shippable and should be its own PR. A1.5 (tablet) is largely a pointer to the existing tablet plan and is tracked there. Do **not** start P1 until P0 is approved/landed — the empty-state and quick-op work changes some of the same surfaces (`App.tsx`, `CAMPanel.tsx`).
+
+## Approved scope for this PR (2026-06-09)
+
+This PR (folded together with P0 on the same branch) implements **A1.1, A1.3, and A1.4** — the three highest-leverage, well-bounded "reduce cognitive load" wins. **A1.2** (standardize multi-step interactions on `CanvasWorkflowPanel`) and **A1.5** (tablet cross-checks) are deferred to follow-up PRs because they are large/cross-cutting (A1.2 is an audit + incremental migration; A1.5 is tracked in `TABLET_UX_COMBINED_PLAN.md`).
+
+Decisions confirmed with the owner before implementation:
+
+- **A1.1 field split:** follow this plan's split — *common* fields are name / operation / `z_top` / `z_bottom` on features and tool + depth + stepdown/stepover on operations; *advanced* (collapsed) holds fine feeds/speeds (feed, plunge feed, RPM), stock-to-leave, strategy (pattern/angle/cut direction/machining order), waterline tuning, drill sub-parameters (peck/dwell/retract), finish walls/floor, and debug flags.
+- **A1.3:** implement both the inline hints *and* the canvas highlight of compatible features (the highlight touches `SketchCanvas.tsx`).
+- **A1.4:** note that P0 already moved regions into a dedicated "Regions" tree section and gave region features a locked "Z Range follows stock" field; the remaining work is the per-row mask/filter badge, the inline explanation where a region is used as an operation parameter, and wording alignment with `REGION_FEATURE_SEMANTICS.md`. Presentation only.
 
 ## Goal
 

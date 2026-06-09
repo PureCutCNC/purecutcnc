@@ -21,6 +21,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
+import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
   OperationKind,
@@ -32,7 +33,7 @@ import type {
   ToolType,
 } from '../../types/project'
 import { featureHasClosedGeometry } from '../../text'
-import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles } from './operationValidity'
+import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
@@ -45,6 +46,8 @@ interface CAMPanelProps {
   onExport: () => void
   toolpathWarnings?: string[] | null
   generatingOperationIds?: Set<string>
+  /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
+  onOperationHighlightChange?: (kind: OperationKind | null) => void
 }
 
 interface DraftTextInputProps {
@@ -538,6 +541,7 @@ export function CAMPanel({
   onExport,
   toolpathWarnings,
   generatingOperationIds,
+  onOperationHighlightChange,
 }: CAMPanelProps) {
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
@@ -617,6 +621,9 @@ export function CAMPanel({
   const selectedOperationWaterlineSpacing = selectedOperation
     ? resolvedWaterlineAdaptiveSpacing(selectedOperation, selectedOperationTool, project.meta.units)
     : 0
+  // A1.4: surface a plain-language note when a region feature is used as an
+  // operation target, so "region" reads as a filter rather than cut geometry.
+  const selectedOperationTargetsRegion = !!selectedOperation && operationTargetsRegion(project, selectedOperation)
   const selectionKey = `${selection.selectedNode?.type ?? 'none'}:${selection.selectedFeatureIds.join(',')}`
 
   useEffect(() => {
@@ -1064,6 +1071,7 @@ export function CAMPanel({
                         operationSupportsPass={operationSupportsPassSelection}
                         onChooseOperation={handleChooseOperationForAdd}
                         onAddOperation={handleAddOperation}
+                        onHighlightOperation={onOperationHighlightChange}
                       />
                     ) : null}
                   </div>
@@ -1247,92 +1255,6 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
-                    <label className="properties-field">
-                      <span>Pattern</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'offset', label: pocketPatternLabel('offset') },
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                        ]}
-                        onChange={(value) => {
-                          const waterlineSpacing = value === 'waterline'
-                            ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
-                            : 0
-                          updateOperation(selectedOperation.id, {
-                            pocketPattern: value,
-                            ...(waterlineSpacing > 0 && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
-                              ? { waterlineMicroStepover: waterlineSpacing }
-                              : {}),
-                          })
-                        }}
-                      />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'finish_surface' ? (
-                    <label className="properties-field">
-                      <span>Pattern</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                          { value: 'waterline', label: pocketPatternLabel('waterline') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
-                      />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'finish_surface_cleanup' ? (
-                    <label className="properties-field">
-                      <span>Pattern</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'offset', label: pocketPatternLabel('offset') },
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
-                      />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
-                    <label className="properties-field">
-                      <span>Angle</span>
-                      <DraftNumberInput
-                        value={selectedOperation.pocketAngle}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
-                      />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') ? (
-                    <label className="properties-field">
-                      <span>Cut Direction</span>
-                      <Select
-                        value={selectedOperation.cutDirection ?? 'conventional'}
-                        options={[
-                          { value: 'conventional', label: 'Conventional' },
-                          { value: 'climb', label: 'Climb' },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
-                      />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket'
-                    || selectedOperation.kind === 'edge_route_inside'
-                    || selectedOperation.kind === 'edge_route_outside') ? (
-                    <label className="properties-field">
-                      <span>Machining Order</span>
-                      <Select
-                        value={selectedOperation.machiningOrder ?? 'level_first'}
-                        options={[
-                          { value: 'feature_first', label: 'Feature first' },
-                          { value: 'level_first', label: 'Level first' },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
-                      />
-                    </label>
-                  ) : null}
                   {selectedOperation.kind === 'follow_line' ? (
                     <label className="properties-field">
                       <span>Carve Depth</span>
@@ -1344,86 +1266,16 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'drilling' ? (
-                    <>
-                      <label className="properties-field">
-                        <span>Drill Type</span>
-                        <Select
-                          value={selectedOperation.drillType ?? 'simple'}
-                          options={[
-                            { value: 'simple', label: drillTypeLabel('simple') },
-                            { value: 'peck', label: drillTypeLabel('peck') },
-                            { value: 'dwell', label: drillTypeLabel('dwell') },
-                            { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
-                          ]}
-                          onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
-                        />
-                      </label>
-                      {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
-                        <label className="properties-field">
-                          <span>Peck Depth</span>
-                          <DraftLengthInput
-                            value={selectedOperation.peckDepth ?? 0}
-                            units={project.meta.units}
-                            min={0}
-                            onCommit={(value) => updateOperation(selectedOperation.id, { peckDepth: value })}
-                          />
-                        </label>
-                      ) : null}
-                      {selectedOperation.drillType === 'dwell' ? (
-                        <label className="properties-field">
-                          <span>Dwell Time (s)</span>
-                          <DraftNumberInput
-                            value={selectedOperation.dwellTime ?? 0}
-                            min={0}
-                            onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
-                          />
-                        </label>
-                      ) : null}
-                      <label className="properties-field">
-                        <span>Retract Height</span>
-                        <DraftLengthInput
-                          value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
-                          units={project.meta.units}
-                          min={0}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
-                        />
-                      </label>
-                    </>
-                  ) : null}
-                  {((selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish')
-                    || selectedOperation.kind === 'finish_surface_cleanup' ? (
-                    <>
-                      <label className="properties-check">
-                        <input
-                          type="checkbox"
-                          checked={selectedOperation.finishWalls}
-                          onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
-                        />
-                        <span>Finish Walls</span>
-                      </label>
-                      <label className="properties-check">
-                        <input
-                          type="checkbox"
-                          checked={selectedOperation.finishFloor}
-                          onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
-                        />
-                        <span>Finish Floor</span>
-                      </label>
-                    </>
-                  ) : null}
                   <label className="properties-field">
                     <span>Target</span>
                     <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />
                   </label>
-                  <label className="properties-check">
-                    <input
-                      type="checkbox"
-                      checked={selectedOperation.debugToolpath}
-                      onChange={(event) => updateOperation(selectedOperation.id, { debugToolpath: event.target.checked })}
-                    />
-                    <span>Debug toolpath</span>
-                  </label>
+                  {selectedOperationTargetsRegion ? (
+                    <div className="cam-region-note">
+                      <span className="cam-region-note__badge">mask</span>
+                      <span>Regions limit where this operation may cut — not shapes to machine.</span>
+                    </div>
+                  ) : null}
                   <div className="properties-field">
                     <span>Target Source</span>
                     <button
@@ -1552,6 +1404,169 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
+                  <DisclosureSection title="Advanced" storageKey="cam-operation-advanced">
+                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
+                    <label className="properties-field">
+                      <span>Pattern</span>
+                      <Select
+                        value={selectedOperation.pocketPattern}
+                        options={[
+                          { value: 'offset', label: pocketPatternLabel('offset') },
+                          { value: 'parallel', label: pocketPatternLabel('parallel') },
+                        ]}
+                        onChange={(value) => {
+                          const waterlineSpacing = value === 'waterline'
+                            ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
+                            : 0
+                          updateOperation(selectedOperation.id, {
+                            pocketPattern: value,
+                            ...(waterlineSpacing > 0 && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
+                              ? { waterlineMicroStepover: waterlineSpacing }
+                              : {}),
+                          })
+                        }}
+                      />
+                    </label>
+                  ) : null}
+                  {selectedOperation.kind === 'finish_surface' ? (
+                    <label className="properties-field">
+                      <span>Pattern</span>
+                      <Select
+                        value={selectedOperation.pocketPattern}
+                        options={[
+                          { value: 'parallel', label: pocketPatternLabel('parallel') },
+                          { value: 'waterline', label: pocketPatternLabel('waterline') },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {selectedOperation.kind === 'finish_surface_cleanup' ? (
+                    <label className="properties-field">
+                      <span>Pattern</span>
+                      <Select
+                        value={selectedOperation.pocketPattern}
+                        options={[
+                          { value: 'offset', label: pocketPatternLabel('offset') },
+                          { value: 'parallel', label: pocketPatternLabel('parallel') },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
+                    <label className="properties-field">
+                      <span>Angle</span>
+                      <DraftNumberInput
+                        value={selectedOperation.pocketAngle}
+                        onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') ? (
+                    <label className="properties-field">
+                      <span>Cut Direction</span>
+                      <Select
+                        value={selectedOperation.cutDirection ?? 'conventional'}
+                        options={[
+                          { value: 'conventional', label: 'Conventional' },
+                          { value: 'climb', label: 'Climb' },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket'
+                    || selectedOperation.kind === 'edge_route_inside'
+                    || selectedOperation.kind === 'edge_route_outside') ? (
+                    <label className="properties-field">
+                      <span>Machining Order</span>
+                      <Select
+                        value={selectedOperation.machiningOrder ?? 'level_first'}
+                        options={[
+                          { value: 'feature_first', label: 'Feature first' },
+                          { value: 'level_first', label: 'Level first' },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
+                      />
+                    </label>
+                  ) : null}
+                  {selectedOperation.kind === 'drilling' ? (
+                    <>
+                      <label className="properties-field">
+                        <span>Drill Type</span>
+                        <Select
+                          value={selectedOperation.drillType ?? 'simple'}
+                          options={[
+                            { value: 'simple', label: drillTypeLabel('simple') },
+                            { value: 'peck', label: drillTypeLabel('peck') },
+                            { value: 'dwell', label: drillTypeLabel('dwell') },
+                            { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
+                          ]}
+                          onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
+                        />
+                      </label>
+                      {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
+                        <label className="properties-field">
+                          <span>Peck Depth</span>
+                          <DraftLengthInput
+                            value={selectedOperation.peckDepth ?? 0}
+                            units={project.meta.units}
+                            min={0}
+                            onCommit={(value) => updateOperation(selectedOperation.id, { peckDepth: value })}
+                          />
+                        </label>
+                      ) : null}
+                      {selectedOperation.drillType === 'dwell' ? (
+                        <label className="properties-field">
+                          <span>Dwell Time (s)</span>
+                          <DraftNumberInput
+                            value={selectedOperation.dwellTime ?? 0}
+                            min={0}
+                            onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="properties-field">
+                        <span>Retract Height</span>
+                        <DraftLengthInput
+                          value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
+                          units={project.meta.units}
+                          min={0}
+                          onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
+                        />
+                      </label>
+                    </>
+                  ) : null}
+                  {((selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish')
+                    || selectedOperation.kind === 'finish_surface_cleanup' ? (
+                    <>
+                      <label className="properties-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedOperation.finishWalls}
+                          onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
+                        />
+                        <span>Finish Walls</span>
+                      </label>
+                      <label className="properties-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedOperation.finishFloor}
+                          onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
+                        />
+                        <span>Finish Floor</span>
+                      </label>
+                    </>
+                  ) : null}
+                  <label className="properties-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedOperation.debugToolpath}
+                      onChange={(event) => updateOperation(selectedOperation.id, { debugToolpath: event.target.checked })}
+                    />
+                    <span>Debug toolpath</span>
+                  </label>
                   <label className="properties-field">
                     <span>Feed</span>
                     <DraftLengthInput
@@ -1680,6 +1695,7 @@ export function CAMPanel({
                       </label>
                     </>
                   ) : null}
+                  </DisclosureSection>
                     </div>
                   </div>
                 ) : (

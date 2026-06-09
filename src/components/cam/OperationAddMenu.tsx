@@ -32,6 +32,8 @@ interface OperationAddMenuProps {
   operationSupportsPass: (kind: OperationKind) => boolean
   onChooseOperation: (kind: OperationKind) => void
   onAddOperation: (kind: OperationKind, mode: 'rough' | 'finish' | 'pair') => void
+  /** A1.3: arm a kind (on hover) so the canvas highlights its compatible features. */
+  onHighlightOperation?: (kind: OperationKind | null) => void
 }
 
 export function OperationAddMenu({
@@ -41,6 +43,7 @@ export function OperationAddMenu({
   operationSupportsPass,
   onChooseOperation,
   onAddOperation,
+  onHighlightOperation,
 }: OperationAddMenuProps) {
   // expandedOperationKind: which description card is open (one at a time).
   // selectedNewOperationKind (prop): which operation the user last attempted to add via the
@@ -54,6 +57,9 @@ export function OperationAddMenu({
   useEffect(() => {
     expandedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [expandedOperationKind])
+
+  // A1.3: clear the canvas highlight when the menu closes/unmounts.
+  useEffect(() => () => onHighlightOperation?.(null), [onHighlightOperation])
 
   function handleOperationClick(kind: OperationKind) {
     onChooseOperation(kind)
@@ -73,6 +79,8 @@ export function OperationAddMenu({
               <div
                 key={button.kind}
                 className={`cam-operation-item ${isExpanded ? 'cam-operation-item--expanded' : ''}`}
+                onMouseEnter={() => onHighlightOperation?.(button.kind)}
+                onMouseLeave={() => onHighlightOperation?.(null)}
               >
                 {/* Operation row */}
                 <div className="cam-operation-row">
@@ -128,6 +136,14 @@ export function OperationAddMenu({
                     </button>
                   )}
                 </div>
+
+                {/* A1.3: always-visible inline reason why this operation is
+                    unavailable, promoted from the button tooltip. */}
+                {button.hint ? (
+                  <div className="cam-operation-hint" role="note">
+                    {button.hint}
+                  </div>
+                ) : null}
 
                 {/* Expanded card */}
                 {isExpanded && description && (

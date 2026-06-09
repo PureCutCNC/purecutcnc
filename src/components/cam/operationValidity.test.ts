@@ -11,7 +11,9 @@
  */
 
 import {
+  compatibleFeatureIdsForOperation,
   getOperationAddHint,
+  operationTargetsRegion,
   quickOperationLabel,
   validQuickOperationsForFeature,
 } from './operationValidity'
@@ -21,6 +23,8 @@ import {
   rectProfile,
   type FeatureKind,
   type FeatureOperation,
+  type Operation,
+  type OperationTarget,
   type Project,
   type SketchFeature,
 } from '../../types/project'
@@ -68,6 +72,33 @@ function selectionFor(featureIds: string[]): SelectionState {
     hoveredFeatureId: null,
     sketchEditTool: null,
     activeControl: null,
+  }
+}
+
+function makeOperation(target: OperationTarget): Operation {
+  return {
+    id: 'op',
+    name: 'op',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target,
+    toolRef: null,
+    stepdown: 1,
+    stepover: 0.5,
+    feed: 100,
+    plungeFeed: 50,
+    rpm: 10000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
   }
 }
 
@@ -176,6 +207,75 @@ function testGetOperationAddHintGoldenValues(): void {
   )
 }
 
+// ── compatibleFeatureIdsForOperation (A1.3 canvas highlight) ──────
+
+function testCompatibleFeatureIdsReuseValidityRules(): void {
+  const project = projectWith([
+    makeFeature('sub', 'subtract'),
+    makeFeature('add', 'add'),
+    makeFeature('reg', 'region'),
+  ])
+
+  // The highlight set must match the CAM panel's add-hint rules exactly:
+  // pocket → subtract only; outside route → add (and model) only.
+  assert(
+    JSON.stringify(compatibleFeatureIdsForOperation(project, 'pocket')) === JSON.stringify(['sub']),
+    'pocket should highlight only the subtract feature',
+  )
+  assert(
+    JSON.stringify(compatibleFeatureIdsForOperation(project, 'edge_route_outside')) === JSON.stringify(['add']),
+    'outside route should highlight only the add feature',
+  )
+  // A region is a filter, never a standalone machining target, so it is never
+  // highlighted as the thing an operation would act on.
+  for (const kind of ['pocket', 'edge_route_outside', 'surface_clean', 'drilling'] as const) {
+    assert(
+      !compatibleFeatureIdsForOperation(project, kind).includes('reg'),
+      `region should not be highlighted as compatible for ${kind}`,
+    )
+  }
+}
+
+function testCompatibleFeatureIdsMatchAddHint(): void {
+  // Every highlighted feature must individually pass getOperationAddHint, and
+  // no non-highlighted feature may — i.e. the highlight is a faithful view of
+  // the same source of truth, not a parallel rule set.
+  const project = projectWith([
+    makeFeature('sub', 'subtract'),
+    makeFeature('add', 'add'),
+    makeFeature('model', 'model', 'stl'),
+  ])
+  for (const kind of ['pocket', 'edge_route_outside', 'rough_surface'] as const) {
+    const highlighted = new Set(compatibleFeatureIdsForOperation(project, kind))
+    for (const feature of project.features) {
+      const valid = getOperationAddHint(project, selectionFor([feature.id]), kind) === null
+      assert(highlighted.has(feature.id) === valid, `${feature.id}/${kind} highlight must match add-hint validity`)
+    }
+  }
+}
+
+// ── operationTargetsRegion (A1.4 region-as-parameter note) ────────
+
+function testOperationTargetsRegion(): void {
+  const project = projectWith([
+    makeFeature('sub', 'subtract'),
+    makeFeature('reg', 'region'),
+  ])
+
+  assert(
+    operationTargetsRegion(project, makeOperation({ source: 'features', featureIds: ['sub', 'reg'] })),
+    'target including a region feature should report true',
+  )
+  assert(
+    !operationTargetsRegion(project, makeOperation({ source: 'features', featureIds: ['sub'] })),
+    'target without a region feature should report false',
+  )
+  assert(
+    !operationTargetsRegion(project, makeOperation({ source: 'stock' })),
+    'a stock target should report false',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -183,5 +283,8 @@ testRegionFeatureOffersNothing()
 testMissingFeatureOffersNothing()
 testQuickOperationCarriesDefaultPassAndLabel()
 testGetOperationAddHintGoldenValues()
+testCompatibleFeatureIdsReuseValidityRules()
+testCompatibleFeatureIdsMatchAddHint()
+testOperationTargetsRegion()
 
 console.log('operationValidity tests passed')

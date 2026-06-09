@@ -18,6 +18,7 @@ import { useRef } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { Select } from '../Select'
+import { DisclosureSection } from '../common/DisclosureSection'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -1261,12 +1262,6 @@ export function PropertiesPanel() {
             />
           )}
         </label>
-        <label className="properties-field">
-          <span>Folder</span>
-          {renderFolderSelect(selectedFeature.folderId, (folderId) =>
-            assignFeaturesToFolder([selectedFeature.id], folderId),
-          )}
-        </label>
         {textFeature ? (
           <>
             <label className="properties-field">
@@ -1313,13 +1308,19 @@ export function PropertiesPanel() {
           </>
         ) : null}
         {selectedFeature.operation === 'region' ? (
-          <label className="properties-field">
-            <span>Z Range</span>
-            <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
-              <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
-              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+          <>
+            <label className="properties-field">
+              <span>Z Range</span>
+              <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
+                <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+                <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+              </div>
+            </label>
+            <div className="properties-region-note">
+              <span className="properties-region-note__badge">mask</span>
+              <span>A region is a filter: it limits where operations may cut, not a shape to machine.</span>
             </div>
-          </label>
+          </>
         ) : !selectedFeature.sketch.profile.closed ? (
           <>
             <label className="properties-field">
@@ -1370,22 +1371,30 @@ export function PropertiesPanel() {
             </label>
           </>
         )}
-        <label className="properties-check">
-          <input
-            type="checkbox"
-            checked={selectedFeature.visible}
-            onChange={(event) => updateFeature(selectedFeature.id, { visible: event.target.checked })}
-          />
-          <span>Visible</span>
-        </label>
-        <label className="properties-check">
-          <input
-            type="checkbox"
-            checked={selectedFeature.locked}
-            onChange={(event) => updateFeature(selectedFeature.id, { locked: event.target.checked })}
-          />
-          <span>Locked</span>
-        </label>
+        <DisclosureSection title="Advanced" storageKey="feature-advanced">
+          <label className="properties-field">
+            <span>Folder</span>
+            {renderFolderSelect(selectedFeature.folderId, (folderId) =>
+              assignFeaturesToFolder([selectedFeature.id], folderId),
+            )}
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={selectedFeature.visible}
+              onChange={(event) => updateFeature(selectedFeature.id, { visible: event.target.checked })}
+            />
+            <span>Visible</span>
+          </label>
+          <label className="properties-check">
+            <input
+              type="checkbox"
+              checked={selectedFeature.locked}
+              onChange={(event) => updateFeature(selectedFeature.id, { locked: event.target.checked })}
+            />
+            <span>Locked</span>
+          </label>
+        </DisclosureSection>
         {hasSelfIntersection ? (
           <div className="properties-warning">
             This profile self-intersects. 3D/CAM results may be invalid.
