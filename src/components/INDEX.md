@@ -23,6 +23,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `export/` — export dialogs (G-code, SVG, DXF, STL preview)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)
+- `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)
 
 ## Conventions
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).

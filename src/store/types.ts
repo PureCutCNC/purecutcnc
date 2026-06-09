@@ -39,6 +39,7 @@ import type {
   Tool,
 } from '../types/project'
 import type { TextToolConfig } from '../text'
+import type { ToolLibraryEntry } from '../toolLibrary'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -354,7 +355,12 @@ export interface ProjectStore {
   deleteTool: (id: string) => void
   duplicateTool: (id: string) => string | null
 
-  addOperation: (kind: OperationKind, pass: OperationPass, target: OperationTarget) => string | null
+  addOperation: (
+    kind: OperationKind,
+    pass: OperationPass,
+    target: OperationTarget,
+    libraryTools?: ToolLibraryEntry[],
+  ) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
   createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
   setAllOperationToolpathVisibility: (visible: boolean) => void

@@ -10,6 +10,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+- [UX_REVIEW_P1_Plan.md](UX_REVIEW_P1_Plan.md) — P1 from the consolidated UX review: progressive disclosure in Properties/CAM, standardize multi-step UI on workflow panels, inline/visual operation-validity feedback, clarify the `region` concept, tablet cross-checks.
 - [IMPORTED_MODEL_OUTLINE_COLORS_Plan.md](IMPORTED_MODEL_OUTLINE_COLORS_Plan.md) — add orange outline for imported 3D models in sketch view, add missing region + imported-model entries to feature color legend
 
 ## In progress

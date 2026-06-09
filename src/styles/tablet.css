@@ -220,6 +220,24 @@
   }
 }
 
+/* ── Touch targets: tree context menu + quick-op submenu ── */
+
+@media (pointer: coarse) {
+  .feature-context-menu {
+    min-width: 220px;
+  }
+
+  .feature-context-menu__item {
+    height: auto;
+    min-height: var(--touch-target, 44px);
+    font-size: 14px;
+  }
+
+  .feature-context-menu__submenu-caret {
+    font-size: 18px;
+  }
+}
+
 /* ── Split divider: larger hit area ─────────────────────── */
 
 @media (pointer: coarse) {

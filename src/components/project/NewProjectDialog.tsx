@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { ExampleProjectList } from './ExampleProjectList'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { getStockBounds, newProject } from '../../types/project'
 import type { Project } from '../../types/project'
@@ -176,7 +177,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(event) => event.stopPropagation()}>
+      <div className="dialog dialog--new-project" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">New Project</h2>
           <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
@@ -286,6 +287,16 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="dialog-section-group new-project-examples">
+            <label className="dialog-section-title">Or open an example</label>
+            <ExampleProjectList
+              onOpened={() => {
+                onClose()
+                onCreated?.()
+              }}
+            />
           </div>
         </div>
 

@@ -16,6 +16,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
+import { validQuickOperationsForFeature, type QuickOperation } from './components/cam/operationValidity'
+import { loadBundledToolLibrary } from './toolLibrary'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import { applyClampWarnings, applyTabsToEdgeRoute, applyTabWarnings, generateDrillingToolpath, generateEdgeRouteToolpath, generateFinishSurfaceCleanupToolpath, generateFinishSurfaceToolpath, generateFollowLineToolpath, generatePocketToolpath, generateRoughSurfaceToolpath, generateSurfaceCleanToolpath, generateVCarveToolpath, generateVCarveRecursiveToolpath } from './engine/toolpaths'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
@@ -26,6 +28,7 @@ import type { SimulationPlaybackInput } from './components/simulation/Simulation
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
+import { isTabletMode, useShellMode } from './components/layout/useShellMode'
 import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Toolbar'
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
@@ -33,6 +36,8 @@ import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './componen
 import { ExportDialog } from './components/export/ExportDialog'
 import { ModelExportDialog } from './components/export/ModelExportDialog'
 import { NewProjectDialog } from './components/project/NewProjectDialog'
+import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
+import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
@@ -160,6 +165,8 @@ function App() {
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
+  const [quickOpsSubmenu, setQuickOpsSubmenu] = useState<{ top: number; left: number; side: 'right' | 'left' } | null>(null)
+  const tabletShell = isTabletMode(useShellMode())
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [isSimulationPending, startSimulationTransition] = useTransition()
@@ -167,6 +174,12 @@ function App() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showModelExportDialog, setShowModelExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  // The empty-state overlay is a one-time nudge per project. Once the user has
+  // engaged (started any draw, opened import, or the project has features), it
+  // stays dismissed — so cancelling a draw or deleting the last feature keeps
+  // them on the sketch view instead of popping the overlay back up.
+  const [emptyStateEngaged, setEmptyStateEngaged] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
   const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
@@ -238,6 +251,9 @@ function App() {
     startMoveClamp,
     startCopyClamp,
     setStockSourceFeature,
+    addOperation,
+    startAddRectPlacement,
+    pendingAdd,
   } = useProjectStore()
 
   const menuFeature = useMemo(
@@ -262,6 +278,14 @@ function App() {
         ? project.tabs.find((tab) => tab.id === treeContextMenu.primaryId) ?? null
         : null,
     [treeContextMenu, project.tabs]
+  )
+
+  const menuQuickOperations = useMemo<QuickOperation[]>(
+    () =>
+      menuFeature && (treeContextMenu?.ids.length ?? 1) <= 1
+        ? validQuickOperationsForFeature(project, menuFeature.id)
+        : [],
+    [menuFeature, treeContextMenu, project]
   )
 
   const effectiveSelectedOperationId =
@@ -748,12 +772,14 @@ function App() {
       }
       setTreeContextMenu(null)
       setMenuPosition(null)
+      setQuickOpsSubmenu(null)
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setTreeContextMenu(null)
         setMenuPosition(null)
+        setQuickOpsSubmenu(null)
       }
     }
 
@@ -825,6 +851,17 @@ function App() {
   function closeTreeContextMenu() {
     setTreeContextMenu(null)
     setMenuPosition(null)
+    setQuickOpsSubmenu(null)
+  }
+
+  function openQuickOpsSubmenu(trigger: HTMLElement) {
+    const rect = trigger.getBoundingClientRect()
+    const openLeft = rect.right + 200 > window.innerWidth
+    setQuickOpsSubmenu({
+      top: rect.top,
+      left: openLeft ? rect.left : rect.right,
+      side: openLeft ? 'left' : 'right',
+    })
   }
 
   function handleEditSketch(featureId: string) {
@@ -833,6 +870,53 @@ function App() {
     setCenterTab('sketch')
     closeTreeContextMenu()
   }
+
+  async function handleCreateQuickOperation(featureId: string, quickOp: QuickOperation) {
+    closeTreeContextMenu()
+    // Load the bundled library so addOperation can auto-pick/import a proper tool.
+    const libraryTools = await loadBundledToolLibrary().then((library) => library.tools).catch(() => [])
+    const operationId = addOperation(quickOp.kind, quickOp.pass, { source: 'features', featureIds: [featureId] }, libraryTools)
+    if (!operationId) {
+      return
+    }
+    setRightTab('operations')
+    handleSelectedOperationIdChange(operationId)
+  }
+
+  function frameOpenedProject() {
+    hasAutoFramed3DRef.current = false
+    setCenterTab('sketch')
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        sketchCanvasRef.current?.zoomToModel()
+      })
+    })
+  }
+
+  function handleEmptyStateDraw() {
+    setCenterTab('sketch')
+    setEmptyStateEngaged(true)
+    startAddRectPlacement()
+  }
+
+  function handleEmptyStateImport() {
+    setEmptyStateEngaged(true)
+    setShowImportDialog(true)
+  }
+
+  // Reset the one-time empty-state nudge for each new/opened project.
+  useEffect(() => {
+    setEmptyStateEngaged(false)
+  }, [projectKey])
+
+  // Latch engagement once the project has any feature or a draw is in progress
+  // (covers toolbar draws too), so the overlay doesn't reappear after a cancel
+  // or after deleting the last feature.
+  useEffect(() => {
+    if (project.features.length > 0 || pendingAdd) {
+      setEmptyStateEngaged(true)
+    }
+  }, [project.features.length, pendingAdd])
 
   function handleEditClamp(clampId: string) {
     enterClampEdit(clampId)
@@ -1064,23 +1148,32 @@ function App() {
           />
         }
         sketchCanvas={
-          <SketchCanvas
-            ref={sketchCanvasRef}
-            onFeatureContextMenu={openFeatureContextMenu}
-            onTabContextMenu={openTabContextMenu}
-            onClampContextMenu={openClampContextMenu}
-            toolpaths={visibleToolpaths}
-            selectedOperationId={effectiveSelectedOperationId}
-            collidingClampIds={collidingClampIds}
-            snapSettings={snapSettings}
-            zoomWindowActive={zoomWindowActive && centerTab === 'sketch'}
-            onZoomWindowComplete={() => setZoomWindowActive(false)}
-            onActiveSnapModeChange={setActiveSnapMode}
-            depthLegendCollapsed={depthLegendCollapsed}
-            onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
-            toolpathVisibility={toolpathVisibility}
-            onToolpathVisibilityChange={setToolpathVisibility}
-          />
+          <>
+            <SketchCanvas
+              ref={sketchCanvasRef}
+              onFeatureContextMenu={openFeatureContextMenu}
+              onTabContextMenu={openTabContextMenu}
+              onClampContextMenu={openClampContextMenu}
+              toolpaths={visibleToolpaths}
+              selectedOperationId={effectiveSelectedOperationId}
+              collidingClampIds={collidingClampIds}
+              snapSettings={snapSettings}
+              zoomWindowActive={zoomWindowActive && centerTab === 'sketch'}
+              onZoomWindowComplete={() => setZoomWindowActive(false)}
+              onActiveSnapModeChange={setActiveSnapMode}
+              depthLegendCollapsed={depthLegendCollapsed}
+              onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
+              toolpathVisibility={toolpathVisibility}
+              onToolpathVisibilityChange={setToolpathVisibility}
+            />
+            {project.features.length === 0 && !pendingAdd && !emptyStateEngaged ? (
+              <EmptyStateOverlay
+                onDraw={handleEmptyStateDraw}
+                onImport={handleEmptyStateImport}
+                onExampleOpened={frameOpenedProject}
+              />
+            ) : null}
+          </>
         }
         viewport3d={
           <Viewport3D
@@ -1155,6 +1248,13 @@ function App() {
 
       {showAboutDialog && <AboutDialog onClose={() => setShowAboutDialog(false)} />}
 
+      {showImportDialog && (
+        <ImportGeometryDialog
+          onClose={() => setShowImportDialog(false)}
+          onImportComplete={handleImportComplete}
+        />
+      )}
+
       {showModelExportDialog && (
         <ModelExportDialog onClose={() => setShowModelExportDialog(false)} />
       )}
@@ -1199,6 +1299,53 @@ function App() {
         >
           {menuFeature ? (
             <>
+              {menuQuickOperations.length > 0 ? (
+                <>
+                  <div
+                    className="feature-context-menu__submenu-host"
+                    onMouseEnter={tabletShell ? undefined : (event) => openQuickOpsSubmenu(event.currentTarget)}
+                    onMouseLeave={tabletShell ? undefined : () => setQuickOpsSubmenu(null)}
+                  >
+                    <button
+                      className="feature-context-menu__item feature-context-menu__item--submenu"
+                      type="button"
+                      aria-haspopup="menu"
+                      aria-expanded={quickOpsSubmenu !== null}
+                      onClick={(event) => {
+                        // Touch has no hover, so tap toggles the flyout. On desktop
+                        // hover drives it and a click just keeps it open.
+                        if (tabletShell && quickOpsSubmenu) {
+                          setQuickOpsSubmenu(null)
+                        } else {
+                          openQuickOpsSubmenu(event.currentTarget)
+                        }
+                      }}
+                    >
+                      <span>Create operation</span>
+                      <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
+                    </button>
+                    {quickOpsSubmenu ? (
+                      <div
+                        className={`feature-context-menu feature-context-menu__submenu feature-context-menu__submenu--${quickOpsSubmenu.side}`}
+                        style={{ top: quickOpsSubmenu.top, left: quickOpsSubmenu.left }}
+                        onContextMenu={(event) => event.preventDefault()}
+                      >
+                        {menuQuickOperations.map((quickOp) => (
+                          <button
+                            key={quickOp.kind}
+                            className="feature-context-menu__item"
+                            type="button"
+                            onClick={() => handleCreateQuickOperation(menuFeature.id, quickOp)}
+                          >
+                            {quickOp.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="feature-context-menu__separator" />
+                </>
+              ) : null}
               <button
                 className="feature-context-menu__item"
                 type="button"
