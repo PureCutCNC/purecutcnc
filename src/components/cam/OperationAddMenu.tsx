@@ -32,7 +32,7 @@ interface OperationAddMenuProps {
   operationSupportsPass: (kind: OperationKind) => boolean
   onChooseOperation: (kind: OperationKind) => void
   onAddOperation: (kind: OperationKind, mode: 'rough' | 'finish' | 'pair') => void
-  /** A1.3: arm a kind (on hover) so the canvas highlights its compatible features. */
+  /** A1.3: arm a kind (on hover or tap-expand) so the canvas highlights its compatible features. */
   onHighlightOperation?: (kind: OperationKind | null) => void
 }
 
@@ -88,7 +88,14 @@ export function OperationAddMenu({
                     className={`cam-operation-label-btn ${isExpanded ? 'cam-operation-label-btn--expanded' : ''}`}
                     type="button"
                     title={button.hint ?? (isExpanded ? `Collapse ${button.label} info` : `Expand ${button.label} info`)}
-                    onClick={() => setExpandedOperationKind(isExpanded ? null : button.kind)}
+                    onClick={() => {
+                      // A1.5: arm the highlight on tap too, so touch users (no
+                      // hover) get the same compatible-feature highlight. Kept
+                      // armed on collapse — it matches hover (the pointer is
+                      // still on the row) and clears when the menu closes.
+                      setExpandedOperationKind(isExpanded ? null : button.kind)
+                      onHighlightOperation?.(button.kind)
+                    }}
                   >
                     <span className="cam-operation-label">{button.label}</span>
                     <Icon id="chevron-down" size={12} />
