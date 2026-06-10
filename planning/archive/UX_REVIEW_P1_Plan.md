@@ -32,6 +32,17 @@ Make the app's own model obvious so a first-time user doesn't have to learn inte
 
 ### A1.2 — Standardize multi-step interactions on workflow panels
 
+> **CLOSED AS ALREADY DONE (audit 2026-06-09).** The audit found all 13 armed
+> multi-step flows (placement, creation, move/copy, resize/rotate/mirror,
+> offset, join, cut, constraint, sketch edit, tape, dimension placement,
+> dimension delete) already use `CanvasWorkflowPanel` with step label,
+> instruction, confirm/cancel, and numeric inputs. Backdrop move/resize/rotate
+> route through `pendingMove`/`pendingTransform` and are covered by those
+> panels. The migration was completed during the tablet UX work (commit
+> `4fbacb6` "convert last old-style banner to workflow panel") before this
+> plan was written; the remaining `sketch-banner-warning` elements are
+> informational, not interactive. No code change required.
+
 - Make `CanvasWorkflowPanel` / `useCanvasWorkflowPanel` the single pattern for every armed multi-step action (placement, move/copy/resize/rotate/offset/mirror, join, cut, constraint placement, dimension/tape tools).
 - Each panel must answer the five questions: step label, instruction, confirm, cancel, and current numeric inputs/constraints. Audit the pending-action flows in the store and `SketchCanvas.tsx` for any that still rely on canvas-only banners or keyboard-only paths and migrate them.
 - This is the largest P1 item; scope it as an audit + incremental migration (one PR per cluster of actions), not a single rewrite.
