@@ -14,7 +14,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-- [UX_REVIEW_P1_Plan.md](UX_REVIEW_P1_Plan.md) — P1 from the consolidated UX review (this PR: A1.1 progressive disclosure, A1.3 inline/visual operation-validity feedback, A1.4 clarify the `region` concept; A1.2 workflow-panel migration + A1.5 tablet cross-checks deferred to follow-ups).
 - [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change
 
 - [WATERLINE_ADAPTIVE_REFINEMENT_Plan.md](WATERLINE_ADAPTIVE_REFINEMENT_Plan.md) — improve imported-model waterline finishing by inserting bounded intermediate contour levels when adjacent bands have small Z separation but large XY drift
