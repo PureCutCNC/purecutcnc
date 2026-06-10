@@ -1,0 +1,59 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * First-run / empty-state onboarding overlay shown over the center viewport when
+ * the project has no features. Offers the three happy-path entry points: draw a
+ * shape, import a file, or open a bundled example project.
+ */
+
+import { ExampleProjectList } from '../project/ExampleProjectList'
+
+interface EmptyStateOverlayProps {
+  onDraw: () => void
+  onImport: () => void
+  /** Called after a bundled example has been loaded into the store. */
+  onExampleOpened: () => void
+}
+
+export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened }: EmptyStateOverlayProps) {
+  return (
+    <div className="empty-state-overlay">
+      <div className="empty-state-card">
+        <h2 className="empty-state-card__title">Start your part</h2>
+        <p className="empty-state-card__subtitle">
+          Draw a shape, import a file, or open a finished example to see the full workflow.
+        </p>
+
+        <div className="empty-state-card__actions">
+          <button className="empty-state-action" type="button" onClick={onDraw}>
+            <span className="empty-state-action__title">Draw a shape</span>
+            <span className="empty-state-action__meta">Sketch a rectangle on the canvas</span>
+          </button>
+          <button className="empty-state-action" type="button" onClick={onImport}>
+            <span className="empty-state-action__title">Import a file</span>
+            <span className="empty-state-action__meta">SVG, DXF, or STL geometry</span>
+          </button>
+        </div>
+
+        <div className="empty-state-card__examples">
+          <div className="empty-state-card__examples-label">Open an example…</div>
+          <ExampleProjectList onOpened={onExampleOpened} />
+        </div>
+      </div>
+    </div>
+  )
+}

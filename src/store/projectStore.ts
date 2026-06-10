@@ -102,6 +102,7 @@ import {
   clipperContourToProfilePreserving,
 } from '../engine/toolpaths/arcReconstruction'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../engine/toolpaths/restRegions'
+import { selectToolForOperation } from '../engine/operations/toolSelection'
 import {
   cutFeaturesByCutterGrouped,
   insertDerivedFeaturesAfterSources,
@@ -2112,9 +2113,18 @@ function defaultOperationForTarget(
   pass: OperationPass,
   target: OperationTarget,
   index: number,
+  resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
-  const tool = project.tools[0] ?? defaultTool(project.meta.units, 1)
-  const toolRef = project.tools[0]?.id ?? null
+  const tool = resolved?.tool ?? project.tools[0] ?? defaultTool(project.meta.units, 1)
+  const toolRef = resolved ? resolved.toolRef : (project.tools[0]?.id ?? null)
+
+  // V-carves should carve to a useful depth, not the 1 mm engrave default. Mirror
+  // the tool-change handler in CAMPanel: derive the cap from the tool's max cut
+  // depth, falling back to the stock thickness so wide areas aren't clipped shallow.
+  const isVCarve = kind === 'v_carve' || kind === 'v_carve_recursive'
+  const vCarveMaxDepth = tool.maxCutDepth > 0
+    ? tool.maxCutDepth
+    : (project.stock.thickness > 0 ? project.stock.thickness : convertLength(1, 'mm', project.meta.units))
 
   return {
     id: `op${index + 1}`,
@@ -2140,7 +2150,7 @@ function defaultOperationForTarget(
     finishWalls: true,
     finishFloor: true,
     carveDepth: convertLength(1, 'mm', project.meta.units),
-    maxCarveDepth: convertLength(1, 'mm', project.meta.units),
+    maxCarveDepth: isVCarve ? vCarveMaxDepth : convertLength(1, 'mm', project.meta.units),
     cutDirection: 'conventional',
     machiningOrder: 'feature_first',
     waterlineAdaptiveRefinement: true,
@@ -4152,14 +4162,48 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     return nextId
   },
 
-  addOperation: (kind, pass, target) => {
+  addOperation: (kind, pass, target, libraryTools) => {
     const state = get()
     if (!isOperationTargetValid(state.project, kind, target)) {
       return null
     }
 
     const nextId = nextUniqueGeneratedId(state.project, 'op')
-    const template = defaultOperationForTarget(state.project, kind, pass, target, state.project.operations.length)
+
+    // Choose a proper tool for this operation (type/units/feature size) instead
+    // of always using tools[0]. An 'import' result is added to the project's
+    // tool list in the same undo step; operation defaults derive from it.
+    const selection = selectToolForOperation(state.project, kind, target, libraryTools ?? [])
+    let toolToAdd: Tool | null = null
+    let resolvedTool: Tool
+    let resolvedToolRef: string | null
+
+    if (selection?.source === 'existing') {
+      resolvedTool = state.project.tools.find((tool) => tool.id === selection.toolId) ?? defaultTool(state.project.meta.units, 1)
+      resolvedToolRef = selection.toolId
+    } else if (selection?.source === 'import') {
+      const existingMatch = state.project.tools.find((tool) => toolMatchesTemplate(tool, selection.tool))
+      if (existingMatch) {
+        resolvedTool = existingMatch
+        resolvedToolRef = existingMatch.id
+      } else {
+        toolToAdd = { ...selection.tool, id: nextUniqueGeneratedId(state.project, 't') }
+        resolvedTool = toolToAdd
+        resolvedToolRef = toolToAdd.id
+      }
+    } else {
+      resolvedTool = state.project.tools[0] ?? defaultTool(state.project.meta.units, 1)
+      resolvedToolRef = state.project.tools[0]?.id ?? null
+    }
+
+    const template = defaultOperationForTarget(
+      state.project,
+      kind,
+      pass,
+      target,
+      state.project.operations.length,
+      { tool: resolvedTool, toolRef: resolvedToolRef },
+    )
     const operation: Operation = {
       ...template,
       id: nextId,
@@ -4170,6 +4214,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     set((s) => ({
       project: {
         ...s.project,
+        tools: toolToAdd ? [...s.project.tools, toolToAdd] : s.project.tools,
         operations: [...s.project.operations, operation],
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       },

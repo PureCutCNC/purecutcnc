@@ -46,6 +46,53 @@
   overflow: visible;
 }
 
+.dialog--new-project {
+  max-width: 720px;
+}
+
+/* Top row: name + template (left) beside the template preview (right);
+   the example projects span the full width underneath. */
+.dialog--new-project .dialog-body {
+  padding: 16px;
+  column-gap: 18px;
+  row-gap: 16px;
+  grid-template-columns: 300px 1fr;
+  grid-template-areas:
+    "form preview"
+    "examples examples";
+}
+
+.dialog--new-project .dialog-section {
+  grid-area: form;
+  gap: 12px;
+}
+
+.dialog--new-project .dialog-preview-container {
+  grid-area: preview;
+}
+
+.dialog--new-project .new-project-examples {
+  grid-area: examples;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.dialog--new-project .dialog-section-group {
+  gap: 6px;
+}
+
+.dialog--new-project .dialog-section-title {
+  margin-bottom: 2px;
+}
+
+.dialog--new-project .project-template-list {
+  gap: 8px;
+}
+
+.dialog--new-project .project-template-card {
+  padding: 9px 12px;
+}
+
 .dialog--import {
   max-width: 480px;
 }

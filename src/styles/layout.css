@@ -2266,6 +2266,32 @@
   margin: 2px 4px;
 }
 
+.feature-context-menu__submenu-host {
+  position: relative;
+  display: grid;
+}
+
+.feature-context-menu__item--submenu {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feature-context-menu__submenu-caret {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.feature-context-menu__submenu {
+  z-index: 1001;
+}
+
+.feature-context-menu__submenu--left {
+  transform: translateX(-100%);
+}
+
 .feature-context-menu__item {
   height: 26px;
   border: 1px solid transparent;
@@ -2690,6 +2716,36 @@
   letter-spacing: normal;
 }
 
+/* A1.4: inline explanation when a region feature is used as an op target. */
+.cam-region-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed rgba(153, 102, 204, 0.5);
+  background: rgba(153, 102, 204, 0.1);
+  color: #c4a6e0;
+  font-size: 11px;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.cam-region-note__badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 3px;
+  border: 1px dashed rgba(153, 102, 204, 0.7);
+  background: rgba(153, 102, 204, 0.16);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .cam-section-content {
   min-height: 0;
   overflow: visible;
@@ -3057,6 +3113,35 @@
   border-color: rgba(153, 102, 204, 0.45);
 }
 
+/* ── Region rows read as filters/masks, not machinable geometry ─── */
+
+.tree-row--region {
+  /* Dashed accent so a region reads as a non-solid filter, not a cut target. */
+  box-shadow: inset 2px 0 0 0 rgba(153, 102, 204, 0.55);
+}
+
+.tree-row--region .tree-label {
+  font-style: italic;
+  color: #c4a6e0;
+}
+
+.tree-region-badge {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 3px;
+  border: 1px dashed rgba(153, 102, 204, 0.7);
+  background: rgba(153, 102, 204, 0.12);
+  color: #c4a6e0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: default;
+}
+
 /* ── Operation popup menu in feature tree ─────────────────── */
 
 .tree-operation-wrapper {
@@ -3131,6 +3216,78 @@
   fill: currentColor;
 }
 
+/* A1.4: inline explanation for a selected region feature. */
+.properties-region-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(153, 102, 204, 0.5);
+  background: rgba(153, 102, 204, 0.1);
+  color: #c4a6e0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.properties-region-note__badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 3px;
+  border: 1px dashed rgba(153, 102, 204, 0.7);
+  background: rgba(153, 102, 204, 0.16);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ── A1.1: progressive-disclosure "Advanced" section ──────── */
+
+.disclosure-section {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.disclosure-section__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted, #9bb0c0);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+}
+
+.disclosure-section__header:hover {
+  color: var(--text);
+}
+
+.disclosure-section__chevron {
+  transition: transform 0.12s ease;
+  transform: rotate(-90deg);
+}
+
+.disclosure-section__chevron--open {
+  transform: rotate(0deg);
+}
+
+.disclosure-section__body {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+
 /* ── Locked operation field in properties panel ───────────── */
 
 .properties-locked-field {
@@ -3151,6 +3308,119 @@
   font-size: 10.5px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* ── Z Range Slider ─────────────────────────────────────────── */
+
+.z-range-slider {
+  display: grid;
+  grid-template-columns: minmax(74px, 88px) 24px minmax(0, 1fr);
+  grid-template-rows: 32px minmax(16px, 1fr) 32px;
+  column-gap: 8px;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.z-range-slider__label--top {
+  grid-area: 1 / 1;
+}
+
+.z-range-slider__track {
+  grid-area: 1 / 2 / 4 / 3;
+  align-self: stretch;
+  position: relative;
+}
+
+.z-range-slider__field--top {
+  grid-area: 1 / 3;
+}
+
+.z-range-slider__label--bot {
+  grid-area: 3 / 1;
+}
+
+.z-range-slider__field--bot {
+  grid-area: 3 / 3;
+}
+
+/* Field inputs styled identically to .properties-field input */
+.z-range-slider__field {
+  background-color: #0f1820;
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  border-radius: 7px;
+  height: 32px;
+  padding: 0 8px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+}
+
+.z-range-slider__field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+/* Vertical track line centered in the 24px column */
+.z-range-slider__track-line {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  top: 0;
+  bottom: 0;
+  background: var(--line-strong);
+  border-radius: 1px;
+}
+
+/* Accent-colored fill between the two handles */
+.z-range-slider__filled {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* Handle nub */
+.z-range-slider__handle {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2.5px solid #0f1820;
+  cursor: ns-resize;
+  z-index: 1;
+  touch-action: none;
+  transition: background 100ms ease, box-shadow 100ms ease;
+}
+
+/* 44×44px invisible touch target centered on the nub */
+.z-range-slider__handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+}
+
+.z-range-slider__handle:hover,
+.z-range-slider__handle:focus-visible {
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 35%, transparent);
+  outline: none;
 }
 
 /* Constraint list in PropertiesPanel */
@@ -3328,6 +3598,18 @@
   height: auto;
   min-height: auto;
   line-height: 1;
+}
+
+/* A1.3: inline "why is this disabled" note under an operation row. */
+.cam-operation-hint {
+  margin: 0 10px 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border-left: 2px solid rgba(214, 165, 92, 0.6);
+  background: rgba(214, 165, 92, 0.1);
+  color: #e0c08a;
+  font-size: 10.5px;
+  line-height: 1.3;
 }
 
 .cam-operation-label-btn {
@@ -3526,4 +3808,157 @@
 
 .cam-add-menu--vertical::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Empty-state onboarding overlay ─────────────────────────────── */
+
+.empty-state-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 12, 18, 0.55);
+  backdrop-filter: blur(2px);
+  overflow-y: auto;
+}
+
+.empty-state-card {
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  border-radius: 14px;
+  border: 1px solid rgba(94, 121, 142, 0.6);
+  background: rgba(14, 20, 28, 0.97);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+}
+
+.empty-state-card__title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state-card__subtitle {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.empty-state-card__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.empty-state-action {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.empty-state-action:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.empty-state-action__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.empty-state-action__meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.empty-state-card__examples-label {
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ── Bundled example project list (shared) ──────────────────────── */
+
+.example-project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+  max-height: 244px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.example-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.example-project-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.example-project-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.example-project-card__thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.example-project-card__title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.example-project-card__meta {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.example-project-card__status {
+  font-size: 11px;
+  color: var(--accent-strong);
+}
+
+.example-project-list__status {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.example-project-list__status--error {
+  color: var(--danger);
 }

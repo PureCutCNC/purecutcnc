@@ -690,6 +690,7 @@ function TreeRow({
         depth > 1 ? 'tree-row--deep' : '',
         isSelected ? 'tree-row--selected' : '',
         isDragging ? 'tree-row--dragging' : '',
+        kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
       ].join(' ')}
       onClick={onClick}
       onMouseDown={(event) => {
@@ -784,6 +785,14 @@ function TreeRow({
         </button>
       ) : null}
       <span className="tree-label" title={label}>{label}</span>
+      {kind === 'feature' && operation === 'region' ? (
+        <span
+          className="tree-region-badge"
+          title="Region — limits where operations may cut. Not a shape to machine."
+        >
+          mask
+        </span>
+      ) : null}
       <div className="tree-row-actions">
         {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
           <button
@@ -890,7 +899,7 @@ function TreeRow({
                   ? 'Feature adds material'
                   : operation === 'subtract'
                   ? 'Feature subtracts material'
-                  : 'Feature outlines machining region'
+                  : 'Region — limits where operations may cut (not machined)'
               }
               aria-label={
                 operationLocked && isFirstFeature ? 'Operation locked to Add'
