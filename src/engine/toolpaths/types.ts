@@ -50,6 +50,9 @@ export interface ToolpathResult {
   warnings: string[]
   bounds: ToolpathBounds | null
   collidingClampIds?: string[]
+  /** Indices into `moves` of segments that cross a clamp zone below required
+   *  clearance. Refers to the final (adjusted) moves array. */
+  collidingMoveIndices?: number[]
   /** True when the source operation has debugToolpath enabled. The 3D viewport
    *  renders extra diagnostic markers (source-tag symbols) when this is set. */
   debugToolpath?: boolean

@@ -17,6 +17,9 @@
 import type { SketchControlRef } from '../../store/types'
 import { getStockBounds, profileVertices, rectProfile } from '../../types/project'
 import type { BackdropImage, Clamp, GridSettings, Point, SketchProfile, Stock, Tab } from '../../types/project'
+import type { Units } from '../../utils/units'
+import { formatLength } from '../../utils/units'
+import { hexToRgba } from './previewPrimitives'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
@@ -264,6 +267,76 @@ export function drawGrid(
   }
 }
 
+const STOCK_LABEL_MIN_WIDTH_PX = 200
+const STOCK_EXCEEDED_STROKE = 'rgba(240, 160, 40, 0.9)'
+
+function drawStockDimensionLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  cy: number,
+): void {
+  ctx.font = '11px sans-serif'
+  const metrics = ctx.measureText(text)
+  const halfW = metrics.width / 2 + 4
+  const halfH = 9
+  ctx.fillStyle = 'rgba(18, 26, 36, 0.85)'
+  ctx.fillRect(cx - halfW, cy - halfH, halfW * 2, halfH * 2)
+  ctx.fillStyle = 'rgba(200, 220, 240, 0.95)'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, cx, cy)
+}
+
+export function drawStockOutline(
+  ctx: CanvasRenderingContext2D,
+  stock: Stock,
+  vt: ViewTransform,
+  units: Units,
+  exceeded: boolean,
+): void {
+  traceProfilePath(ctx, stock.profile, vt)
+  ctx.strokeStyle = exceeded ? STOCK_EXCEEDED_STROKE : hexToRgba(stock.color, 0.7)
+  ctx.lineWidth = 2
+  ctx.setLineDash([7, 4])
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  traceProfilePath(ctx, stock.profile, vt)
+  ctx.fillStyle = hexToRgba(stock.color, 0.12)
+  ctx.fill()
+
+  const bounds = getStockBounds(stock)
+  const widthWorld = bounds.maxX - bounds.minX
+  const heightWorld = bounds.maxY - bounds.minY
+  if (widthWorld * vt.scale < STOCK_LABEL_MIN_WIDTH_PX) {
+    return
+  }
+
+  const cornerA = worldToCanvas({ x: bounds.minX, y: bounds.minY }, vt)
+  const cornerB = worldToCanvas({ x: bounds.maxX, y: bounds.maxY }, vt)
+  const minCx = Math.min(cornerA.cx, cornerB.cx)
+  const maxCx = Math.max(cornerA.cx, cornerB.cx)
+  const minCy = Math.min(cornerA.cy, cornerB.cy)
+  const maxCy = Math.max(cornerA.cy, cornerB.cy)
+  const unitSuffix = units === 'inch' ? 'in' : 'mm'
+
+  ctx.save()
+  drawStockDimensionLabel(
+    ctx,
+    `${formatLength(widthWorld, units)} ${unitSuffix}`,
+    (minCx + maxCx) / 2,
+    minCy - 12,
+  )
+  drawStockDimensionLabel(
+    ctx,
+    `${formatLength(heightWorld, units)} ${unitSuffix}`,
+    maxCx + 8 + ctx.measureText(`${formatLength(heightWorld, units)} ${unitSuffix}`).width / 2,
+    (minCy + maxCy) / 2,
+  )
+  ctx.restore()
+}
+
 export function drawClampFootprint(
   ctx: CanvasRenderingContext2D,
   clamp: Clamp,
@@ -353,6 +426,11 @@ export function drawOriginMarker(
   ctx.stroke()
 
   ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.fillStyle = '#e35b5b'
+  ctx.fillText('X', anchor.cx + axisLength + 4, anchor.cy + 3)
+  ctx.fillStyle = '#63c07a'
+  ctx.fillText('Y', anchor.cx - 3, anchor.cy - axisLength - 4)
+
   ctx.fillStyle = 'rgba(230, 237, 245, 0.95)'
   ctx.fillText(origin.name, anchor.cx + 10, anchor.cy - 8)
   ctx.restore()

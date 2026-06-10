@@ -559,6 +559,26 @@ export function drawToolpath(
     ctx.globalAlpha = 1
   }
 
+  // Collision warning overlay: segments that cross a clamp zone below required
+  // clearance are re-drawn in amber on top, regardless of layer visibility.
+  if (toolpath.collidingMoveIndices && toolpath.collidingMoveIndices.length > 0) {
+    ctx.beginPath()
+    for (const index of toolpath.collidingMoveIndices) {
+      const move = toolpath.moves[index]
+      if (!move) continue
+      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
+      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
+      ctx.moveTo(from.cx, from.cy)
+      ctx.lineTo(to.cx, to.cy)
+    }
+    ctx.strokeStyle = 'rgba(255, 180, 60, 0.95)'
+    ctx.globalAlpha = emphasized ? 1 : 0.55
+    ctx.lineWidth = emphasized ? 3 : 2.2
+    ctx.setLineDash([])
+    ctx.stroke()
+    ctx.globalAlpha = 1
+  }
+
   if (!emphasized || !toolpath.bounds || !visibility.directions) {
     return
   }
