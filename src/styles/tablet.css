@@ -938,6 +938,15 @@
   pointer-events: auto;
 }
 
+/* The PanelSplit inside the drawer must fill the drawer's full height so that
+   its fr-based grid rows have a fixed size to divide, allowing panel-content's
+   overflow:auto to engage when disclosures are expanded. */
+[data-shell-mode="tablet"] .panel-left > .panel-split,
+[data-shell-mode="tablet-compact"] .panel-left > .panel-split {
+  flex: 1;
+  min-height: 0;
+}
+
 /* Tablet body: tool rail + centre only */
 [data-shell-mode="tablet"] .app-body--tablet,
 [data-shell-mode="tablet-compact"] .app-body--tablet {

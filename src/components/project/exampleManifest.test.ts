@@ -9,12 +9,9 @@
  * Run with: npx tsx src/components/project/exampleManifest.test.ts
  */
 
-// @ts-expect-error Node-only test fixture loading; the app tsconfig excludes Node typings.
-import { readFileSync } from 'fs'
-// @ts-expect-error Node-only test fixture loading; the app tsconfig excludes Node typings.
-import { fileURLToPath } from 'url'
-// @ts-expect-error Node-only test fixture loading; the app tsconfig excludes Node typings.
-import { join } from 'path'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { normalizeProject } from '../../store/projectStore'
 import type { Project } from '../../types/project'
 

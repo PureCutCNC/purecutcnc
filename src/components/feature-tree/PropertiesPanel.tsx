@@ -19,6 +19,7 @@ import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
+import { ZRangeSlider } from './ZRangeSlider'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -1345,6 +1346,16 @@ export function PropertiesPanel() {
               />
             </label>
           </>
+        ) : project.stock.thickness > 0 ? (
+          <ZRangeSlider
+            featureId={selectedFeature.id}
+            zTop={zTop}
+            zBottom={zBottom}
+            stockThickness={project.stock.thickness}
+            units={units}
+            onCommitZTop={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+            onCommitZBottom={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+          />
         ) : (
           <>
             <label className="properties-field">
