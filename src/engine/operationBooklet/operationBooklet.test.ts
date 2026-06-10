@@ -89,7 +89,7 @@ function fixture(): { project: Project; operation: Operation; toolpath: Toolpath
     moves: [
       { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 5, y: 5, z: 5 } },
       { kind: 'plunge', from: { x: 5, y: 5, z: 5 }, to: { x: 5, y: 5, z: 0 } },
-      { kind: 'cut', from: { x: 5, y: 5, z: 0 }, to: { x: 25, y: 5, z: 0 } },
+      { kind: 'cut', from: { x: 5, y: 5, z: 0 }, to: { x: 25.1234, y: 5, z: 0 } },
     ],
   }
   return { project, operation, toolpath }
@@ -120,6 +120,7 @@ function testReportContent(): void {
   assert(report.settingRows.some((row) => row.label === 'Machining Order' && row.value === 'Feature first'), 'machining order should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Moves' && row.value === '3'), 'toolpath move count should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Estimated Feed Time' && row.value === '2.9 s (excludes G0 rapid time)'), 'estimated feed time should be included')
+  assert(report.toolpathStats.some((row) => row.label === 'Feed Travel' && row.value === '25.12 mm (feed and plunge moves)'), 'feed travel should be rounded to 2 decimals')
   assert(report.toolpathStats.some((row) => row.label === 'Rapid Travel' && row.value.includes('G0 speed machine-defined')), 'rapid travel should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Top Z' && row.value === '5 mm'), 'top Z should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Bottom Z' && row.value === '0 mm'), 'bottom Z should be included')

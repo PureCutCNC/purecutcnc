@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Done
 created: 2026-06-04
 ---
 
@@ -21,8 +21,9 @@ Add richer operation documentation to PureCutCNC by storing a freeform operation
 - Add a static operation snapshot renderer that reuses existing canvas drawing primitives where possible, especially toolpath rendering, origin markers, tabs, and clamps, but avoids coupling the booklet export to interactive `SketchCanvas` state.
 - Generate a real PDF file using a small client-side PDF dependency, most likely `pdf-lib`, embedding the operation snapshot image and tabular operation/tool/settings data.
 - Include setup-critical text in the PDF overview, including origin Z level and locally generated date/time with timezone offset.
-- Estimate feed-controlled operation time from toolpath move distances and operation feed/plunge definitions, while calling out untimed G0 rapid travel separately because controller rapid speed is not currently modeled.
-- Flow the PDF body in two columns after the header/snapshot to reduce page count while keeping the operation image full-width.
+- Estimate feed-controlled operation time from toolpath move distances and operation feed/plunge definitions, while calling out feed travel and untimed G0 rapid travel separately because controller rapid speed is not currently modeled.
+- Flow PDF sections top-to-bottom after the header/snapshot, with each tabular section using two label/value columns internally to reduce page count without splitting the page reading order.
+- Polish PDF presentation with a stronger title header, framed snapshot, description callout, section accents, row dividers, and contextual page footers.
 - Save/export the PDF through the existing platform abstraction, adding binary/blob save support where needed for browser and Tauri desktop.
 
 ## Files affected

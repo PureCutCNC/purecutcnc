@@ -1369,20 +1369,6 @@ export function CAMPanel({
                     </div>
                   ) : null}
                   <div className="properties-field">
-                    <span>Booklet</span>
-                    <button
-                      className="feat-btn"
-                      type="button"
-                      onClick={handleExportBooklet}
-                      disabled={exportingBookletOperationId === selectedOperation.id}
-                    >
-                      {exportingBookletOperationId === selectedOperation.id ? 'Exporting...' : 'Export PDF'}
-                    </button>
-                    {bookletExportMessage?.operationId === selectedOperation.id ? (
-                      <span className="cam-field-message">{bookletExportMessage.text}</span>
-                    ) : null}
-                  </div>
-                  <div className="properties-field">
                     <span>Target Source</span>
                     <button
                       className="feat-btn"
@@ -1411,6 +1397,20 @@ export function CAMPanel({
                       ) : null}
                     </div>
                   ) : null}
+                  <div className="properties-field">
+                    <span>Booklet</span>
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      onClick={handleExportBooklet}
+                      disabled={exportingBookletOperationId === selectedOperation.id}
+                    >
+                      {exportingBookletOperationId === selectedOperation.id ? 'Exporting...' : 'Export PDF'}
+                    </button>
+                    {bookletExportMessage?.operationId === selectedOperation.id ? (
+                      <span className="cam-field-message">{bookletExportMessage.text}</span>
+                    ) : null}
+                  </div>
                   {(selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
                       <span>Tabs</span>

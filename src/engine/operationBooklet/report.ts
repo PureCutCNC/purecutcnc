@@ -72,6 +72,10 @@ function lengthWithUnits(value: number, units: Units): string {
   return `${formatLength(value, units)} ${units === 'inch' ? 'in' : 'mm'}`
 }
 
+function travelDistanceWithUnits(value: number, units: Units): string {
+  return `${formatLength(value, units, { maximumFractionDigits: 2 })} ${units === 'inch' ? 'in' : 'mm'}`
+}
+
 function pad2(value: number): string {
   return String(value).padStart(2, '0')
 }
@@ -119,8 +123,9 @@ function durationLabel(seconds: number): string {
 function feedControlledTimeSeconds(
   toolpath: ToolpathResult,
   operation: Operation,
-): { seconds: number | null; rapidDistance: number } {
+): { seconds: number | null; feedDistance: number; rapidDistance: number } {
   let seconds = 0
+  let feedDistance = 0
   let rapidDistance = 0
   let hasInvalidFeed = false
 
@@ -130,6 +135,7 @@ function feedControlledTimeSeconds(
       case 'cut':
       case 'lead_in':
       case 'lead_out':
+        feedDistance += distance
         if (operation.feed > 0) {
           seconds += (distance / operation.feed) * 60
         } else {
@@ -137,6 +143,7 @@ function feedControlledTimeSeconds(
         }
         break
       case 'plunge':
+        feedDistance += distance
         if (operation.plungeFeed > 0) {
           seconds += (distance / operation.plungeFeed) * 60
         } else {
@@ -151,6 +158,7 @@ function feedControlledTimeSeconds(
 
   return {
     seconds: hasInvalidFeed ? null : seconds,
+    feedDistance,
     rapidDistance,
   }
 }
@@ -260,8 +268,12 @@ function statsRows(toolpath: ToolpathResult | null, operation: Operation, units:
         : `${durationLabel(timeEstimate.seconds)} (excludes G0 rapid time)`,
     },
     {
+      label: 'Feed Travel',
+      value: `${travelDistanceWithUnits(timeEstimate.feedDistance, units)} (feed and plunge moves)`,
+    },
+    {
       label: 'Rapid Travel',
-      value: `${lengthWithUnits(timeEstimate.rapidDistance, units)} (G0 speed machine-defined)`,
+      value: `${travelDistanceWithUnits(timeEstimate.rapidDistance, units)} (G0 speed machine-defined)`,
     },
   ]
 
