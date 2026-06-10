@@ -65,7 +65,6 @@ import {
   drawPendingSplineLoop,
   drawPreviewProfile,
   drawToolpath,
-  hexToRgba,
   translateProfile,
 } from './previewPrimitives'
 import {
@@ -94,6 +93,7 @@ import {
   drawOriginMarker,
   drawSketchControls,
   drawSketchEditPreviewPoint,
+  drawStockOutline,
   drawTabFootprint,
   hitBackdrop,
 } from './scenePrimitives'
@@ -1340,16 +1340,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (project.stock.visible) {
-      traceProfilePath(ctx, project.stock.profile, vt)
-      ctx.strokeStyle = hexToRgba(project.stock.color, 0.7)
-      ctx.lineWidth = 2
-      ctx.setLineDash([7, 4])
-      ctx.stroke()
-      ctx.setLineDash([])
-
-      traceProfilePath(ctx, project.stock.profile, vt)
-      ctx.fillStyle = hexToRgba(project.stock.color, 0.12)
-      ctx.fill()
+      const anyFeatureExceedsStock = project.features.some(
+        (feature) => feature.visible
+          && feature.kind !== 'text'
+          && profileExceedsStock(feature.sketch.profile, project.stock),
+      )
+      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock)
     }
 
     if (project.origin.visible) {

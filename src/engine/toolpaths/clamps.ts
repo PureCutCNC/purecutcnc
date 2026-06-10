@@ -211,6 +211,7 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
   const maxTravelZ = Math.max(0, project.meta.maxTravelZ)
   const adjustedMoves: ToolpathMove[] = []
   const collidingClampIds = new Set<string>()
+  const collidingMoveIndices: number[] = []
   const warningCounts = new Map<string, { clamp: Clamp; kind: ToolpathMove['kind']; count: number; minActualZ: number; requiredZ: number }>()
   const travelLimitWarnings = new Set<string>()
 
@@ -247,6 +248,7 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
     }
 
     adjustedMoves.push(move)
+    collidingMoveIndices.push(adjustedMoves.length - 1)
 
     for (const rect of unsafe) {
       const key = `${rect.clamp.id}:${move.kind}`
@@ -284,5 +286,6 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
     warnings,
     bounds: computeBounds(adjustedMoves),
     collidingClampIds: [...collidingClampIds],
+    collidingMoveIndices,
   }
 }
