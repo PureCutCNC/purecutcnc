@@ -60,6 +60,7 @@ src/types/project.ts    Core data model definitions
 
 ## Coding Standards
 
+- Every `src/**/*.ts` / `*.tsx` file (including tests and `.d.ts`) starts with the Apache 2.0 license header — copy the exact comment block from any existing source file
 - Strict TypeScript — no `any`
 - React + vanilla CSS (no UI component libraries)
 - New engine features or bug fixes must include unit tests
