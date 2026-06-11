@@ -3556,6 +3556,9 @@
 
 /* A1.3: inline "why is this disabled" note under an operation row. */
 .cam-operation-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 10px 6px;
   padding: 4px 8px;
   border-radius: 6px;
@@ -3564,6 +3567,16 @@
   color: #e0c08a;
   font-size: 10.5px;
   line-height: 1.3;
+}
+
+.cam-operation-hint__text {
+  flex: 1;
+}
+
+/* Right-aligned quick action: select every feature the hovered operation accepts. */
+.cam-operation-hint__select-all {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .cam-operation-label-btn {

@@ -352,6 +352,32 @@ export function compatibleFeatureIdsForOperation(project: Project, kind: Operati
 }
 
 /**
+ * Returns the feature ids the "Select all" affordance in the "Add operation"
+ * menu should select for an operation kind, or an empty list when the
+ * affordance should not be offered. The ids are the individually compatible
+ * features (`compatibleFeatureIdsForOperation`), but only when selecting them
+ * all together is itself a valid selection for the kind — e.g. 3D Surface
+ * finish accepts exactly one model, so with two compatible models there is no
+ * unambiguous "all" to select.
+ */
+export function selectAllCompatibleFeatureIds(project: Project, kind: OperationKind): string[] {
+  const featureIds = compatibleFeatureIdsForOperation(project, kind)
+  if (featureIds.length === 0) {
+    return []
+  }
+  const selection: SelectionState = {
+    mode: 'feature',
+    selectedFeatureId: featureIds[0],
+    selectedFeatureIds: featureIds,
+    selectedNode: null,
+    hoveredFeatureId: null,
+    sketchEditTool: null,
+    activeControl: null,
+  }
+  return getOperationAddHint(project, selection, kind) === null ? featureIds : []
+}
+
+/**
  * True when an operation's target list includes at least one `region` feature.
  * Used by the CAM panel (A1.4) to show a plain-language note clarifying that a
  * region limits where the operation may cut rather than being machined itself.
