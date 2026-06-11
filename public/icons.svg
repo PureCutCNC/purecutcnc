@@ -499,4 +499,17 @@
     <path d="M 13 10 L 22 10 L 22 14 L 13 14 L 13 10 Z" />
     <path d="M 22 8 L 22 16" />
   </symbol>
+  <symbol id="feature-drawer" viewBox="0 0 24 24">
+    <path d="M 5 7 L 19 7 L 19 15 L 5 15 L 5 7 Z" />
+    <path d="M 4 16 L 20 16" />
+    <path d="M 8 7 L 9.5 3" />
+    <path d="M 16 7 L 14.5 3" />
+    <path d="M 12 7 L 12 2.75" />
+    <path d="M 8 16 L 5 22" />
+    <path d="M 16 16 L 19 22" />
+    <path d="M 12 16 L 12 22" />
+    <path d="M 7 19 L 17 19" />
+    <path d="M 8 11 L 11 8.5" />
+    <path d="M 12 13 L 16 9.5" />
+  </symbol>
 </svg>

@@ -58,6 +58,22 @@ interface CreationToolbarProps {
   layout?: 'horizontal' | 'vertical'
 }
 
+const CREATION_SHAPE_OPTIONS = [
+  { value: 'rect', icon: 'rect', noun: 'rectangle' },
+  { value: 'circle', icon: 'circle', noun: 'circle' },
+  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse' },
+  { value: 'polygon', icon: 'polygon', noun: 'polygon' },
+  { value: 'spline', icon: 'spline', noun: 'spline' },
+  { value: 'composite', icon: 'composite', noun: 'composite' },
+  { value: 'text', icon: 'text', noun: 'text' },
+] as const
+
+type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']
+type PopoverOpenMode = 'hover' | 'click'
+
+const TOOLBAR_POPOVER_HOVER_OPEN_DELAY_MS = 320
+const TOOLBAR_POPOVER_HOVER_CLOSE_DELAY_MS = 240
+
 function ToolbarAction({
   label,
   tooltipSide = 'bottom',
@@ -752,6 +768,143 @@ function CreationActions({
   onComposite: () => void
   onText: () => void
 }) {
+  const [lastShape, setLastShape] = useState<CreationShape>('rect')
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const openTimerRef = useRef<number | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+  const openModeRef = useRef<PopoverOpenMode | null>(null)
+  const [drawerCoords, setDrawerCoords] = useState<{ top: number; left: number } | null>(null)
+  const side = tooltipSide ?? 'bottom'
+  const availableShapeOptions = creationTarget === 'region'
+    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
+    : CREATION_SHAPE_OPTIONS
+  const lastShapeOption = availableShapeOptions.find((option) => option.value === lastShape) ?? availableShapeOptions[0]
+
+  function clearDrawerTimers() {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current)
+      openTimerRef.current = null
+    }
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }
+
+  function runShapeTool(shape: CreationShape) {
+    if (shape === 'rect') {
+      onRect()
+    } else if (shape === 'circle') {
+      onCircle()
+    } else if (shape === 'ellipse') {
+      onEllipse()
+    } else if (shape === 'polygon') {
+      onPolygon()
+    } else if (shape === 'spline') {
+      onSpline()
+    } else if (shape === 'composite') {
+      onComposite()
+    } else {
+      onText()
+    }
+  }
+
+  function selectShape(shape: CreationShape) {
+    setLastShape(shape)
+    openModeRef.current = null
+    setDrawerOpen(false)
+    runShapeTool(shape)
+  }
+
+  function scheduleDrawerOpen() {
+    if (openModeRef.current === 'click') {
+      return
+    }
+    clearDrawerTimers()
+    openTimerRef.current = window.setTimeout(() => {
+      openModeRef.current = 'hover'
+      setDrawerOpen(true)
+      openTimerRef.current = null
+    }, TOOLBAR_POPOVER_HOVER_OPEN_DELAY_MS)
+  }
+
+  function scheduleDrawerClose() {
+    if (openModeRef.current === 'click') {
+      return
+    }
+    clearDrawerTimers()
+    closeTimerRef.current = window.setTimeout(() => {
+      openModeRef.current = null
+      setDrawerOpen(false)
+      closeTimerRef.current = null
+    }, TOOLBAR_POPOVER_HOVER_CLOSE_DELAY_MS)
+  }
+
+  useLayoutEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    function reposition() {
+      const trigger = pickerRef.current
+      const popover = popoverRef.current
+      if (!trigger || !popover) {
+        return
+      }
+      const t = trigger.getBoundingClientRect()
+      const p = popover.getBoundingClientRect()
+      const margin = 8
+      let top: number
+      let left: number
+      if (side === 'right') {
+        left = t.right + 6
+        top = t.top + t.height / 2 - p.height / 2
+      } else {
+        top = t.bottom + 6
+        left = t.left + t.width / 2 - p.width / 2
+      }
+      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+      setDrawerCoords({ top, left })
+    }
+    reposition()
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [drawerOpen, side])
+
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node
+      if (pickerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return
+      }
+      openModeRef.current = null
+      setDrawerOpen(false)
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        openModeRef.current = null
+        setDrawerOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [drawerOpen])
+
+  useEffect(() => () => clearDrawerTimers(), [])
+
   function renderCreationTargetButton(target: CreationTarget, icon: string, label: string) {
     const active = creationTarget === target
     return (
@@ -781,56 +934,89 @@ function CreationActions({
         {renderCreationTargetButton('feature', 'plus', 'Create features')}
         {renderCreationTargetButton('region', 'pocket', 'Create regions')}
       </div>
-      <div className="toolbar-group toolbar-group--drawing">
+      <div
+        className="toolbar-group toolbar-group--drawing toolbar-creation-picker"
+        ref={pickerRef}
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'mouse') {
+            scheduleDrawerOpen()
+          }
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse') {
+            scheduleDrawerClose()
+          }
+        }}
+      >
+        <ToolbarAction label={drawerOpen ? 'Close shape drawer' : `Choose ${creationTarget} shape`} tooltipSide={tooltipSide}>
+          <button
+            type="button"
+            className={`toolbar-icon-btn toolbar-creation-picker__drawer-btn ${drawerOpen ? 'toolbar-icon-btn--active' : ''}`}
+            onClick={(event) => {
+              clearDrawerTimers()
+              if (drawerOpen && openModeRef.current === 'click') {
+                openModeRef.current = null
+                setDrawerOpen(false)
+              } else {
+                openModeRef.current = 'click'
+                setDrawerOpen(true)
+              }
+              event.currentTarget.blur()
+            }}
+            aria-label={drawerOpen ? 'Close shape drawer' : `Choose ${creationTarget} shape`}
+            aria-haspopup="menu"
+            aria-expanded={drawerOpen}
+          >
+            <Icon id="feature-drawer" />
+          </button>
+        </ToolbarAction>
         <ToolbarActionButton
-          icon="rect"
-          label={pendingShape === 'rect' ? 'Cancel rectangle tool' : `Add ${creationTarget} rectangle`}
-          active={pendingShape === 'rect'}
+          icon={lastShapeOption.icon}
+          label={pendingShape === lastShapeOption.value ? `Cancel ${lastShapeOption.noun} tool` : `Add ${creationTarget} ${lastShapeOption.noun}`}
+          active={pendingShape === lastShapeOption.value}
           tooltipSide={tooltipSide}
-          onClick={onRect}
+          onClick={() => runShapeTool(lastShapeOption.value)}
         />
-        <ToolbarActionButton
-          icon="circle"
-          label={pendingShape === 'circle' ? 'Cancel circle tool' : `Add ${creationTarget} circle`}
-          active={pendingShape === 'circle'}
-          tooltipSide={tooltipSide}
-          onClick={onCircle}
-        />
-        <ToolbarActionButton
-          icon="ellipse"
-          label={pendingShape === 'ellipse' ? 'Cancel ellipse tool' : `Add ${creationTarget} ellipse`}
-          active={pendingShape === 'ellipse'}
-          tooltipSide={tooltipSide}
-          onClick={onEllipse}
-        />
-        <ToolbarActionButton
-          icon="polygon"
-          label={pendingShape === 'polygon' ? 'Cancel polygon tool' : `Add ${creationTarget} polygon`}
-          active={pendingShape === 'polygon'}
-          tooltipSide={tooltipSide}
-          onClick={onPolygon}
-        />
-        <ToolbarActionButton
-          icon="spline"
-          label={pendingShape === 'spline' ? 'Cancel spline tool' : `Add ${creationTarget} spline`}
-          active={pendingShape === 'spline'}
-          tooltipSide={tooltipSide}
-          onClick={onSpline}
-        />
-        <ToolbarActionButton
-          icon="composite"
-          label={pendingShape === 'composite' ? 'Cancel composite tool' : `Add ${creationTarget} composite`}
-          active={pendingShape === 'composite'}
-          tooltipSide={tooltipSide}
-          onClick={onComposite}
-        />
-        <ToolbarActionButton
-          icon="text"
-          label={pendingShape === 'text' ? 'Cancel text tool' : 'Add text'}
-          active={pendingShape === 'text'}
-          tooltipSide={tooltipSide}
-          onClick={onText}
-        />
+        {drawerOpen
+          ? createPortal(
+              <div
+                ref={popoverRef}
+                className="toolbar-popover toolbar-popover--floating toolbar-creation-picker__drawer"
+                style={{
+                  position: 'fixed',
+                  top: drawerCoords?.top ?? -9999,
+                  left: drawerCoords?.left ?? -9999,
+                  visibility: drawerCoords ? 'visible' : 'hidden',
+                  gridTemplateColumns: `repeat(${availableShapeOptions.length}, auto)`,
+                }}
+                role="menu"
+                onPointerEnter={(event) => {
+                  if (event.pointerType === 'mouse') {
+                    clearDrawerTimers()
+                  }
+                }}
+                onPointerLeave={(event) => {
+                  if (event.pointerType === 'mouse') {
+                    scheduleDrawerClose()
+                  }
+                }}
+              >
+                {availableShapeOptions.map((option) => (
+                  <ToolbarActionButton
+                    key={option.value}
+                    icon={option.icon}
+                    label={`Add ${creationTarget} ${option.noun}`}
+                    active={lastShapeOption.value === option.value}
+                    tooltipSide="bottom"
+                    onClick={() => {
+                      selectShape(option.value)
+                    }}
+                  />
+                ))}
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
     </div>
   )
@@ -970,9 +1156,50 @@ function ToolbarPopoverMenu<T extends string>({
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const openTimerRef = useRef<number | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+  const openModeRef = useRef<PopoverOpenMode | null>(null)
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
   const effectiveOpen = open && enabled
   const side = tooltipSide ?? 'bottom'
+
+  function clearHoverTimers() {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current)
+      openTimerRef.current = null
+    }
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }
+
+  function scheduleOpen() {
+    if (!enabled) {
+      return
+    }
+    if (openModeRef.current === 'click') {
+      return
+    }
+    clearHoverTimers()
+    openTimerRef.current = window.setTimeout(() => {
+      openModeRef.current = 'hover'
+      setOpen(true)
+      openTimerRef.current = null
+    }, TOOLBAR_POPOVER_HOVER_OPEN_DELAY_MS)
+  }
+
+  function scheduleClose() {
+    if (openModeRef.current === 'click') {
+      return
+    }
+    clearHoverTimers()
+    closeTimerRef.current = window.setTimeout(() => {
+      openModeRef.current = null
+      setOpen(false)
+      closeTimerRef.current = null
+    }, TOOLBAR_POPOVER_HOVER_CLOSE_DELAY_MS)
+  }
 
   // The popover is rendered in a portal on document.body (below) so the
   // scrollable left rail — whose overflow clips its absolutely-positioned
@@ -1023,10 +1250,12 @@ function ToolbarPopoverMenu<T extends string>({
       if (containerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
         return
       }
+      openModeRef.current = null
       setOpen(false)
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        openModeRef.current = null
         setOpen(false)
       }
     }
@@ -1038,15 +1267,39 @@ function ToolbarPopoverMenu<T extends string>({
     }
   }, [effectiveOpen])
 
+  useEffect(() => () => clearHoverTimers(), [])
+
   return (
-    <div className="toolbar-group toolbar-popover-host" ref={containerRef}>
+    <div
+      className="toolbar-group toolbar-popover-host"
+      ref={containerRef}
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse') {
+          scheduleOpen()
+        }
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === 'mouse') {
+          scheduleClose()
+        }
+      }}
+    >
       <ToolbarActionButton
         icon={triggerIcon}
         label={effectiveOpen ? triggerLabelOpen : triggerLabelClosed}
         active={effectiveOpen}
         disabled={!enabled}
         tooltipSide={tooltipSide}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          clearHoverTimers()
+          if (open && openModeRef.current === 'click') {
+            openModeRef.current = null
+            setOpen(false)
+          } else {
+            openModeRef.current = 'click'
+            setOpen(true)
+          }
+        }}
       />
       {effectiveOpen
         ? createPortal(
@@ -1061,6 +1314,16 @@ function ToolbarPopoverMenu<T extends string>({
                 gridTemplateColumns: `repeat(${columns}, auto)`,
               }}
               role="menu"
+              onPointerEnter={(event) => {
+                if (event.pointerType === 'mouse') {
+                  clearHoverTimers()
+                }
+              }}
+              onPointerLeave={(event) => {
+                if (event.pointerType === 'mouse') {
+                  scheduleClose()
+                }
+              }}
             >
               {options.map((option) => (
                 <ToolbarActionButton
@@ -1070,6 +1333,7 @@ function ToolbarPopoverMenu<T extends string>({
                   tooltipSide="bottom"
                   onClick={() => {
                     onSelect(option.value)
+                    openModeRef.current = null
                     setOpen(false)
                   }}
                 />
@@ -1469,13 +1733,19 @@ function ToolbarDialog({
   onConfirmText: (config: TextToolConfig) => void
   onImportComplete?: () => void
 }) {
-  return (
+  const dialogs = (
     <>
       {showNewProjectDialog ? <NewProjectDialog onClose={onCloseNewProject} /> : null}
       {showImportDialog ? <ImportGeometryDialog onClose={onCloseImport} onImportComplete={onImportComplete} /> : null}
       {showTextDialog ? <TextToolDialog onClose={onCloseText} onConfirm={onConfirmText} /> : null}
     </>
   )
+
+  if (typeof document === 'undefined') {
+    return dialogs
+  }
+
+  return createPortal(dialogs, document.body)
 }
 
 export function GlobalToolbar({
