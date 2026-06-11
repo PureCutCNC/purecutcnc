@@ -16,6 +16,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ReactNode } from 'react'
 import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
@@ -57,6 +58,97 @@ interface CreationToolbarProps {
   layout?: 'horizontal' | 'vertical'
 }
 
+function ToolbarAction({
+  label,
+  tooltipSide = 'bottom',
+  children,
+}: {
+  label: string
+  tooltipSide?: 'bottom' | 'right'
+  children: ReactNode
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const tooltipRef = useRef<HTMLSpanElement | null>(null)
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const [tooltipCoords, setTooltipCoords] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!tooltipVisible) {
+      setTooltipCoords(null)
+      return
+    }
+
+    function reposition() {
+      const trigger = containerRef.current
+      const tooltip = tooltipRef.current
+      if (!trigger || !tooltip) {
+        return
+      }
+
+      const triggerRect = trigger.getBoundingClientRect()
+      const tooltipRect = tooltip.getBoundingClientRect()
+      const margin = 8
+      let top: number
+      let left: number
+
+      if (tooltipSide === 'right') {
+        left = triggerRect.right + 8
+        top = triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2
+      } else {
+        top = triggerRect.bottom + 8
+        left = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2
+      }
+
+      left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin))
+      top = Math.max(margin, Math.min(top, window.innerHeight - tooltipRect.height - margin))
+      setTooltipCoords((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }))
+    }
+
+    reposition()
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [label, tooltipSide, tooltipVisible])
+
+  return (
+    <div
+      className="toolbar-action"
+      ref={containerRef}
+      onMouseEnter={() => setTooltipVisible(true)}
+      onMouseLeave={() => setTooltipVisible(false)}
+      onFocusCapture={() => setTooltipVisible(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setTooltipVisible(false)
+        }
+      }}
+    >
+      {children}
+      {tooltipVisible && typeof document !== 'undefined'
+        ? createPortal(
+            <span
+              className={`toolbar-tooltip toolbar-tooltip--${tooltipSide} toolbar-tooltip--floating`}
+              ref={tooltipRef}
+              role="tooltip"
+              style={{
+                top: tooltipCoords?.top ?? -9999,
+                left: tooltipCoords?.left ?? -9999,
+                visibility: tooltipCoords ? 'visible' : 'hidden',
+              }}
+            >
+              {label}
+            </span>,
+            document.body,
+          )
+        : null}
+    </div>
+  )
+}
+
 function ToolbarActionButton({
   icon,
   label,
@@ -67,7 +159,7 @@ function ToolbarActionButton({
   onClick,
 }: ToolbarActionButtonProps) {
   return (
-    <div className="toolbar-action">
+    <ToolbarAction label={label} tooltipSide={tooltipSide}>
       <button
         className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''} ${emphasized ? 'toolbar-icon-btn--live' : ''}`}
         onClick={(event) => {
@@ -80,10 +172,7 @@ function ToolbarActionButton({
       >
         <Icon id={icon} />
       </button>
-      <span className={`toolbar-tooltip toolbar-tooltip--${tooltipSide}`} role="tooltip">
-        {label}
-      </span>
-    </div>
+    </ToolbarAction>
   )
 }
 
@@ -666,7 +755,7 @@ function CreationActions({
   function renderCreationTargetButton(target: CreationTarget, icon: string, label: string) {
     const active = creationTarget === target
     return (
-      <div className="toolbar-action">
+      <ToolbarAction label={label} tooltipSide={tooltipSide}>
         <button
           type="button"
           className={[
@@ -682,10 +771,7 @@ function CreationActions({
         >
           <Icon id={icon} />
         </button>
-        <span className={`toolbar-tooltip toolbar-tooltip--${tooltipSide ?? 'bottom'}`} role="tooltip">
-          {label}
-        </span>
-      </div>
+      </ToolbarAction>
     )
   }
 
