@@ -327,7 +327,7 @@ function testMultiConstraintPropagation() {
 function testRepeatedMoves() {
   console.log('Testing 10 Repeated Moves...')
 
-  let featureA: SketchFeature = {
+  const featureA: SketchFeature = {
     id: 'A',
     name: 'Rect A',
     kind: 'rect',
@@ -355,7 +355,7 @@ function testRepeatedMoves() {
     },
   }
 
-  let featureB: SketchFeature = {
+  const featureB: SketchFeature = {
     id: 'B',
     name: 'Circle B',
     kind: 'circle',
@@ -425,7 +425,7 @@ function testRepeatedMoves() {
 function testRepeatedRotates() {
   console.log('Testing 10 Repeated Rotates...')
 
-  let featureA: SketchFeature = {
+  const featureA: SketchFeature = {
     id: 'A',
     name: 'Rect A',
     kind: 'rect',
@@ -453,7 +453,7 @@ function testRepeatedRotates() {
     },
   }
 
-  let featureB: SketchFeature = {
+  const featureB: SketchFeature = {
     id: 'B',
     name: 'Circle B',
     kind: 'circle',
@@ -615,7 +615,7 @@ function testComplexMultiDependencyRepeatedMoves() {
   console.log('Testing Complex Multi-Dependency Repeated Moves (User Data)...')
   
   // Feature A (Rect 1)
-  let featureA: SketchFeature = {
+  const featureA: SketchFeature = {
     id: 'f0001', name: 'Rect 1', kind: 'rect', operation: 'add', z_top: 0.75, z_bottom: 0, visible: true, locked: false, folderId: null,
     sketch: {
       profile: {
@@ -633,7 +633,7 @@ function testComplexMultiDependencyRepeatedMoves() {
   }
 
   // Feature B (Circle 2) -> depends on Rect 1
-  let featureB: SketchFeature = {
+  const featureB: SketchFeature = {
     id: 'f0002', name: 'Circle 2', kind: 'circle', operation: 'subtract', z_top: 0.75, z_bottom: 0, visible: true, locked: false, folderId: null,
     sketch: {
       profile: {
@@ -653,7 +653,7 @@ function testComplexMultiDependencyRepeatedMoves() {
   }
 
   // Feature C (Circle 4) -> depends on Circle 2 AND Rect 1
-  let featureC: SketchFeature = {
+  const featureC: SketchFeature = {
     id: 'f0008', name: 'Circle 4', kind: 'circle', operation: 'subtract', z_top: 0.75, z_bottom: 0, visible: true, locked: false, folderId: null,
     sketch: {
       profile: {
@@ -1108,7 +1108,7 @@ function testSegmentSidePreservation() {
 
   // Rect A: top edge segment 0 is (0,0)->(20,0), normal points upward (negative Y in screen coords)
   // Circle B is ABOVE the top edge (negative Y = above in screen coords), constrained at signed dist = -5
-  let featureA: SketchFeature = {
+  const featureA: SketchFeature = {
     id: 'A', name: 'Rect A', kind: 'rect', operation: 'add',
     z_top: 0, z_bottom: -10, visible: true, locked: false, folderId: null,
     sketch: {
@@ -1132,7 +1132,7 @@ function testSegmentSidePreservation() {
   // nx = -(0-0)/20 = 0, ny = (20-0)/20 = 1 — normal points in +Y direction
   // signed dist from (10,-5) to segment: (-5 - 0)*1 = -5 (below the normal = above the edge visually)
   // So value = -5 means the circle is on the negative-normal side
-  let featureB: SketchFeature = {
+  const featureB: SketchFeature = {
     id: 'B', name: 'Circle B', kind: 'circle', operation: 'subtract',
     z_top: 0, z_bottom: -10, visible: true, locked: false, folderId: null,
     sketch: {

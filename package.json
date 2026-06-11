@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/convert-camj-to-icons.js && tsc -b && npm test && vite build",
-    "lint": "eslint .",
+    "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/lib",
+    "lint:scripts": "eslint scripts",
     "preview": "vite preview",
     "sync-icons": "node scripts/convert-camj-to-icons.js",
     "test": "npx tsx scripts/run-tests.ts",

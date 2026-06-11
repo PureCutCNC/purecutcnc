@@ -12,6 +12,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Backlog / tech debt
 
+- [LINT_HOOK_TYPING_DEBT_Plan.md](LINT_HOOK_TYPING_DEBT_Plan.md) — **approved design, not yet implemented** — batching of the remaining hook/ref/setState-in-effect debt and production `any` boundaries (shared hooks + typed Clipper/font/segment wrappers)
+
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
 
 ## In progress

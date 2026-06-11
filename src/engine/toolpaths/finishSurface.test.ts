@@ -20,7 +20,6 @@
  * Run with: npx tsx src/engine/toolpaths/finishSurface.test.ts
  */
 
-// @ts-ignore Node-only test fixture loading; the app tsconfig excludes Node typings.
 import { readFileSync } from 'fs'
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
 import { normalizeProject, useProjectStore } from '../../store/projectStore'

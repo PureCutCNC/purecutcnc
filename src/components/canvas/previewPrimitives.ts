@@ -15,7 +15,7 @@
  */
 
 import type { ToolpathResult } from '../../engine/toolpaths/types'
-import type { ToolpathVisibility } from '../ToolpathVisibilityPanel'
+import type { ToolpathVisibility } from '../toolpathVisibility'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -468,7 +468,8 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
         const a = (i * 2 * Math.PI) / 5 - Math.PI / 2
         const px = cx + r * Math.cos(a)
         const py = cy + r * Math.sin(a)
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
       }
       ctx.closePath()
       ctx.fill()
@@ -486,7 +487,8 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
         const radius = i % 2 === 0 ? r : r * 0.45
         const px = cx + radius * Math.cos(a)
         const py = cy + radius * Math.sin(a)
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
       }
       ctx.closePath()
       ctx.fill()
