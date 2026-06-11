@@ -23,6 +23,8 @@ interface OperationButton {
   kind: OperationKind
   label: string
   hint?: string
+  /** Features "Select all" would select; empty when the affordance is unavailable. */
+  selectAllFeatureIds?: string[]
 }
 
 interface OperationAddMenuProps {
@@ -34,6 +36,8 @@ interface OperationAddMenuProps {
   onAddOperation: (kind: OperationKind, mode: 'rough' | 'finish' | 'pair') => void
   /** A1.3: arm a kind (on hover or tap-expand) so the canvas highlights its compatible features. */
   onHighlightOperation?: (kind: OperationKind | null) => void
+  /** Replace the current selection (drives the hint row's "Select all" button). */
+  onSelectFeatures?: (featureIds: string[]) => void
 }
 
 export function OperationAddMenu({
@@ -44,12 +48,16 @@ export function OperationAddMenu({
   onChooseOperation,
   onAddOperation,
   onHighlightOperation,
+  onSelectFeatures,
 }: OperationAddMenuProps) {
   // expandedOperationKind: which description card is open (one at a time).
   // selectedNewOperationKind (prop): which operation the user last attempted to add via the
   // + button for non-pass operations — separate from expansion state so the user can browse
   // descriptions without clearing the attempted-operation highlight.
   const [expandedOperationKind, setExpandedOperationKind] = useState<OperationKind | null>(null)
+  // Which row the pointer is on (or was tap-armed on, for touch) — gates the
+  // hint row's "Select all" button to the hovered operation only.
+  const [hoveredOperationKind, setHoveredOperationKind] = useState<OperationKind | null>(null)
   const [imageErrors, setImageErrors] = useState<Set<OperationKind>>(new Set())
   const expandedRef = useRef<HTMLDivElement>(null)
 
@@ -79,8 +87,14 @@ export function OperationAddMenu({
               <div
                 key={button.kind}
                 className={`cam-operation-item ${isExpanded ? 'cam-operation-item--expanded' : ''}`}
-                onMouseEnter={() => onHighlightOperation?.(button.kind)}
-                onMouseLeave={() => onHighlightOperation?.(null)}
+                onMouseEnter={() => {
+                  setHoveredOperationKind(button.kind)
+                  onHighlightOperation?.(button.kind)
+                }}
+                onMouseLeave={() => {
+                  setHoveredOperationKind(null)
+                  onHighlightOperation?.(null)
+                }}
               >
                 {/* Operation row */}
                 <div className="cam-operation-row">
@@ -94,6 +108,7 @@ export function OperationAddMenu({
                       // armed on collapse — it matches hover (the pointer is
                       // still on the row) and clears when the menu closes.
                       setExpandedOperationKind(isExpanded ? null : button.kind)
+                      setHoveredOperationKind(button.kind)
                       onHighlightOperation?.(button.kind)
                     }}
                   >
@@ -148,7 +163,19 @@ export function OperationAddMenu({
                     unavailable, promoted from the button tooltip. */}
                 {button.hint ? (
                   <div className="cam-operation-hint" role="note">
-                    {button.hint}
+                    <span className="cam-operation-hint__text">{button.hint}</span>
+                    {hoveredOperationKind === button.kind
+                      && onSelectFeatures
+                      && (button.selectAllFeatureIds?.length ?? 0) > 0 ? (
+                      <button
+                        className="cam-subtab cam-subtab--compact cam-operation-hint__select-all"
+                        type="button"
+                        title={`Select all features compatible with ${button.label}`}
+                        onClick={() => onSelectFeatures(button.selectAllFeatureIds ?? [])}
+                      >
+                        Select all
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
 

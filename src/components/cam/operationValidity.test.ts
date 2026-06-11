@@ -1,4 +1,20 @@
 /**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
  * Tests for the shared operation-validity helpers.
  *
  * Two concerns are covered:
@@ -15,6 +31,7 @@ import {
   getOperationAddHint,
   operationTargetsRegion,
   quickOperationLabel,
+  selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
@@ -254,6 +271,56 @@ function testCompatibleFeatureIdsMatchAddHint(): void {
   }
 }
 
+// ── selectAllCompatibleFeatureIds ("Select all" in the add menu) ──
+
+function testSelectAllReturnsCompatibleIdsWhenJointlyValid(): void {
+  const project = projectWith([
+    makeFeature('sub1', 'subtract'),
+    makeFeature('sub2', 'subtract'),
+    makeFeature('add', 'add'),
+  ])
+
+  // Pocket accepts multiple subtract features together, so "Select all" offers
+  // exactly the compatible set.
+  assert(
+    JSON.stringify(selectAllCompatibleFeatureIds(project, 'pocket')) === JSON.stringify(['sub1', 'sub2']),
+    'pocket select-all should return both subtract features',
+  )
+}
+
+function testSelectAllReturnsEmptyWhenNothingCompatible(): void {
+  const project = projectWith([makeFeature('add', 'add')])
+  assert(
+    selectAllCompatibleFeatureIds(project, 'pocket').length === 0,
+    'pocket select-all should be empty with no subtract features',
+  )
+}
+
+function testSelectAllReturnsEmptyWhenJointSelectionInvalid(): void {
+  // Two models are each individually valid for finish_surface, but the kind
+  // accepts exactly one model — there is no unambiguous "all", so the
+  // affordance must not be offered.
+  const project = projectWith([
+    makeFeature('model1', 'model', 'stl'),
+    makeFeature('model2', 'model', 'stl'),
+  ])
+
+  assert(
+    JSON.stringify(compatibleFeatureIdsForOperation(project, 'finish_surface'))
+      === JSON.stringify(['model1', 'model2']),
+    'both models should be individually compatible with finish surface',
+  )
+  assert(
+    selectAllCompatibleFeatureIds(project, 'finish_surface').length === 0,
+    'finish-surface select-all should be empty when two models exist',
+  )
+  assert(
+    JSON.stringify(selectAllCompatibleFeatureIds(projectWith([makeFeature('model1', 'model', 'stl')]), 'finish_surface'))
+      === JSON.stringify(['model1']),
+    'finish-surface select-all should offer a single model',
+  )
+}
+
 // ── operationTargetsRegion (A1.4 region-as-parameter note) ────────
 
 function testOperationTargetsRegion(): void {
@@ -285,6 +352,9 @@ testQuickOperationCarriesDefaultPassAndLabel()
 testGetOperationAddHintGoldenValues()
 testCompatibleFeatureIdsReuseValidityRules()
 testCompatibleFeatureIdsMatchAddHint()
+testSelectAllReturnsCompatibleIdsWhenJointlyValid()
+testSelectAllReturnsEmptyWhenNothingCompatible()
+testSelectAllReturnsEmptyWhenJointSelectionInvalid()
 testOperationTargetsRegion()
 
 console.log('operationValidity tests passed')

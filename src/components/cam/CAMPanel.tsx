@@ -39,7 +39,7 @@ import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
 import { featureHasClosedGeometry } from '../../text'
-import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion } from './operationValidity'
+import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
@@ -704,64 +704,33 @@ export function CAMPanel({
     void ensureBundledLibraryLoaded()
   }, [ensureBundledLibraryLoaded, libraryError, libraryLoading, libraryTools.length, mode])
 
-  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string }>>(
-    () => ([
-      {
-        kind: 'pocket',
-        label: operationAddButtonLabel('pocket'),
-        hint: getOperationAddHint(project, selection, 'pocket') ?? undefined,
-      },
-      {
-        kind: 'v_carve',
-        label: operationAddButtonLabel('v_carve'),
-        hint: getOperationAddHint(project, selection, 'v_carve') ?? undefined,
-      },
-      {
-        kind: 'v_carve_recursive',
-        label: operationAddButtonLabel('v_carve_recursive'),
-        hint: getOperationAddHint(project, selection, 'v_carve_recursive') ?? undefined,
-      },
-      {
-        kind: 'edge_route_inside',
-        label: operationAddButtonLabel('edge_route_inside'),
-        hint: getOperationAddHint(project, selection, 'edge_route_inside') ?? undefined,
-      },
-      {
-        kind: 'edge_route_outside',
-        label: operationAddButtonLabel('edge_route_outside'),
-        hint: getOperationAddHint(project, selection, 'edge_route_outside') ?? undefined,
-      },
-      {
-        kind: 'surface_clean',
-        label: operationAddButtonLabel('surface_clean'),
-        hint: getOperationAddHint(project, selection, 'surface_clean') ?? undefined,
-      },
-      {
-        kind: 'follow_line',
-        label: operationAddButtonLabel('follow_line'),
-        hint: getOperationAddHint(project, selection, 'follow_line') ?? undefined,
-      },
-      {
-        kind: 'drilling',
-        label: operationAddButtonLabel('drilling'),
-        hint: getOperationAddHint(project, selection, 'drilling') ?? undefined,
-      },
-      {
-        kind: 'rough_surface',
-        label: operationAddButtonLabel('rough_surface'),
-        hint: getOperationAddHint(project, selection, 'rough_surface') ?? undefined,
-      },
-      {
-        kind: 'finish_surface_cleanup',
-        label: operationAddButtonLabel('finish_surface_cleanup'),
-        hint: getOperationAddHint(project, selection, 'finish_surface_cleanup') ?? undefined,
-      },
-      {
-        kind: 'finish_surface',
-        label: operationAddButtonLabel('finish_surface'),
-        hint: getOperationAddHint(project, selection, 'finish_surface') ?? undefined,
-      },
-    ]),
+  const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
+    () => {
+      const button = (kind: OperationKind) => {
+        const hint = getOperationAddHint(project, selection, kind)
+        return {
+          kind,
+          label: operationAddButtonLabel(kind),
+          hint: hint ?? undefined,
+          // "Select all" is only offered while the hint is showing, so skip
+          // the compatibility scan when the current selection is already valid.
+          selectAllFeatureIds: hint ? selectAllCompatibleFeatureIds(project, kind) : [],
+        }
+      }
+      return [
+        button('pocket'),
+        button('v_carve'),
+        button('v_carve_recursive'),
+        button('edge_route_inside'),
+        button('edge_route_outside'),
+        button('surface_clean'),
+        button('follow_line'),
+        button('drilling'),
+        button('rough_surface'),
+        button('finish_surface_cleanup'),
+        button('finish_surface'),
+      ]
+    },
     [project, selection]
   )
 
@@ -1157,6 +1126,7 @@ export function CAMPanel({
                         onChooseOperation={handleChooseOperationForAdd}
                         onAddOperation={handleAddOperation}
                         onHighlightOperation={onOperationHighlightChange}
+                        onSelectFeatures={selectFeatures}
                       />
                     ) : null}
                   </div>
