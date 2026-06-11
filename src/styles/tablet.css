@@ -771,6 +771,15 @@
   z-index: 100;
 }
 
+/* Portaled to document.body; positioned via inline fixed coords so the
+ * scrolling tool rail cannot clip it. */
+.tool-rail__popover--floating {
+  left: auto;
+  top: auto;
+  margin-left: 0;
+  z-index: 1000;
+}
+
 .tool-rail__popover button {
   display: inline-flex;
   align-items: center;
