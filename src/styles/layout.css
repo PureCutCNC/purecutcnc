@@ -416,6 +416,15 @@
   transform: translate(0, -50%);
 }
 
+.toolbar-tooltip--floating {
+  position: fixed;
+  bottom: auto;
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  z-index: 1000;
+}
+
 .toolbar-btn-apply {
   border-color: color-mix(in oklab, var(--accent) 50%, var(--line-strong));
 }
