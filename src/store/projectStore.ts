@@ -2129,6 +2129,7 @@ function defaultOperationForTarget(
   return {
     id: `op${index + 1}`,
     name: defaultOperationName(kind, pass, project.operations),
+    description: '',
     kind,
     pass,
     enabled: true,
@@ -2635,6 +2636,7 @@ function normalizeOperation(operation: Operation, project: Project, index: numbe
   const normalized = {
     ...defaults,
     ...operation,
+    description: operation.description ?? '',
     machiningOrder: operation.machiningOrder ?? 'level_first',
     waterlineAdaptiveRefinement: operation.waterlineAdaptiveRefinement ?? true,
     waterlineMicroStepover: operation.waterlineMicroStepover ?? 0,

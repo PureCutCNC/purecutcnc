@@ -20,6 +20,7 @@ import type {
 } from './types'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
+import type { OperationTarget } from '../../types/project'
 
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
@@ -30,6 +31,27 @@ interface ModalState {
   currentToolId: string | null
   currentPosition: ToolpathPoint | null
   lineNumber: number
+}
+
+function operationTargetSummary(target: OperationTarget): string {
+  if (target.source === 'stock') {
+    return 'Stock'
+  }
+  return `${target.featureIds.length} feature${target.featureIds.length === 1 ? '' : 's'}`
+}
+
+function safeCommentText(text: string): string {
+  return text
+    .replace(/[()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function safeCommentLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => safeCommentText(line))
+    .filter((line) => line.length > 0)
 }
 
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
@@ -62,6 +84,25 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
   const substituteTemplates = (text: string, context: Record<string, string | number>): string => {
     return text.replace(/{(\w+)}/g, (_, key) => context[key] !== undefined ? context[key].toString() : `{${key}}`)
+  }
+
+  const emitTemplateLines = (
+    templates: string[],
+    context: Record<string, string | number>,
+    descriptionLines: string[] = [],
+  ) => {
+    for (const template of templates) {
+      const expanded = template.includes('{operationDescription}')
+        ? descriptionLines.map((descriptionLine) => (
+          substituteTemplates(template, { ...context, operationDescription: descriptionLine })
+        )).join('\n')
+        : substituteTemplates(template, context)
+      for (const line of expanded.split(/\r?\n/)) {
+        if (line.trim().length > 0) {
+          emitLine(line)
+        }
+      }
+    }
   }
 
   const emitMotionLine = (
@@ -142,8 +183,29 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
   // 4. Operations
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
-    // Operation comment
-    emitLine(`${definition.program.commentPrefix} Operation: ${operation.name}${definition.program.commentSuffix}`)
+    const toolNumber = project.tools.findIndex(t => t.id === tool.id) + 1
+    const rpm = operation.rpm || tool.defaultRpm
+    const operationContext = {
+      ...commonContext,
+      operationIndex: opIndex + 1,
+      operationName: safeCommentText(operation.name),
+      operationDescription: safeCommentText(operation.description ?? ''),
+      operationKind: operation.kind,
+      operationPass: operation.pass,
+      operationTarget: operationTargetSummary(operation.target),
+      toolNumber: toolNumber > 0 ? toolNumber : 1,
+      toolName: safeCommentText(tool.name),
+      feed: formatGCodeNumber(operation.feed || tool.defaultFeed, definition, outputUnits),
+      plungeFeed: formatGCodeNumber(operation.plungeFeed || tool.defaultPlungeFeed, definition, outputUnits),
+      rpm: formatGCodeNumber(rpm, definition, outputUnits),
+    }
+    const descriptionLines = safeCommentLines(operation.description ?? '')
+
+    if (definition.program.operationHeader.length > 0) {
+      emitTemplateLines(definition.program.operationHeader, operationContext, descriptionLines)
+    } else {
+      emitLine(`${definition.program.commentPrefix} Operation: ${operationContext.operationName}${definition.program.commentSuffix}`)
+    }
 
     // Tool change
     const toolChanged = state.currentToolId !== tool.id
@@ -153,12 +215,8 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         state.spindleOn = false
       }
 
-      // Find tool number in original project tools list
-      const toolNumber = project.tools.findIndex(t => t.id === tool.id) + 1
       const toolContext = {
-        ...commonContext,
-        toolNumber: toolNumber > 0 ? toolNumber : 1,
-        toolName: tool.name
+        ...operationContext,
       }
 
       definition.toolChange.commands.forEach(cmd => {
@@ -175,7 +233,6 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     }
 
     // Spindle On
-    const rpm = operation.rpm || tool.defaultRpm
     if (!state.spindleOn || state.spindleSpeed !== rpm) {
       emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
       state.spindleOn = true

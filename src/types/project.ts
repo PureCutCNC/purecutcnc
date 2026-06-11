@@ -393,6 +393,7 @@ export type OperationTarget =
 export interface Operation {
   id: string
   name: string
+  description?: string
   kind: OperationKind
   pass: OperationPass
   enabled: boolean

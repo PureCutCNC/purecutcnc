@@ -1180,6 +1180,7 @@ function App() {
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
             onExport={() => setShowExportDialog(true)}
+            generateToolpath={generateToolpathForOperation}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}

@@ -1605,6 +1605,14 @@
   grid-template-columns: minmax(92px, 104px) minmax(0, 1fr);
 }
 
+.properties-field--textarea {
+  align-items: start;
+}
+
+.properties-field--textarea > span {
+  padding-top: 8px;
+}
+
 .properties-field-label-row {
   display: inline-flex;
   align-items: center;
