@@ -29,7 +29,7 @@ import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
 import { isTabletMode, useShellMode } from './components/layout/useShellMode'
-import { CreationToolbar, GlobalToolbar, Toolbar } from './components/layout/Toolbar'
+import { CreationToolbar, GlobalToolbar } from './components/layout/Toolbar'
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './components/ToolpathVisibilityPanel'
@@ -120,11 +120,7 @@ function scheduleAfterPaint(fn: () => void): void {
   requestAnimationFrame(() => requestAnimationFrame(fn))
 }
 
-type ToolbarOrientation = 'top' | 'left'
-
-const TOOLBAR_ORIENTATION_STORAGE_KEY = 'camcam.toolbarOrientation'
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
-const TOOLBAR_LEFT_BREAKPOINT = 920
 const CONTEXT_MENU_VIEWPORT_PADDING = 8
 const CONTEXT_MENU_INITIAL_WIDTH = 188
 const CONTEXT_MENU_INITIAL_HEIGHT = 300
@@ -151,17 +147,6 @@ function clampMenuPosition(
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
-  const [toolbarOrientationPreference, setToolbarOrientationPreference] = useState<ToolbarOrientation>(() => {
-    if (typeof window === 'undefined') {
-      return 'top'
-    }
-
-    const saved = window.localStorage.getItem(TOOLBAR_ORIENTATION_STORAGE_KEY)
-    return saved === 'left' ? 'left' : 'top'
-  })
-  const [isToolbarForcedTop, setIsToolbarForcedTop] = useState(() => (
-    typeof window !== 'undefined' ? window.innerWidth <= TOOLBAR_LEFT_BREAKPOINT : false
-  ))
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
@@ -310,8 +295,6 @@ function App() {
     selection.selectedNode?.type === 'clamp'
       ? selection.selectedNode.clampId
       : null
-
-  const effectiveToolbarOrientation: ToolbarOrientation = isToolbarForcedTop ? 'top' : toolbarOrientationPreference
 
   const handleCenterTabChange = useCallback(
     (tab: 'sketch' | 'preview3d' | 'simulation') => {
@@ -682,20 +665,6 @@ function App() {
       window.cancelAnimationFrame(frame2)
     }
   }, [centerTab])
-
-  useEffect(() => {
-    function updateForcedToolbarState() {
-      setIsToolbarForcedTop(window.innerWidth <= TOOLBAR_LEFT_BREAKPOINT)
-    }
-
-    updateForcedToolbarState()
-    window.addEventListener('resize', updateForcedToolbarState)
-    return () => window.removeEventListener('resize', updateForcedToolbarState)
-  }, [])
-
-  useEffect(() => {
-    window.localStorage.setItem(TOOLBAR_ORIENTATION_STORAGE_KEY, toolbarOrientationPreference)
-  }, [toolbarOrientationPreference])
 
   useEffect(() => {
     window.localStorage.setItem(DEPTH_LEGEND_COLLAPSED_STORAGE_KEY, String(depthLegendCollapsed))
@@ -1118,19 +1087,6 @@ function App() {
   return (
     <>
       <AppShell
-        toolbar={
-          <Toolbar
-            onZoomToModel={handleZoomToModel}
-            onZoomWindow={handleZoomWindow}
-            zoomWindowActive={zoomWindowActive}
-            onImportComplete={handleImportComplete}
-            onExportModel={() => setShowModelExportDialog(true)}
-            snapSettings={snapSettings}
-            activeSnapMode={activeSnapMode}
-            onToggleSnapEnabled={handleToggleSnapEnabled}
-            onToggleSnapMode={handleToggleSnapMode}
-          />
-        }
         globalToolbar={
           <GlobalToolbar
             onZoomToModel={handleZoomToModel}
@@ -1234,9 +1190,6 @@ function App() {
         onCenterTabChange={handleCenterTabChange}
         workspaceLayout={workspaceLayout}
         onWorkspaceLayoutChange={setWorkspaceLayout}
-        toolbarOrientation={effectiveToolbarOrientation}
-        toolbarOrientationForced={isToolbarForcedTop}
-        onToolbarOrientationChange={setToolbarOrientationPreference}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
         statusBarExtras={collapsedDepthLegend}

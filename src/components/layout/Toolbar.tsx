@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
@@ -882,19 +883,61 @@ function ToolbarPopoverMenu<T extends string>({
 }) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
   const effectiveOpen = open && enabled
+  const side = tooltipSide ?? 'bottom'
+
+  // The popover is rendered in a portal on document.body (below) so the
+  // scrollable left rail — whose overflow clips its absolutely-positioned
+  // descendants — cannot cut it off. Position it from the trigger's bounding
+  // rect, recomputing while it is open in case the rail scrolls or resizes.
+  useLayoutEffect(() => {
+    if (!effectiveOpen) {
+      setCoords(null)
+      return
+    }
+    function reposition() {
+      const trigger = containerRef.current
+      const popover = popoverRef.current
+      if (!trigger || !popover) {
+        return
+      }
+      const t = trigger.getBoundingClientRect()
+      const p = popover.getBoundingClientRect()
+      const margin = 8
+      let top: number
+      let left: number
+      if (side === 'right') {
+        left = t.right + 6
+        top = t.top + t.height / 2 - p.height / 2
+      } else {
+        top = t.bottom + 6
+        left = t.left + t.width / 2 - p.width / 2
+      }
+      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+      setCoords({ top, left })
+    }
+    reposition()
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [effectiveOpen, side])
 
   useEffect(() => {
     if (!effectiveOpen) {
       return
     }
     function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current) {
+      const target = event.target as Node
+      if (containerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
         return
       }
-      if (!containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
+      setOpen(false)
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -919,26 +962,36 @@ function ToolbarPopoverMenu<T extends string>({
         tooltipSide={tooltipSide}
         onClick={() => setOpen((prev) => !prev)}
       />
-      {effectiveOpen ? (
-        <div
-          className={`toolbar-popover toolbar-popover--${tooltipSide ?? 'bottom'}`}
-          style={{ gridTemplateColumns: `repeat(${columns}, auto)` }}
-          role="menu"
-        >
-          {options.map((option) => (
-            <ToolbarActionButton
-              key={option.value}
-              icon={option.icon}
-              label={option.label}
-              tooltipSide="bottom"
-              onClick={() => {
-                onSelect(option.value)
-                setOpen(false)
+      {effectiveOpen
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="toolbar-popover toolbar-popover--floating"
+              style={{
+                position: 'fixed',
+                top: coords?.top ?? -9999,
+                left: coords?.left ?? -9999,
+                visibility: coords ? 'visible' : 'hidden',
+                gridTemplateColumns: `repeat(${columns}, auto)`,
               }}
-            />
-          ))}
-        </div>
-      ) : null}
+              role="menu"
+            >
+              {options.map((option) => (
+                <ToolbarActionButton
+                  key={option.value}
+                  icon={option.icon}
+                  label={option.label}
+                  tooltipSide="bottom"
+                  onClick={() => {
+                    onSelect(option.value)
+                    setOpen(false)
+                  }}
+                />
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

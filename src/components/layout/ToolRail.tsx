@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
 import { featureHasClosedGeometry } from '../../text'
@@ -36,6 +37,118 @@ function RailButton({
         <Icon id={icon} />
       </button>
       <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+    </div>
+  )
+}
+
+/**
+ * A rail button with a flyout menu (align / distribute). The menu is portaled
+ * to document.body and positioned with fixed coordinates from the trigger, so
+ * the scrolling tool rail (overflow-y: auto) cannot clip it.
+ */
+function RailFlyout({
+  icon,
+  label,
+  tooltip,
+  open,
+  onToggle,
+  onClose,
+  children,
+}: {
+  icon: string
+  label: string
+  tooltip: string
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+  children: ReactNode
+}) {
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const popRef = useRef<HTMLDivElement | null>(null)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null)
+      return
+    }
+    function reposition() {
+      const btn = btnRef.current
+      const pop = popRef.current
+      if (!btn || !pop) {
+        return
+      }
+      const b = btn.getBoundingClientRect()
+      const p = pop.getBoundingClientRect()
+      const margin = 8
+      let left = b.right + 6
+      let top = b.top + b.height / 2 - p.height / 2
+      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+      setCoords({ top, left })
+    }
+    reposition()
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node
+      if (btnRef.current?.contains(target) || popRef.current?.contains(target)) {
+        return
+      }
+      onClose()
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open, onClose])
+
+  return (
+    <div className="tool-rail__action">
+      <button
+        ref={btnRef}
+        className={`tool-rail__btn ${open ? 'tool-rail__btn--active' : ''}`}
+        type="button"
+        aria-label={label}
+        onClick={onToggle}
+      >
+        <Icon id={icon} />
+      </button>
+      <span className="tool-rail__tooltip" role="tooltip">{tooltip}</span>
+      {open
+        ? createPortal(
+            <div
+              ref={popRef}
+              className="tool-rail__popover tool-rail__popover--floating"
+              style={{
+                position: 'fixed',
+                top: coords?.top ?? -9999,
+                left: coords?.left ?? -9999,
+                visibility: coords ? 'visible' : 'hidden',
+              }}
+            >
+              {children}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -253,47 +366,35 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         {/* Alignment/distribution (multi-select) */}
         {canAlign && (
           <div className="tool-rail__section">
-            <div className="tool-rail__action">
-              <button
-                className={`tool-rail__btn ${showAlignPopover ? 'tool-rail__btn--active' : ''}`}
-                type="button"
-                aria-label="Align features"
-                onClick={() => { setShowAlignPopover((v) => !v); setShowDistributePopover(false) }}
-              >
-                <Icon id="align" />
-              </button>
-              <span className="tool-rail__tooltip" role="tooltip">Align</span>
-              {showAlignPopover && (
-                <div className="tool-rail__popover">
-                  <button type="button" aria-label="Align left" onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
-                  <button type="button" aria-label="Align center horizontal" onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
-                  <button type="button" aria-label="Align right" onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
-                  <button type="button" aria-label="Align top" onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
-                  <button type="button" aria-label="Align center vertical" onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
-                  <button type="button" aria-label="Align bottom" onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
-                </div>
-              )}
-            </div>
+            <RailFlyout
+              icon="align"
+              label="Align features"
+              tooltip="Align"
+              open={showAlignPopover}
+              onToggle={() => { setShowAlignPopover((v) => !v); setShowDistributePopover(false) }}
+              onClose={() => setShowAlignPopover(false)}
+            >
+              <button type="button" aria-label="Align left" onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
+              <button type="button" aria-label="Align center horizontal" onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
+              <button type="button" aria-label="Align right" onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
+              <button type="button" aria-label="Align top" onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
+              <button type="button" aria-label="Align center vertical" onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
+              <button type="button" aria-label="Align bottom" onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
+            </RailFlyout>
             {canDistribute && (
-              <div className="tool-rail__action">
-                <button
-                  className={`tool-rail__btn ${showDistributePopover ? 'tool-rail__btn--active' : ''}`}
-                  type="button"
-                  aria-label="Distribute features"
-                  onClick={() => { setShowDistributePopover((v) => !v); setShowAlignPopover(false) }}
-                >
-                  <Icon id="distribute" />
-                </button>
-                <span className="tool-rail__tooltip" role="tooltip">Distribute</span>
-                {showDistributePopover && (
-                  <div className="tool-rail__popover">
-                    <button type="button" aria-label="Distribute horizontal gaps" onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
-                    <button type="button" aria-label="Distribute horizontal centers" onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
-                    <button type="button" aria-label="Distribute vertical gaps" onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
-                    <button type="button" aria-label="Distribute vertical centers" onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
-                  </div>
-                )}
-              </div>
+              <RailFlyout
+                icon="distribute"
+                label="Distribute features"
+                tooltip="Distribute"
+                open={showDistributePopover}
+                onToggle={() => { setShowDistributePopover((v) => !v); setShowAlignPopover(false) }}
+                onClose={() => setShowDistributePopover(false)}
+              >
+                <button type="button" aria-label="Distribute horizontal gaps" onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
+                <button type="button" aria-label="Distribute horizontal centers" onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
+                <button type="button" aria-label="Distribute vertical gaps" onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
+                <button type="button" aria-label="Distribute vertical centers" onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
+              </RailFlyout>
             )}
           </div>
         )}

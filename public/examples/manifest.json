@@ -8,11 +8,11 @@
     "thumbnail": "purecutcnc.png"
   },
   {
-    "id": "t-53-body",
-    "title": "Guitar body - T-53",
+    "id": "t-style-body",
+    "title": "T Style guitar body",
     "description": "Pocket, drilling, and edge out examples",
-    "file": "T-53-body.camj",
-    "thumbnail": "T-53-body.png"
+    "file": "t-style-body.camj",
+    "thumbnail": "t-style-body.png"
   },
   {
     "id": "badge",

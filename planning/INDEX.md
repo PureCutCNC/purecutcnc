@@ -10,6 +10,10 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+## Backlog / tech debt
+
+- [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
+
 ## In progress
 
 - [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change

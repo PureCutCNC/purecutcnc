@@ -28,7 +28,6 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
 
 interface AppShellProps {
-  toolbar: ReactNode
   globalToolbar: ReactNode
   creationToolbar: ReactNode
   sketchCanvas: ReactNode
@@ -41,9 +40,6 @@ interface AppShellProps {
   onCenterTabChange: (tab: 'sketch' | 'preview3d' | 'simulation') => void
   workspaceLayout: 'lcr' | 'lc' | 'c' | 'cr'
   onWorkspaceLayoutChange: (layout: 'lcr' | 'lc' | 'c' | 'cr') => void
-  toolbarOrientation: 'top' | 'left'
-  toolbarOrientationForced: boolean
-  onToolbarOrientationChange: (orientation: 'top' | 'left') => void
   rightTab: 'operations' | 'tools'
   onRightTabChange: (tab: 'operations' | 'tools') => void
   statusBarExtras?: ReactNode
@@ -67,7 +63,6 @@ function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 
 }
 
 export function AppShell({
-  toolbar,
   globalToolbar,
   creationToolbar,
   sketchCanvas,
@@ -80,9 +75,6 @@ export function AppShell({
   onCenterTabChange,
   workspaceLayout,
   onWorkspaceLayoutChange,
-  toolbarOrientation,
-  toolbarOrientationForced,
-  onToolbarOrientationChange,
   rightTab,
   onRightTabChange,
   statusBarExtras,
@@ -142,9 +134,34 @@ export function AppShell({
   })
 
   const leftPanelRef = useRef<HTMLElement>(null)
+  const leftRailRef = useRef<HTMLElement>(null)
   const centrePanelRef = useRef<HTMLElement>(null)
   const rightPanelRef = useRef<HTMLElement>(null)
   const activeDividerRef = useRef<{ side: 'left' | 'right'; pointerId: number } | null>(null)
+
+  // Toggle the top/bottom fade hints on the creation rail so users can tell
+  // when tool buttons are scrolled out of view.
+  useEffect(() => {
+    const rail = leftRailRef.current
+    if (!rail) {
+      return
+    }
+    const updateFades = () => {
+      rail.classList.toggle('app-left-rail--can-scroll-up', rail.scrollTop > 1)
+      rail.classList.toggle(
+        'app-left-rail--can-scroll-down',
+        rail.scrollTop + rail.clientHeight < rail.scrollHeight - 1,
+      )
+    }
+    updateFades()
+    rail.addEventListener('scroll', updateFades, { passive: true })
+    const observer = new ResizeObserver(updateFades)
+    observer.observe(rail)
+    return () => {
+      rail.removeEventListener('scroll', updateFades)
+      observer.disconnect()
+    }
+  })
 
   const showLeft = workspaceLayout === 'lcr' || workspaceLayout === 'lc'
   const showRight = workspaceLayout === 'lcr' || workspaceLayout === 'cr'
@@ -245,7 +262,7 @@ export function AppShell({
   //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
   if (!tabletShell && (showLeft || showDockedRight)) {
-    const railPrefix = toolbarOrientation === 'left' ? 'var(--left-toolbar-width) ' : ''
+    const railPrefix = 'var(--left-toolbar-width) '
     const leftCol = showLeft
       ? `minmax(${MIN_LEFT_WIDTH}px, ${leftPanelRatio / (1 - leftPanelRatio)}fr) `
       : ''
@@ -317,8 +334,8 @@ export function AppShell({
           />
         </header>
       ) : (
-        <header className={`app-toolbar app-toolbar--${toolbarOrientation}`}>
-          {toolbarOrientation === 'left' ? globalToolbar : toolbar}
+        <header className="app-toolbar app-toolbar--left">
+          {globalToolbar}
           <button
             className="tablet-drawer-toggle toolbar-btn"
             type="button"
@@ -333,16 +350,16 @@ export function AppShell({
       )}
 
       {/* Main work area */}
-      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-${toolbarOrientation} ${tabletShell ? 'app-body--tablet' : ''}`} style={bodyStyle}>
+      <div className={`app-body app-body--${workspaceLayout} app-body--toolbar-left ${tabletShell ? 'app-body--tablet' : ''}`} style={bodyStyle}>
         {tabletShell ? (
           <aside className="app-left-rail app-left-rail--tablet" aria-label="Tools">
             <ToolRail onZoomToModel={onZoomToModel} onImportComplete={onImportComplete} />
           </aside>
-        ) : toolbarOrientation === 'left' ? (
-          <aside className="app-left-rail" aria-label="Creation tools">
+        ) : (
+          <aside className="app-left-rail" aria-label="Creation tools" ref={leftRailRef}>
             {creationToolbar}
           </aside>
-        ) : null}
+        )}
 
         <aside className="panel-left" ref={leftPanelRef}>
           <PanelSplit storageKey="project-tree" initialRatio={0.55} minFirst={160} minSecond={160}>
@@ -481,33 +498,6 @@ export function AppShell({
                         </span>
                       </button>
                     ))}
-                  </div>
-                  <div className="toolbar-orientation-controls" aria-label="Toolbar orientation">
-                    <button
-                      className={`toolbar-orientation-btn ${toolbarOrientation === 'top' ? 'toolbar-orientation-btn--active' : ''}`}
-                      type="button"
-                      title="Use top toolbar"
-                      aria-label="Use top toolbar"
-                      onClick={() => onToolbarOrientationChange('top')}
-                    >
-                      <span className="toolbar-orientation-icon toolbar-orientation-icon--top" aria-hidden="true">
-                        <span />
-                        <span />
-                      </span>
-                    </button>
-                    <button
-                      className={`toolbar-orientation-btn ${toolbarOrientation === 'left' ? 'toolbar-orientation-btn--active' : ''}`}
-                      type="button"
-                      title={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
-                      aria-label={toolbarOrientationForced ? 'Left toolbar is disabled below 920px wide' : 'Use left toolbar'}
-                      onClick={() => onToolbarOrientationChange('left')}
-                      disabled={toolbarOrientationForced}
-                    >
-                      <span className="toolbar-orientation-icon toolbar-orientation-icon--left" aria-hidden="true">
-                        <span />
-                        <span />
-                      </span>
-                    </button>
                   </div>
                 </>
               )}

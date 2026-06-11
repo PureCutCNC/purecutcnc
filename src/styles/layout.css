@@ -209,6 +209,12 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
 }
 
+/* Portaled to document.body and positioned via inline fixed coords so the
+ * scrollable left rail cannot clip it. */
+.toolbar-popover--floating {
+  z-index: 1000;
+}
+
 .toolbar-popover--bottom {
   top: calc(100% + 6px);
   left: 50%;
@@ -490,7 +496,32 @@
   align-content: start;
   justify-items: center;
   padding: 0;
-  overflow: visible;
+  /* Scroll when the tools are taller than the viewport so the bottom buttons
+   * are always reachable. Scrollbar is hidden (the rail is only ~44px wide);
+   * the fade hints below signal that there is more above/below. The popover
+   * menus escape this clip via a body portal (see .toolbar-popover--floating). */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--rail-fade-top, 0px),
+    #000 calc(100% - var(--rail-fade-bottom, 0px)),
+    transparent 100%
+  );
+}
+
+.app-left-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.app-left-rail--can-scroll-up {
+  --rail-fade-top: 16px;
+}
+
+.app-left-rail--can-scroll-down {
+  --rail-fade-bottom: 16px;
 }
 
 .panel-left {
@@ -998,16 +1029,6 @@
   padding-bottom: 6px;
 }
 
-.toolbar-orientation-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  margin-left: 10px;
-  padding-left: 10px;
-  padding-bottom: 6px;
-  border-left: 1px solid var(--line);
-}
-
 .workspace-layout-btn {
   width: var(--control-hit-target);
   height: var(--control-hit-target);
@@ -1033,89 +1054,14 @@
   background: rgba(15, 22, 31, 0.96);
 }
 
-.toolbar-orientation-btn {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line-strong);
-  border-radius: 0;
-  background: rgba(18, 25, 34, 0.72);
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 0;
-}
-
-.toolbar-orientation-btn:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--line-bright);
-}
-
-.toolbar-orientation-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.toolbar-orientation-btn--active {
-  color: var(--text);
-  border-color: rgba(220, 165, 106, 0.75);
-  background: rgba(15, 22, 31, 0.96);
-}
-
-.workspace-layout-controls .workspace-layout-btn:first-child,
-.toolbar-orientation-controls .toolbar-orientation-btn:first-child {
+.workspace-layout-controls .workspace-layout-btn:first-child {
   border-top-left-radius: 6px;
   border-bottom-left-radius: 6px;
 }
 
-.workspace-layout-controls .workspace-layout-btn:last-child,
-.toolbar-orientation-controls .toolbar-orientation-btn:last-child {
+.workspace-layout-controls .workspace-layout-btn:last-child {
   border-top-right-radius: 6px;
   border-bottom-right-radius: 6px;
-}
-
-.toolbar-orientation-icon {
-  display: grid;
-  gap: 3px;
-}
-
-.toolbar-orientation-icon span {
-  display: block;
-  border-radius: 2px;
-  background: currentColor;
-}
-
-.toolbar-orientation-icon--top {
-  width: 14px;
-}
-
-.toolbar-orientation-icon--top span:first-child {
-  width: 14px;
-  height: 3px;
-}
-
-.toolbar-orientation-icon--top span:last-child {
-  width: 14px;
-  height: 8px;
-  opacity: 0.55;
-}
-
-.toolbar-orientation-icon--left {
-  grid-template-columns: 3px 8px;
-  width: 14px;
-  height: 12px;
-}
-
-.toolbar-orientation-icon--left span:first-child {
-  width: 3px;
-  height: 12px;
-}
-
-.toolbar-orientation-icon--left span:last-child {
-  width: 8px;
-  height: 12px;
-  opacity: 0.55;
 }
 
 .workspace-layout-icon {
