@@ -399,8 +399,8 @@ function svgArcToBeziers(
   const dx2 = (start.x - end.x) / 2
   const dy2 = (start.y - end.y) / 2
 
-  let x1p = cosPhi * dx2 + sinPhi * dy2
-  let y1p = -sinPhi * dx2 + cosPhi * dy2
+  const x1p = cosPhi * dx2 + sinPhi * dy2
+  const y1p = -sinPhi * dx2 + cosPhi * dy2
   let adjustedRx = Math.abs(rx)
   let adjustedRy = Math.abs(ry)
 

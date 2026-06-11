@@ -139,7 +139,7 @@ function fmt(value: number): string {
 }
 
 function sanitizeSolidName(name: string): string {
-  return name.replace(/[^A-Za-z0-9_\-]+/g, '_') || 'model'
+  return name.replace(/[^A-Za-z0-9_-]+/g, '_') || 'model'
 }
 
 export const stlExportFormat: ModelExportFormat<STLExportOptions> = {

@@ -28,7 +28,8 @@ The existing 13 active plans at `planning/` root predate this rule — treat the
 npm run build          # Full build (icon generation + tsc + tests + vite). Run this before committing.
 npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
 npm run dev            # Vite dev server (do NOT start this — the user runs it themselves)
-npm run lint           # ESLint
+npm run lint           # ESLint over supported source only: src, vite.config.ts, and build/test scripts
+npm run lint:scripts   # Optional: lint the one-off diagnostic scripts in scripts/ (not a quality gate)
 npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons.camj
 ```
 

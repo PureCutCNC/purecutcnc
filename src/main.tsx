@@ -20,6 +20,7 @@ import App from './App.tsx'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { renderErrorHTML } from './components/errorFormat'
 import { IconGalleryRoute } from './components/IconGallery'
+import { UnsupportedMobileScreen } from './components/UnsupportedMobileScreen'
 import { isDesktop } from './platform'
 import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
@@ -59,26 +60,6 @@ function isPhoneSizedTouchDevice() {
   if (!mq.matches) return false
   const short = Math.min(window.innerWidth, window.innerHeight)
   return short < 500
-}
-
-function UnsupportedMobileScreen() {
-  return (
-    <main className="unsupported-mobile-shell">
-      <div className="unsupported-mobile-card">
-        <div className="unsupported-mobile-eyebrow">Desktop Browser Only</div>
-        <h1>PureCutCNC is not supported on phones.</h1>
-        <p>
-          The browser app is designed for a desktop-sized workspace and does not
-          behave well on phone screens. Use a desktop browser or install a
-          desktop build for macOS, Windows, or Linux.
-        </p>
-        <div className="unsupported-mobile-actions">
-          <a href="https://purecutcnc.github.io/downloads.html">Desktop Downloads</a>
-          <a href="https://purecutcnc.github.io/">Project Website</a>
-        </div>
-      </div>
-    </main>
-  )
 }
 
 // Dev-only: #icons shows the sprite gallery for visual QA.

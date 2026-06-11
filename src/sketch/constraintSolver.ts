@@ -469,8 +469,8 @@ export function inferSemanticIndices(
       reference_t = projectPointOntoSegmentT(referencePoint, a, b)
       // If t is very close to 0 or 1, snap to the vertex instead
       if (reference_t < 0.01) {
+        // reference_index already points at the segment's start vertex
         reference_type = 'anchor'
-        reference_index = reference_index
         reference_t = undefined
       } else if (reference_t > 0.99) {
         reference_type = 'anchor'
@@ -521,7 +521,7 @@ export function solveFeatureTranslation(
         const ay = c.anchor.y + dy
         const vx = ax - c.reference.x
         const vy = ay - c.reference.y
-        let currentLen = Math.hypot(vx, vy)
+        const currentLen = Math.hypot(vx, vy)
         
         if (currentLen < 1e-12) {
           if (c.distance > 1e-12) {
@@ -608,7 +608,7 @@ export function propagateRigidTransforms(
     const nextConstraints = feature.sketch.constraints.map((c) => {
       if (c.type !== 'fixed_distance') return c
       
-      let nextC = { ...c }
+      const nextC = { ...c }
       let cChanged = false
 
       if (t && nextC.anchor_point) {

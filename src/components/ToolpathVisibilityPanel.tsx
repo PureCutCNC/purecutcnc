@@ -15,22 +15,7 @@
  */
 
 import { useState } from 'react'
-
-export interface ToolpathVisibility {
-  cuts: boolean
-  rapids: boolean
-  plunges: boolean
-  retractions: boolean
-  directions: boolean
-}
-
-export const DEFAULT_TOOLPATH_VISIBILITY: ToolpathVisibility = {
-  cuts: true,
-  rapids: true,
-  plunges: true,
-  retractions: true,
-  directions: true,
-}
+import type { ToolpathVisibility } from './toolpathVisibility'
 
 interface ToolpathVisibilityPanelProps {
   visibility: ToolpathVisibility
