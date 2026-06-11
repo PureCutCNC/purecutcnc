@@ -53,6 +53,7 @@ export const MachineDefinitionSchema = z.object({
   }),
   program: z.object({
     header: z.array(z.string()),
+    operationHeader: z.array(z.string()).default([]),
     footer: z.array(z.string()),
     commentPrefix: z.string(),
     commentSuffix: z.string(),
