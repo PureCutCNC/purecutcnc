@@ -197,6 +197,22 @@
   position: relative;
 }
 
+.toolbar-popover-host > .toolbar-action .toolbar-icon-btn {
+  position: relative;
+}
+
+.toolbar-popover-host > .toolbar-action .toolbar-icon-btn::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-left: 4px solid transparent;
+  opacity: 0.72;
+}
+
 .toolbar-popover {
   position: absolute;
   z-index: 30;
@@ -229,6 +245,26 @@
 
 .toolbar-popover .toolbar-icon-btn {
   border-radius: 6px;
+}
+
+.toolbar-creation-picker {
+  position: relative;
+}
+
+.toolbar-creation-picker__drawer-btn {
+  position: relative;
+}
+
+.toolbar-creation-picker__drawer-btn::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-left: 4px solid transparent;
+  opacity: 0.78;
 }
 
 .icon-sprite {
@@ -307,16 +343,20 @@
   border-bottom-right-radius: 6px;
 }
 
-.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:first-child .toolbar-icon-btn {
+.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:first-child:not(:last-child) .toolbar-icon-btn {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
   border-bottom-left-radius: 0;
 }
 
-.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:last-child .toolbar-icon-btn {
+.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:last-child:not(:first-child) .toolbar-icon-btn {
   border-bottom-left-radius: 6px;
   border-bottom-right-radius: 6px;
   border-top-right-radius: 0;
+}
+
+.toolbar--creation.toolbar--vertical .toolbar-group .toolbar-action:first-child:last-child .toolbar-icon-btn {
+  border-radius: 6px;
 }
 
 .toolbar-icon-btn .icon-sprite {

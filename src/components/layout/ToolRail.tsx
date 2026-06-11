@@ -23,6 +23,19 @@ import { TextToolDialog } from '../project/TextToolDialog'
 import type { FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
 import type { TextToolConfig } from '../../text'
 
+const CREATION_SHAPE_OPTIONS = [
+  { value: 'rect', icon: 'rect', noun: 'rectangle' },
+  { value: 'circle', icon: 'circle', noun: 'circle' },
+  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse' },
+  { value: 'polygon', icon: 'polygon', noun: 'polygon' },
+  { value: 'spline', icon: 'spline', noun: 'spline' },
+  { value: 'composite', icon: 'composite', noun: 'composite' },
+  { value: 'text', icon: 'text', noun: 'text' },
+] as const
+
+type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']
+type PlacementShape = Exclude<CreationShape, 'text'>
+
 function RailButton({
   icon,
   label,
@@ -218,8 +231,10 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   } = useProjectStore()
 
   const [showTextDialog, setShowTextDialog] = useState(false)
+  const [showCreationPopover, setShowCreationPopover] = useState(false)
   const [showAlignPopover, setShowAlignPopover] = useState(false)
   const [showDistributePopover, setShowDistributePopover] = useState(false)
+  const [lastCreationShape, setLastCreationShape] = useState<CreationShape>('rect')
 
   const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
   const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
@@ -235,7 +250,12 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const canDistribute = alignableCount >= 3
   const featureSketchEditActive = selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && !!selection.selectedFeatureId
 
-  function togglePlacement(shape: 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite', start: () => void) {
+  const availableCreationOptions = creationTarget === 'region'
+    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
+    : CREATION_SHAPE_OPTIONS
+  const lastCreationOption = availableCreationOptions.find((option) => option.value === lastCreationShape) ?? availableCreationOptions[0]
+
+  function togglePlacement(shape: PlacementShape, start: () => void) {
     if (pendingAdd?.shape === shape) {
       cancelPendingAdd()
       return
@@ -243,7 +263,34 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     start()
   }
 
+  function startCreationShape(shape: CreationShape) {
+    if (shape === 'text') {
+      handleTextTool()
+      return
+    }
+    if (shape === 'rect') {
+      togglePlacement(shape, startAddRectPlacement)
+    } else if (shape === 'circle') {
+      togglePlacement(shape, startAddCirclePlacement)
+    } else if (shape === 'ellipse') {
+      togglePlacement(shape, startAddEllipsePlacement)
+    } else if (shape === 'polygon') {
+      togglePlacement(shape, startAddPolygonPlacement)
+    } else if (shape === 'spline') {
+      togglePlacement(shape, startAddSplinePlacement)
+    } else {
+      togglePlacement(shape, startAddCompositePlacement)
+    }
+  }
+
+  function selectCreationShape(shape: CreationShape) {
+    setLastCreationShape(shape)
+    setShowCreationPopover(false)
+    startCreationShape(shape)
+  }
+
   function handleTextTool() {
+    if (creationTarget === 'region') return
     if (pendingAdd) cancelPendingAdd()
     setShowTextDialog(true)
   }
@@ -354,13 +401,36 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
 
         {/* Creation tools */}
         <div className="tool-rail__section">
-          <RailButton icon="rect" label="Rectangle" active={pendingAdd?.shape === 'rect'} onClick={() => togglePlacement('rect', startAddRectPlacement)} />
-          <RailButton icon="circle" label="Circle" active={pendingAdd?.shape === 'circle'} onClick={() => togglePlacement('circle', startAddCirclePlacement)} />
-          <RailButton icon="ellipse" label="Ellipse" active={pendingAdd?.shape === 'ellipse'} onClick={() => togglePlacement('ellipse', startAddEllipsePlacement)} />
-          <RailButton icon="polygon" label="Polygon" active={pendingAdd?.shape === 'polygon'} onClick={() => togglePlacement('polygon', startAddPolygonPlacement)} />
-          <RailButton icon="spline" label="Spline" active={pendingAdd?.shape === 'spline'} onClick={() => togglePlacement('spline', startAddSplinePlacement)} />
-          <RailButton icon="composite" label="Composite" active={pendingAdd?.shape === 'composite'} onClick={() => togglePlacement('composite', startAddCompositePlacement)} />
-          <RailButton icon="text" label="Text" active={pendingAdd?.shape === 'text'} onClick={handleTextTool} />
+          <RailFlyout
+            icon="feature-drawer"
+            label={`Choose ${creationTarget} shape`}
+            tooltip="Shapes"
+            open={showCreationPopover}
+            onToggle={() => {
+              setShowCreationPopover((v) => !v)
+              setShowAlignPopover(false)
+              setShowDistributePopover(false)
+            }}
+            onClose={() => setShowCreationPopover(false)}
+          >
+            {availableCreationOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-label={`Add ${creationTarget} ${option.noun}`}
+                className={lastCreationOption.value === option.value ? 'tool-rail__popover-btn--active' : ''}
+                onClick={() => selectCreationShape(option.value)}
+              >
+                <Icon id={option.icon} />
+              </button>
+            ))}
+          </RailFlyout>
+          <RailButton
+            icon={lastCreationOption.icon}
+            label={pendingAdd?.shape === lastCreationOption.value ? `Cancel ${lastCreationOption.noun}` : `Add ${creationTarget} ${lastCreationOption.noun}`}
+            active={pendingAdd?.shape === lastCreationOption.value}
+            onClick={() => startCreationShape(lastCreationOption.value)}
+          />
         </div>
 
         {/* Edit tools (visible when features selected) */}
@@ -427,7 +497,12 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         )}
       </nav>
 
-      {showTextDialog && <TextToolDialog onClose={() => setShowTextDialog(false)} onConfirm={confirmTextTool} />}
+      {showTextDialog && typeof document !== 'undefined'
+        ? createPortal(
+            <TextToolDialog onClose={() => setShowTextDialog(false)} onConfirm={confirmTextTool} />,
+            document.body,
+          )
+        : null}
     </>
   )
 }

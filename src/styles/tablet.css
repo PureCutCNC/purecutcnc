@@ -798,6 +798,12 @@
   color: var(--text);
 }
 
+.tool-rail__popover button.tool-rail__popover-btn--active {
+  background: rgba(220, 165, 106, 0.22);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
 .tool-rail__popover button .icon-sprite {
   width: 20px;
   height: 20px;
@@ -1228,4 +1234,3 @@
     padding: 32px;
   }
 }
-
