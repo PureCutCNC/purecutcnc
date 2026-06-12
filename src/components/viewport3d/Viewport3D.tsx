@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
@@ -684,8 +684,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
   const { project, selection, projectKey } = useProjectStore()
-  zoomWindowActiveRef.current = zoomWindowActive
-  zoomWindowBoxRef.current = zoomWindowBox
+  // Mirror the zoom-window state into refs for the orbit-controls callback and
+  // pointer handlers (which read them outside render). Write after commit, not
+  // during render, so we don't touch refs while rendering.
+  useLayoutEffect(() => {
+    zoomWindowActiveRef.current = zoomWindowActive
+    zoomWindowBoxRef.current = zoomWindowBox
+  }, [zoomWindowActive, zoomWindowBox])
 
   const syncGridVisibility = useCallback(() => {
     const gridGroup = gridRef.current
@@ -1064,6 +1069,10 @@ useEffect(() => {
   }, 250)
 
   return () => clearTimeout(timer)
+// Load-bearing: this react-hooks disable makes the compiler-backed rules bail on
+// the whole file, masking a set-state-in-effect (Batch D's rule). Removing it is
+// deferred with the SketchCanvas ref-mirror conversion (see
+// planning/LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md).
 // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [projectKey])
 

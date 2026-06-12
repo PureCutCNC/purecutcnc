@@ -408,6 +408,11 @@ function App() {
       }
     }
     return ids
+  // toolpathMap is load-bearing, not unnecessary: the memo reads cache state via
+  // toolpathCacheRef (a ref the rule can't see) which is updated in lockstep with
+  // toolpathMap when the async pipeline finishes. Dropping it would leave the
+  // generating spinner stuck on. `project` does not change when generation completes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [neededOperationIds, project, toolpathMap])
 
   // Async toolpath pipeline: resolves cached results immediately, defers

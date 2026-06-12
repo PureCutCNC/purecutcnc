@@ -7,7 +7,9 @@ single feature live next to that feature (e.g. `sketch/useAxisLock.ts`,
 ## Files
 - `useStableEvent.ts` — `useStableEvent(fn)` returns a stable-identity callback whose body always reflects the latest `fn` (refreshed in `useInsertionEffect`, never during render). Replaces the `ref.current = fn` render-write anti-pattern. Exports the React-free `createStableEvent` core for unit testing.
 - `useEventListener.ts` — `useWindowEvent` / `useDocumentEvent` / `useEventListener(ref, …)`: subscribe-once event-listener hooks that route the handler through `useStableEvent`, so listener effects don't re-bind on every render. Pass a **stable** options value (module const / memoized), not a fresh object literal.
+- `useRafScheduler.ts` — `useRafScheduler(callback)` returns a **stable** `schedule()` that coalesces repeated calls into one `requestAnimationFrame`, runs the latest `callback` on that frame, and cancels a pending frame on unmount. Replaces ad-hoc `scheduleDraw` closures so the scheduler can be a stable effect dependency. Exports the React-free `createRafScheduler` core for unit testing.
 - `useStableEvent.test.ts` — unit tests for `createStableEvent` (stable identity, latest-fn dispatch, arg/return forwarding).
+- `useRafScheduler.test.ts` — unit tests for `createRafScheduler` (frame coalescing, re-schedule after flush, latest-callback dispatch, cancellation) against a fake `requestAnimationFrame`.
 
 ## Conventions
 - Strict TS, no `any`. Generic over the listener's event map so `type` narrows the event.

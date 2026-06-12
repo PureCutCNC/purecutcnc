@@ -18,6 +18,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md](LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md) — Batch C of the typing-debt design: stable `useRafScheduler()` coalescing redraw hook, clear `SketchCanvas.tsx` + `App.tsx` `exhaustive-deps` warnings, and remove the three load-bearing `eslint-disable react-hooks/exhaustive-deps` directives (SketchCanvas/SimulationViewport/Viewport3D) — fixing the 15 latent `immutability`/`refs` errors they mask. Behavior-preserving; highest-risk batch.
+
 - [LINT_BATCH_B_EVENT_REF_HYGIENE_Plan.md](LINT_BATCH_B_EVENT_REF_HYGIENE_Plan.md) — Batch B of the typing-debt design: replace render-time callback-ref writes (`useAxisLock`, `FeatureTree`) and state-in-deps listener effects (`SketchCanvas` pointermove/wheel) with shared `useStableEvent` / `useWindowEvent` / `useEventListener` hooks under new `src/hooks/`. Behavior-preserving, no suppressions.
 
 - [LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md](LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md) — Batch A of the typing-debt design: kill production `any` at the segment-endpoint, Clipper open-path, and font-parse boundaries via small typed wrappers (`segmentEndPoint` in `project.ts`, new `clipperOpenPaths.ts`, new `text/fontData.ts`). Behavior-free; unit-tested.
