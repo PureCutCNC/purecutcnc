@@ -37,11 +37,16 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
   const [operation, setOperation] = useState<FeatureOperation>(defaults.operation)
   const fontOptions = getTextFontOptions(style)
 
-  useEffect(() => {
+  // `fontOptions` derives only from `style`, so the current font can only become
+  // invalid when the style changes. Fall back to that style's default during
+  // render — the React-recommended alternative to a setState-in-effect reset.
+  const [prevStyle, setPrevStyle] = useState(style)
+  if (style !== prevStyle) {
+    setPrevStyle(style)
     if (!fontOptions.some((font) => font.id === fontId)) {
       setFontId(defaultFontIdForStyle(style))
     }
-  }, [fontId, fontOptions, style])
+  }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
