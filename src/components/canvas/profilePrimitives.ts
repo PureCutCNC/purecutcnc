@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { segmentEndPoint } from '../../types/project'
 import type { Point, Segment, SketchProfile } from '../../types/project'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
@@ -21,8 +22,7 @@ import type { ViewTransform } from './viewTransform'
 export function anchorPointForIndex(profile: SketchProfile, index: number): Point {
   if (index === 0) return profile.start
   const seg = profile.segments[index - 1]
-  if (seg.type === 'circle') return profile.start
-  return (seg as any).to
+  return segmentEndPoint(seg, profile.start)
 }
 
 export function arcControlPoint(start: Point, segment: Extract<Segment, { type: 'arc' | 'circle' }>): Point {

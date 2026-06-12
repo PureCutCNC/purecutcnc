@@ -18,6 +18,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md](LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md) — Batch A of the typing-debt design: kill production `any` at the segment-endpoint, Clipper open-path, and font-parse boundaries via small typed wrappers (`segmentEndPoint` in `project.ts`, new `clipperOpenPaths.ts`, new `text/fontData.ts`). Behavior-free; unit-tested.
+
 - [FEATURE_CREATION_PICKER_POC_Plan.md](FEATURE_CREATION_PICKER_POC_Plan.md) — compact feature creation picker POC with drawer selection plus a last-used repeat button in the left rail
 
 - [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change

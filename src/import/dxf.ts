@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { circleProfile, type Point, type SketchProfile } from '../types/project'
+import { circleProfile, segmentEndPoint, type Point, type SketchProfile } from '../types/project'
 import { convertLength } from '../utils/units'
 import { identityMatrix, isProfileDegenerate, multiplyMatrix, transformProfile, type AffineMatrix2D } from './normalize'
 import type { ImportContext, ImportedShape, ImportInspection, ImportParseResult } from './types'
@@ -498,7 +498,7 @@ function reverseProfile(profile: SketchProfile): SketchProfile {
 
   const reversedSegments = []
   let previous = profile.start
-  const vertices = [profile.start, ...profile.segments.map((segment) => (segment as any).to)]
+  const vertices = [profile.start, ...profile.segments.map((segment) => segmentEndPoint(segment, profile.start))]
 
   for (let index = profile.segments.length - 1; index >= 0; index -= 1) {
     const segment = profile.segments[index]

@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { addOpenSubject, openPathsFromPolyTree } from '../../engine/clipperOpenPaths'
 import { DEFAULT_CLIPPER_SCALE, fromClipperPath } from '../../engine/toolpaths/geometry'
 import { uniqueName } from '../../import'
 import type {
@@ -164,9 +165,9 @@ function trimOpenTargetByClosedCutters(
   const targetPath = flattenOpenFeatureToClipperPath(target, DEFAULT_CLIPPER_SCALE)
   const clipper = new ClipperLib.Clipper()
   // Open subject path.
-  ;(clipper as any).AddPath(targetPath, ClipperLib.PolyType.ptSubject, false)
+  addOpenSubject(clipper, targetPath)
   for (const clip of closedClipPaths) {
-    ;(clipper as any).AddPath(clip, ClipperLib.PolyType.ptClip, true)
+    clipper.AddPaths([clip], ClipperLib.PolyType.ptClip, true)
   }
   const polyTree = new ClipperLib.PolyTree()
   clipper.Execute(
@@ -176,7 +177,7 @@ function trimOpenTargetByClosedCutters(
     ClipperLib.PolyFillType.pftNonZero,
   )
   const openPaths: Point[][] = []
-  const openPathsRaw = (ClipperLib.Clipper as any).OpenPathsFromPolyTree(polyTree)
+  const openPathsRaw = openPathsFromPolyTree(polyTree)
   for (const path of openPathsRaw) {
     if (!path || path.length < 2) continue
     openPaths.push(fromClipperPath(path, DEFAULT_CLIPPER_SCALE))

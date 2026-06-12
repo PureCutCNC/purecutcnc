@@ -3,6 +3,8 @@
 Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation. New features here **must** have unit tests.
 
 ## Top-level files
+- `clipperOpenPaths.ts` — typed seam for clipper-lib's open-path API (`addOpenSubject`, `openPathsFromPolyTree`); confines the casts the local clipper-lib typings force
+- `clipperOpenPaths.test.ts` — tests for the above
 - `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache
 - `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, silhouette extraction, serialization
 - `importedMesh.test.ts` — tests for the above
