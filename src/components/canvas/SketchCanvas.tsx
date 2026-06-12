@@ -112,6 +112,8 @@ import { compatibleFeatureIdsForOperation } from '../cam/operationValidity'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
+import { useStableEvent } from '../../hooks/useStableEvent'
+import { useEventListener } from '../../hooks/useEventListener'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -121,6 +123,10 @@ const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 const OPEN_ENDPOINT_JOIN_HIT_RADIUS = 14
 const MIN_SKETCH_ZOOM = 0.02
+
+// Stable (module-level) so the wheel listener subscribes once; `passive: false`
+// lets handleWheelEvent call preventDefault to suppress page scroll/zoom.
+const WHEEL_LISTENER_OPTIONS = { passive: false } as const
 
 interface PendingPreviewPoint {
   point: Point
@@ -2355,48 +2361,30 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    function handleNativePointerMove(event: PointerEvent) {
-      if (longPressTimerRef.current && longPressStartRef.current) {
-        const dx = event.clientX - longPressStartRef.current.clientX
-        const dy = event.clientY - longPressStartRef.current.clientY
-        if (dx * dx + dy * dy > 100) {
-          clearTimeout(longPressTimerRef.current)
-          longPressTimerRef.current = null
-          longPressStartRef.current = null
-        }
+  // Native pointermove (not React's synthetic) so we can read coalesced events.
+  // Routed through useStableEvent so the listener subscribes once while the body
+  // still sees the latest state — clears the exhaustive-deps warning without a
+  // hand-maintained state dependency list.
+  const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {
+    if (longPressTimerRef.current && longPressStartRef.current) {
+      const dx = event.clientX - longPressStartRef.current.clientX
+      const dy = event.clientY - longPressStartRef.current.clientY
+      if (dx * dx + dy * dy > 100) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+        longPressStartRef.current = null
       }
-      const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
-      const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
-      handleCanvasPointerMove(canvasCoordinates(sourceEvent))
     }
+    const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
+    const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
+    handleCanvasPointerMove(canvasCoordinates(sourceEvent))
+  })
+  useEventListener(canvasRef, 'pointermove', onCanvasPointerMove)
 
-    canvas.addEventListener('pointermove', handleNativePointerMove)
-    return () => {
-      canvas.removeEventListener('pointermove', handleNativePointerMove)
-    }
-  }, [copyCountPromptActive, rotateCopyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length, zoomWindowActive])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    function handleNativeWheel(event: globalThis.WheelEvent) {
-      handleWheelEvent(event)
-    }
-
-    canvas.addEventListener('wheel', handleNativeWheel, { passive: false })
-    return () => {
-      canvas.removeEventListener('wheel', handleNativeWheel)
-    }
-  }, [zoomWindowActive])
+  const onCanvasWheel = useStableEvent((event: globalThis.WheelEvent) => {
+    handleWheelEvent(event)
+  })
+  useEventListener(canvasRef, 'wheel', onCanvasWheel, WHEEL_LISTENER_OPTIONS)
 
   const { isGestureActive: isGestureActiveRef } = useCanvasGestures({
     getCanvas: () => canvasRef.current,
