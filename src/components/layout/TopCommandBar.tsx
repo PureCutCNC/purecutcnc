@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
 import { useFileActions } from '../../platform/useFileActions'
@@ -70,9 +70,15 @@ export function TopCommandBar({
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
 
-  useEffect(() => {
-    if (!editingName) setNameVal(project.meta.name)
-  }, [editingName, project.meta.name])
+  // Sync the edit field with the project name when it changes externally
+  // (load / new project) while not editing — adjusting state during render
+  // instead of a synchronous setState-in-effect. Entering edit mode seeds
+  // `nameVal` in its own click handler.
+  const [syncedName, setSyncedName] = useState(project.meta.name)
+  if (!editingName && project.meta.name !== syncedName) {
+    setSyncedName(project.meta.name)
+    setNameVal(project.meta.name)
+  }
 
   async function handleNew() {
     const ok = await fileActions.confirmDiscardIfDirty()

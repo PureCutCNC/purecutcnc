@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { Icon } from '../Icon'
+import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
@@ -86,48 +87,23 @@ function ToolbarAction({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const tooltipRef = useRef<HTMLSpanElement | null>(null)
   const [tooltipVisible, setTooltipVisible] = useState(false)
-  const [tooltipCoords, setTooltipCoords] = useState<{ top: number; left: number } | null>(null)
+  const tooltipCoords = usePortalPosition(containerRef, tooltipRef, tooltipVisible, (triggerRect, tooltipRect) => {
+    const margin = 8
+    let top: number
+    let left: number
 
-  useLayoutEffect(() => {
-    if (!tooltipVisible) {
-      setTooltipCoords(null)
-      return
+    if (tooltipSide === 'right') {
+      left = triggerRect.right + 8
+      top = triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2
+    } else {
+      top = triggerRect.bottom + 8
+      left = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2
     }
 
-    function reposition() {
-      const trigger = containerRef.current
-      const tooltip = tooltipRef.current
-      if (!trigger || !tooltip) {
-        return
-      }
-
-      const triggerRect = trigger.getBoundingClientRect()
-      const tooltipRect = tooltip.getBoundingClientRect()
-      const margin = 8
-      let top: number
-      let left: number
-
-      if (tooltipSide === 'right') {
-        left = triggerRect.right + 8
-        top = triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2
-      } else {
-        top = triggerRect.bottom + 8
-        left = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2
-      }
-
-      left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin))
-      top = Math.max(margin, Math.min(top, window.innerHeight - tooltipRect.height - margin))
-      setTooltipCoords((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }))
-    }
-
-    reposition()
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-    }
-  }, [label, tooltipSide, tooltipVisible])
+    left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin))
+    top = Math.max(margin, Math.min(top, window.innerHeight - tooltipRect.height - margin))
+    return { top, left }
+  })
 
   return (
     <div
@@ -261,11 +237,16 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [showTextDialog, setShowTextDialog] = useState(false)
 
-  useEffect(() => {
-    if (!editingName) {
-      setNameVal(project.meta.name)
-    }
-  }, [editingName, project.meta.name])
+  // Keep the edit field in sync with the project name when it changes externally
+  // (load / new project) while not editing. Adjusting state during render — the
+  // React-recommended alternative to a synchronous setState-in-effect. Entering
+  // edit mode seeds `nameVal` in its own click handler, so only out-of-edit
+  // changes need syncing here.
+  const [syncedName, setSyncedName] = useState(project.meta.name)
+  if (!editingName && project.meta.name !== syncedName) {
+    setSyncedName(project.meta.name)
+    setNameVal(project.meta.name)
+  }
 
   async function handleNewProject() {
     const ok = await fileActions.confirmDiscardIfDirty()
@@ -775,7 +756,6 @@ function CreationActions({
   const openTimerRef = useRef<number | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const openModeRef = useRef<PopoverOpenMode | null>(null)
-  const [drawerCoords, setDrawerCoords] = useState<{ top: number; left: number } | null>(null)
   const side = tooltipSide ?? 'bottom'
   const availableShapeOptions = creationTarget === 'region'
     ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
@@ -842,40 +822,21 @@ function CreationActions({
     }, TOOLBAR_POPOVER_HOVER_CLOSE_DELAY_MS)
   }
 
-  useLayoutEffect(() => {
-    if (!drawerOpen) {
-      return
+  const drawerCoords = usePortalPosition(pickerRef, popoverRef, drawerOpen, (t, p) => {
+    const margin = 8
+    let top: number
+    let left: number
+    if (side === 'right') {
+      left = t.right + 6
+      top = t.top + t.height / 2 - p.height / 2
+    } else {
+      top = t.bottom + 6
+      left = t.left + t.width / 2 - p.width / 2
     }
-    function reposition() {
-      const trigger = pickerRef.current
-      const popover = popoverRef.current
-      if (!trigger || !popover) {
-        return
-      }
-      const t = trigger.getBoundingClientRect()
-      const p = popover.getBoundingClientRect()
-      const margin = 8
-      let top: number
-      let left: number
-      if (side === 'right') {
-        left = t.right + 6
-        top = t.top + t.height / 2 - p.height / 2
-      } else {
-        top = t.bottom + 6
-        left = t.left + t.width / 2 - p.width / 2
-      }
-      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
-      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
-      setDrawerCoords({ top, left })
-    }
-    reposition()
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-    }
-  }, [drawerOpen, side])
+    left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+    top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+    return { top, left }
+  })
 
   useEffect(() => {
     if (!drawerOpen) {
@@ -1159,7 +1120,6 @@ function ToolbarPopoverMenu<T extends string>({
   const openTimerRef = useRef<number | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const openModeRef = useRef<PopoverOpenMode | null>(null)
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
   const effectiveOpen = open && enabled
   const side = tooltipSide ?? 'bottom'
 
@@ -1205,41 +1165,21 @@ function ToolbarPopoverMenu<T extends string>({
   // scrollable left rail — whose overflow clips its absolutely-positioned
   // descendants — cannot cut it off. Position it from the trigger's bounding
   // rect, recomputing while it is open in case the rail scrolls or resizes.
-  useLayoutEffect(() => {
-    if (!effectiveOpen) {
-      setCoords(null)
-      return
+  const coords = usePortalPosition(containerRef, popoverRef, effectiveOpen, (t, p) => {
+    const margin = 8
+    let top: number
+    let left: number
+    if (side === 'right') {
+      left = t.right + 6
+      top = t.top + t.height / 2 - p.height / 2
+    } else {
+      top = t.bottom + 6
+      left = t.left + t.width / 2 - p.width / 2
     }
-    function reposition() {
-      const trigger = containerRef.current
-      const popover = popoverRef.current
-      if (!trigger || !popover) {
-        return
-      }
-      const t = trigger.getBoundingClientRect()
-      const p = popover.getBoundingClientRect()
-      const margin = 8
-      let top: number
-      let left: number
-      if (side === 'right') {
-        left = t.right + 6
-        top = t.top + t.height / 2 - p.height / 2
-      } else {
-        top = t.bottom + 6
-        left = t.left + t.width / 2 - p.width / 2
-      }
-      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
-      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
-      setCoords({ top, left })
-    }
-    reposition()
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-    }
-  }, [effectiveOpen, side])
+    left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+    top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+    return { top, left }
+  })
 
   useEffect(() => {
     if (!effectiveOpen) {
