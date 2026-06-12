@@ -16,6 +16,7 @@
 
 import {
   inferFeatureKind,
+  segmentEndPoint,
   type FeatureOperation,
   type Point,
   type Project,
@@ -83,7 +84,7 @@ export function isProfileDegenerate(profile: SketchProfile, epsilon = 1e-9): boo
     return Math.abs(profile.start.x - seg.center.x) <= epsilon && Math.abs(profile.start.y - seg.center.y) <= epsilon
   }
 
-  const points = [profile.start, ...profile.segments.map((segment) => (segment as any).to)]
+  const points = [profile.start, ...profile.segments.map((segment) => segmentEndPoint(segment, profile.start))]
   return points.every((point) => Math.abs(point.x - points[0].x) <= epsilon && Math.abs(point.y - points[0].y) <= epsilon)
 }
 
