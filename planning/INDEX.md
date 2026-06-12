@@ -18,6 +18,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [LINT_BATCH_B_EVENT_REF_HYGIENE_Plan.md](LINT_BATCH_B_EVENT_REF_HYGIENE_Plan.md) — Batch B of the typing-debt design: replace render-time callback-ref writes (`useAxisLock`, `FeatureTree`) and state-in-deps listener effects (`SketchCanvas` pointermove/wheel) with shared `useStableEvent` / `useWindowEvent` / `useEventListener` hooks under new `src/hooks/`. Behavior-preserving, no suppressions.
+
 - [LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md](LINT_BATCH_A_TYPED_BOUNDARIES_Plan.md) — Batch A of the typing-debt design: kill production `any` at the segment-endpoint, Clipper open-path, and font-parse boundaries via small typed wrappers (`segmentEndPoint` in `project.ts`, new `clipperOpenPaths.ts`, new `text/fontData.ts`). Behavior-free; unit-tested.
 
 - [FEATURE_CREATION_PICKER_POC_Plan.md](FEATURE_CREATION_PICKER_POC_Plan.md) — compact feature creation picker POC with drawer selection plus a last-used repeat button in the left rail

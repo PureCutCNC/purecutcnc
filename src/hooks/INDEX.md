@@ -1,0 +1,14 @@
+# INDEX — src/hooks/
+
+Shared, cross-cutting React hooks. App-generic primitives only — hooks tied to a
+single feature live next to that feature (e.g. `sketch/useAxisLock.ts`,
+`platform/useFileActions.ts`).
+
+## Files
+- `useStableEvent.ts` — `useStableEvent(fn)` returns a stable-identity callback whose body always reflects the latest `fn` (refreshed in `useInsertionEffect`, never during render). Replaces the `ref.current = fn` render-write anti-pattern. Exports the React-free `createStableEvent` core for unit testing.
+- `useEventListener.ts` — `useWindowEvent` / `useDocumentEvent` / `useEventListener(ref, …)`: subscribe-once event-listener hooks that route the handler through `useStableEvent`, so listener effects don't re-bind on every render. Pass a **stable** options value (module const / memoized), not a fresh object literal.
+- `useStableEvent.test.ts` — unit tests for `createStableEvent` (stable identity, latest-fn dispatch, arg/return forwarding).
+
+## Conventions
+- Strict TS, no `any`. Generic over the listener's event map so `type` narrows the event.
+- The stable wrapper is for event handlers / effects — do not call it during render.
