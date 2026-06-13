@@ -180,8 +180,8 @@ export const browserPlatform: PlatformApi = {
     return { name: file.name, content }
   },
 
-  async revealInFileManager(_path: string): Promise<void> {
-    // Not supported in the browser
+  async revealInFileManager(): Promise<void> {
+    // Not supported in the browser (no filesystem path to reveal)
   },
 
   async confirmDiscardChanges(): Promise<boolean> {

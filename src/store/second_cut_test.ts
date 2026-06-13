@@ -35,9 +35,9 @@ import { flattenProfile } from '../engine/toolpaths/geometry'
 import { splitClosedByOpen } from './helpers/polygonSplit'
 
 function fakeFeature(profile: SketchProfile, name: string): SketchFeature {
-  return { id: name, name, kind: 'polygon', folderId: null, locked: false, operation: 'add',
-    sketch: { profile, constraints: [], dimensions: [], origin: { x: 0, y: 0 } },
-    z_top: 0.75, z_bottom: 0 } as any
+  return { id: name, name, kind: 'polygon', folderId: null, locked: false, operation: 'add', visible: true,
+    sketch: { profile, constraints: [], dimensions: [], origin: { x: 0, y: 0 }, orientationAngle: 0 },
+    z_top: 0.75, z_bottom: 0 }
 }
 
 function signedArea(pts: Point[]): number {

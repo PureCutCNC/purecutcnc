@@ -1091,7 +1091,7 @@ function normalizeImportedModelStorage(
 ): STLFeatureData | null | undefined {
   if (!stl) return stl
   if (stl.meshAssetId && modelAssets[stl.meshAssetId]) {
-    const { mesh: _mesh, fileData: _fileData, filePath: _filePath, ...rest } = stl
+    const { mesh, fileData, filePath, ...rest } = stl
     return rest
   }
 
@@ -1099,7 +1099,7 @@ function normalizeImportedModelStorage(
   if (transientMesh) {
     const meshAssetId = stl.meshAssetId ?? modelAssetIdForFeature(featureId)
     modelAssets[meshAssetId] = transientMesh
-    const { mesh: _mesh, fileData: _fileData, filePath: _filePath, ...rest } = stl
+    const { mesh, fileData, filePath, ...rest } = stl
     return {
       ...rest,
       meshAssetId,
@@ -3123,7 +3123,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     cloneProject,
     normalizeProject,
   }),
-  ...createPendingActionsSlice(set, get),
+  ...createPendingActionsSlice(set),
   ...createPendingCompletionSlice(set, get, {
     cloneProject,
     projectsEqual,

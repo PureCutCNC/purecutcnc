@@ -2182,12 +2182,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const canvas = canvasRef.current
     if (!canvas) return
     setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
-  // Load-bearing: this react-hooks disable makes the compiler-backed rules
-  // (react-hooks/refs, react-hooks/immutability) bail on the whole file, masking
-  // ~26 render-time ref-mirror writes + set-state-in-effect. Converting those is
-  // a dedicated follow-up (see planning/LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md);
-  // removing this directive surfaces all of them at once.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Load-bearing — DO NOT remove without converting the masked errors first.
+  // Any react-hooks eslint-disable makes the React-Compiler rules bail on the
+  // whole file; this directive masks 3 `react-hooks/immutability` errors at
+  // SketchCanvas.tsx:2242/2247 (the useStableEvent wrappers reference
+  // handleCanvasPointerMove / handleWheelEvent, declared ~1700 lines later).
+  // Converting those forward references is the deferred Batch C declaration-order
+  // work (planning/LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md). Because the bail
+  // hides what this line suppresses, ESLint also reports it as an "unused
+  // directive" warning — that warning is the cost of keeping the bail.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks deferred Batch C immutability errors at :2242/:2247 (see comment above)
   }, [projectKey])
 
   useEffect(() => {
@@ -4973,7 +4977,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const featureId = selection.selectedFeatureId
         if (!featureId) return null
 
-        function makeEditInputKeyDown(_field: 'length' | 'angle' | 'radius') {
+        function makeEditInputKeyDown() {
           return (e: KeyboardEvent<HTMLInputElement>) => {
             e.stopPropagation()
             if (e.key === 'Enter') {
@@ -5002,7 +5006,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
               value={dimensionEdit.radius}
               onChange={(e) => handleLiveChange('radius', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('radius')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
           )
@@ -5024,7 +5028,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: layout.labelX, top: layout.labelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
               value={dimensionEdit.length}
               onChange={(e) => handleLiveChange('length', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('length')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
             <input
@@ -5034,7 +5038,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
               value={dimensionEdit.angle}
               onChange={(e) => handleLiveChange('angle', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('angle')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
           </>
