@@ -16,7 +16,7 @@
 
 
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, calculateGeometricCenter, nearestVertexIndex, nearestSegmentIndex, projectPointOntoSegmentT } from './constraintSolver'
-import type { SketchFeature, Point, SketchProfile } from '../types/project'
+import type { SketchFeature, Point, SketchProfile, Segment } from '../types/project'
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -28,16 +28,23 @@ function approx(a: number, b: number, epsilon = 1e-6) {
   return Math.abs(a - b) < epsilon
 }
 
-function transformProfile(profile: any, transformPoint: (p: Point) => Point) {
+// Test helper: read the centre of a segment that the test knows is an arc or
+// circle. Narrows the `Segment` union honestly instead of an `as any` cast.
+function segmentCenter(seg: Segment): Point {
+  if ('center' in seg) return seg.center
+  throw new Error('Assertion failed: expected an arc or circle segment with a center')
+}
+
+function transformProfile(profile: SketchProfile, transformPoint: (p: Point) => Point): SketchProfile {
   return {
     ...profile,
     start: transformPoint(profile.start),
-    segments: profile.segments.map((s: any) => {
+    segments: profile.segments.map((s: Segment) => {
       if (s.type === 'circle' || s.type === 'arc') {
-        return { 
-          ...s, 
-          center: transformPoint(s.center), 
-          to: transformPoint(s.to) 
+        return {
+          ...s,
+          center: transformPoint(s.center),
+          to: transformPoint(s.to)
         }
       }
       return { ...s, to: transformPoint(s.to) }
@@ -276,7 +283,7 @@ function testMultiConstraintPropagation() {
     sketch: {
       profile: {
         start: { x: 12, y: 0 },
-        segments: [{ type: 'circle', center: { x: 10, y: 0 }, to: { x: 12, y: 0 }, clockwise: true } as any],
+        segments: [{ type: 'circle', center: { x: 10, y: 0 }, to: { x: 12, y: 0 }, clockwise: true }],
         closed: true,
       },
       origin: { x: 0, y: 0 },
@@ -312,7 +319,7 @@ function testMultiConstraintPropagation() {
   })
 
   const nextC = nextFeatures.find(f => f.id === 'C')!
-  const nextCenter = (nextC.sketch.profile.segments[0] as any).center
+  const nextCenter = segmentCenter(nextC.sketch.profile.segments[0])
   
   console.log('Next C center:', nextCenter)
   
@@ -514,7 +521,7 @@ function testRepeatedRotates() {
     features = propagateConstraintsOnRotate(features, movedRotations, { transformProfile })
     
     const currentB = features.find(f => f.id === 'B')!
-    const nextCenter = (currentB.sketch.profile.segments[0] as any).center
+    const nextCenter = segmentCenter(currentB.sketch.profile.segments[0])
     
     // After i steps, total rotation is i * angle
     const expectedAngle = i * angle
@@ -604,7 +611,7 @@ function testSmallFeatures() {
     features = propagateConstraintsOnTranslate(features, movedOffsets, { transformProfile })
     
     const currentB = features.find(f => f.id === 'B')!
-    const center = (currentB.sketch.profile.segments[0] as any).center
+    const center = segmentCenter(currentB.sketch.profile.segments[0])
     assert(approx(center.x, 0.625 + i * 0.1), `Circle center x should be ${0.625 + i * 0.1}`)
   }
 
@@ -869,7 +876,7 @@ function testSemanticPropagation() {
 
   const nextA = nextFeatures.find(f => f.id === 'A')!
   const nextB = nextFeatures.find(f => f.id === 'B')!
-  const nextBCenter = (nextB.sketch.profile.segments[0] as any).center
+  const nextBCenter = segmentCenter(nextB.sketch.profile.segments[0])
   const nextACenter = calculateGeometricCenter(nextA.sketch.profile)
 
   // B's center should be 10 units from A's new center
@@ -1183,7 +1190,7 @@ function testSegmentSidePreservation() {
   const nextFeatures = propagateConstraintsOnTranslate(features, movedOffsets, { transformProfile })
 
   const nextB = nextFeatures.find(f => f.id === 'B')!
-  const nextCenter = (nextB.sketch.profile.segments[0] as any).center
+  const nextCenter = segmentCenter(nextB.sketch.profile.segments[0])
 
   // Circle should be at y = 3 + (-5) = -2 (still on negative-normal side)
   assert(approx(nextCenter.y, -2, 0.1), `Circle y should be -2 (negative side preserved), got ${nextCenter.y}`)
@@ -1248,7 +1255,7 @@ function testFrozenInvalidFeature() {
   const nextFeatures = propagateConstraintsOnTranslate(features, movedOffsets, { transformProfile })
 
   const nextB = nextFeatures.find(f => f.id === 'B')!
-  const nextBCenter = (nextB.sketch.profile.segments[0] as any).center
+  const nextBCenter = segmentCenter(nextB.sketch.profile.segments[0])
 
   // B should stay at x=15 (frozen)
   assert(approx(nextBCenter.x, 15), `B should be frozen at x=15, got ${nextBCenter.x}`)

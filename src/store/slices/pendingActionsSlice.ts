@@ -69,7 +69,6 @@ function tabById(project: Project, id: string): Tab | null {
 
 export function createPendingActionsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
 ): PendingActionsSlice {
   return {
     pendingMove: null,

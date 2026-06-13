@@ -1069,11 +1069,15 @@ useEffect(() => {
   }, 250)
 
   return () => clearTimeout(timer)
-// Load-bearing: this react-hooks disable makes the compiler-backed rules bail on
-// the whole file, masking a set-state-in-effect (Batch D's rule). Removing it is
-// deferred with the SketchCanvas ref-mirror conversion (see
-// planning/LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md).
-// eslint-disable-next-line react-hooks/exhaustive-deps
+// Load-bearing — DO NOT remove without converting the masked error first.
+// Any react-hooks eslint-disable makes the React-Compiler rules bail on the
+// whole file; this directive masks a `react-hooks/set-state-in-effect` error at
+// Viewport3D.tsx:1082 (setZoomWindowBox(null) resetting the zoom-window box when
+// the tool deactivates). Converting it to an adjust-state-during-render reset is
+// the deferred Batch D pattern (planning/LINT_BATCH_D_SET_STATE_IN_EFFECT_Plan.md).
+// Because the bail hides what this line suppresses, ESLint also reports it as an
+// "unused directive" warning — that warning is the cost of keeping the bail.
+// eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks deferred Batch D set-state-in-effect at :1082 (see comment above)
 }, [projectKey])
 
 useImperativeHandle(ref, () => ({

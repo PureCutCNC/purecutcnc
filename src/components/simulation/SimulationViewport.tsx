@@ -875,7 +875,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (!texture) {
       return
     }
-    updateHeightfieldTexture(texture, playbackControllerRef.current?.getDirtyRegion() ?? null)
+    updateHeightfieldTexture(texture)
     playbackControllerRef.current?.clearDirtyRegion()
   }, [])
 
