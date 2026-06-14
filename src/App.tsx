@@ -42,6 +42,8 @@ import { AboutDialog } from './components/about/AboutDialog'
 import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
+import { useLocalStorageState } from './hooks/useLocalStorageState'
+import { useOutsideDismiss } from './hooks/useOutsideDismiss'
 
 interface TreeContextMenuState {
   entityType: 'feature' | 'tab' | 'clamp'
@@ -121,6 +123,23 @@ function scheduleAfterPaint(fn: () => void): void {
 }
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
+
+// Persist the depth-legend collapsed flag as the literal "true"/"false" string
+// the previous hand-rolled site wrote (`String(bool)` / `=== 'true'`), not JSON,
+// so existing stored values keep working unchanged.
+const DEPTH_LEGEND_CODEC = {
+  serialize: (collapsed: boolean): string => String(collapsed),
+  deserialize: (raw: string): boolean => raw === 'true',
+}
+
+// Snap settings persist as JSON, run through normalizeSnapSettings on read so a
+// stored value from an older schema is upgraded; a parse failure falls back to
+// DEFAULT_SNAP_SETTINGS via the hook's deserialize-error handling.
+const SNAP_SETTINGS_CODEC = {
+  serialize: (settings: SnapSettings): string => JSON.stringify(settings),
+  deserialize: (raw: string): SnapSettings => normalizeSnapSettings(JSON.parse(raw)),
+}
+
 const CONTEXT_MENU_VIEWPORT_PADDING = 8
 const CONTEXT_MENU_INITIAL_WIDTH = 188
 const CONTEXT_MENU_INITIAL_HEIGHT = 300
@@ -183,29 +202,16 @@ function App() {
   const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
   useDesktopIntegration({ onExportGcode: handleExportGcode })
   const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
-  const [depthLegendCollapsed, setDepthLegendCollapsed] = useState(() => {
-    if (typeof window === 'undefined') {
-      return false
-    }
-
-    return window.localStorage.getItem(DEPTH_LEGEND_COLLAPSED_STORAGE_KEY) === 'true'
-  })
-  const [snapSettings, setSnapSettings] = useState<SnapSettings>(() => {
-    if (typeof window === 'undefined') {
-      return DEFAULT_SNAP_SETTINGS
-    }
-
-    const saved = window.localStorage.getItem(SNAP_SETTINGS_STORAGE_KEY)
-    if (!saved) {
-      return DEFAULT_SNAP_SETTINGS
-    }
-
-    try {
-      return normalizeSnapSettings(JSON.parse(saved))
-    } catch {
-      return DEFAULT_SNAP_SETTINGS
-    }
-  })
+  const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
+    DEPTH_LEGEND_COLLAPSED_STORAGE_KEY,
+    false,
+    { codec: DEPTH_LEGEND_CODEC },
+  )
+  const [snapSettings, setSnapSettings] = useLocalStorageState<SnapSettings>(
+    SNAP_SETTINGS_STORAGE_KEY,
+    DEFAULT_SNAP_SETTINGS,
+    { codec: SNAP_SETTINGS_CODEC },
+  )
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const simulationViewportRef = useRef<SimulationViewportHandle>(null)
@@ -672,14 +678,6 @@ function App() {
   }, [centerTab])
 
   useEffect(() => {
-    window.localStorage.setItem(DEPTH_LEGEND_COLLAPSED_STORAGE_KEY, String(depthLegendCollapsed))
-  }, [depthLegendCollapsed])
-
-  useEffect(() => {
-    window.localStorage.setItem(SNAP_SETTINGS_STORAGE_KEY, JSON.stringify(snapSettings))
-  }, [snapSettings])
-
-  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
       if (
@@ -737,36 +735,16 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [zoomWindowActive])
 
-  useEffect(() => {
-    if (!treeContextMenu) {
-      return
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node | null
-      if (menuRef.current?.contains(target)) {
-        return
-      }
+  useOutsideDismiss({
+    open: treeContextMenu !== null,
+    refs: menuRef,
+    target: 'window',
+    onDismiss: () => {
       setTreeContextMenu(null)
       setMenuPosition(null)
       setQuickOpsSubmenu(null)
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setTreeContextMenu(null)
-        setMenuPosition(null)
-        setQuickOpsSubmenu(null)
-      }
-    }
-
-    window.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [treeContextMenu])
+    },
+  })
 
   function handleZoomToModel() {
     if (centerTab === 'preview3d') {
