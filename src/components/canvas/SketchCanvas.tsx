@@ -2182,16 +2182,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const canvas = canvasRef.current
     if (!canvas) return
     setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
-  // Load-bearing — DO NOT remove without converting the masked errors first.
+  // Load-bearing — DO NOT remove without resolving the FULL masked set first.
   // Any react-hooks eslint-disable makes the React-Compiler rules bail on the
-  // whole file; this directive masks 3 `react-hooks/immutability` errors at
-  // SketchCanvas.tsx:2242/2247 (the useStableEvent wrappers reference
-  // handleCanvasPointerMove / handleWheelEvent, declared ~1700 lines later).
-  // Converting those forward references is the deferred Batch C declaration-order
-  // work (planning/LINT_BATCH_C_RAF_SKETCHCANVAS_DEPS_Plan.md). Because the bail
-  // hides what this line suppresses, ESLint also reports it as an "unused
-  // directive" warning — that warning is the cost of keeping the bail.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks deferred Batch C immutability errors at :2242/:2247 (see comment above)
+  // ENTIRE file (all-or-nothing), so this one directive hides every react-hooks
+  // issue in SketchCanvas. The "3 errors at :2242/:2247" it was first thought to
+  // mask are only the first wave — a 2026-06 investigation removed it and found:
+  //   1. 8 forward-referenced hoisted functions (declaration order) — mechanically
+  //      fixable by reordering; runtime-neutral.
+  //   2. ~27 ref-mirror WRITES during render (the state→ref block near the top of
+  //      the component + the drawRef closure) — convertible to a useLayoutEffect.
+  //   3. ~6 render-time ref READS of pointer-move hot-path refs (pendingPreviewPointRef,
+  //      canvasRef) — the real blocker. These refs exist to avoid re-rendering the
+  //      canvas on every mouse move, so lifting them to state to satisfy the rule
+  //      risks a perf regression; resolving (3) is an architectural redesign, not a
+  //      lint fix. Because (3) keeps the file non-compliant, removing the directive
+  //      gains nothing, so it stays — and ESLint reports it as an "unused directive"
+  //      warning, which is the (intentional) cost of the bail.
+  // Full analysis + reproducible reorder script: planning/LINT_HOOK_TYPING_DEBT_Plan.md.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks forward-refs + ref-mirror writes + hot-path render-time ref reads (see comment above; LINT_HOOK_TYPING_DEBT_Plan.md)
   }, [projectKey])
 
   useEffect(() => {

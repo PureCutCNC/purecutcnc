@@ -692,6 +692,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     zoomWindowBoxRef.current = zoomWindowBox
   }, [zoomWindowActive, zoomWindowBox])
 
+  // Reset the zoom-window box during render when the tool deactivates (React-
+  // recommended adjust-state-during-render; the ref mirror above nulls
+  // zoomWindowBoxRef after commit, so we only touch state here).
+  if (!zoomWindowActive && zoomWindowBox !== null) {
+    setZoomWindowBox(null)
+  }
+
   const syncGridVisibility = useCallback(() => {
     const gridGroup = gridRef.current
     if (!gridGroup) return
@@ -1069,28 +1076,11 @@ useEffect(() => {
   }, 250)
 
   return () => clearTimeout(timer)
-// Load-bearing — DO NOT remove without converting the masked error first.
-// Any react-hooks eslint-disable makes the React-Compiler rules bail on the
-// whole file; this directive masks a `react-hooks/set-state-in-effect` error at
-// Viewport3D.tsx:1082 (setZoomWindowBox(null) resetting the zoom-window box when
-// the tool deactivates). Converting it to an adjust-state-during-render reset is
-// the deferred Batch D pattern (planning/LINT_BATCH_D_SET_STATE_IN_EFFECT_Plan.md).
-// Because the bail hides what this line suppresses, ESLint also reports it as an
-// "unused directive" warning — that warning is the cost of keeping the bail.
-// eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks deferred Batch D set-state-in-effect at :1082 (see comment above)
 }, [projectKey])
 
 useImperativeHandle(ref, () => ({
   zoomToModel,
 }), [zoomToModel])
-
-
-  useEffect(() => {
-    if (!zoomWindowActive) {
-      zoomWindowBoxRef.current = null
-      setZoomWindowBox(null)
-    }
-  }, [zoomWindowActive])
 
   const zoomBoxStyle = zoomWindowBox
     ? {
