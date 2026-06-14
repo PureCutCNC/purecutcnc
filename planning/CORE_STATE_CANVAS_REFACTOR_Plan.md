@@ -30,7 +30,7 @@ Management view for the `feat/core-arch-simplification` branch. Updated as each 
 | Phase | Status | Branch / worktree | Notes |
 |---|---|---|---|
 | P0 — Stale-plan housekeeping | ✅ Done (`4b15583`) | this branch | 5 stale plans archived |
-| P1 — Shared util hooks | ✅ Done (merge `3678ceb`) | merged | `useLocalStorageState` + `useOutsideDismiss`; build + browser regression green |
+| P1 — Shared util hooks | ✅ Done (`3678ceb` + `d506c77`) | merged | `useLocalStorageState` + `useOutsideDismiss`; all 6 localStorage sites consolidated (incl. `updateCheck.ts` via the React-free cores); build + browser regression green |
 | P2 — App orchestration | ⬜ Not started | — | `src/app/` hooks |
 | P3 — Shared command model | ⬜ Not started | — | tablet-sensitive |
 | P4 — Toolbar file-split | ⬜ Not started | — | depends on P3 |
