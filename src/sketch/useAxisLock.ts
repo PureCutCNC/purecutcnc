@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { LockMode } from '../types/axisLock'
 import type { Point } from '../types/project'
+import { useStableEvent } from '../hooks/useStableEvent'
+import { useWindowEvent } from '../hooks/useEventListener'
 
 /**
  * @param onLockChange - Called whenever the lock mode changes so the caller can redraw.
@@ -24,25 +26,21 @@ import type { Point } from '../types/project'
 export function useAxisLock(onLockChange?: () => void) {
   const lockModeRef = useRef<LockMode>('none')
   const [lockMode, setLockMode] = useState<LockMode>('none')
-  const onLockChangeRef = useRef(onLockChange)
-  onLockChangeRef.current = onLockChange
+  // Stable wrapper so the latest `onLockChange` is invoked without writing a ref
+  // during render (react-hooks/refs).
+  const emitLockChange = useStableEvent(() => onLockChange?.())
 
   function setLock(mode: LockMode) {
     lockModeRef.current = mode
     setLockMode(mode)
-    onLockChangeRef.current?.()
+    emitLockChange()
   }
 
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+  useWindowEvent('keydown', (event) => {
     if (event.key !== 'Alt') return
     event.preventDefault()
     setLock(cycleLockMode(lockModeRef.current))
-  }, [])
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+  })
 
   const reset = useCallback(() => {
     lockModeRef.current = 'none'
@@ -62,9 +60,11 @@ export function useAxisLock(onLockChange?: () => void) {
     return point
   }, [])
 
-  const cycleLock = useCallback(() => {
+  // useStableEvent (not useCallback) so this can call the non-memoized `setLock`
+  // without a manual-memoization mismatch, while keeping a stable identity.
+  const cycleLock = useStableEvent(() => {
     setLock(cycleLockMode(lockModeRef.current))
-  }, [])
+  })
 
   return { lockModeRef, lockMode, applyLock, cycleLock, reset }
 }

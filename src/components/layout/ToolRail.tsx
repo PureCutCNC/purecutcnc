@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
+import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useProjectStore } from '../../store/projectStore'
 import { featureHasClosedGeometry } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
@@ -94,36 +95,14 @@ function RailFlyout({
 }) {
   const btnRef = useRef<HTMLButtonElement | null>(null)
   const popRef = useRef<HTMLDivElement | null>(null)
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setCoords(null)
-      return
-    }
-    function reposition() {
-      const btn = btnRef.current
-      const pop = popRef.current
-      if (!btn || !pop) {
-        return
-      }
-      const b = btn.getBoundingClientRect()
-      const p = pop.getBoundingClientRect()
-      const margin = 8
-      let left = b.right + 6
-      let top = b.top + b.height / 2 - p.height / 2
-      left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
-      top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
-      setCoords({ top, left })
-    }
-    reposition()
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-    }
-  }, [open])
+  const coords = usePortalPosition(btnRef, popRef, open, (b, p) => {
+    const margin = 8
+    let left = b.right + 6
+    let top = b.top + b.height / 2 - p.height / 2
+    left = Math.max(margin, Math.min(left, window.innerWidth - p.width - margin))
+    top = Math.max(margin, Math.min(top, window.innerHeight - p.height - margin))
+    return { top, left }
+  })
 
   useEffect(() => {
     if (!open) {

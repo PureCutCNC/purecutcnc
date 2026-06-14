@@ -1,5 +1,5 @@
 ---
-status: Approved   # Draft → Approved → In progress → Done | Abandoned (design accepted 2026-06-11; implementation batches not started)
+status: Done
 created: 2026-06-11
 ---
 

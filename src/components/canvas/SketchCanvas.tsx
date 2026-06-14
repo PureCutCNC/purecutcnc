@@ -112,6 +112,9 @@ import { compatibleFeatureIdsForOperation } from '../cam/operationValidity'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
+import { useStableEvent } from '../../hooks/useStableEvent'
+import { useEventListener } from '../../hooks/useEventListener'
+import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -121,6 +124,10 @@ const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 const OPEN_ENDPOINT_JOIN_HIT_RADIUS = 14
 const MIN_SKETCH_ZOOM = 0.02
+
+// Stable (module-level) so the wheel listener subscribes once; `passive: false`
+// lets handleWheelEvent call preventDefault to suppress page scroll/zoom.
+const WHEEL_LISTENER_OPTIONS = { passive: false } as const
 
 interface PendingPreviewPoint {
   point: Point
@@ -289,8 +296,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetRawPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const livePointerWorldRef = useRef<Point | null>(null)
-  const drawFrameRef = useRef<number | null>(null)
   const drawRef = useRef<() => void>(() => {})
+  // Stable, frame-coalescing redraw. Replaces the former ad-hoc `scheduleDraw`
+  // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
+  const scheduleDraw = useRafScheduler(() => drawRef.current())
   const [copyCountDraft, setCopyCountDraft] = useState('1')
   const [rotateCopyCountDraft, setRotateCopyCountDraft] = useState('1')
   const [pendingRotateCopyPoint, setPendingRotateCopyPoint] = useState<Point | null>(null)
@@ -488,8 +497,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const showCutFlowPanel = pendingShapeAction?.kind === 'cut'
   const cutFlowPanelPhase = pendingShapeAction?.kind === 'cut' ? pendingShapeAction.phase : null
-  const scheduleDrawRef = useRef<() => void>(() => {})
-  const { lockModeRef, lockMode, applyLock, cycleLock, reset: resetLock } = useAxisLock(() => scheduleDrawRef.current())
+  const { lockModeRef, lockMode, applyLock, cycleLock, reset: resetLock } = useAxisLock(scheduleDraw)
   const cutWorkflowPanel = useCanvasWorkflowPanel({
     open: showCutFlowPanel,
     phaseKey: cutFlowPanelPhase,
@@ -619,49 +627,52 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return n === 0 ? 'Click the first point' : n === 1 ? 'Click the second point' : 'Click to set the offset'
   })()
 
-  function updateActiveSnap(nextSnap: ResolvedSnap | null) {
+  // Transient-preview ref setters. Wrapped in `useStableEvent` so they have a
+  // stable identity and can be listed as effect deps without re-subscribing
+  // (the bodies only touch refs, the stable `scheduleDraw`, and props).
+  const updateActiveSnap = useStableEvent((nextSnap: ResolvedSnap | null) => {
     activeSnapRef.current = nextSnap?.mode ? nextSnap : null
     onActiveSnapModeChange?.(nextSnap?.mode ?? null)
     scheduleDraw()
-  }
+  })
 
-  function setPendingPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+  const setPendingPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingPreviewPointRef.current = nextPoint
     scheduleDraw()
-  }
+  })
 
-  function setPendingMovePreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+  const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingMovePreviewPointRef.current = nextPoint
     scheduleDraw()
-  }
+  })
 
-  function setPendingTransformPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+  const setPendingTransformPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingTransformPreviewPointRef.current = nextPoint
     scheduleDraw()
-  }
+  })
 
-  function setPendingOffsetPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+  const setPendingOffsetPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingOffsetPreviewPointRef.current = nextPoint
     scheduleDraw()
-  }
+  })
 
-  function setPendingOffsetRawPreviewPointRef(nextPoint: PendingPreviewPoint | null) {
+  const setPendingOffsetRawPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingOffsetRawPreviewPointRef.current = nextPoint
     scheduleDraw()
-  }
+  })
 
   function sameControl(a: SketchControlRef | null, b: SketchControlRef | null): boolean {
     return a?.kind === b?.kind && a?.index === b?.index && a?.t === b?.t
   }
 
-  function setHoveredEditControl(nextControl: SketchControlRef | null) {
+  const setHoveredEditControl = useStableEvent((nextControl: SketchControlRef | null) => {
     if (sameControl(hoveredEditControlRef.current, nextControl)) {
       return
     }
     hoveredEditControlRef.current = nextControl
     if (!nextControl) setArmedForDimension(false)
     scheduleDraw()
-  }
+  })
 
   function clearTransientCanvasState() {
     suppressClickRef.current = false
@@ -1109,11 +1120,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // Redraw when measure/dimension transient state changes.
   useEffect(() => {
     scheduleDraw()
-  }, [tapeMeasure, pendingDimension, dimensionDeleteArmed, selectedAnnotationId, project.annotations])
+  }, [scheduleDraw, tapeMeasure, pendingDimension, dimensionDeleteArmed, selectedAnnotationId, project.annotations])
 
   useEffect(() => {
     scheduleDraw()
-  }, [project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility, operationHighlightKind])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility, operationHighlightKind])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -1140,7 +1151,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     ) {
       setHoveredEditControl(null)
     }
-  }, [selection.mode, selection.selectedFeatureId, selection.selectedNode, selection.sketchEditTool])
+  }, [setHoveredEditControl, selection.mode, selection.selectedFeatureId, selection.selectedNode, selection.sketchEditTool])
 
   useEffect(() => {
     pendingOffsetPreviewPointRef.current = null
@@ -1155,143 +1166,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     zoomWindowStartRef.current = null
     zoomWindowCurrentRef.current = null
     scheduleDraw()
-  }, [zoomWindowActive])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const livePoint = livePointerWorldRef.current
-    if (!canvas || !livePoint) {
-      return
-    }
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const pendingConstraintLive = pendingConstraintRef.current
-    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
-    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
-    const constraintPicking = constraintAnchorPicking || constraintRefPicking
-    const resolvedSnap = resolveCurrentSketchSnap(livePoint, vt, {
-      excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
-    })
-    const snapped = resolvedSnap.point
-    const sketchEditTool = selection.sketchEditTool
-
-    const shouldPreviewSnap =
-      !!pendingAdd
-      || !!pendingMove
-      || !!pendingTransform
-      || !!pendingOffset
-      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
-      || isDraggingNodeRef.current
-      || constraintPicking
-
-    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
-
-    if (pendingAdd) {
-      if (pendingAdd.shape === 'origin') {
-        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
-        scheduleDraw()
-        return
-      }
-      setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
-      return
-    }
-
-    if (pendingMove) {
-      const moveEdit = operationDimEditRef.current
-      if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
-        const distance = parseLengthInput(moveEdit.distance, project.meta.units)
-        const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? snapped
-        setPendingMovePreviewPointRef({
-          point: distance !== null
-            ? computeMoveDistancePreviewPoint(pendingMove.fromPoint, referencePoint, distance)
-            : referencePoint,
-          session: pendingMove.session,
-        })
-        return
-      }
-      setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
-      return
-    }
-
-    if (pendingTransform) {
-      const constrainedPoint =
-        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
-          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
-          : snapped
-      setPendingTransformPreviewPointRef({ point: constrainedPoint, session: pendingTransform.session })
-      return
-    }
-
-    if (pendingOffset) {
-      setPendingOffsetRawPreviewPointRef({ point: livePoint, session: pendingOffset.session })
-      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
-      return
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-      const feature = editableFeature()
-      if (feature && sketchEditTool === 'add_point') {
-        pendingSketchFilletRef.current = null
-        if (pendingSketchExtensionRef.current) {
-          const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
-          const targetEndpoint = findOpenEndpointHit(livePoint, vt, {
-            exclude: {
-              featureId: feature.id,
-              endpoint: sourceEndpoint,
-              anchor: pendingSketchExtensionRef.current.anchor,
-            },
-          })
-          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
-          sketchEditPreviewRef.current = { point: targetEndpoint?.anchor ?? lockedSnapped, mode: 'add_point' }
-        } else {
-          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, livePoint, vt)
-          if (endpoint) {
-            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
-          } else {
-            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
-            sketchEditPreviewRef.current = target ? { point: target.point, mode: 'add_point' } : null
-          }
-        }
-        scheduleDraw()
-        return
-      }
-
-      if (feature && sketchEditTool === 'delete_segment') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
-        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
-        scheduleDraw()
-        return
-      }
-
-      if (feature && sketchEditTool === 'disconnect') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const control = hitEditableControl(worldToCanvas(livePoint, vt), { includeSegments: false })
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
-            : null
-        scheduleDraw()
-        return
-      }
-
-      if (feature && sketchEditTool === 'fillet') {
-        pendingSketchExtensionRef.current = null
-        if (pendingSketchFilletRef.current) {
-          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
-        }
-        scheduleDraw()
-      }
-    }
-  }, [snapSettings, viewState, pendingAdd, pendingMove, pendingTransform, pendingOffset, selection.mode, selection.sketchEditTool, selection.selectedFeatureId, selection.selectedNode])
+  }, [scheduleDraw, zoomWindowActive])
 
   drawRef.current = () => {
     const canvas = canvasRef.current
@@ -2081,25 +1956,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     drawSnapIndicator(ctx, activeSnapRef.current, vt)
   }
 
-  function scheduleDraw() {
-    scheduleDrawRef.current = scheduleDraw
-    if (drawFrameRef.current !== null) {
-      return
-    }
-
-    drawFrameRef.current = window.requestAnimationFrame(() => {
-      drawFrameRef.current = null
-      drawRef.current()
-    })
-  }
-
   useEffect(() => {
+    // `useRafScheduler` cancels any pending redraw frame on unmount; this effect
+    // only tears down the canvas backing store. Capture the node now and use the
+    // local in cleanup (the ref may have changed by the time cleanup runs).
+    const canvas = canvasRef.current
     return () => {
-      if (drawFrameRef.current !== null) {
-        window.cancelAnimationFrame(drawFrameRef.current)
-      }
-
-      const canvas = canvasRef.current
       if (!canvas) {
         return
       }
@@ -2146,47 +2008,53 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [rotateCopyCountPromptActive])
 
+  // Re-focus when the active edit field changes or the edit opens/closes; the
+  // derived key (null while closed) is statically checkable as a single dep.
+  const dimensionEditActiveField = dimensionEdit?.activeField ?? null
   useEffect(() => {
-    if (!dimensionEdit) return
+    if (dimensionEditActiveField === null) return
     const inputRef =
-      dimensionEdit.activeField === 'width' ? widthInputRef
-      : dimensionEdit.activeField === 'height' ? heightInputRef
-      : dimensionEdit.activeField === 'radius' ? radiusInputRef
-      : dimensionEdit.activeField === 'length' ? widthInputRef
+      dimensionEditActiveField === 'width' ? widthInputRef
+      : dimensionEditActiveField === 'height' ? heightInputRef
+      : dimensionEditActiveField === 'radius' ? radiusInputRef
+      : dimensionEditActiveField === 'length' ? widthInputRef
       : heightInputRef  // angle
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [dimensionEdit?.activeField, !dimensionEdit])
+  }, [dimensionEditActiveField])
 
+  const filletDimensionEditActive = filletDimensionEdit != null
   useEffect(() => {
-    if (!filletDimensionEdit) return
+    if (!filletDimensionEditActive) return
     const frame = window.requestAnimationFrame(() => {
       filletRadiusInputRef.current?.focus({ preventScroll: true })
       filletRadiusInputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [!filletDimensionEdit])
+  }, [filletDimensionEditActive])
 
+  const hasConstraintDistanceInput = constraintDistanceInput != null
   useEffect(() => {
-    if (constraintDistanceInput == null) return
+    if (!hasConstraintDistanceInput) return
     const frame = window.requestAnimationFrame(() => {
       constraintDistanceInputRef.current?.focus({ preventScroll: true })
       constraintDistanceInputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [constraintDistanceInput == null])
+  }, [hasConstraintDistanceInput])
 
+  const constraintEditId = constraintEdit?.constraintId ?? null
   useEffect(() => {
-    if (!constraintEdit) return
+    if (constraintEditId == null) return
     const frame = window.requestAnimationFrame(() => {
       constraintEditInputRef.current?.focus({ preventScroll: true })
       constraintEditInputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [constraintEdit?.constraintId])
+  }, [constraintEditId])
 
   useEffect(() => {
     if (!pendingConstraint) setConstraintDistanceInput(null)
@@ -2216,15 +2084,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!pendingOffset) setOperationDimEdit(null)
   }, [pendingOffset])
 
+  const operationDimEditKind = operationDimEdit?.kind ?? null
   useEffect(() => {
-    if (!operationDimEdit) return
+    if (operationDimEditKind === null) return
     const inputRef = widthInputRef
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [operationDimEdit?.kind, !operationDimEdit])
+  }, [operationDimEditKind])
 
   useEffect(() => {
     const pendingMove = pendingMoveRef.current
@@ -2249,7 +2118,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ),
       session: pendingMove.session,
     })
-  }, [operationDimEdit])
+  }, [operationDimEdit, setPendingMovePreviewPointRef])
 
   useEffect(() => {
     const pendingTransform = pendingTransformRef.current
@@ -2298,7 +2167,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ),
       session: pendingTransform.session,
     })
-  }, [operationDimEdit])
+  }, [operationDimEdit, setPendingTransformPreviewPointRef])
 
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
@@ -2313,7 +2182,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const canvas = canvasRef.current
     if (!canvas) return
     setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Load-bearing — DO NOT remove without resolving the FULL masked set first.
+  // Any react-hooks eslint-disable makes the React-Compiler rules bail on the
+  // ENTIRE file (all-or-nothing), so this one directive hides every react-hooks
+  // issue in SketchCanvas. The "3 errors at :2242/:2247" it was first thought to
+  // mask are only the first wave — a 2026-06 investigation removed it and found:
+  //   1. 8 forward-referenced hoisted functions (declaration order) — mechanically
+  //      fixable by reordering; runtime-neutral.
+  //   2. ~27 ref-mirror WRITES during render (the state→ref block near the top of
+  //      the component + the drawRef closure) — convertible to a useLayoutEffect.
+  //   3. ~6 render-time ref READS of pointer-move hot-path refs (pendingPreviewPointRef,
+  //      canvasRef) — the real blocker. These refs exist to avoid re-rendering the
+  //      canvas on every mouse move, so lifting them to state to satisfy the rule
+  //      risks a perf regression; resolving (3) is an architectural redesign, not a
+  //      lint fix. Because (3) keeps the file non-compliant, removing the directive
+  //      gains nothing, so it stays — and ESLint reports it as an "unused directive"
+  //      warning, which is the (intentional) cost of the bail.
+  // Full analysis + reproducible reorder script: planning/archive/LINT_HOOK_TYPING_DEBT_Plan.md.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks forward-refs + ref-mirror writes + hot-path render-time ref reads (see comment above; planning/archive/LINT_HOOK_TYPING_DEBT_Plan.md)
   }, [projectKey])
 
   useEffect(() => {
@@ -2355,48 +2241,30 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    function handleNativePointerMove(event: PointerEvent) {
-      if (longPressTimerRef.current && longPressStartRef.current) {
-        const dx = event.clientX - longPressStartRef.current.clientX
-        const dy = event.clientY - longPressStartRef.current.clientY
-        if (dx * dx + dy * dy > 100) {
-          clearTimeout(longPressTimerRef.current)
-          longPressTimerRef.current = null
-          longPressStartRef.current = null
-        }
+  // Native pointermove (not React's synthetic) so we can read coalesced events.
+  // Routed through useStableEvent so the listener subscribes once while the body
+  // still sees the latest state — clears the exhaustive-deps warning without a
+  // hand-maintained state dependency list.
+  const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {
+    if (longPressTimerRef.current && longPressStartRef.current) {
+      const dx = event.clientX - longPressStartRef.current.clientX
+      const dy = event.clientY - longPressStartRef.current.clientY
+      if (dx * dx + dy * dy > 100) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+        longPressStartRef.current = null
       }
-      const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
-      const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
-      handleCanvasPointerMove(canvasCoordinates(sourceEvent))
     }
+    const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
+    const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
+    handleCanvasPointerMove(canvasCoordinates(sourceEvent))
+  })
+  useEventListener(canvasRef, 'pointermove', onCanvasPointerMove)
 
-    canvas.addEventListener('pointermove', handleNativePointerMove)
-    return () => {
-      canvas.removeEventListener('pointermove', handleNativePointerMove)
-    }
-  }, [copyCountPromptActive, rotateCopyCountPromptActive, pendingMove, pendingTransform, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length, zoomWindowActive])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    function handleNativeWheel(event: globalThis.WheelEvent) {
-      handleWheelEvent(event)
-    }
-
-    canvas.addEventListener('wheel', handleNativeWheel, { passive: false })
-    return () => {
-      canvas.removeEventListener('wheel', handleNativeWheel)
-    }
-  }, [zoomWindowActive])
+  const onCanvasWheel = useStableEvent((event: globalThis.WheelEvent) => {
+    handleWheelEvent(event)
+  })
+  useEventListener(canvasRef, 'wheel', onCanvasWheel, WHEEL_LISTENER_OPTIONS)
 
   const { isGestureActive: isGestureActiveRef } = useCanvasGestures({
     getCanvas: () => canvasRef.current,
@@ -2703,6 +2571,154 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     return bestControl
   }
+
+  // Body of the live snap/preview effect above. Declared here (below the
+  // edit-hit helpers it calls) and wrapped in `useStableEvent` so it keeps a
+  // stable identity and never reads stale state.
+  const runLivePointerPreview = useStableEvent(() => {
+    const canvas = canvasRef.current
+    const livePoint = livePointerWorldRef.current
+    if (!canvas || !livePoint) {
+      return
+    }
+
+    const project = projectRef.current
+    const selection = selectionRef.current
+    const pendingAdd = pendingAddRef.current
+    const pendingMove = pendingMoveRef.current
+    const pendingTransform = pendingTransformRef.current
+    const pendingOffset = pendingOffsetRef.current
+    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const pendingConstraintLive = pendingConstraintRef.current
+    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
+    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
+    const constraintPicking = constraintAnchorPicking || constraintRefPicking
+    const resolvedSnap = resolveCurrentSketchSnap(livePoint, vt, {
+      excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
+    })
+    const snapped = resolvedSnap.point
+    const sketchEditTool = selection.sketchEditTool
+
+    const shouldPreviewSnap =
+      !!pendingAdd
+      || !!pendingMove
+      || !!pendingTransform
+      || !!pendingOffset
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
+      || isDraggingNodeRef.current
+      || constraintPicking
+
+    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
+
+    if (pendingAdd) {
+      if (pendingAdd.shape === 'origin') {
+        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
+        scheduleDraw()
+        return
+      }
+      setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+      return
+    }
+
+    if (pendingMove) {
+      const moveEdit = operationDimEditRef.current
+      if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
+        const distance = parseLengthInput(moveEdit.distance, project.meta.units)
+        const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? snapped
+        setPendingMovePreviewPointRef({
+          point: distance !== null
+            ? computeMoveDistancePreviewPoint(pendingMove.fromPoint, referencePoint, distance)
+            : referencePoint,
+          session: pendingMove.session,
+        })
+        return
+      }
+      setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
+      return
+    }
+
+    if (pendingTransform) {
+      const constrainedPoint =
+        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
+          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+          : snapped
+      setPendingTransformPreviewPointRef({ point: constrainedPoint, session: pendingTransform.session })
+      return
+    }
+
+    if (pendingOffset) {
+      setPendingOffsetRawPreviewPointRef({ point: livePoint, session: pendingOffset.session })
+      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
+      return
+    }
+
+    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
+      const feature = editableFeature()
+      if (feature && sketchEditTool === 'add_point') {
+        pendingSketchFilletRef.current = null
+        if (pendingSketchExtensionRef.current) {
+          const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
+          const targetEndpoint = findOpenEndpointHit(livePoint, vt, {
+            exclude: {
+              featureId: feature.id,
+              endpoint: sourceEndpoint,
+              anchor: pendingSketchExtensionRef.current.anchor,
+            },
+          })
+          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
+          sketchEditPreviewRef.current = { point: targetEndpoint?.anchor ?? lockedSnapped, mode: 'add_point' }
+        } else {
+          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, livePoint, vt)
+          if (endpoint) {
+            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
+          } else {
+            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
+            sketchEditPreviewRef.current = target ? { point: target.point, mode: 'add_point' } : null
+          }
+        }
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'delete_segment') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
+        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'disconnect') {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        const control = hitEditableControl(worldToCanvas(livePoint, vt), { includeSegments: false })
+        sketchEditPreviewRef.current =
+          control?.kind === 'anchor'
+            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
+            : null
+        scheduleDraw()
+        return
+      }
+
+      if (feature && sketchEditTool === 'fillet') {
+        pendingSketchExtensionRef.current = null
+        if (pendingSketchFilletRef.current) {
+          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
+        }
+        scheduleDraw()
+      }
+    }
+  })
+
+  // Recompute the live snap/preview when interaction state changes. Declared
+  // here (with its `runLivePointerPreview` body, below the edit-hit helpers it
+  // calls) so the dep list stays honest without tripping the compiler's
+  // "accessed before declared" rule. Effect ordering is immaterial: the body
+  // only updates preview refs consumed by the next animation-frame redraw.
+  useEffect(() => {
+    runLivePointerPreview()
+  }, [runLivePointerPreview, snapSettings, viewState, pendingAdd, pendingMove, pendingTransform, pendingOffset, selection.mode, selection.sketchEditTool, selection.selectedFeatureId, selection.selectedNode])
 
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (isGestureActiveRef.current) return
@@ -4969,7 +4985,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const featureId = selection.selectedFeatureId
         if (!featureId) return null
 
-        function makeEditInputKeyDown(_field: 'length' | 'angle' | 'radius') {
+        function makeEditInputKeyDown() {
           return (e: KeyboardEvent<HTMLInputElement>) => {
             e.stopPropagation()
             if (e.key === 'Enter') {
@@ -4998,7 +5014,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
               value={dimensionEdit.radius}
               onChange={(e) => handleLiveChange('radius', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('radius')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
           )
@@ -5020,7 +5036,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: layout.labelX, top: layout.labelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
               value={dimensionEdit.length}
               onChange={(e) => handleLiveChange('length', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('length')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
             <input
@@ -5030,7 +5046,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
               value={dimensionEdit.angle}
               onChange={(e) => handleLiveChange('angle', e.target.value)}
-              onKeyDown={makeEditInputKeyDown('angle')}
+              onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
           </>

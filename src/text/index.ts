@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js'
+import { parseFontJson } from './fontData'
 import helvetikerRegular from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerRegular from 'three/examples/fonts/optimer_regular.typeface.json'
@@ -132,19 +132,18 @@ const TEXT_FONTS: TextFontDefinition[] = [
   { id: 'droid_serif_bold_italic', label: 'Droid Serif Bold Italic', style: 'outline', baseId: 'droid_serif_bold', slant: ITALIC_SLANT },
 ]
 
-const fontLoader = new FontLoader()
 const OUTLINE_FONTS = {
-  helvetiker_regular: fontLoader.parse(helvetikerRegular as any),
-  helvetiker_bold: fontLoader.parse(helvetikerBold as any),
-  optimer_regular: fontLoader.parse(optimerRegular as any),
-  optimer_bold: fontLoader.parse(optimerBold as any),
-  gentilis_regular: fontLoader.parse(gentilisRegular as any),
-  gentilis_bold: fontLoader.parse(gentilisBold as any),
-  droid_sans_regular: fontLoader.parse(droidSansRegular as any),
-  droid_sans_bold: fontLoader.parse(droidSansBold as any),
-  droid_sans_mono_regular: fontLoader.parse(droidSansMonoRegular as any),
-  droid_serif_regular: fontLoader.parse(droidSerifRegular as any),
-  droid_serif_bold: fontLoader.parse(droidSerifBold as any),
+  helvetiker_regular: parseFontJson(helvetikerRegular),
+  helvetiker_bold: parseFontJson(helvetikerBold),
+  optimer_regular: parseFontJson(optimerRegular),
+  optimer_bold: parseFontJson(optimerBold),
+  gentilis_regular: parseFontJson(gentilisRegular),
+  gentilis_bold: parseFontJson(gentilisBold),
+  droid_sans_regular: parseFontJson(droidSansRegular),
+  droid_sans_bold: parseFontJson(droidSansBold),
+  droid_sans_mono_regular: parseFontJson(droidSansMonoRegular),
+  droid_serif_regular: parseFontJson(droidSerifRegular),
+  droid_serif_bold: parseFontJson(droidSerifBold),
 } as const
 
 const TEXT_FONT_MAP = Object.fromEntries(TEXT_FONTS.map((font) => [font.id, font])) as Record<TextFontId, TextFontDefinition>

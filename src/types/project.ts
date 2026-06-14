@@ -937,6 +937,14 @@ export interface Bounds2D {
   maxY: number
 }
 
+// Endpoint of a segment when walking a profile from `profileStart`. A closed
+// circle has no distinct end vertex — its traversal endpoint is the profile
+// start; every other segment kind ends at `to`. Narrows the discriminated union
+// so callers don't reach for `(seg as any).to`.
+export function segmentEndPoint(seg: Segment, profileStart: Point): Point {
+  return seg.type === 'circle' ? profileStart : seg.to
+}
+
 // Returns editable vertices (without duplicate closure vertex).
 export function profileVertices(profile: SketchProfile): Point[] {
   if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {

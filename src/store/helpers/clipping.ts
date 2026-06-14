@@ -27,6 +27,7 @@ import {
   normalizeWinding,
   toClipperPath,
 } from '../../engine/toolpaths/geometry'
+import { addOpenSubject, openPathsFromPolyTree } from '../../engine/clipperOpenPaths'
 import { getProfileBounds } from '../../types/project'
 import type { SketchFeature } from '../../types/project'
 import { openCrossesClosedFully } from './polygonSplit'
@@ -174,8 +175,8 @@ export function featuresOverlapForCut(target: SketchFeature, cutter: SketchFeatu
     // Trim semantics: any portion of the open target inside the closed cutter
     // gets removed. Detect by clipping the open path as a Clipper subject.
     const clipper = new ClipperLib.Clipper()
-    ;(clipper as any).AddPath(flattenOpenFeatureToClipperPath(target), ClipperLib.PolyType.ptSubject, false)
-    ;(clipper as any).AddPath(flattenFeatureToClipperPath(cutter), ClipperLib.PolyType.ptClip, true)
+    addOpenSubject(clipper, flattenOpenFeatureToClipperPath(target))
+    clipper.AddPaths([flattenFeatureToClipperPath(cutter)], ClipperLib.PolyType.ptClip, true)
     const polyTree = new ClipperLib.PolyTree()
     clipper.Execute(
       ClipperLib.ClipType.ctIntersection,
@@ -183,7 +184,7 @@ export function featuresOverlapForCut(target: SketchFeature, cutter: SketchFeatu
       ClipperLib.PolyFillType.pftNonZero,
       ClipperLib.PolyFillType.pftNonZero,
     )
-    const openPaths = (ClipperLib.Clipper as any).OpenPathsFromPolyTree(polyTree)
+    const openPaths = openPathsFromPolyTree(polyTree)
     return openPaths && openPaths.length > 0
   }
 

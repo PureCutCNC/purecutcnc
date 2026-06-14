@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
@@ -684,8 +684,20 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
   const { project, selection, projectKey } = useProjectStore()
-  zoomWindowActiveRef.current = zoomWindowActive
-  zoomWindowBoxRef.current = zoomWindowBox
+  // Mirror the zoom-window state into refs for the orbit-controls callback and
+  // pointer handlers (which read them outside render). Write after commit, not
+  // during render, so we don't touch refs while rendering.
+  useLayoutEffect(() => {
+    zoomWindowActiveRef.current = zoomWindowActive
+    zoomWindowBoxRef.current = zoomWindowBox
+  }, [zoomWindowActive, zoomWindowBox])
+
+  // Reset the zoom-window box during render when the tool deactivates (React-
+  // recommended adjust-state-during-render; the ref mirror above nulls
+  // zoomWindowBoxRef after commit, so we only touch state here).
+  if (!zoomWindowActive && zoomWindowBox !== null) {
+    setZoomWindowBox(null)
+  }
 
   const syncGridVisibility = useCallback(() => {
     const gridGroup = gridRef.current
@@ -1064,20 +1076,11 @@ useEffect(() => {
   }, 250)
 
   return () => clearTimeout(timer)
-// eslint-disable-next-line react-hooks/exhaustive-deps
 }, [projectKey])
 
 useImperativeHandle(ref, () => ({
   zoomToModel,
 }), [zoomToModel])
-
-
-  useEffect(() => {
-    if (!zoomWindowActive) {
-      zoomWindowBoxRef.current = null
-      setZoomWindowBox(null)
-    }
-  }, [zoomWindowActive])
 
   const zoomBoxStyle = zoomWindowBox
     ? {

@@ -42,6 +42,18 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
 
+  // Clear a stale preview the moment the active definition goes away — adjusting
+  // state during render instead of a synchronous setState-in-effect. When a
+  // definition is (re)selected, the debounced effect below recomputes the preview.
+  const hasDefinition = Boolean(activeDefinition)
+  const [hadDefinition, setHadDefinition] = useState(hasDefinition)
+  if (hadDefinition !== hasDefinition) {
+    setHadDefinition(hasDefinition)
+    if (!hasDefinition && previewResult !== null) {
+      setPreviewResult(null)
+    }
+  }
+
   const activeOperations = useMemo(() => (
     project.operations
       .filter((op) => op.enabled && op.showToolpath && op.toolRef)
@@ -71,7 +83,6 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
 
   useEffect(() => {
     if (!activeDefinition) {
-      setPreviewResult(null)
       return
     }
 

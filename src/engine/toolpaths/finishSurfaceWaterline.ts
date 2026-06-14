@@ -1550,7 +1550,7 @@ export function generateFinishSurfaceWaterline(
     ? (point: { x: number; y: number }): boolean => (
         distanceToClipperPathsBoundary(intersectingAddUnion, point) <= toolOffset + tool.radius + 1e-6
       )
-    : (_point: { x: number; y: number }): boolean => false
+    : (): boolean => false
 
   const remainingClusters: RingEntry[][] = [...clusters]
 

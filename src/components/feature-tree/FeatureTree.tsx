@@ -674,10 +674,6 @@ function TreeRow({
   // Popup menu state for operation selector — stores viewport position for fixed positioning
   const operationBtnRef = useRef<HTMLButtonElement>(null)
   const [operationMenuPos, setOperationMenuPos] = useState<{ top: number; left: number } | null>(null)
-  const moveUpRef = useRef(onMoveUp)
-  const moveDownRef = useRef(onMoveDown)
-  moveUpRef.current = onMoveUp
-  moveDownRef.current = onMoveDown
   const gripDragRef = useRef<{ lastSwapY: number; pointerId: number } | null>(null)
   const hasGrip = onMoveUp || onMoveDown
 
@@ -756,11 +752,11 @@ function TreeRow({
             e.preventDefault()
             const delta = e.clientY - state.lastSwapY
             const threshold = 36
-            if (delta > threshold && moveDownRef.current) {
-              moveDownRef.current()
+            if (delta > threshold && onMoveDown) {
+              onMoveDown()
               state.lastSwapY = e.clientY
-            } else if (delta < -threshold && moveUpRef.current) {
-              moveUpRef.current()
+            } else if (delta < -threshold && onMoveUp) {
+              onMoveUp()
               state.lastSwapY = e.clientY
             }
           }}

@@ -15,7 +15,7 @@
  */
 
 import * as THREE from 'three'
-import type { DirtyRegion, SimulationGrid } from './types'
+import type { SimulationGrid } from './types'
 
 const MAX_UINT16_INDEX = 65535
 const STOCK_PLANE_CHUNK_CELLS = 128
@@ -153,10 +153,11 @@ function createStockPlaneGeometryChunk(
  *
  * For grids up to ~2000×2000 the full re-upload is a single
  * `texSubImage2D` of ~16 MB which takes <1 ms on modern GPUs. If profiling
- * shows this matters we can switch to manual `gl.texSubImage2D` on the
- * dirty rows only.
+ * shows this matters we can switch to manual `gl.texSubImage2D` on the dirty
+ * rows only — the per-frame dirty region is tracked on the playback controller
+ * (`getDirtyRegion()`) and can be threaded in here at that point.
  */
-export function updateHeightfieldTexture(texture: THREE.DataTexture, _dirtyRegion: DirtyRegion | null): void {
+export function updateHeightfieldTexture(texture: THREE.DataTexture): void {
   texture.needsUpdate = true
 }
 

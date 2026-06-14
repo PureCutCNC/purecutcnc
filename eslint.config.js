@@ -35,5 +35,14 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Rest-sibling destructuring (`const { a, b, ...rest } = obj`) is the
+      // idiomatic way to drop keys from an object — the named siblings exist
+      // only to be excluded from `rest`. This narrow option exempts exactly
+      // that pattern; all other unused-var detection keeps its defaults (much
+      // narrower than a blanket `^_` ignore). See
+      // planning/archive/LINT_BATCH_E_LEFTOVERS_Plan.md.
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
+    },
   },
 ])
