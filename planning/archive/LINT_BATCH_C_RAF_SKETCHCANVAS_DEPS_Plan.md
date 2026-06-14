@@ -1,5 +1,5 @@
 ---
-status: In progress   # Draft → Approved → In progress → Done | Abandoned
+status: Done
 created: 2026-06-12
 decisions: App.tsx:411 keep toolpathMap + line suppression; SimulationViewport 4 line-level immutability suppressions (both confirmed 2026-06-12)
 ---

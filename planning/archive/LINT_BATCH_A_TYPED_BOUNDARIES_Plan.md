@@ -1,5 +1,5 @@
 ---
-status: In progress   # Draft → Approved → In progress → Done | Abandoned
+status: Done
 created: 2026-06-11
 ---
 

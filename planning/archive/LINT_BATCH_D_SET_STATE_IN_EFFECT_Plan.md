@@ -1,5 +1,5 @@
 ---
-status: In progress   # Draft → Approved → In progress → Done | Abandoned (approved 2026-06-12; drawer migration included)
+status: Done
 created: 2026-06-12
 ---
 
