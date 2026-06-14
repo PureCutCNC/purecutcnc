@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { useProjectStore } from '../../store/projectStore'
 import { featureHasClosedGeometry } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
@@ -104,29 +105,7 @@ function RailFlyout({
     return { top, left }
   })
 
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (btnRef.current?.contains(target) || popRef.current?.contains(target)) {
-        return
-      }
-      onClose()
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open, onClose])
+  useOutsideDismiss({ open, refs: [btnRef, popRef], onDismiss: onClose })
 
   return (
     <div className="tool-rail__action">

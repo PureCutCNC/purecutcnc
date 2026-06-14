@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { Icon } from '../Icon'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
@@ -838,31 +839,14 @@ function CreationActions({
     return { top, left }
   })
 
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (pickerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
-        return
-      }
+  useOutsideDismiss({
+    open: drawerOpen,
+    refs: [pickerRef, popoverRef],
+    onDismiss: () => {
       openModeRef.current = null
       setDrawerOpen(false)
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        openModeRef.current = null
-        setDrawerOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [drawerOpen])
+    },
+  })
 
   useEffect(() => () => clearDrawerTimers(), [])
 
@@ -1181,31 +1165,14 @@ function ToolbarPopoverMenu<T extends string>({
     return { top, left }
   })
 
-  useEffect(() => {
-    if (!effectiveOpen) {
-      return
-    }
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (containerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
-        return
-      }
+  useOutsideDismiss({
+    open: effectiveOpen,
+    refs: [containerRef, popoverRef],
+    onDismiss: () => {
       openModeRef.current = null
       setOpen(false)
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        openModeRef.current = null
-        setOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [effectiveOpen])
+    },
+  })
 
   useEffect(() => () => clearHoverTimers(), [])
 

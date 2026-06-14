@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import type { DimensionType } from '../../types/project'
 
 const DIMENSION_TYPES: { type: DimensionType; icon: string; hint: string }[] = [
@@ -48,23 +49,7 @@ export function DimensionPopover() {
   const dimType = pendingDimension?.type ?? null
   const anyActive = tapeActive || pendingDimension !== null || dimensionDeleteArmed
 
-  useEffect(() => {
-    if (!open) return
-    function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+  useOutsideDismiss({ open, refs: containerRef, onDismiss: () => setOpen(false) })
 
   function toggleTape() {
     if (tapeActive) clearTapeMeasure()

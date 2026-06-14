@@ -14,7 +14,23 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
+import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
+
+// Persist the split fraction as a bare number string (`String(ratio)`), matching
+// the prior hand-rolled format. deserialize rejects non-finite or out-of-(0,1)
+// values by throwing, so the hook falls back to the panel's initial ratio —
+// reproducing the original `parseFloat` + range-check guard exactly.
+const RATIO_CODEC: StorageCodec<number> = {
+  serialize: (ratio) => String(ratio),
+  deserialize: (raw) => {
+    const parsed = parseFloat(raw)
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+      throw new Error('panel-split ratio out of range')
+    }
+    return parsed
+  },
+}
 
 interface PanelSplitProps {
   children: [React.ReactNode, React.ReactNode]
@@ -38,18 +54,13 @@ export function PanelSplit({
   minSecond = 120,
   className,
 }: PanelSplitProps) {
-  const [ratio, setRatio] = useState<number>(() => {
-    if (storageKey) {
-      const stored = localStorage.getItem(`panel-split:${storageKey}`)
-      if (stored !== null) {
-        const parsed = parseFloat(stored)
-        if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) {
-          return parsed
-        }
-      }
-    }
-    return initialRatio
-  })
+  // Optional key → persist; no key keeps the split in-memory only (enabled:false),
+  // preserving the prior `if (storageKey)` gate without a conditional hook.
+  const [ratio, setRatio] = useLocalStorageState<number>(
+    storageKey ? `panel-split:${storageKey}` : 'panel-split',
+    initialRatio,
+    { codec: RATIO_CODEC, enabled: Boolean(storageKey) },
+  )
 
   const containerRef = useRef<HTMLDivElement>(null)
   const activePointerRef = useRef<number | null>(null)
@@ -67,12 +78,10 @@ export function PanelSplit({
       const maxRatio = 1 - minSecond / totalHeight
       const newRatio = Math.max(minRatio, Math.min(maxRatio, offsetY / totalHeight))
 
+      // The hook persists `ratio` to `panel-split:${storageKey}` automatically.
       setRatio(newRatio)
-      if (storageKey) {
-        localStorage.setItem(`panel-split:${storageKey}`, String(newRatio))
-      }
     },
-    [minFirst, minSecond, storageKey],
+    [minFirst, minSecond, setRatio],
   )
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
