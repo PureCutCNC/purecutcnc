@@ -16,19 +16,11 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-- [CORE_STATE_CANVAS_REFACTOR_Plan.md](CORE_STATE_CANVAS_REFACTOR_Plan.md) — **approved umbrella plan** (status: Approved) for the core state/canvas/app architecture simplification. Runs on a cumulative `feat/core-arch-simplification` branch with each phase in its own worktree. Phase 0 closes stale plans (incl. the picker/measure/waterline entries below) before extraction begins.
-
-- [FEATURE_CREATION_PICKER_POC_Plan.md](FEATURE_CREATION_PICKER_POC_Plan.md) — compact feature creation picker POC with drawer selection plus a last-used repeat button in the left rail
-
-- [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change
-
-- [WATERLINE_ADAPTIVE_REFINEMENT_Plan.md](WATERLINE_ADAPTIVE_REFINEMENT_Plan.md) — improve imported-model waterline finishing by inserting bounded intermediate contour levels when adjacent bands have small Z separation but large XY drift
-- [WATERLINE_CONTAINING_ADD_FIX_Plan.md](WATERLINE_CONTAINING_ADD_FIX_Plan.md) — fix waterline finish emitting no paths when containing/base add features are mistaken for intersecting walls
+- [CORE_STATE_CANVAS_REFACTOR_Plan.md](CORE_STATE_CANVAS_REFACTOR_Plan.md) — **approved umbrella plan** (status: In progress) for the core state/canvas/app architecture simplification. Runs on a cumulative `feat/core-arch-simplification` branch with each phase in its own worktree. Phase 0 has archived the stale shipped plans (measure & dimensions, feature-creation picker, both waterline plans) and the superseded REFACTORING_Plan.
 
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — how regions filter rather than define machining targets. Read before touching operation/region logic.
-- [REFACTORING_Plan.md](REFACTORING_Plan.md) — identified hot-spot files and refactoring priorities.
 
 ### Export / machine
 - [G-code_Export_Design.md](G-code_Export_Design.md) — post-processor architecture and machine-definition model.
