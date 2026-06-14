@@ -27,6 +27,8 @@
  * deployed bundle, so there is nothing to check.
  */
 
+import { readFromStorage, writeToStorage } from '../hooks/useLocalStorageState'
+
 export type UpdateChannel = 'stable' | 'snapshot'
 
 /** Manifest platform key, matching the deploy workflows' output filenames. */
@@ -69,21 +71,20 @@ export type UpdateResult =
 // ---------------------------------------------------------------------------
 
 export function loadChannel(): UpdateChannel {
-  try {
-    const value = localStorage.getItem(CHANNEL_STORAGE_KEY)
-    return value === 'stable' || value === 'snapshot' ? value : DEFAULT_CHANNEL
-  } catch {
-    return DEFAULT_CHANNEL
-  }
+  const storage = typeof window === 'undefined' ? null : window.localStorage
+  return readFromStorage(storage, CHANNEL_STORAGE_KEY, DEFAULT_CHANNEL, {
+    deserialize: (raw) => {
+      if (raw === 'stable' || raw === 'snapshot') return raw
+      throw new Error('invalid channel')
+    },
+  })
 }
 
 export function saveChannel(channel: UpdateChannel): void {
-  try {
-    localStorage.setItem(CHANNEL_STORAGE_KEY, channel)
-  } catch {
-    // Storage may be unavailable (private mode); the in-session menu state still
-    // reflects the choice, it just won't persist across launches.
-  }
+  // Storage may be unavailable (private mode); writeToStorage swallows the error
+  // so the in-session menu state still reflects the choice, it just won't persist.
+  const storage = typeof window === 'undefined' ? null : window.localStorage
+  writeToStorage(storage, CHANNEL_STORAGE_KEY, channel, { serialize: (c) => c })
 }
 
 // ---------------------------------------------------------------------------

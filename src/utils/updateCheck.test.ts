@@ -25,6 +25,8 @@ import {
   classifyManifest,
   detectPlatform,
   checkDesktopUpdate,
+  loadChannel,
+  saveChannel,
   manifestUrl,
   type DownloadManifest,
 } from './updateCheck'
@@ -178,11 +180,52 @@ async function testCheckDesktopUpdate() {
   console.log('testCheckDesktopUpdate PASS')
 }
 
+// ---------------------------------------------------------------------------
+// loadChannel / saveChannel (channel preference persistence)
+// ---------------------------------------------------------------------------
+
+function testChannelPersistence() {
+  // Install a minimal fake `window.localStorage` (the tsx test env has no DOM),
+  // then remove it so nothing leaks into the other tests.
+  const map = new Map<string, string>()
+  const fakeWindow = {
+    localStorage: {
+      getItem: (key: string): string | null => (map.has(key) ? map.get(key)! : null),
+      setItem: (key: string, value: string): void => {
+        map.set(key, value)
+      },
+    },
+  }
+  ;(globalThis as { window?: unknown }).window = fakeWindow
+  try {
+    // Default when nothing is stored.
+    assert(loadChannel() === 'snapshot', 'missing key -> DEFAULT_CHANNEL (snapshot)')
+
+    // Round-trip both valid channels.
+    saveChannel('stable')
+    assert(loadChannel() === 'stable', 'saved "stable" round-trips')
+    saveChannel('snapshot')
+    assert(loadChannel() === 'snapshot', 'saved "snapshot" round-trips')
+
+    // Any non-stable/snapshot stored value falls back to the default.
+    map.set('purecutcnc.updateChannel', 'nightly')
+    assert(loadChannel() === 'snapshot', 'invalid stored value -> DEFAULT_CHANNEL')
+  } finally {
+    delete (globalThis as { window?: unknown }).window
+  }
+
+  // With no window (SSR / non-browser), load returns the default and save is a no-op.
+  assert(loadChannel() === 'snapshot', 'no window -> DEFAULT_CHANNEL')
+  saveChannel('stable') // must not throw without a window
+  console.log('testChannelPersistence PASS')
+}
+
 testCompareCore()
 testComparePrefixAndShape()
 testComparePrerelease()
 testClassify()
 testDetectPlatform()
+testChannelPersistence()
 await testCheckDesktopUpdate()
 
 console.log('All updateCheck tests passed.')
