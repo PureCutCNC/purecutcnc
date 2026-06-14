@@ -41,7 +41,7 @@ export default defineConfig([
       // only to be excluded from `rest`. This narrow option exempts exactly
       // that pattern; all other unused-var detection keeps its defaults (much
       // narrower than a blanket `^_` ignore). See
-      // planning/LINT_BATCH_E_LEFTOVERS_Plan.md.
+      // planning/archive/LINT_BATCH_E_LEFTOVERS_Plan.md.
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },

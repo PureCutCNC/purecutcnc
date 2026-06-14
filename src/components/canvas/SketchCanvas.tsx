@@ -2198,8 +2198,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   //      lint fix. Because (3) keeps the file non-compliant, removing the directive
   //      gains nothing, so it stays — and ESLint reports it as an "unused directive"
   //      warning, which is the (intentional) cost of the bail.
-  // Full analysis + reproducible reorder script: planning/LINT_HOOK_TYPING_DEBT_Plan.md.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks forward-refs + ref-mirror writes + hot-path render-time ref reads (see comment above; LINT_HOOK_TYPING_DEBT_Plan.md)
+  // Full analysis + reproducible reorder script: planning/archive/LINT_HOOK_TYPING_DEBT_Plan.md.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- file-wide React-Compiler bail; masks forward-refs + ref-mirror writes + hot-path render-time ref reads (see comment above; planning/archive/LINT_HOOK_TYPING_DEBT_Plan.md)
   }, [projectKey])
 
   useEffect(() => {
