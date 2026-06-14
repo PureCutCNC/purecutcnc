@@ -23,6 +23,21 @@ ends small and cohesive with a clear owner, and a mechanical guard (see *Definit
 anti-regrowth guardrails*) keeps it that way — so "that file is too big, changing it is risky" stops
 being a valid excuse for any file in scope.
 
+## Phase status ledger
+
+Management view for the `feat/core-arch-simplification` branch. Updated as each phase lands.
+
+| Phase | Status | Branch / worktree | Notes |
+|---|---|---|---|
+| P0 — Stale-plan housekeeping | ✅ Done (`4b15583`) | this branch | 5 stale plans archived |
+| P1 — Shared util hooks | 🔄 In worktree | `core-arch/p1-shared-hooks` | `useLocalStorageState` + `useOutsideDismiss` |
+| P2 — App orchestration | ⬜ Not started | — | `src/app/` hooks |
+| P3 — Shared command model | ⬜ Not started | — | tablet-sensitive |
+| P4 — Toolbar file-split | ⬜ Not started | — | depends on P3 |
+| P5 — Store slice extraction | ⬜ Not started | — | one domain per worktree |
+| P6 — SketchCanvas hooks | ⬜ Not started | — | highest risk |
+| P7 — Workflow-panel migration | ⬜ Not started | — | tablet-sensitive |
+
 ## Hotspot Map — large because they coordinate vs. large because junk accumulated
 
 Current sizes (measured, not estimated):
