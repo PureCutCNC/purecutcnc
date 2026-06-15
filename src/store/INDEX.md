@@ -26,6 +26,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived features from the feature tree
   - `geometry.ts` — geometric utilities (bounds, transforms)
+  - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — normalizes incoming/legacy project data
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
@@ -33,6 +34,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 ## Tests
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `openProfileJoin.test.ts` — open-profile joining behavior
+- `profileEdit.test.ts` — profile and segment-editing helper behavior
 - `polygonSplit.test.ts` — polygon splitting
 - `projectStoreTransform.test.ts` — project transform actions
 - `second_cut_test.ts` — multi-pass cutting behavior
