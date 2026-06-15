@@ -31,7 +31,7 @@ Management view for the `feat/core-arch-simplification` branch. Updated as each 
 |---|---|---|---|
 | P0 — Stale-plan housekeeping | ✅ Done (`4b15583`) | this branch | 5 stale plans archived |
 | P1 — Shared util hooks | ✅ Done (`3678ceb` + `d506c77`) | merged | `useLocalStorageState` + `useOutsideDismiss`; all 6 localStorage sites consolidated (incl. `updateCheck.ts` via the React-free cores); build + browser regression green |
-| P2 — App orchestration | 🔄 In progress | `core-arch/p2c-…` | P2a `useToolpathGeneration` merged (`3930c6d`), browser-verified; P2b `useSimulationModel` merged (`d9229be`), build + Simulation-tab browser regression green (Selected/Visible modes + playback, 0 console errors); P2c context-menu pending |
+| P2 — App orchestration | 🔄 In progress | P2d pending | All 3 named extractions merged + browser-verified: P2a `useToolpathGeneration` (`3930c6d`), P2b `useSimulationModel` (`d9229be`, Simulation tab green), P2c `useTreeContextMenu` + `FeatureContextMenu` (`0b444ce`, context-menu green — feature/clamp branches, quick-ops hover flyout, derived disable flags, dismiss). **App.tsx 1457→739 lines.** **Not yet at DoD:** target `< ~400` + collapse the 22 action handlers + activate `max-lines` guard on `src/App.tsx`+`src/app/**` → remaining **P2d**. |
 | P3 — Shared command model | ⬜ Not started | — | tablet-sensitive |
 | P4 — Toolbar file-split | ⬜ Not started | — | depends on P3 |
 | P5 — Store slice extraction | ⬜ Not started | — | one domain per worktree |
