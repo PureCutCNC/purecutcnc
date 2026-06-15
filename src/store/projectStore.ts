@@ -29,9 +29,7 @@ import { clearSTLTransformedGeometryCache } from '../engine/csg'
 import { isProfileDegenerate, uniqueName } from '../import'
 import {
   type Segment,
-  defaultStock,
   defaultOrigin,
-  defaultGrid,
   defaultTool,
   defaultMaxTravelZ,
   defaultOperationClearanceZ,
@@ -113,7 +111,7 @@ import {
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
-import { createSelectionSlice, emptySelection, sanitizeSelection } from './slices/selectionSlice'
+import { createSelectionSlice, sanitizeSelection } from './slices/selectionSlice'
 import { createDimensionsSlice } from './slices/dimensionsSlice'
 import { createDimensionToolSlice } from './slices/dimensionToolSlice'
 import { createFeatureSlice } from './slices/featureSlice'
@@ -127,6 +125,7 @@ import { createBackdropSlice, normalizeBackdrop } from './slices/backdropSlice'
 import { createMachineDefsSlice } from './slices/machineDefsSlice'
 import { createOperationsSlice } from './slices/operationsSlice'
 import { createImportMergeSlice } from './slices/importMergeSlice'
+import { createProjectLifecycleSlice } from './slices/projectLifecycleSlice'
 import {
   propagateConstraintsOnTranslate,
   propagateConstraintsOnRotate,
@@ -2301,130 +2300,15 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     transformProfile,
   }),
   ...createTreeVisibilitySlice(set, get, { cloneProject, projectsEqual }),
-
-  // ── Project ──────────────────────────────────────────────
-
-  createNewProject: (template, name) =>
-    set((state) => {
-      clearProjectMemoryCaches()
-      const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
-      return {
-        project: nextProject,
-        dirty: false,
-        filePath: null,
-        pendingAdd: null,
-        pendingMove: null,
-        pendingTransform: null,
-        pendingOffset: null,
-        selection: emptySelection(),
-        projectKey: state.projectKey + 1,
-        history: {
-          past: [],
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  setProjectName: (name) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        meta: { ...s.project.meta, name, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      if (s.history.transactionStart) {
-        return { project: nextProject }
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  setProjectClearances: (patch) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          ...patch,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      if (s.history.transactionStart) {
-        return { project: nextProject }
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  setShowDimensions: (visible) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          showDimensions: visible,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      if (s.history.transactionStart) {
-        return { project: nextProject }
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  setShowFeatureInfo: (visible) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          showFeatureInfo: visible,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      if (s.history.transactionStart) {
-        return { project: nextProject }
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
+  ...createProjectLifecycleSlice(set, get, {
+    rawSet,
+    cloneProject,
+    projectsEqual,
+    normalizeProject,
+    instantiateProjectTemplate,
+    clearProjectMemoryCaches,
+    pruneUnusedModelAssets,
+  }),
 
   setOrigin: (origin) =>
     set((s) => {
@@ -2488,100 +2372,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         },
       }
     }),
-
-  loadProject: (p) =>
-    set((state) => {
-      clearProjectMemoryCaches()
-      const normalizedProject = normalizeProject(p)
-      const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
-      const gridDefaults = defaultGrid(normalizedProject.meta.units)
-      const nextProject = {
-        ...normalizedProject,
-        grid: {
-          ...gridDefaults,
-          ...normalizedProject.grid,
-        },
-        stock: {
-          ...stockDefaults,
-          ...normalizedProject.stock,
-          origin: normalizedProject.stock?.origin ?? stockDefaults.origin,
-          profile: normalizedProject.stock?.profile ?? stockDefaults.profile,
-        },
-        origin: normalizedProject.origin ?? defaultOrigin(normalizedProject.stock ?? stockDefaults),
-      }
-      clearProjectMemoryCaches()
-      return {
-        project: nextProject,
-        pendingAdd: null,
-        pendingMove: null,
-        pendingTransform: null,
-        pendingOffset: null,
-        selection: emptySelection(),
-        projectKey: state.projectKey + 1,
-        history: {
-          past: [],
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  saveProject: () => {
-    const p = pruneUnusedModelAssets(get().project)
-    const updated = {
-      ...p,
-      meta: { ...p.meta, modified: new Date().toISOString() },
-    }
-    return JSON.stringify(updated, null, 2)
-  },
-
-  openProjectFromText: (content, path) => {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      throw new Error('Failed to parse project file.')
-    }
-    const normalized = normalizeProject(parsed as ReturnType<typeof normalizeProject>)
-    const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
-    const gridDefaults = defaultGrid(normalized.meta.units)
-    clearProjectMemoryCaches()
-    set((state) => ({
-      project: {
-        ...normalized,
-        grid: { ...gridDefaults, ...normalized.grid },
-        stock: {
-          ...stockDefaults,
-          ...normalized.stock,
-          origin: normalized.stock?.origin ?? stockDefaults.origin,
-          profile: normalized.stock?.profile ?? stockDefaults.profile,
-        },
-        origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
-      },
-      filePath: path,
-      dirty: false,
-      pendingAdd: null,
-      pendingMove: null,
-      pendingTransform: null,
-      pendingOffset: null,
-      selection: emptySelection(),
-      projectKey: state.projectKey + 1,
-      history: {
-        past: [],
-        future: [],
-        transactionStart: null,
-      },
-    }))
-  },
-
-  markSaved: (path) =>
-    rawSet({ filePath: path, dirty: false }),
-
-  markExported: (path) =>
-    set({ lastExportPath: path }),
-
-  markModelExported: (path) =>
-    set({ lastModelExportPath: path }),
 
   undo: () =>
     set((state) => {

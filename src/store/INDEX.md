@@ -22,6 +22,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — machine definition CRUD: set selected, add/remove/refresh machine definitions
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, and ordering
+  - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `importMergeSlice.ts` — shape import and `.camj` folder merge actions
   - `constraintsSlice.ts` — persistent fixed-distance constraint placement, value updates, cancellation, and deletion
   - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions, folders, region folders, and folder selection
