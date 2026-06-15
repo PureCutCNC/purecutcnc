@@ -392,6 +392,8 @@ phase that brings each area under it, so it never flags already-clean code. A fi
 past the cap then fails `npm run lint` instead of surfacing months later. New behaviour has nowhere to
 hide: it must land in the owning slice/hook/module.
 
+**License-header guard:** `scripts/check-license-headers.ts` runs inside `npm test` (hence `npm run build`) and fails the gate if any `src/**/*.ts(x)` file lacks the Apache 2.0 header — compliance is now mechanical, not reviewer/agent diligence. Added during this effort as a sibling to the size guard (there was previously no eslint rule, build/test check, hook, or CI step enforcing it).
+
 **Ownership is documented, not implied:** every new module is registered in the nearest `INDEX.md` (per
 `AGENTS.md`) so the next agent knows where new code belongs without opening the large files.
 
