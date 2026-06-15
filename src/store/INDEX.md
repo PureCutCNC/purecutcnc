@@ -21,6 +21,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — machine definition CRUD: set selected, add/remove/refresh machine definitions
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, and ordering
+  - `importMergeSlice.ts` — shape import and `.camj` folder merge actions
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived features from the feature tree
