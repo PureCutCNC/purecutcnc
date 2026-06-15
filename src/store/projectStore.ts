@@ -90,7 +90,6 @@ import {
 } from './helpers/geometry'
 import {
   anchorPointForIndex,
-  appendSplineDraftSegment,
   applyLineCornerFillet,
   arcControlPoint,
   buildArcSegmentFromThreePoints,
@@ -104,8 +103,7 @@ import {
   normalizeEditableProfileClosure,
   orientOpenProfileFromEndpoint,
   orientOpenProfileTowardEndpoint,
-  resolveCompositeDraftSegments,
-  resolveOpenCompositeDraftSegments,
+  type ProfileBreakResult,
 } from './helpers/profileEdit'
 import {
   insertDerivedFeaturesAfterSources,
@@ -2252,11 +2250,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     cloneProject,
     syncFeatureTreeProject,
     createTextFeatureAt,
-    appendSplineDraftSegment,
-    buildArcSegmentFromThreePoints,
-    resolveCompositeDraftSegments,
-    resolveOpenCompositeDraftSegments,
-    cloneSegment,
   }),
   ...createDimensionsSlice(set, get, { cloneProject }),
   ...createDimensionToolSlice(set, get),

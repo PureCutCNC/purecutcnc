@@ -26,7 +26,7 @@ import {
   splitBezierSegment,
 } from './profileEdit'
 
-function assert(cond: boolean, msg: string): void {
+function assert(cond: boolean, msg: string): asserts cond {
   if (!cond) throw new Error('FAIL: ' + msg)
 }
 
