@@ -15,6 +15,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
   - `featureSlice.ts` — feature CRUD, tree/folder management, primitive constructors, arrange (align/distribute), and boolean ops (merge/cut/offset)
+  - `featureGeometrySlice.ts` — feature sketch/profile geometry edits: moving controls, inserting/deleting/disconnecting points/segments, joining open endpoints, and corner fillets
   - `toolsSlice.ts` — tool CRUD: add/import/update/delete/duplicate tool definitions
   - `clampsSlice.ts` — clamp CRUD: add/update/delete/duplicate clamp, set visibility, move control point
   - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, auto-place for operation
