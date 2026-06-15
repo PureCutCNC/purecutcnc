@@ -45,4 +45,10 @@ export default defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
+  {
+    files: ['src/App.tsx', 'src/app/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 530, skipBlankLines: true, skipComments: true }],
+    },
+  },
 ])

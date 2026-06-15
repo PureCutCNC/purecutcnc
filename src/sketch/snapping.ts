@@ -28,8 +28,6 @@ export interface SnapSettings {
   pixelRadius: number
 }
 
-export const SNAP_SETTINGS_STORAGE_KEY = 'camcam.snapSettings'
-
 export const ALL_SNAP_MODES: SnapMode[] = [
   'grid',
   'point',
@@ -39,7 +37,7 @@ export const ALL_SNAP_MODES: SnapMode[] = [
   'perpendicular',
 ]
 
-export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
+const DEFAULT_SNAP_SETTINGS: SnapSettings = {
   enabled: true,
   modes: ['grid', 'point', 'line', 'midpoint', 'center'],
   pixelRadius: 14,

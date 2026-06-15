@@ -16,8 +16,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
-import type { QuickOperation } from './components/cam/operationValidity'
-import { loadBundledToolLibrary } from './toolLibrary'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import type { OperationKind } from './types/project'
 import { FeatureContextMenu } from './components/feature-tree/FeatureContextMenu'
@@ -35,13 +33,16 @@ import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
 import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
-import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type SnapSettings, normalizeSnapSettings } from './sketch/snapping'
 import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
 import { useSimulationModel } from './app/useSimulationModel'
 import { useTreeContextMenu } from './app/useTreeContextMenu'
+import { useFeatureTreeActions } from './app/useFeatureTreeActions'
+import { useSnapSettings } from './app/useSnapSettings'
+import { useZoomWindow } from './app/useZoomWindow'
+import { useEmptyStateEngagement } from './app/useEmptyStateEngagement'
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 
@@ -51,14 +52,6 @@ const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 const DEPTH_LEGEND_CODEC = {
   serialize: (collapsed: boolean): string => String(collapsed),
   deserialize: (raw: string): boolean => raw === 'true',
-}
-
-// Snap settings persist as JSON, run through normalizeSnapSettings on read so a
-// stored value from an older schema is upgraded; a parse failure falls back to
-// DEFAULT_SNAP_SETTINGS via the hook's deserialize-error handling.
-const SNAP_SETTINGS_CODEC = {
-  serialize: (settings: SnapSettings): string => JSON.stringify(settings),
-  deserialize: (raw: string): SnapSettings => normalizeSnapSettings(JSON.parse(raw)),
 }
 
 function App() {
@@ -74,13 +67,7 @@ function App() {
   const [showModelExportDialog, setShowModelExportDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
-  // The empty-state overlay is a one-time nudge per project. Once the user has
-  // engaged (started any draw, opened import, or the project has features), it
-  // stays dismissed — so cancelling a draw or deleting the last feature keeps
-  // them on the sketch view instead of popping the overlay back up.
-  const [emptyStateEngaged, setEmptyStateEngaged] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
-  const [zoomWindowActive, setZoomWindowActive] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
   // A1.3: operation kind armed in the CAM "Add operation" menu (on hover), so the
   // sketch canvas can highlight the features that operation could act on.
@@ -96,16 +83,12 @@ function App() {
 
   const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
   useDesktopIntegration({ onExportGcode: handleExportGcode })
-  const [activeSnapMode, setActiveSnapMode] = useState<SnapMode | null>(null)
+  const { snapSettings, activeSnapMode, setActiveSnapMode, onToggleSnapEnabled, onToggleSnapMode } = useSnapSettings()
+  const { zoomWindowActive, onZoomWindow, onZoomWindowComplete } = useZoomWindow()
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
     DEPTH_LEGEND_COLLAPSED_STORAGE_KEY,
     false,
     { codec: DEPTH_LEGEND_CODEC },
-  )
-  const [snapSettings, setSnapSettings] = useLocalStorageState<SnapSettings>(
-    SNAP_SETTINGS_STORAGE_KEY,
-    DEFAULT_SNAP_SETTINGS,
-    { codec: SNAP_SETTINGS_CODEC },
   )
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
   const viewport3dRef = useRef<Viewport3DHandle>(null)
@@ -116,28 +99,6 @@ function App() {
     projectKey,
     projectLoading,
     selection,
-    selectFeature,
-    enterSketchEdit,
-    enterTabEdit,
-    enterClampEdit,
-    deleteFeatures,
-    deleteTab,
-    deleteClamp,
-    startMoveFeature,
-    startCopyFeature,
-    startResizeFeature,
-    startRotateFeature,
-    startMirrorFeature,
-    startOffsetSelectedFeatures,
-    startJoinSelectedFeatures,
-    startCutSelectedFeatures,
-    beginConstraint,
-    startMoveTab,
-    startCopyTab,
-    startMoveClamp,
-    startCopyClamp,
-    setStockSourceFeature,
-    addOperation,
     startAddRectPlacement,
     pendingAdd,
   } = useProjectStore()
@@ -207,6 +168,29 @@ function App() {
     },
     [centerTab, startSimulationTransition],
   )
+
+  const featureActions = useFeatureTreeActions({
+    setCenterTab,
+    setRightTab,
+    closeTreeContextMenu,
+    onSelectedOperationIdChange: handleSelectedOperationIdChange,
+  })
+
+  const {
+    emptyStateEngaged,
+    onDraw: handleEmptyStateDraw,
+    onImport: handleEmptyStateImport,
+    frameOpenedProject,
+  } = useEmptyStateEngagement({
+    projectKey,
+    featureCount: project.features.length,
+    pendingAdd,
+    setCenterTab,
+    setShowImportDialog,
+    startAddRectPlacement,
+    sketchCanvasRef,
+    hasAutoFramed3DRef,
+  })
 
   const {
     toolpathMap,
@@ -291,21 +275,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  useEffect(() => {
-    if (!zoomWindowActive) {
-      return
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setZoomWindowActive(false)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [zoomWindowActive])
-
   function handleZoomToModel() {
     if (centerTab === 'preview3d') {
       viewport3dRef.current?.zoomToModel()
@@ -325,188 +294,6 @@ function App() {
     window.requestAnimationFrame(() => {
       sketchCanvasRef.current?.zoomToModel()
     })
-  }
-
-  function handleZoomWindow() {
-    setZoomWindowActive((previous) => !previous)
-  }
-
-  function handleToggleSnapEnabled() {
-    setSnapSettings((previous) => ({ ...previous, enabled: !previous.enabled }))
-  }
-
-  function handleToggleSnapMode(mode: SnapMode) {
-    setSnapSettings((previous) => {
-      const modes = previous.modes.includes(mode)
-        ? previous.modes.filter((entry) => entry !== mode)
-        : [...previous.modes, mode]
-      return { ...previous, modes }
-    })
-  }
-
-  function handleEditSketch(featureId: string) {
-    selectFeature(featureId)
-    enterSketchEdit(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  async function handleCreateQuickOperation(featureId: string, quickOp: QuickOperation) {
-    closeTreeContextMenu()
-    // Load the bundled library so addOperation can auto-pick/import a proper tool.
-    const libraryTools = await loadBundledToolLibrary().then((library) => library.tools).catch(() => [])
-    const operationId = addOperation(quickOp.kind, quickOp.pass, { source: 'features', featureIds: [featureId] }, libraryTools)
-    if (!operationId) {
-      return
-    }
-    setRightTab('operations')
-    handleSelectedOperationIdChange(operationId)
-  }
-
-  function frameOpenedProject() {
-    hasAutoFramed3DRef.current = false
-    setCenterTab('sketch')
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        sketchCanvasRef.current?.zoomToModel()
-      })
-    })
-  }
-
-  function handleEmptyStateDraw() {
-    setCenterTab('sketch')
-    setEmptyStateEngaged(true)
-    startAddRectPlacement()
-  }
-
-  function handleEmptyStateImport() {
-    setEmptyStateEngaged(true)
-    setShowImportDialog(true)
-  }
-
-  // Reset the one-time empty-state nudge for each new/opened project.
-  useEffect(() => {
-    setEmptyStateEngaged(false)
-  }, [projectKey])
-
-  // Latch engagement once the project has any feature or a draw is in progress
-  // (covers toolbar draws too), so the overlay doesn't reappear after a cancel
-  // or after deleting the last feature.
-  useEffect(() => {
-    if (project.features.length > 0 || pendingAdd) {
-      setEmptyStateEngaged(true)
-    }
-  }, [project.features.length, pendingAdd])
-
-  function handleEditClamp(clampId: string) {
-    enterClampEdit(clampId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleEditTab(tabId: string) {
-    enterTabEdit(tabId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleDeleteFeatures(featureIds: string[]) {
-    deleteFeatures(featureIds)
-    closeTreeContextMenu()
-  }
-
-  function handleMoveFeature(featureId: string) {
-    startMoveFeature(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleCopyFeature(featureId: string) {
-    startCopyFeature(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleResizeFeature(featureId: string) {
-    startResizeFeature(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleRotateFeature(featureId: string) {
-    startRotateFeature(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleMirrorFeature(featureId: string) {
-    startMirrorFeature(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleOffsetFeatures() {
-    startOffsetSelectedFeatures()
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleJoinFeatures() {
-    startJoinSelectedFeatures()
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleCutFeatures() {
-    startCutSelectedFeatures()
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleConstraint(featureId: string) {
-    selectFeature(featureId)
-    enterSketchEdit(featureId)
-    beginConstraint(featureId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleDeleteClamp(clampId: string) {
-    deleteClamp(clampId)
-    closeTreeContextMenu()
-  }
-
-  function handleDeleteTab(tabId: string) {
-    deleteTab(tabId)
-    closeTreeContextMenu()
-  }
-
-  function handleMoveClamp(clampId: string) {
-    startMoveClamp(clampId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleMoveTab(tabId: string) {
-    startMoveTab(tabId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleCopyClamp(clampId: string) {
-    startCopyClamp(clampId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleCopyTab(tabId: string) {
-    startCopyTab(tabId)
-    setCenterTab('sketch')
-    closeTreeContextMenu()
-  }
-
-  function handleUseAsStock(featureId: string) {
-    setStockSourceFeature(featureId)
   }
 
   const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
@@ -535,14 +322,14 @@ function App() {
         globalToolbar={
           <GlobalToolbar
             onZoomToModel={handleZoomToModel}
-            onZoomWindow={handleZoomWindow}
+            onZoomWindow={onZoomWindow}
             zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
             onExportModel={() => setShowModelExportDialog(true)}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
-            onToggleSnapEnabled={handleToggleSnapEnabled}
-            onToggleSnapMode={handleToggleSnapMode}
+            onToggleSnapEnabled={onToggleSnapEnabled}
+            onToggleSnapMode={onToggleSnapMode}
           />
         }
         creationToolbar={
@@ -563,7 +350,7 @@ function App() {
               collidingClampIds={collidingClampIds}
               snapSettings={snapSettings}
               zoomWindowActive={zoomWindowActive && centerTab === 'sketch'}
-              onZoomWindowComplete={() => setZoomWindowActive(false)}
+              onZoomWindowComplete={onZoomWindowComplete}
               onActiveSnapModeChange={setActiveSnapMode}
               depthLegendCollapsed={depthLegendCollapsed}
               onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
@@ -588,7 +375,7 @@ function App() {
             collidingClampIds={collidingClampIds}
             originVisible={project.origin.visible}
             zoomWindowActive={zoomWindowActive && centerTab === 'preview3d'}
-            onZoomWindowComplete={() => setZoomWindowActive(false)}
+            onZoomWindowComplete={onZoomWindowComplete}
             toolpathVisibility={toolpathVisibility}
             onToolpathVisibilityChange={setToolpathVisibility}
           />
@@ -612,7 +399,7 @@ function App() {
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
-            onZoomWindowComplete={() => setZoomWindowActive(false)}
+            onZoomWindowComplete={onZoomWindowComplete}
             playbackInput={simulationPlaybackInput}
             projectKey={projectKey}
           />
@@ -639,14 +426,14 @@ function App() {
         onRightTabChange={setRightTab}
         statusBarExtras={collapsedDepthLegend}
         onZoomToModel={handleZoomToModel}
-        onZoomWindow={handleZoomWindow}
+        onZoomWindow={onZoomWindow}
         zoomWindowActive={zoomWindowActive}
         onImportComplete={handleImportComplete}
         onExportModel={() => setShowModelExportDialog(true)}
         snapSettings={snapSettings}
         activeSnapMode={activeSnapMode}
-        onToggleSnapEnabled={handleToggleSnapEnabled}
-        onToggleSnapMode={handleToggleSnapMode}
+        onToggleSnapEnabled={onToggleSnapEnabled}
+        onToggleSnapMode={onToggleSnapMode}
         onShowAbout={() => setShowAboutDialog(true)}
       />
 
@@ -708,29 +495,9 @@ function App() {
         tabletShell={tabletShell}
         primaryId={treeContextMenu?.primaryId ?? null}
         ids={treeContextMenu?.ids ?? []}
-        onEditSketch={handleEditSketch}
-        onConstraint={handleConstraint}
-        onCopyFeature={handleCopyFeature}
-        onMoveFeature={handleMoveFeature}
-        onResizeFeature={handleResizeFeature}
-        onRotateFeature={handleRotateFeature}
-        onMirrorFeature={handleMirrorFeature}
-        onOffsetFeatures={handleOffsetFeatures}
-        onJoinFeatures={handleJoinFeatures}
-        onCutFeatures={handleCutFeatures}
-        onUseAsStock={handleUseAsStock}
-        onDeleteFeatures={handleDeleteFeatures}
-        onCreateQuickOperation={handleCreateQuickOperation}
+        actions={featureActions}
         onOpenQuickOpsSubmenu={openQuickOpsSubmenu}
         onCloseQuickOpsSubmenu={() => setQuickOpsSubmenu(null)}
-        onEditTab={handleEditTab}
-        onCopyTab={handleCopyTab}
-        onMoveTab={handleMoveTab}
-        onDeleteTab={handleDeleteTab}
-        onEditClamp={handleEditClamp}
-        onCopyClamp={handleCopyClamp}
-        onMoveClamp={handleMoveClamp}
-        onDeleteClamp={handleDeleteClamp}
       />
     </>
   )

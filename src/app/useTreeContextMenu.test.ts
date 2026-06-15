@@ -42,6 +42,7 @@ function renderUseTreeContextMenu(
   function Capture() {
     const result = useTreeContextMenu(args)
     exercise?.(result)
+    // eslint-disable-next-line react-hooks/globals
     captured = result
     return null
   }
