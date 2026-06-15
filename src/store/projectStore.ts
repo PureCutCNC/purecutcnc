@@ -119,6 +119,7 @@ import { createDimensionToolSlice } from './slices/dimensionToolSlice'
 import { createFeatureSlice } from './slices/featureSlice'
 import { createFeatureGeometrySlice } from './slices/featureGeometrySlice'
 import { createConstraintsSlice } from './slices/constraintsSlice'
+import { createTreeVisibilitySlice } from './slices/treeVisibilitySlice'
 import { createToolsSlice } from './slices/toolsSlice'
 import { createClampsSlice } from './slices/clampsSlice'
 import { createTabsSlice } from './slices/tabsSlice'
@@ -2299,6 +2300,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     translateProfile,
     transformProfile,
   }),
+  ...createTreeVisibilitySlice(set, get, { cloneProject, projectsEqual }),
 
   // ── Project ──────────────────────────────────────────────
 
@@ -2907,102 +2909,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           future: [],
           transactionStart: null,
         },
-      }
-    }),
-
-  setAllRegionsVisible: (visible) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => (
-          feature.operation === 'region' ? { ...feature, visible } : feature
-        )),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  toggleFolderVisible: (folderId) =>
-    set((s) => {
-      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId)
-      const anyVisible = folderFeatures.some((f) => f.visible)
-      const nextVisible = !anyVisible
-      const nextProject = {
-        ...s.project,
-        features: s.project.features.map((f) =>
-          f.folderId === folderId ? { ...f, visible: nextVisible } : f
-        ),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  toggleRegionFolderVisible: (folderId) =>
-    set((s) => {
-      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId && f.operation === 'region')
-      const anyVisible = folderFeatures.some((f) => f.visible)
-      const nextVisible = !anyVisible
-      const nextProject = {
-        ...s.project,
-        features: s.project.features.map((f) =>
-          f.folderId === folderId && f.operation === 'region' ? { ...f, visible: nextVisible } : f
-        ),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  selectFolderFeatures: (folderId) =>
-    set((s) => {
-      const ids = s.project.features
-        .filter((f) => f.folderId === folderId)
-        .map((f) => f.id)
-      if (ids.length === 0) {
-        return {}
-      }
-      const primaryId = ids.at(-1) ?? null
-      return {
-        pendingOffset: null,
-        pendingShapeAction: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: primaryId,
-          selectedFeatureIds: ids,
-          selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
-          mode: 'feature',
-          activeControl: null,
-        },
-        sketchEditSession: null,
       }
     }),
 
