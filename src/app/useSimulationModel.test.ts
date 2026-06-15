@@ -37,6 +37,7 @@ function renderUseSimulationModel(args: UseSimulationModelArgs): UseSimulationMo
   let captured: UseSimulationModelResult | null = null
 
   function Capture() {
+    // eslint-disable-next-line react-hooks/globals
     captured = useSimulationModel(args)
     return null
   }

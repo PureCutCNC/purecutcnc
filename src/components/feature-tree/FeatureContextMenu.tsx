@@ -16,6 +16,7 @@
 
 import type { RefObject } from 'react'
 import type { QuickOperation } from '../cam/operationValidity'
+import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
 import type { MenuPosition, QuickOpsSubmenuPosition } from '../../app/useTreeContextMenu'
 import type { Clamp, SketchFeature, Tab } from '../../types/project'
 
@@ -33,29 +34,9 @@ interface FeatureContextMenuProps {
   tabletShell: boolean
   primaryId: string | null
   ids: readonly string[]
-  onEditSketch: (featureId: string) => void
-  onConstraint: (featureId: string) => void
-  onCopyFeature: (featureId: string) => void
-  onMoveFeature: (featureId: string) => void
-  onResizeFeature: (featureId: string) => void
-  onRotateFeature: (featureId: string) => void
-  onMirrorFeature: (featureId: string) => void
-  onOffsetFeatures: () => void
-  onJoinFeatures: () => void
-  onCutFeatures: () => void
-  onUseAsStock: (featureId: string) => void
-  onDeleteFeatures: (featureIds: string[]) => void
-  onCreateQuickOperation: (featureId: string, quickOp: QuickOperation) => void
+  actions: FeatureTreeActions
   onOpenQuickOpsSubmenu: (trigger: HTMLElement) => void
   onCloseQuickOpsSubmenu: () => void
-  onEditTab: (tabId: string) => void
-  onCopyTab: (tabId: string) => void
-  onMoveTab: (tabId: string) => void
-  onDeleteTab: (tabId: string) => void
-  onEditClamp: (clampId: string) => void
-  onCopyClamp: (clampId: string) => void
-  onMoveClamp: (clampId: string) => void
-  onDeleteClamp: (clampId: string) => void
 }
 
 export function FeatureContextMenu({
@@ -72,29 +53,9 @@ export function FeatureContextMenu({
   tabletShell,
   primaryId,
   ids,
-  onEditSketch,
-  onConstraint,
-  onCopyFeature,
-  onMoveFeature,
-  onResizeFeature,
-  onRotateFeature,
-  onMirrorFeature,
-  onOffsetFeatures,
-  onJoinFeatures,
-  onCutFeatures,
-  onUseAsStock,
-  onDeleteFeatures,
-  onCreateQuickOperation,
+  actions,
   onOpenQuickOpsSubmenu,
   onCloseQuickOpsSubmenu,
-  onEditTab,
-  onCopyTab,
-  onMoveTab,
-  onDeleteTab,
-  onEditClamp,
-  onCopyClamp,
-  onMoveClamp,
-  onDeleteClamp,
 }: FeatureContextMenuProps) {
   if (!position || !primaryId || (!menuFeature && !menuTab && !menuClamp)) {
     return null
@@ -145,7 +106,7 @@ export function FeatureContextMenu({
                         key={quickOp.kind}
                         className="feature-context-menu__item"
                         type="button"
-                        onClick={() => onCreateQuickOperation(menuFeature.id, quickOp)}
+                        onClick={() => actions.createQuickOperation(menuFeature.id, quickOp)}
                       >
                         {quickOp.label}
                       </button>
@@ -159,7 +120,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onEditSketch(menuFeature.id)}
+            onClick={() => actions.editSketch(menuFeature.id)}
             disabled={menuHasMultipleSelection}
             title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
           >
@@ -168,19 +129,19 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onConstraint(menuFeature.id)}
+            onClick={() => actions.constraint(menuFeature.id)}
             disabled={menuHasMultipleSelection || menuHasLockedSelection}
           >
             Add Constraint
           </button>
           <div className="feature-context-menu__separator" />
-          <button className="feature-context-menu__item" type="button" onClick={() => onCopyFeature(menuFeature.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyFeature(menuFeature.id)}>
             {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
           </button>
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onMoveFeature(menuFeature.id)}
+            onClick={() => actions.moveFeature(menuFeature.id)}
             disabled={menuHasLockedSelection}
             title={menuHasLockedSelection ? 'Locked features cannot be moved' : undefined}
           >
@@ -189,7 +150,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onResizeFeature(menuFeature.id)}
+            onClick={() => actions.resizeFeature(menuFeature.id)}
             disabled={menuHasLockedSelection}
           >
             Resize
@@ -197,7 +158,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onRotateFeature(menuFeature.id)}
+            onClick={() => actions.rotateFeature(menuFeature.id)}
             disabled={menuHasLockedSelection}
           >
             Rotate
@@ -205,7 +166,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onMirrorFeature(menuFeature.id)}
+            onClick={() => actions.mirrorFeature(menuFeature.id)}
             disabled={menuHasLockedSelection}
           >
             Mirror
@@ -213,7 +174,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onOffsetFeatures()}
+            onClick={() => actions.offsetFeatures()}
             disabled={menuHasLockedSelection}
           >
             Offset
@@ -222,7 +183,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onJoinFeatures()}
+            onClick={() => actions.joinFeatures()}
             disabled={!menuHasMultipleSelection || menuHasLockedSelection}
             title={!menuHasMultipleSelection ? 'Select two or more features to join' : undefined}
           >
@@ -231,7 +192,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onCutFeatures()}
+            onClick={() => actions.cutFeatures()}
             disabled={menuHasLockedSelection}
           >
             Cut
@@ -240,7 +201,7 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => onUseAsStock(primaryId)}
+            onClick={() => actions.useAsStock(primaryId)}
             disabled={!menuCanUseAsStock}
             title={!menuCanUseAsStock ? 'Feature must be an add operation with a closed profile' : undefined}
           >
@@ -250,45 +211,45 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => onDeleteFeatures([...ids])}
+            onClick={() => actions.deleteFeatures([...ids])}
           >
             {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
           </button>
         </>
       ) : menuTab ? (
         <>
-          <button className="feature-context-menu__item" type="button" onClick={() => onEditTab(menuTab.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.editTab(menuTab.id)}>
             Edit Sketch
           </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => onCopyTab(menuTab.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyTab(menuTab.id)}>
             Copy
           </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => onMoveTab(menuTab.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.moveTab(menuTab.id)}>
             Move
           </button>
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => onDeleteTab(menuTab.id)}
+            onClick={() => actions.deleteTab(menuTab.id)}
           >
             Delete
           </button>
         </>
       ) : menuClamp ? (
         <>
-          <button className="feature-context-menu__item" type="button" onClick={() => onEditClamp(menuClamp.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.editClamp(menuClamp.id)}>
             Edit Sketch
           </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => onCopyClamp(menuClamp.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyClamp(menuClamp.id)}>
             Copy
           </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => onMoveClamp(menuClamp.id)}>
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.moveClamp(menuClamp.id)}>
             Move
           </button>
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => onDeleteClamp(menuClamp.id)}
+            onClick={() => actions.deleteClamp(menuClamp.id)}
           >
             Delete
           </button>
