@@ -16,15 +16,9 @@
 
 import { useState } from 'react'
 import { useLocalStorageState } from '../hooks/useLocalStorageState'
-import { normalizeSnapSettings, type SnapMode, type SnapSettings } from '../sketch/snapping'
+import { DEFAULT_SNAP_SETTINGS, normalizeSnapSettings, type SnapMode, type SnapSettings } from '../sketch/snapping'
 
 const SNAP_SETTINGS_STORAGE_KEY = 'camcam.snapSettings'
-
-export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
-  enabled: true,
-  modes: ['grid', 'point', 'line', 'midpoint', 'center'],
-  pixelRadius: 14,
-}
 
 // Snap settings persist as JSON, run through normalizeSnapSettings on read so a
 // stored value from an older schema is upgraded; a parse failure falls back to

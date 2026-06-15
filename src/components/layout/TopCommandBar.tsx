@@ -17,12 +17,12 @@
 import { useState } from 'react'
 import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
-import { useFileActions } from '../../platform/useFileActions'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { SnapPopover } from './SnapPopover'
 import { DimensionPopover } from './DimensionPopover'
+import { useFileCommands } from '../../commands/fileCommands'
 
 interface TopCommandBarProps {
   centerTab: 'sketch' | 'preview3d' | 'simulation'
@@ -55,20 +55,21 @@ export function TopCommandBar({
   onToggleSnapEnabled,
   onToggleSnapMode,
 }: TopCommandBarProps) {
-  const fileActions = useFileActions()
   const {
     project,
     dirty,
-    history,
     setProjectName,
-    undo,
-    redo,
   } = useProjectStore()
 
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const fileCommands = useFileCommands({
+    onNewProject: () => setShowNewProjectDialog(true),
+    onImportGeometry: () => setShowImportDialog(true),
+    onExportModel,
+  })
 
   // Sync the edit field with the project name when it changes externally
   // (load / new project) while not editing — adjusting state during render
@@ -78,11 +79,6 @@ export function TopCommandBar({
   if (!editingName && project.meta.name !== syncedName) {
     setSyncedName(project.meta.name)
     setNameVal(project.meta.name)
-  }
-
-  async function handleNew() {
-    const ok = await fileActions.confirmDiscardIfDirty()
-    if (ok) setShowNewProjectDialog(true)
   }
 
   return (
@@ -144,33 +140,33 @@ export function TopCommandBar({
         {/* Center section: file ops + undo/redo + view tabs */}
         <div className="top-command-bar__center">
           <div className="top-cmd-group">
-            <button className="top-cmd-btn" type="button" aria-label="New project" onClick={handleNew}>
+            <button className="top-cmd-btn" type="button" aria-label="New project" onClick={fileCommands.commands.newProject.onActivate}>
               <Icon id="new" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Open project" onClick={() => fileActions.open()}>
+            <button className="top-cmd-btn" type="button" aria-label="Open project" onClick={fileCommands.commands.openProject.onActivate}>
               <Icon id="open" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Import geometry" onClick={() => setShowImportDialog(true)}>
+            <button className="top-cmd-btn" type="button" aria-label="Import geometry" onClick={fileCommands.commands.importGeometry.onActivate}>
               <Icon id="import" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Export model" onClick={onExportModel}>
+            <button className="top-cmd-btn" type="button" aria-label="Export model" onClick={fileCommands.commands.exportModel.onActivate}>
               <Icon id="export" />
             </button>
             <button
               className={`top-cmd-btn ${dirty ? 'top-cmd-btn--emphasized' : ''}`}
               type="button"
               aria-label="Save project"
-              onClick={() => fileActions.save()}
+              onClick={fileCommands.commands.saveProject.onActivate}
             >
               <Icon id="save" />
             </button>
           </div>
 
           <div className="top-cmd-group">
-            <button className="top-cmd-btn" type="button" aria-label="Undo" onClick={undo} disabled={history.past.length === 0}>
+            <button className="top-cmd-btn" type="button" aria-label="Undo" onClick={fileCommands.commands.undo.onActivate} disabled={!fileCommands.commands.undo.enabled}>
               <Icon id="undo" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Redo" onClick={redo} disabled={history.future.length === 0}>
+            <button className="top-cmd-btn" type="button" aria-label="Redo" onClick={fileCommands.commands.redo.onActivate} disabled={!fileCommands.commands.redo.enabled}>
               <Icon id="redo" />
             </button>
           </div>

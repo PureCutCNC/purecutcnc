@@ -37,7 +37,7 @@ export const ALL_SNAP_MODES: SnapMode[] = [
   'perpendicular',
 ]
 
-const DEFAULT_SNAP_SETTINGS: SnapSettings = {
+export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
   enabled: true,
   modes: ['grid', 'point', 'line', 'midpoint', 'center'],
   pixelRadius: 14,
