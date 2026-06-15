@@ -26,7 +26,7 @@ import {
   type ImportedModelFormat,
 } from '../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../engine/csg'
-import { createImportedFeature, isProfileDegenerate, mergeCamjFolders, uniqueName } from '../import'
+import { isProfileDegenerate, uniqueName } from '../import'
 import {
   type Segment,
   defaultStock,
@@ -88,8 +88,6 @@ import {
   scalePoint,
   subtractPoint,
 } from './helpers/geometry'
-import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../engine/toolpaths/restRegions'
-import { selectToolForOperation } from '../engine/operations/toolSelection'
 import {
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
@@ -117,6 +115,8 @@ import { createClampsSlice } from './slices/clampsSlice'
 import { createTabsSlice } from './slices/tabsSlice'
 import { createBackdropSlice, normalizeBackdrop } from './slices/backdropSlice'
 import { createMachineDefsSlice } from './slices/machineDefsSlice'
+import { createOperationsSlice } from './slices/operationsSlice'
+import { createImportMergeSlice } from './slices/importMergeSlice'
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
@@ -1812,19 +1812,6 @@ function operationKindLabel(kind: OperationKind): string {
   }
 }
 
-function duplicateOperationName(name: string, operations: Operation[]): string {
-  const baseName = `${name} Copy`
-  if (!operations.some((operation) => operation.name === baseName)) {
-    return baseName
-  }
-
-  let index = 2
-  while (operations.some((operation) => operation.name === `${baseName} ${index}`)) {
-    index += 1
-  }
-  return `${baseName} ${index}`
-}
-
 function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
   if (kind === 'drilling') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
@@ -2970,6 +2957,21 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createTabsSlice(set, get, { cloneProject, projectsEqual }),
   ...createBackdropSlice(set, get, { cloneProject, projectsEqual }),
   ...createMachineDefsSlice(set, get, { cloneProject, projectsEqual }),
+  ...createOperationsSlice(set, get, {
+    cloneProject,
+    projectsEqual,
+    toolMatchesTemplate,
+    isOperationTargetValid,
+    defaultOperationForTarget,
+    defaultOperationName,
+    uniqueFolderName,
+    syncFeatureTreeProject,
+  }),
+  ...createImportMergeSlice(set, get, {
+    cloneProject,
+    uniqueFolderName,
+    syncFeatureTreeProject,
+  }),
   ...createFeatureSlice(set, get, {
     cloneProject,
     syncFeatureTreeProject,
@@ -3593,395 +3595,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       }
     }),
 
-  addOperation: (kind, pass, target, libraryTools) => {
-    const state = get()
-    if (!isOperationTargetValid(state.project, kind, target)) {
-      return null
-    }
-
-    const nextId = nextUniqueGeneratedId(state.project, 'op')
-
-    // Choose a proper tool for this operation (type/units/feature size) instead
-    // of always using tools[0]. An 'import' result is added to the project's
-    // tool list in the same undo step; operation defaults derive from it.
-    const selection = selectToolForOperation(state.project, kind, target, libraryTools ?? [])
-    let toolToAdd: Tool | null = null
-    let resolvedTool: Tool
-    let resolvedToolRef: string | null
-
-    if (selection?.source === 'existing') {
-      resolvedTool = state.project.tools.find((tool) => tool.id === selection.toolId) ?? defaultTool(state.project.meta.units, 1)
-      resolvedToolRef = selection.toolId
-    } else if (selection?.source === 'import') {
-      const existingMatch = state.project.tools.find((tool) => toolMatchesTemplate(tool, selection.tool))
-      if (existingMatch) {
-        resolvedTool = existingMatch
-        resolvedToolRef = existingMatch.id
-      } else {
-        toolToAdd = { ...selection.tool, id: nextUniqueGeneratedId(state.project, 't') }
-        resolvedTool = toolToAdd
-        resolvedToolRef = toolToAdd.id
-      }
-    } else {
-      resolvedTool = state.project.tools[0] ?? defaultTool(state.project.meta.units, 1)
-      resolvedToolRef = state.project.tools[0]?.id ?? null
-    }
-
-    const template = defaultOperationForTarget(
-      state.project,
-      kind,
-      pass,
-      target,
-      state.project.operations.length,
-      { tool: resolvedTool, toolRef: resolvedToolRef },
-    )
-    const operation: Operation = {
-      ...template,
-      id: nextId,
-      showToolpath: true,
-      pass,
-    }
-
-    set((s) => ({
-      project: {
-        ...s.project,
-        tools: toolToAdd ? [...s.project.tools, toolToAdd] : s.project.tools,
-        operations: [...s.project.operations, operation],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-      history: {
-        past: [...s.history.past, cloneProject(s.project)].slice(-100),
-        future: [],
-        transactionStart: null,
-      },
-    }))
-
-    return nextId
-  },
-
-  updateOperation: (id, patch) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        operations: s.project.operations.map((operation) => {
-          if (operation.id !== id) {
-            return operation
-          }
-
-          const nextOperation = { ...operation, ...patch }
-          return isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)
-            ? nextOperation
-            : operation
-        }),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  createRestOperation: (operationId) => {
-    const state = get()
-    const operation = state.project.operations.find((item) => item.id === operationId)
-    if (!operation) {
-      return { operationId: null, regionIds: [], warnings: ['Operation not found'] }
-    }
-    if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
-      return { operationId: null, regionIds: [], warnings: ['Rest operations can only be created from pocket or edge-route operations with feature targets'] }
-    }
-
-    if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
-      const result = generateEdgeRestRegionDrafts(state.project, operation)
-      if (result.drafts.length === 0) {
-        return { operationId: null, regionIds: [], warnings: result.warnings }
-      }
-
-      let nextProjectLike = state.project
-      const targetFeatures = operation.target.featureIds
-        .map((featureId) => state.project.features.find((item) => item.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
-      const machiningTargetIds = targetFeatures
-        .filter((feature) => feature.operation !== 'region')
-        .map((feature) => feature.id)
-      const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
-      const restFolder: FeatureFolder = {
-        id: restFolderId,
-        name: uniqueFolderName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest Regions`, state.project.featureFolders),
-        collapsed: false,
-        section: 'regions',
-      }
-      nextProjectLike = {
-        ...nextProjectLike,
-        featureFolders: [...nextProjectLike.featureFolders, restFolder],
-      }
-      const createdFeatures: SketchFeature[] = result.drafts.map((draft, index) => {
-        const id = nextUniqueGeneratedId(nextProjectLike, 'f')
-        const feature = normalizeFeatureZRange({
-          id,
-          name: uniqueName(
-            `${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest Region${result.drafts.length > 1 ? ` ${index + 1}` : ''}`,
-            nextProjectLike.features.map((feature) => feature.name),
-          ),
-          kind: inferFeatureKind(draft.profile),
-          folderId: restFolderId,
-          sketch: {
-            profile: draft.profile,
-            origin: { x: 0, y: 0 },
-            orientationAngle: 0,
-            dimensions: [],
-            constraints: [],
-          },
-          operation: 'region',
-          z_top: state.project.stock.thickness,
-          z_bottom: 0,
-          visible: true,
-          locked: false,
-        })
-        nextProjectLike = {
-          ...nextProjectLike,
-          features: [...nextProjectLike.features, feature],
-        }
-        return feature
-      })
-      const createdIds = createdFeatures.map((feature) => feature.id)
-      const restTarget: OperationTarget = {
-        source: 'features',
-        featureIds: [...machiningTargetIds, ...createdIds],
-      }
-      const nextOperationId = nextUniqueGeneratedId(nextProjectLike, 'op')
-      const restOperation: Operation = {
-        ...operation,
-        id: nextOperationId,
-        name: uniqueName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest`, state.project.operations.map((item) => item.name)),
-        showToolpath: true,
-        target: restTarget,
-        toolRef: null,
-      }
-
-      set((s) => {
-        const nextProject = syncFeatureTreeProject({
-          ...s.project,
-          featureFolders: [...s.project.featureFolders, restFolder],
-          features: [...s.project.features, ...createdFeatures],
-          operations: [...s.project.operations, restOperation],
-          featureTree: [...s.project.featureTree, { type: 'folder', folderId: restFolder.id }],
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
-        })
-
-        return {
-          project: nextProject,
-          history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
-            future: [],
-            transactionStart: null,
-          },
-        }
-      })
-
-      return { operationId: nextOperationId, regionIds: createdIds, warnings: result.warnings }
-    }
-
-    const result = generatePocketRestRegionDrafts(state.project, operation)
-    if (result.drafts.length === 0) {
-      return { operationId: null, regionIds: [], warnings: result.warnings }
-    }
-
-    let nextProjectLike = state.project
-    const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
-    const restFolder: FeatureFolder = {
-      id: restFolderId,
-      name: uniqueFolderName(`${operation.name || 'Pocket'} Rest Regions`, state.project.featureFolders),
-      collapsed: false,
-      section: 'regions',
-    }
-    nextProjectLike = {
-      ...nextProjectLike,
-      featureFolders: [...nextProjectLike.featureFolders, restFolder],
-    }
-    const createdFeatures: SketchFeature[] = result.drafts.map((draft, index) => {
-      const id = nextUniqueGeneratedId(nextProjectLike, 'f')
-      const feature = normalizeFeatureZRange({
-        id,
-        name: uniqueName(
-          `${operation.name || 'Pocket'} Rest Region${result.drafts.length > 1 ? ` ${index + 1}` : ''}`,
-          nextProjectLike.features.map((feature) => feature.name),
-        ),
-        kind: inferFeatureKind(draft.profile),
-        folderId: restFolderId,
-        sketch: {
-          profile: draft.profile,
-          origin: { x: 0, y: 0 },
-          orientationAngle: 0,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'region',
-        z_top: state.project.stock.thickness,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      })
-      nextProjectLike = {
-        ...nextProjectLike,
-        features: [...nextProjectLike.features, feature],
-      }
-      return feature
-    })
-    const createdIds = createdFeatures.map((feature) => feature.id)
-    const machiningTargetIds = operation.target.featureIds.filter((featureId) => {
-      const feature = state.project.features.find((item) => item.id === featureId)
-      return feature?.operation !== 'region'
-    })
-    const restTarget: OperationTarget = {
-      source: 'features',
-      featureIds: [...machiningTargetIds, ...createdIds],
-    }
-    const nextOperationId = nextUniqueGeneratedId(nextProjectLike, 'op')
-    const restOperation: Operation = {
-      ...operation,
-      id: nextOperationId,
-      name: uniqueName(`${operation.name || 'Pocket'} Rest`, state.project.operations.map((item) => item.name)),
-      pass: 'rough',
-      showToolpath: true,
-      target: restTarget,
-      toolRef: null,
-    }
-
-    set((s) => {
-      const nextProject = syncFeatureTreeProject({
-        ...s.project,
-        featureFolders: [...s.project.featureFolders, restFolder],
-        features: [...s.project.features, ...createdFeatures],
-        operations: [...s.project.operations, restOperation],
-        featureTree: [
-          ...s.project.featureTree,
-          { type: 'folder', folderId: restFolderId },
-        ],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      })
-
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    })
-
-    return { operationId: nextOperationId, regionIds: createdIds, warnings: result.warnings }
-  },
-
-  setAllOperationToolpathVisibility: (visible) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        operations: s.project.operations.map((operation) => ({
-          ...operation,
-          showToolpath: visible,
-        })),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  deleteOperation: (id) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        operations: s.project.operations.filter((operation) => operation.id !== id),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  duplicateOperation: (id) => {
-    const state = get()
-    const sourceOperation = state.project.operations.find((operation) => operation.id === id)
-    if (!sourceOperation) {
-      return null
-    }
-
-    const nextId = nextUniqueGeneratedId(state.project, 'op')
-    const duplicate: Operation = {
-      ...sourceOperation,
-      id: nextId,
-      name: duplicateOperationName(sourceOperation.name, state.project.operations),
-      showToolpath: true,
-    }
-
-    set((s) => ({
-      project: {
-        ...s.project,
-        operations: [...s.project.operations, duplicate],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-      history: {
-        past: [...s.history.past, cloneProject(s.project)].slice(-100),
-        future: [],
-        transactionStart: null,
-      },
-    }))
-
-    return nextId
-  },
-
-  reorderOperations: (ids) =>
-    set((s) => {
-      const byId = new Map(s.project.operations.map((operation) => [operation.id, operation]))
-      const reordered = ids
-        .map((id) => byId.get(id))
-        .filter((operation): operation is Operation => Boolean(operation))
-
-      const untouched = s.project.operations.filter((operation) => !ids.includes(operation.id))
-      const nextOperations = [...reordered, ...untouched]
-      const nextProject = {
-        ...s.project,
-        operations: nextOperations,
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
   setAllRegionsVisible: (visible) =>
     set((s) => {
       const nextProject = {
@@ -4077,149 +3690,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         sketchEditSession: null,
       }
     }),
-
-
-  importShapes: (input) => {
-    const state = get()
-    const sourceShapes = input.shapes.filter((shape) => !isProfileDegenerate(shape.profile))
-    if (sourceShapes.length === 0) {
-      return []
-    }
-
-    // Group shapes by layer name. Null layer (DXF layer "0") → keyed as '0'.
-    const layerGroups = new Map<string, typeof sourceShapes>()
-    for (const shape of sourceShapes) {
-      const key = shape.layerName ?? '0'
-      const existing = layerGroups.get(key)
-      if (existing) {
-        existing.push(shape)
-      } else {
-        layerGroups.set(key, [shape])
-      }
-    }
-
-    const existingFeatureNames = state.project.features.map((f) => f.name)
-    const newFolders: FeatureFolder[] = []
-    const createdFeatures: SketchFeature[] = []
-
-    let nextProjectLike: Project = {
-      ...state.project,
-      features: [...state.project.features],
-      featureFolders: [...state.project.featureFolders],
-    }
-
-    for (const [layerKey, layerShapes] of layerGroups) {
-      const folderDisplayName = layerKey || '0'
-      const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
-      const folderName = uniqueFolderName(folderDisplayName, nextProjectLike.featureFolders)
-      const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
-
-      newFolders.push(folder)
-      nextProjectLike = { ...nextProjectLike, featureFolders: [...nextProjectLike.featureFolders, folder] }
-
-      for (const shape of layerShapes) {
-        const featureName = uniqueName(
-          shape.name || folderDisplayName,
-          [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
-        )
-        // All closed profiles import as 'add'; open profiles as 'line'.
-        const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
-        const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
-        const feature = normalizeFeatureZRange({
-          ...createImportedFeature(shape, state.project, folderId, featureName, operation),
-          id: nextId,
-        })
-
-        createdFeatures.push(feature)
-        nextProjectLike = { ...nextProjectLike, features: [...nextProjectLike.features, feature] }
-      }
-    }
-
-    if (createdFeatures.length === 0) {
-      return []
-    }
-
-    set((s) => {
-      const nextProject = syncFeatureTreeProject({
-        ...s.project,
-        featureFolders: [...s.project.featureFolders, ...newFolders],
-        featureTree: [
-          ...s.project.featureTree,
-          ...newFolders.map((f) => ({ type: 'folder' as const, folderId: f.id })),
-        ],
-        features: [...s.project.features, ...createdFeatures],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      })
-      const createdIds = createdFeatures.map((f) => f.id)
-      const primaryId = createdIds.at(-1) ?? null
-      const primaryFolderId = newFolders.at(-1)?.id ?? null
-
-      return {
-        project: nextProject,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: primaryId,
-          selectedFeatureIds: createdIds,
-          selectedNode: primaryId
-            ? { type: 'feature', featureId: primaryId }
-            : primaryFolderId
-              ? { type: 'folder', folderId: primaryFolderId }
-              : s.selection.selectedNode,
-          mode: 'feature',
-          activeControl: null,
-        },
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    })
-
-    return createdFeatures.map((f) => f.id)
-  },
-
-  importCamjFolders: (input) => {
-    const state = get()
-    const merge = mergeCamjFolders({
-      currentProject: state.project,
-      sourceProject: input.sourceProject,
-      selectedFolderIds: input.selectedFolderIds,
-      importStock: input.importStock,
-    })
-    if (merge.createdFeatureIds.length === 0 && !merge.stockReplaced) {
-      return []
-    }
-
-    set((s) => {
-      const nextProject = syncFeatureTreeProject(merge.project)
-      const createdIds = merge.createdFeatureIds
-      const primaryId = createdIds.at(-1) ?? null
-      const primaryFolderId = merge.createdFolderIds.at(-1) ?? null
-      return {
-        project: nextProject,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: primaryId,
-          selectedFeatureIds: createdIds,
-          selectedNode: primaryId
-            ? { type: 'feature', featureId: primaryId }
-            : primaryFolderId
-              ? { type: 'folder', folderId: primaryFolderId }
-              : s.selection.selectedNode,
-          mode: 'feature',
-          activeControl: null,
-        },
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    })
-
-    return merge.createdFeatureIds
-  },
 
   moveFeatureControl: (featureId, control, point) =>
     set((s) => {
