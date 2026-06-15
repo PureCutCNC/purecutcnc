@@ -14,7 +14,23 @@
  * limitations under the License.
  */
 
-export { CreationToolbar } from './toolbar/CreationToolbar'
-export { GlobalToolbar } from './toolbar/GlobalToolbar'
-export { SnapToolbar } from './toolbar/SnapToolbar'
-export { Toolbar } from './toolbar/Toolbar'
+import type { SnapToolbarProps } from './shared'
+import { SnapActions } from './SnapActions'
+
+export function SnapToolbar({
+  snapSettings,
+  activeSnapMode,
+  onToggleSnapEnabled,
+  onToggleSnapMode,
+}: SnapToolbarProps) {
+  return (
+    <div className="toolbar toolbar--snap">
+      <SnapActions
+        snapSettings={snapSettings}
+        activeSnapMode={activeSnapMode}
+        onToggleSnapEnabled={onToggleSnapEnabled}
+        onToggleSnapMode={onToggleSnapMode}
+      />
+    </div>
+  )
+}
