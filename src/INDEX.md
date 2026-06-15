@@ -8,6 +8,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - `App.css`, `index.css` — global styles
 
 ## Subfolders
+- [app/](app/) — app-level orchestration hooks (starting with `useToolpathGeneration`)
 - [store/](store/INDEX.md) — Zustand state (the single source of truth for projects). **All mutations go through here.**
 - [engine/](engine/INDEX.md) — pure-logic CAM core: toolpaths, G-code, simulation, CSG, mesh import
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
