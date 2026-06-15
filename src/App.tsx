@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
-import { validQuickOperationsForFeature, type QuickOperation } from './components/cam/operationValidity'
+import type { QuickOperation } from './components/cam/operationValidity'
 import { loadBundledToolLibrary } from './toolLibrary'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import type { OperationKind } from './types/project'
+import { FeatureContextMenu } from './components/feature-tree/FeatureContextMenu'
 import { FeatureTree } from './components/feature-tree/FeatureTree'
 import { PropertiesPanel } from './components/feature-tree/PropertiesPanel'
 import { AppShell } from './components/layout/AppShell'
@@ -38,22 +39,9 @@ import { DEFAULT_SNAP_SETTINGS, SNAP_SETTINGS_STORAGE_KEY, type SnapMode, type S
 import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
-import { useOutsideDismiss } from './hooks/useOutsideDismiss'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
 import { useSimulationModel } from './app/useSimulationModel'
-
-interface TreeContextMenuState {
-  entityType: 'feature' | 'tab' | 'clamp'
-  ids: string[]
-  primaryId: string
-  x: number
-  y: number
-}
-
-interface MenuPosition {
-  left: number
-  top: number
-}
+import { useTreeContextMenu } from './app/useTreeContextMenu'
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 
@@ -73,36 +61,10 @@ const SNAP_SETTINGS_CODEC = {
   deserialize: (raw: string): SnapSettings => normalizeSnapSettings(JSON.parse(raw)),
 }
 
-const CONTEXT_MENU_VIEWPORT_PADDING = 8
-const CONTEXT_MENU_INITIAL_WIDTH = 188
-const CONTEXT_MENU_INITIAL_HEIGHT = 300
-
-function clampMenuPosition(
-  x: number,
-  y: number,
-  menuWidth: number,
-  menuHeight: number,
-  viewportWidth: number,
-  viewportHeight: number,
-): MenuPosition {
-  const minLeft = CONTEXT_MENU_VIEWPORT_PADDING
-  const minTop = CONTEXT_MENU_VIEWPORT_PADDING
-  const maxLeft = Math.max(minLeft, viewportWidth - menuWidth - CONTEXT_MENU_VIEWPORT_PADDING)
-  const maxTop = Math.max(minTop, viewportHeight - menuHeight - CONTEXT_MENU_VIEWPORT_PADDING)
-
-  return {
-    left: Math.min(Math.max(x, minLeft), maxLeft),
-    top: Math.min(Math.max(y, minTop), maxTop),
-  }
-}
-
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
   const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
-  const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
-  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
-  const [quickOpsSubmenu, setQuickOpsSubmenu] = useState<{ top: number; left: number; side: 'right' | 'left' } | null>(null)
   const tabletShell = isTabletMode(useShellMode())
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
@@ -149,7 +111,6 @@ function App() {
   const viewport3dRef = useRef<Viewport3DHandle>(null)
   const simulationViewportRef = useRef<SimulationViewportHandle>(null)
   const hasAutoFramed3DRef = useRef(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const {
     project,
     projectKey,
@@ -181,37 +142,25 @@ function App() {
     pendingAdd,
   } = useProjectStore()
 
-  const menuFeature = useMemo(
-    () =>
-      treeContextMenu?.entityType === 'feature'
-        ? project.features.find((feature) => feature.id === treeContextMenu.primaryId) ?? null
-        : null,
-    [treeContextMenu, project.features]
-  )
-
-  const menuClamp = useMemo(
-    () =>
-      treeContextMenu?.entityType === 'clamp'
-        ? project.clamps.find((clamp) => clamp.id === treeContextMenu.primaryId) ?? null
-        : null,
-    [treeContextMenu, project.clamps]
-  )
-
-  const menuTab = useMemo(
-    () =>
-      treeContextMenu?.entityType === 'tab'
-        ? project.tabs.find((tab) => tab.id === treeContextMenu.primaryId) ?? null
-        : null,
-    [treeContextMenu, project.tabs]
-  )
-
-  const menuQuickOperations = useMemo<QuickOperation[]>(
-    () =>
-      menuFeature && (treeContextMenu?.ids.length ?? 1) <= 1
-        ? validQuickOperationsForFeature(project, menuFeature.id)
-        : [],
-    [menuFeature, treeContextMenu, project]
-  )
+  const {
+    treeContextMenu,
+    menuRef,
+    resolvedMenuPosition,
+    menuFeature,
+    menuTab,
+    menuClamp,
+    menuQuickOperations,
+    quickOpsSubmenu,
+    setQuickOpsSubmenu,
+    menuHasMultipleSelection,
+    menuCanUseAsStock,
+    menuHasLockedSelection,
+    openFeatureContextMenu,
+    openClampContextMenu,
+    openTabContextMenu,
+    closeTreeContextMenu,
+    openQuickOpsSubmenu,
+  } = useTreeContextMenu({ project })
 
   const effectiveSelectedOperationId =
     selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
@@ -357,17 +306,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [zoomWindowActive])
 
-  useOutsideDismiss({
-    open: treeContextMenu !== null,
-    refs: menuRef,
-    target: 'window',
-    onDismiss: () => {
-      setTreeContextMenu(null)
-      setMenuPosition(null)
-      setQuickOpsSubmenu(null)
-    },
-  })
-
   function handleZoomToModel() {
     if (centerTab === 'preview3d') {
       viewport3dRef.current?.zoomToModel()
@@ -403,41 +341,6 @@ function App() {
         ? previous.modes.filter((entry) => entry !== mode)
         : [...previous.modes, mode]
       return { ...previous, modes }
-    })
-  }
-
-  function openFeatureContextMenu(featureId: string, x: number, y: number) {
-    const nextSelection = useProjectStore.getState().selection
-    const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
-      ? nextSelection.selectedFeatureIds
-      : [featureId]
-    setMenuPosition(null)
-    setTreeContextMenu({ entityType: 'feature', ids: featureIds, primaryId: featureId, x, y })
-  }
-
-  function openClampContextMenu(clampId: string, x: number, y: number) {
-    setMenuPosition(null)
-    setTreeContextMenu({ entityType: 'clamp', ids: [clampId], primaryId: clampId, x, y })
-  }
-
-  function openTabContextMenu(tabId: string, x: number, y: number) {
-    setMenuPosition(null)
-    setTreeContextMenu({ entityType: 'tab', ids: [tabId], primaryId: tabId, x, y })
-  }
-
-  function closeTreeContextMenu() {
-    setTreeContextMenu(null)
-    setMenuPosition(null)
-    setQuickOpsSubmenu(null)
-  }
-
-  function openQuickOpsSubmenu(trigger: HTMLElement) {
-    const rect = trigger.getBoundingClientRect()
-    const openLeft = rect.right + 200 > window.innerWidth
-    setQuickOpsSubmenu({
-      top: rect.top,
-      left: openLeft ? rect.left : rect.right,
-      side: openLeft ? 'left' : 'right',
     })
   }
 
@@ -602,72 +505,9 @@ function App() {
     closeTreeContextMenu()
   }
 
-  const menuHasMultipleSelection = treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.length ?? 0) > 1
-  const menuCanUseAsStock =
-    treeContextMenu?.entityType === 'feature' &&
-    !menuHasMultipleSelection &&
-    menuFeature !== null &&
-    menuFeature.operation === 'add' &&
-    menuFeature.sketch.profile.closed === true &&
-    menuFeature.kind !== 'text' &&
-    menuFeature.kind !== 'stl'
-  const menuHasLockedSelection =
-    treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.some((featureId) =>
-      project.features.some((feature) => feature.id === featureId && feature.locked)
-    ) ?? false)
-  const fallbackMenuPosition = treeContextMenu
-    ? clampMenuPosition(
-        treeContextMenu.x,
-        treeContextMenu.y,
-        CONTEXT_MENU_INITIAL_WIDTH,
-        CONTEXT_MENU_INITIAL_HEIGHT,
-        window.innerWidth,
-        window.innerHeight,
-      )
-    : null
-  const resolvedMenuPosition = menuPosition ?? fallbackMenuPosition
-
-  const updateTreeContextMenuPosition = useCallback(() => {
-    if (!treeContextMenu || !menuRef.current) {
-      return
-    }
-
-    const rect = menuRef.current.getBoundingClientRect()
-    const nextPosition = clampMenuPosition(
-      treeContextMenu.x,
-      treeContextMenu.y,
-      rect.width,
-      rect.height,
-      window.innerWidth,
-      window.innerHeight,
-    )
-    setMenuPosition((previous) => (
-      previous?.left === nextPosition.left && previous.top === nextPosition.top
-        ? previous
-        : nextPosition
-    ))
-  }, [treeContextMenu])
-
-  useLayoutEffect(() => {
-    updateTreeContextMenuPosition()
-  }, [
-    updateTreeContextMenuPosition,
-    menuFeature,
-    menuTab,
-    menuClamp,
-    menuHasMultipleSelection,
-    menuCanUseAsStock,
-    menuHasLockedSelection,
-  ])
-
-  useEffect(() => {
-    if (!treeContextMenu) {
-      return
-    }
-
-    window.addEventListener('resize', updateTreeContextMenuPosition)
-    return () => window.removeEventListener('resize', updateTreeContextMenuPosition)
-  }, [treeContextMenu, updateTreeContextMenuPosition])
+  function handleUseAsStock(featureId: string) {
+    setStockSourceFeature(featureId)
+  }
 
   const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
     <button
@@ -854,202 +694,44 @@ function App() {
         </div>
       )}
 
-      {treeContextMenu && resolvedMenuPosition && (menuFeature || menuTab || menuClamp) ? (
-        <div
-          ref={menuRef}
-          className="feature-context-menu"
-          style={resolvedMenuPosition}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          {menuFeature ? (
-            <>
-              {menuQuickOperations.length > 0 ? (
-                <>
-                  <div
-                    className="feature-context-menu__submenu-host"
-                    onMouseEnter={tabletShell ? undefined : (event) => openQuickOpsSubmenu(event.currentTarget)}
-                    onMouseLeave={tabletShell ? undefined : () => setQuickOpsSubmenu(null)}
-                  >
-                    <button
-                      className="feature-context-menu__item feature-context-menu__item--submenu"
-                      type="button"
-                      aria-haspopup="menu"
-                      aria-expanded={quickOpsSubmenu !== null}
-                      onClick={(event) => {
-                        // Touch has no hover, so tap toggles the flyout. On desktop
-                        // hover drives it and a click just keeps it open.
-                        if (tabletShell && quickOpsSubmenu) {
-                          setQuickOpsSubmenu(null)
-                        } else {
-                          openQuickOpsSubmenu(event.currentTarget)
-                        }
-                      }}
-                    >
-                      <span>Create operation</span>
-                      <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
-                    </button>
-                    {quickOpsSubmenu ? (
-                      <div
-                        className={`feature-context-menu feature-context-menu__submenu feature-context-menu__submenu--${quickOpsSubmenu.side}`}
-                        style={{ top: quickOpsSubmenu.top, left: quickOpsSubmenu.left }}
-                        onContextMenu={(event) => event.preventDefault()}
-                      >
-                        {menuQuickOperations.map((quickOp) => (
-                          <button
-                            key={quickOp.kind}
-                            className="feature-context-menu__item"
-                            type="button"
-                            onClick={() => handleCreateQuickOperation(menuFeature.id, quickOp)}
-                          >
-                            {quickOp.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="feature-context-menu__separator" />
-                </>
-              ) : null}
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleEditSketch(menuFeature.id)}
-                disabled={menuHasMultipleSelection}
-                title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
-              >
-                Edit Sketch
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleConstraint(menuFeature.id)}
-                disabled={menuHasMultipleSelection || menuHasLockedSelection}
-              >
-                Add Constraint
-              </button>
-              <div className="feature-context-menu__separator" />
-              <button className="feature-context-menu__item" type="button" onClick={() => handleCopyFeature(menuFeature.id)}>
-                {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleMoveFeature(menuFeature.id)}
-                disabled={menuHasLockedSelection}
-                title={menuHasLockedSelection ? 'Locked features cannot be moved' : undefined}
-              >
-                {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleResizeFeature(menuFeature.id)}
-                disabled={menuHasLockedSelection}
-              >
-                Resize
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleRotateFeature(menuFeature.id)}
-                disabled={menuHasLockedSelection}
-              >
-                Rotate
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleMirrorFeature(menuFeature.id)}
-                disabled={menuHasLockedSelection}
-              >
-                Mirror
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleOffsetFeatures()}
-                disabled={menuHasLockedSelection}
-              >
-                Offset
-              </button>
-              <div className="feature-context-menu__separator" />
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleJoinFeatures()}
-                disabled={!menuHasMultipleSelection || menuHasLockedSelection}
-                title={!menuHasMultipleSelection ? 'Select two or more features to join' : undefined}
-              >
-                Join
-              </button>
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => handleCutFeatures()}
-                disabled={menuHasLockedSelection}
-              >
-                Cut
-              </button>
-              <div className="feature-context-menu__separator" />
-              <button
-                className="feature-context-menu__item"
-                type="button"
-                onClick={() => setStockSourceFeature(treeContextMenu.primaryId)}
-                disabled={!menuCanUseAsStock}
-                title={!menuCanUseAsStock ? 'Feature must be an add operation with a closed profile' : undefined}
-              >
-                Use as Stock
-              </button>
-              <div className="feature-context-menu__separator" />
-              <button
-                className="feature-context-menu__item feature-context-menu__item--danger"
-                type="button"
-                onClick={() => handleDeleteFeatures(treeContextMenu.ids)}
-              >
-                {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
-              </button>
-            </>
-          ) : menuTab ? (
-            <>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleEditTab(menuTab.id)}>
-                Edit Sketch
-              </button>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleCopyTab(menuTab.id)}>
-                Copy
-              </button>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleMoveTab(menuTab.id)}>
-                Move
-              </button>
-              <button
-                className="feature-context-menu__item feature-context-menu__item--danger"
-                type="button"
-                onClick={() => handleDeleteTab(menuTab.id)}
-              >
-                Delete
-              </button>
-            </>
-          ) : menuClamp ? (
-            <>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleEditClamp(menuClamp.id)}>
-                Edit Sketch
-              </button>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleCopyClamp(menuClamp.id)}>
-                Copy
-              </button>
-              <button className="feature-context-menu__item" type="button" onClick={() => handleMoveClamp(menuClamp.id)}>
-                Move
-              </button>
-              <button
-                className="feature-context-menu__item feature-context-menu__item--danger"
-                type="button"
-                onClick={() => handleDeleteClamp(menuClamp.id)}
-              >
-                Delete
-              </button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+      <FeatureContextMenu
+        menuRef={menuRef}
+        position={resolvedMenuPosition}
+        menuFeature={menuFeature}
+        menuTab={menuTab}
+        menuClamp={menuClamp}
+        menuHasMultipleSelection={menuHasMultipleSelection}
+        menuCanUseAsStock={menuCanUseAsStock}
+        menuHasLockedSelection={menuHasLockedSelection}
+        menuQuickOperations={menuQuickOperations}
+        quickOpsSubmenu={quickOpsSubmenu}
+        tabletShell={tabletShell}
+        primaryId={treeContextMenu?.primaryId ?? null}
+        ids={treeContextMenu?.ids ?? []}
+        onEditSketch={handleEditSketch}
+        onConstraint={handleConstraint}
+        onCopyFeature={handleCopyFeature}
+        onMoveFeature={handleMoveFeature}
+        onResizeFeature={handleResizeFeature}
+        onRotateFeature={handleRotateFeature}
+        onMirrorFeature={handleMirrorFeature}
+        onOffsetFeatures={handleOffsetFeatures}
+        onJoinFeatures={handleJoinFeatures}
+        onCutFeatures={handleCutFeatures}
+        onUseAsStock={handleUseAsStock}
+        onDeleteFeatures={handleDeleteFeatures}
+        onCreateQuickOperation={handleCreateQuickOperation}
+        onOpenQuickOpsSubmenu={openQuickOpsSubmenu}
+        onCloseQuickOpsSubmenu={() => setQuickOpsSubmenu(null)}
+        onEditTab={handleEditTab}
+        onCopyTab={handleCopyTab}
+        onMoveTab={handleMoveTab}
+        onDeleteTab={handleDeleteTab}
+        onEditClamp={handleEditClamp}
+        onCopyClamp={handleCopyClamp}
+        onMoveClamp={handleMoveClamp}
+        onDeleteClamp={handleDeleteClamp}
+      />
     </>
   )
 }
