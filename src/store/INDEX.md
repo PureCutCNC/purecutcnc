@@ -18,6 +18,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `toolsSlice.ts` — tool CRUD: add/import/update/delete/duplicate tool definitions
   - `clampsSlice.ts` — clamp CRUD: add/update/delete/duplicate clamp, set visibility, move control point
   - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, auto-place for operation
+  - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived features from the feature tree
