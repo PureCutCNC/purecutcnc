@@ -16,6 +16,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed `parseFontJson` font-parse seam
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
+- [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
 - [platform/](platform/) — platform abstraction (web vs Tauri)

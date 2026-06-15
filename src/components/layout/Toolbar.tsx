@@ -23,13 +23,14 @@ import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { ImportGeometryDialog } from '../project/ImportGeometryDialog'
 import { NewProjectDialog } from '../project/NewProjectDialog'
 import { TextToolDialog } from '../project/TextToolDialog'
-import { featureHasClosedGeometry } from '../../text'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { CreationTarget, FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
 import type { DimensionType } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import type { TextToolConfig } from '../../text'
-import { useFileActions } from '../../platform/useFileActions'
+import { useCreationShapeCommands } from '../../commands/creationShapes'
+import { useFileCommands } from '../../commands/fileCommands'
+import { useSketchCommands } from '../../commands/sketchCommands'
 
 interface ToolbarActionButtonProps {
   icon: string
@@ -169,74 +170,35 @@ function ToolbarActionButton({
   )
 }
 
-function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => void) {
+function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => void, onExportModel: () => void = () => undefined) {
   void onImportComplete
-  const fileActions = useFileActions()
-
   const {
     project,
-    dirty,
-    pendingAdd,
-    history,
     setProjectName,
-    undo,
-    redo,
-    startAddRectPlacement,
-    startAddCirclePlacement,
-    startAddEllipsePlacement,
-    startAddPolygonPlacement,
-    startAddSplinePlacement,
-    startAddCompositePlacement,
-    startAddTextPlacement,
-    creationTarget,
-    setCreationTarget,
-    startMoveFeature,
-    startCopyFeature,
-    startResizeFeature,
-    startRotateFeature,
-    startMirrorFeature,
-    startJoinSelectedFeatures,
-    startCutSelectedFeatures,
-    startOffsetSelectedFeatures,
-    alignFeatures,
-    distributeFeatures,
     startMoveBackdrop,
     startResizeBackdrop,
     startRotateBackdrop,
     deleteBackdrop,
-    deleteFeatures,
-    setSketchEditTool,
-    beginConstraint,
-    pendingConstraint,
-    cancelPendingConstraint,
-    cancelPendingAdd,
     pendingMove,
     pendingTransform,
-    pendingOffset,
-    pendingShapeAction,
     cancelPendingMove,
     cancelPendingTransform,
-    cancelPendingOffset,
-    cancelPendingShapeAction,
-    selection,
-    tapeMeasure,
-    pendingDimension,
-    startTapeMeasure,
-    clearTapeMeasure,
-    startDimensionTool,
-    cancelPendingDimension,
-    dimensionDeleteArmed,
-    setDimensionDeleteArmed,
-    setShowDimensions,
-    selectedAnnotationId,
-    deleteDimensionAnnotation,
   } = useProjectStore()
+  const sketchCommands = useSketchCommands()
 
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [showTextDialog, setShowTextDialog] = useState(false)
+  const creationCommands = useCreationShapeCommands({
+    onRequestText: () => setShowTextDialog(true),
+  })
+  const fileCommands = useFileCommands({
+    onNewProject: () => setShowNewProjectDialog(true),
+    onImportGeometry: () => setShowImportDialog(true),
+    onExportModel,
+  })
 
   // Keep the edit field in sync with the project name when it changes externally
   // (load / new project) while not editing. Adjusting state during render — the
@@ -249,168 +211,9 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     setNameVal(project.meta.name)
   }
 
-  async function handleNewProject() {
-    const ok = await fileActions.confirmDiscardIfDirty()
-    if (ok) setShowNewProjectDialog(true)
-  }
-
-  async function handleSave() {
-    await fileActions.save()
-  }
-
-  async function handleLoad() {
-    await fileActions.open()
-  }
-
-  function handleImport() {
-    setShowImportDialog(true)
-  }
-
-  function togglePlacement(shape: 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite', start: () => void) {
-    if (pendingAdd?.shape === shape) {
-      cancelPendingAdd()
-      return
-    }
-
-    start()
-  }
-
-  function handleTextTool() {
-    if (pendingAdd) {
-      cancelPendingAdd()
-    }
-    setShowTextDialog(true)
-  }
-
   function confirmTextTool(config: TextToolConfig) {
-    startAddTextPlacement(config)
+    creationCommands.confirmTextTool(config)
     setShowTextDialog(false)
-  }
-
-  function handleTapeMeasure() {
-    if (tapeMeasure) {
-      clearTapeMeasure()
-      return
-    }
-    if (pendingAdd) cancelPendingAdd()
-    startTapeMeasure()
-  }
-
-  function handleDimensionType(type: DimensionType) {
-    if (pendingDimension?.type === type) {
-      cancelPendingDimension()
-      return
-    }
-    if (pendingAdd) cancelPendingAdd()
-    startDimensionTool(type)
-  }
-
-  function handleToggleShowDimensions() {
-    setShowDimensions(!project.meta.showDimensions)
-  }
-
-  function handleDeleteDimension() {
-    if (pendingAdd) cancelPendingAdd()
-    // If a dimension is already selected, just delete it — no need to arm the
-    // pick-a-dimension mode for a second click.
-    if (selectedAnnotationId) {
-      deleteDimensionAnnotation(selectedAnnotationId)
-      if (dimensionDeleteArmed) setDimensionDeleteArmed(false)
-      return
-    }
-    setDimensionDeleteArmed(!dimensionDeleteArmed)
-  }
-
-  const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
-  const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
-  const selectedFeatures = selectedFeatureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is NonNullable<typeof project.features[number]> => feature !== null)
-  const hasSelectedFeatures = selectedFeatureIds.length > 0
-  const hasSelectedBackdrop = selection.selectedNode?.type === 'backdrop' && !!project.backdrop
-  const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
-  const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
-  const hasOffsetEligibleSelectedFeatures =
-    hasClosedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
-  const alignableFeatureCount = selectedFeatures.filter((feature) => !feature.locked).length
-  const canAlignSelectedFeatures = alignableFeatureCount >= 2
-  const canDistributeSelectedFeatures = alignableFeatureCount >= 3
-  const featureSketchEditActive =
-    selection.mode === 'sketch_edit'
-    && selection.selectedNode?.type === 'feature'
-    && !!selection.selectedFeatureId
-
-  function handleFeatureMove() {
-    if (!primarySelectedFeatureId) {
-      return
-    }
-
-    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'move') {
-      cancelPendingMove()
-      return
-    }
-
-    startMoveFeature(primarySelectedFeatureId)
-  }
-
-  function handleFeatureCopy() {
-    if (!primarySelectedFeatureId) {
-      return
-    }
-
-    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'copy') {
-      cancelPendingMove()
-      return
-    }
-
-    startCopyFeature(primarySelectedFeatureId)
-  }
-
-  function handleFeatureResize() {
-    if (!primarySelectedFeatureId) {
-      return
-    }
-
-    if (pendingTransform?.mode === 'resize') {
-      cancelPendingTransform()
-      return
-    }
-
-    startResizeFeature(primarySelectedFeatureId)
-  }
-
-  function handleFeatureRotate() {
-    if (!primarySelectedFeatureId) {
-      return
-    }
-
-    if (pendingTransform?.mode === 'rotate') {
-      cancelPendingTransform()
-      return
-    }
-
-    startRotateFeature(primarySelectedFeatureId)
-  }
-
-  function handleFeatureMirror() {
-    if (!primarySelectedFeatureId) {
-      return
-    }
-
-    if (pendingTransform?.mode === 'mirror') {
-      cancelPendingTransform()
-      return
-    }
-
-    startMirrorFeature(primarySelectedFeatureId)
-  }
-
-  function handleDeleteSelectedFeatures() {
-    if (!hasSelectedFeatures) {
-      return
-    }
-
-    deleteFeatures(selectedFeatureIds)
   }
 
   function handleBackdropMove() {
@@ -456,147 +259,35 @@ function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => voi
     deleteBackdrop()
   }
 
-  function handleJoinSelectedFeatures() {
-    if (pendingShapeAction?.kind === 'join') {
-      cancelPendingShapeAction()
-      return
-    }
-    startJoinSelectedFeatures()
-  }
-
-  function handleCutSelectedFeatures() {
-    if (pendingShapeAction?.kind === 'cut') {
-      cancelPendingShapeAction()
-      return
-    }
-    startCutSelectedFeatures()
-  }
-
-  function handleOffsetSelectedFeatures() {
-    if (pendingOffset) {
-      cancelPendingOffset()
-      return
-    }
-
-    startOffsetSelectedFeatures()
-  }
-
-  function handleAlignSelectedFeatures(alignment: FeatureAlignment) {
-    const eligibleIds = selectedFeatures
-      .filter((feature) => !feature.locked)
-      .map((feature) => feature.id)
-    if (eligibleIds.length < 2) {
-      return
-    }
-    alignFeatures(eligibleIds, alignment)
-  }
-
-  function handleDistributeSelectedFeatures(distribution: FeatureDistribution) {
-    const eligibleIds = selectedFeatures
-      .filter((feature) => !feature.locked)
-      .map((feature) => feature.id)
-    if (eligibleIds.length < 3) {
-      return
-    }
-    distributeFeatures(eligibleIds, distribution)
-  }
-
-  function toggleSketchEditTool(tool: SketchEditTool) {
-    if (!featureSketchEditActive) {
-      return
-    }
-    setSketchEditTool(selection.sketchEditTool === tool ? null : tool)
-  }
-
   return {
     project,
-    dirty,
-    pendingAdd,
-    pendingMove,
-    pendingTransform,
-    pendingOffset,
-    history,
-    selection,
+    dirty: fileCommands.dirty,
+    pendingShape: creationCommands.pendingShape,
+    pendingMove: sketchCommands.predicates.hasSelectedBackdrop ? pendingMove : null,
+    pendingTransform: sketchCommands.predicates.hasSelectedBackdrop ? pendingTransform : null,
+    historyLengthPast: fileCommands.historyPastLength,
+    historyLengthFuture: fileCommands.historyFutureLength,
     editingName,
     nameVal,
     showNewProjectDialog,
     showImportDialog,
     showTextDialog,
-    pendingShapeAction,
-    hasSelectedFeatures,
-    hasSelectedBackdrop,
-    hasLockedSelectedFeatures,
-    hasClosedSelectedFeatures,
-    hasOffsetEligibleSelectedFeatures,
-    canAlignSelectedFeatures,
-    canDistributeSelectedFeatures,
-    featureSketchEditActive,
-    sketchEditTool: selection.sketchEditTool,
+    hasSelectedBackdrop: sketchCommands.predicates.hasSelectedBackdrop,
     setProjectName,
     setEditingName,
     setNameVal,
     setShowNewProjectDialog,
     setShowImportDialog,
     setShowTextDialog,
-    handleNewProject,
-    handleSave,
-    handleLoad,
-    handleImport,
+    fileCommands: fileCommands.commands,
     handleZoomToModel: onZoomToModel,
-    handleUndo: undo,
-    handleRedo: redo,
-    handleRect: () => togglePlacement('rect', startAddRectPlacement),
-    handleCircle: () => togglePlacement('circle', startAddCirclePlacement),
-    handleEllipse: () => togglePlacement('ellipse', startAddEllipsePlacement),
-    handlePolygon: () => togglePlacement('polygon', startAddPolygonPlacement),
-    handleSpline: () => togglePlacement('spline', startAddSplinePlacement),
-    handleComposite: () => togglePlacement('composite', startAddCompositePlacement),
-    handleTextTool,
-    tapeActive: tapeMeasure !== null,
-    pendingDimensionType: pendingDimension?.type ?? null,
-    dimensionDeleteArmed,
-    showDimensions: project.meta.showDimensions,
-    dimensionCount: project.annotations.length,
-    handleTapeMeasure,
-    handleDimensionType,
-    handleDeleteDimension,
-    handleToggleShowDimensions,
-    creationTarget,
-    setCreationTarget,
+    creationCommands,
+    sketchCommands,
     confirmTextTool,
-    handleFeatureMove,
-    handleFeatureCopy,
-    handleFeatureResize,
-    handleFeatureRotate,
-    handleFeatureMirror,
-    handleDeleteSelectedFeatures,
     handleBackdropMove,
     handleBackdropResize,
     handleBackdropRotate,
     handleBackdropDelete,
-    handleJoinSelectedFeatures,
-    handleCutSelectedFeatures,
-    handleOffsetSelectedFeatures,
-    handleAlignSelectedFeatures,
-    handleDistributeSelectedFeatures,
-    handleSketchEditAddPoint: () => toggleSketchEditTool('add_point'),
-    handleSketchEditDeletePoint: () => toggleSketchEditTool('delete_point'),
-    handleSketchEditDeleteSegment: () => toggleSketchEditTool('delete_segment'),
-    handleSketchEditDisconnect: () => toggleSketchEditTool('disconnect'),
-    handleSketchEditFillet: () => toggleSketchEditTool('fillet'),
-    handleFeatureConstraint: () => {
-      if (pendingConstraint) {
-        cancelPendingConstraint()
-        return
-      }
-      const featureId =
-        (selection.selectedNode?.type === 'feature' ? selection.selectedNode.featureId : null) ??
-        selection.selectedFeatureId
-      if (!featureId) return
-      if (featureSketchEditActive) setSketchEditTool(null)
-      beginConstraint(featureId)
-    },
-    constraintActive: !!pendingConstraint,
   }
 }
 
@@ -1666,7 +1357,7 @@ export function GlobalToolbar({
   onToggleSnapEnabled,
   onToggleSnapMode,
 }: ToolbarProps & SnapToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel, onImportComplete)
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete, onExportModel)
 
   return (
     <>
@@ -1681,15 +1372,15 @@ export function GlobalToolbar({
           setProjectName={toolbar.setProjectName}
         />
         <GlobalActions
-          historyLengthPast={toolbar.history.past.length}
-          historyLengthFuture={toolbar.history.future.length}
-          onNew={toolbar.handleNewProject}
-          onOpen={toolbar.handleLoad}
-          onImport={toolbar.handleImport}
-          onExportModel={onExportModel}
-          onSave={toolbar.handleSave}
-          onUndo={toolbar.handleUndo}
-          onRedo={toolbar.handleRedo}
+          historyLengthPast={toolbar.historyLengthPast}
+          historyLengthFuture={toolbar.historyLengthFuture}
+          onNew={toolbar.fileCommands.newProject.onActivate}
+          onOpen={toolbar.fileCommands.openProject.onActivate}
+          onImport={toolbar.fileCommands.importGeometry.onActivate}
+          onExportModel={toolbar.fileCommands.exportModel.onActivate}
+          onSave={toolbar.fileCommands.saveProject.onActivate}
+          onUndo={toolbar.fileCommands.undo.onActivate}
+          onRedo={toolbar.fileCommands.redo.onActivate}
           onZoomToModel={toolbar.handleZoomToModel}
           onZoomWindow={onZoomWindow}
           zoomWindowActive={zoomWindowActive}
@@ -1702,15 +1393,15 @@ export function GlobalToolbar({
           onToggleSnapMode={onToggleSnapMode}
         />
         <MeasureActions
-          tapeActive={toolbar.tapeActive}
-          pendingDimensionType={toolbar.pendingDimensionType}
-          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
-          showDimensions={toolbar.showDimensions}
-          dimensionCount={toolbar.dimensionCount}
-          onTapeMeasure={toolbar.handleTapeMeasure}
-          onDimensionType={toolbar.handleDimensionType}
-          onDeleteDimension={toolbar.handleDeleteDimension}
-          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
+          tapeActive={toolbar.sketchCommands.dimension.tapeMeasure.active}
+          pendingDimensionType={toolbar.sketchCommands.dimension.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.sketchCommands.dimension.deleteDimension.active}
+          showDimensions={toolbar.sketchCommands.dimension.showDimensions.active}
+          dimensionCount={toolbar.sketchCommands.dimension.dimensionCount}
+          onTapeMeasure={toolbar.sketchCommands.dimension.tapeMeasure.onActivate}
+          onDimensionType={toolbar.sketchCommands.dimension.dimensionTypes.aligned.onActivate}
+          onDeleteDimension={toolbar.sketchCommands.dimension.deleteDimension.onActivate}
+          onToggleShowDimensions={toolbar.sketchCommands.dimension.showDimensions.onActivate}
         />
       </div>
       <ToolbarDialog
@@ -1742,61 +1433,61 @@ export function CreationToolbar({
     <>
       <div className={`toolbar toolbar--creation toolbar--${layout}`}>
         <CreationActions
-          pendingShape={toolbar.pendingAdd?.shape ?? null}
-          creationTarget={toolbar.creationTarget}
+          pendingShape={toolbar.pendingShape}
+          creationTarget={toolbar.creationCommands.creationTarget}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onCreationTargetChange={toolbar.setCreationTarget}
-          onRect={toolbar.handleRect}
-          onCircle={toolbar.handleCircle}
-          onEllipse={toolbar.handleEllipse}
-          onPolygon={toolbar.handlePolygon}
-          onSpline={toolbar.handleSpline}
-          onComposite={toolbar.handleComposite}
-          onText={toolbar.handleTextTool}
+          onCreationTargetChange={toolbar.creationCommands.setCreationTarget}
+          onRect={toolbar.creationCommands.shapeCommands[0].onActivate}
+          onCircle={toolbar.creationCommands.shapeCommands[1].onActivate}
+          onEllipse={toolbar.creationCommands.shapeCommands[2].onActivate}
+          onPolygon={toolbar.creationCommands.shapeCommands[3].onActivate}
+          onSpline={toolbar.creationCommands.shapeCommands[4].onActivate}
+          onComposite={toolbar.creationCommands.shapeCommands[5].onActivate}
+          onText={toolbar.creationCommands.shapeCommands[6].onActivate}
         />
         <ShapeToolActions
-          pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
+          pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onJoin={toolbar.handleJoinSelectedFeatures}
-          onCut={toolbar.handleCutSelectedFeatures}
+          onJoin={toolbar.sketchCommands.boolean.join.onActivate}
+          onCut={toolbar.sketchCommands.boolean.cut.onActivate}
         />
         <FeatureEditActions
-          enabled={toolbar.hasSelectedFeatures}
-          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-          hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
-          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
-          pendingOffset={!!toolbar.pendingOffset}
+          enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
+          hasLockedSelection={toolbar.sketchCommands.predicates.hasLockedSelectedFeatures}
+          hasClosedSelection={toolbar.sketchCommands.predicates.hasOffsetEligibleSelectedFeatures}
+          pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
+          pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
+          pendingOffset={toolbar.sketchCommands.boolean.offset.active}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onCopy={toolbar.handleFeatureCopy}
-          onMove={toolbar.handleFeatureMove}
-          onDelete={toolbar.handleDeleteSelectedFeatures}
-          onResize={toolbar.handleFeatureResize}
-          onRotate={toolbar.handleFeatureRotate}
-          onMirror={toolbar.handleFeatureMirror}
-          onOffset={toolbar.handleOffsetSelectedFeatures}
-          onConstraint={toolbar.handleFeatureConstraint}
-          constraintActive={toolbar.constraintActive}
+          onCopy={toolbar.sketchCommands.transform.copy.onActivate}
+          onMove={toolbar.sketchCommands.transform.move.onActivate}
+          onDelete={toolbar.sketchCommands.transform.delete.onActivate}
+          onResize={toolbar.sketchCommands.transform.resize.onActivate}
+          onRotate={toolbar.sketchCommands.transform.rotate.onActivate}
+          onMirror={toolbar.sketchCommands.transform.mirror.onActivate}
+          onOffset={toolbar.sketchCommands.boolean.offset.onActivate}
+          onConstraint={toolbar.sketchCommands.constraint.onActivate}
+          constraintActive={toolbar.sketchCommands.constraint.active}
         />
         <AlignmentActions
-          enabled={toolbar.canAlignSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.canAlignSelectedFeatures}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onAlign={toolbar.handleAlignSelectedFeatures}
+          onAlign={toolbar.sketchCommands.arrange.alignFeature}
         />
         <DistributionActions
-          enabled={toolbar.canDistributeSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onDistribute={toolbar.handleDistributeSelectedFeatures}
+          onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
         />
         <SketchEditActions
-          enabled={toolbar.featureSketchEditActive}
-          activeTool={toolbar.sketchEditTool}
+          enabled={toolbar.sketchCommands.predicates.featureSketchEditActive}
+          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : null}
           tooltipSide={layout === 'vertical' ? 'right' : 'bottom'}
-          onAddPoint={toolbar.handleSketchEditAddPoint}
-          onDeletePoint={toolbar.handleSketchEditDeletePoint}
-          onDeleteSegment={toolbar.handleSketchEditDeleteSegment}
-          onDisconnect={toolbar.handleSketchEditDisconnect}
-          onFillet={toolbar.handleSketchEditFillet}
+          onAddPoint={toolbar.sketchCommands.sketchEdit.add_point.onActivate}
+          onDeletePoint={toolbar.sketchCommands.sketchEdit.delete_point.onActivate}
+          onDeleteSegment={toolbar.sketchCommands.sketchEdit.delete_segment.onActivate}
+          onDisconnect={toolbar.sketchCommands.sketchEdit.disconnect.onActivate}
+          onFillet={toolbar.sketchCommands.sketchEdit.fillet.onActivate}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
@@ -1838,7 +1529,7 @@ export function Toolbar({
   onToggleSnapEnabled,
   onToggleSnapMode,
 }: ToolbarProps & SnapToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel, onImportComplete)
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete, onExportModel)
 
   return (
     <>
@@ -1853,15 +1544,15 @@ export function Toolbar({
           setProjectName={toolbar.setProjectName}
         />
         <GlobalActions
-          historyLengthPast={toolbar.history.past.length}
-          historyLengthFuture={toolbar.history.future.length}
-          onNew={toolbar.handleNewProject}
-          onOpen={toolbar.handleLoad}
-          onImport={toolbar.handleImport}
-          onExportModel={onExportModel}
-          onSave={toolbar.handleSave}
-          onUndo={toolbar.handleUndo}
-          onRedo={toolbar.handleRedo}
+          historyLengthPast={toolbar.historyLengthPast}
+          historyLengthFuture={toolbar.historyLengthFuture}
+          onNew={toolbar.fileCommands.newProject.onActivate}
+          onOpen={toolbar.fileCommands.openProject.onActivate}
+          onImport={toolbar.fileCommands.importGeometry.onActivate}
+          onExportModel={toolbar.fileCommands.exportModel.onActivate}
+          onSave={toolbar.fileCommands.saveProject.onActivate}
+          onUndo={toolbar.fileCommands.undo.onActivate}
+          onRedo={toolbar.fileCommands.redo.onActivate}
           onZoomToModel={toolbar.handleZoomToModel}
           onZoomWindow={onZoomWindow}
           zoomWindowActive={zoomWindowActive}
@@ -1874,66 +1565,66 @@ export function Toolbar({
           onToggleSnapMode={onToggleSnapMode}
         />
         <MeasureActions
-          tapeActive={toolbar.tapeActive}
-          pendingDimensionType={toolbar.pendingDimensionType}
-          dimensionDeleteArmed={toolbar.dimensionDeleteArmed}
-          showDimensions={toolbar.showDimensions}
-          dimensionCount={toolbar.dimensionCount}
-          onTapeMeasure={toolbar.handleTapeMeasure}
-          onDimensionType={toolbar.handleDimensionType}
-          onDeleteDimension={toolbar.handleDeleteDimension}
-          onToggleShowDimensions={toolbar.handleToggleShowDimensions}
+          tapeActive={toolbar.sketchCommands.dimension.tapeMeasure.active}
+          pendingDimensionType={toolbar.sketchCommands.dimension.pendingDimensionType}
+          dimensionDeleteArmed={toolbar.sketchCommands.dimension.deleteDimension.active}
+          showDimensions={toolbar.sketchCommands.dimension.showDimensions.active}
+          dimensionCount={toolbar.sketchCommands.dimension.dimensionCount}
+          onTapeMeasure={toolbar.sketchCommands.dimension.tapeMeasure.onActivate}
+          onDimensionType={toolbar.sketchCommands.dimension.dimensionTypes.aligned.onActivate}
+          onDeleteDimension={toolbar.sketchCommands.dimension.deleteDimension.onActivate}
+          onToggleShowDimensions={toolbar.sketchCommands.dimension.showDimensions.onActivate}
         />
         <CreationActions
-          pendingShape={toolbar.pendingAdd?.shape ?? null}
-          creationTarget={toolbar.creationTarget}
-          onCreationTargetChange={toolbar.setCreationTarget}
-          onRect={toolbar.handleRect}
-          onCircle={toolbar.handleCircle}
-          onEllipse={toolbar.handleEllipse}
-          onPolygon={toolbar.handlePolygon}
-          onSpline={toolbar.handleSpline}
-          onComposite={toolbar.handleComposite}
-          onText={toolbar.handleTextTool}
+          pendingShape={toolbar.pendingShape}
+          creationTarget={toolbar.creationCommands.creationTarget}
+          onCreationTargetChange={toolbar.creationCommands.setCreationTarget}
+          onRect={toolbar.creationCommands.shapeCommands[0].onActivate}
+          onCircle={toolbar.creationCommands.shapeCommands[1].onActivate}
+          onEllipse={toolbar.creationCommands.shapeCommands[2].onActivate}
+          onPolygon={toolbar.creationCommands.shapeCommands[3].onActivate}
+          onSpline={toolbar.creationCommands.shapeCommands[4].onActivate}
+          onComposite={toolbar.creationCommands.shapeCommands[5].onActivate}
+          onText={toolbar.creationCommands.shapeCommands[6].onActivate}
         />
         <ShapeToolActions
-          pendingShapeAction={toolbar.pendingShapeAction?.kind ?? null}
-          onJoin={toolbar.handleJoinSelectedFeatures}
-          onCut={toolbar.handleCutSelectedFeatures}
+          pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}
+          onJoin={toolbar.sketchCommands.boolean.join.onActivate}
+          onCut={toolbar.sketchCommands.boolean.cut.onActivate}
         />
         <FeatureEditActions
-          enabled={toolbar.hasSelectedFeatures}
-          hasLockedSelection={toolbar.hasLockedSelectedFeatures}
-          hasClosedSelection={toolbar.hasOffsetEligibleSelectedFeatures}
-          pendingMoveMode={toolbar.pendingMove?.entityType === 'feature' ? toolbar.pendingMove.mode : null}
-          pendingTransformMode={toolbar.pendingTransform?.entityType === 'feature' ? toolbar.pendingTransform.mode : null}
-          pendingOffset={!!toolbar.pendingOffset}
-          onCopy={toolbar.handleFeatureCopy}
-          onMove={toolbar.handleFeatureMove}
-          onDelete={toolbar.handleDeleteSelectedFeatures}
-          onResize={toolbar.handleFeatureResize}
-          onRotate={toolbar.handleFeatureRotate}
-          onMirror={toolbar.handleFeatureMirror}
-          onOffset={toolbar.handleOffsetSelectedFeatures}
-          onConstraint={toolbar.handleFeatureConstraint}
-          constraintActive={toolbar.constraintActive}
+          enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
+          hasLockedSelection={toolbar.sketchCommands.predicates.hasLockedSelectedFeatures}
+          hasClosedSelection={toolbar.sketchCommands.predicates.hasOffsetEligibleSelectedFeatures}
+          pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
+          pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
+          pendingOffset={toolbar.sketchCommands.boolean.offset.active}
+          onCopy={toolbar.sketchCommands.transform.copy.onActivate}
+          onMove={toolbar.sketchCommands.transform.move.onActivate}
+          onDelete={toolbar.sketchCommands.transform.delete.onActivate}
+          onResize={toolbar.sketchCommands.transform.resize.onActivate}
+          onRotate={toolbar.sketchCommands.transform.rotate.onActivate}
+          onMirror={toolbar.sketchCommands.transform.mirror.onActivate}
+          onOffset={toolbar.sketchCommands.boolean.offset.onActivate}
+          onConstraint={toolbar.sketchCommands.constraint.onActivate}
+          constraintActive={toolbar.sketchCommands.constraint.active}
         />
         <AlignmentActions
-          enabled={toolbar.canAlignSelectedFeatures}
-          onAlign={toolbar.handleAlignSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.canAlignSelectedFeatures}
+          onAlign={toolbar.sketchCommands.arrange.alignFeature}
         />
         <DistributionActions
-          enabled={toolbar.canDistributeSelectedFeatures}
-          onDistribute={toolbar.handleDistributeSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
+          onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
         />
         <SketchEditActions
-          enabled={toolbar.featureSketchEditActive}
-          activeTool={toolbar.sketchEditTool}
-          onAddPoint={toolbar.handleSketchEditAddPoint}
-          onDeletePoint={toolbar.handleSketchEditDeletePoint}
-          onDeleteSegment={toolbar.handleSketchEditDeleteSegment}
-          onDisconnect={toolbar.handleSketchEditDisconnect}
-          onFillet={toolbar.handleSketchEditFillet}
+          enabled={toolbar.sketchCommands.predicates.featureSketchEditActive}
+          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : null}
+          onAddPoint={toolbar.sketchCommands.sketchEdit.add_point.onActivate}
+          onDeletePoint={toolbar.sketchCommands.sketchEdit.delete_point.onActivate}
+          onDeleteSegment={toolbar.sketchCommands.sketchEdit.delete_segment.onActivate}
+          onDisconnect={toolbar.sketchCommands.sketchEdit.disconnect.onActivate}
+          onFillet={toolbar.sketchCommands.sketchEdit.fillet.onActivate}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
