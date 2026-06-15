@@ -116,6 +116,7 @@ import { createToolsSlice } from './slices/toolsSlice'
 import { createClampsSlice } from './slices/clampsSlice'
 import { createTabsSlice } from './slices/tabsSlice'
 import { createBackdropSlice, normalizeBackdrop } from './slices/backdropSlice'
+import { createMachineDefsSlice } from './slices/machineDefsSlice'
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
@@ -2968,6 +2969,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createClampsSlice(set, get, { cloneProject, projectsEqual, duplicateClampName }),
   ...createTabsSlice(set, get, { cloneProject, projectsEqual }),
   ...createBackdropSlice(set, get, { cloneProject, projectsEqual }),
+  ...createMachineDefsSlice(set, get, { cloneProject, projectsEqual }),
   ...createFeatureSlice(set, get, {
     cloneProject,
     syncFeatureTreeProject,
@@ -3160,126 +3162,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         project: nextProject,
         pendingAdd: null,
         pendingTransform: null,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  setSelectedMachineId: (id) =>
-    set((s) => {
-      const nextId = id && s.project.meta.machineDefinitions.some((definition) => definition.id === id)
-        ? id
-        : null
-      const nextProject = {
-        ...s.project,
-        meta: { ...s.project.meta, selectedMachineId: nextId, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  addMachineDefinition: (definition) =>
-    set((s) => {
-      const normalizedDefinition = validateMachineDefinition({
-        ...definition,
-        builtin: false,
-      })
-      const machineDefinitions = [
-        ...s.project.meta.machineDefinitions.filter((entry) => entry.id !== normalizedDefinition.id),
-        normalizedDefinition,
-      ]
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          machineDefinitions,
-          selectedMachineId: normalizedDefinition.id,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  removeMachineDefinition: (id) =>
-    set((s) => {
-      const definition = s.project.meta.machineDefinitions.find((entry) => entry.id === id)
-      if (!definition || definition.builtin) {
-        return {}
-      }
-
-      const machineDefinitions = s.project.meta.machineDefinitions.filter((entry) => entry.id !== id)
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          machineDefinitions,
-          selectedMachineId: s.project.meta.selectedMachineId === id ? null : s.project.meta.selectedMachineId,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  refreshMachineDefinitions: () =>
-    set((s) => {
-      const bundledDefinitions = copyBundledDefinitions()
-      const bundledIds = new Set(bundledDefinitions.map((definition) => definition.id))
-      const customDefinitions = s.project.meta.machineDefinitions.filter(
-        (definition) => !definition.builtin && !bundledIds.has(definition.id)
-      )
-      const machineDefinitions = [...bundledDefinitions, ...customDefinitions]
-      const selectedMachineId = machineDefinitions.some(
-        (definition) => definition.id === s.project.meta.selectedMachineId
-      )
-        ? s.project.meta.selectedMachineId
-        : null
-      const nextProject = {
-        ...s.project,
-        meta: {
-          ...s.project.meta,
-          machineDefinitions,
-          selectedMachineId,
-          modified: new Date().toISOString(),
-        },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
