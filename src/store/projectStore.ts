@@ -113,6 +113,7 @@ import { createSelectionSlice, emptySelection, sanitizeSelection } from './slice
 import { createDimensionsSlice } from './slices/dimensionsSlice'
 import { createDimensionToolSlice } from './slices/dimensionToolSlice'
 import { createFeatureSlice } from './slices/featureSlice'
+import { createToolsSlice } from './slices/toolsSlice'
 import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, inferSemanticIndices, validateConstraintsOnFeature, solveFeatureTranslation, type ConstraintInput } from '../sketch/constraintSolver'
 import type {
   PendingAddTool,
@@ -1858,19 +1859,6 @@ function buildAutoTabsForFeature(
   return created
 }
 
-function duplicateToolName(name: string, tools: Tool[]): string {
-  const baseName = `${name} Copy`
-  if (!tools.some((tool) => tool.name === baseName)) {
-    return baseName
-  }
-
-  let index = 2
-  while (tools.some((tool) => tool.name === `${baseName} ${index}`)) {
-    index += 1
-  }
-  return `${baseName} ${index}`
-}
-
 function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
   return (
     existingTool.name === candidate.name
@@ -3156,6 +3144,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   }),
   ...createDimensionsSlice(set, get, { cloneProject }),
   ...createDimensionToolSlice(set, get),
+  ...createToolsSlice(set, get, { cloneProject, projectsEqual, toolMatchesTemplate }),
   ...createFeatureSlice(set, get, {
     cloneProject,
     syncFeatureTreeProject,
@@ -4013,156 +4002,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         },
       }
     }),
-
-  addTool: () => {
-    const state = get()
-    const nextId = nextUniqueGeneratedId(state.project, 't')
-    const template = defaultTool(state.project.meta.units, state.project.tools.length + 1)
-    const tool: Tool = {
-      ...template,
-      id: nextId,
-    }
-
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        tools: [...s.project.tools, tool],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    })
-
-    return nextId
-  },
-
-  importTools: (tools) => {
-    const state = get()
-    const imported: Tool[] = []
-    let nextProject = state.project
-
-    for (const sourceTool of tools) {
-      if (nextProject.tools.some((tool) => toolMatchesTemplate(tool, sourceTool))) {
-        continue
-      }
-
-      const nextId = nextUniqueGeneratedId(nextProject, 't')
-      const tool = normalizeTool(
-        {
-          ...sourceTool,
-          id: nextId,
-        },
-        sourceTool.units,
-        nextProject.tools.length,
-      )
-
-      imported.push(tool)
-      nextProject = {
-        ...nextProject,
-        tools: [...nextProject.tools, tool],
-      }
-    }
-
-    if (imported.length === 0) {
-      return []
-    }
-
-    set((s) => ({
-      project: {
-        ...nextProject,
-        meta: { ...nextProject.meta, modified: new Date().toISOString() },
-      },
-      history: {
-        past: [...s.history.past, cloneProject(s.project)].slice(-100),
-        future: [],
-        transactionStart: null,
-      },
-    }))
-
-    return imported.map((tool) => tool.id)
-  },
-
-  updateTool: (id, patch) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        tools: s.project.tools.map((tool) => (tool.id === id ? { ...tool, ...patch } : tool)),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      if (s.history.transactionStart) {
-        return { project: nextProject }
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  deleteTool: (id) =>
-    set((s) => {
-      const nextProject = {
-        ...s.project,
-        tools: s.project.tools.filter((tool) => tool.id !== id),
-        operations: s.project.operations.map((operation) =>
-          operation.toolRef === id ? { ...operation, toolRef: null } : operation
-        ),
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      }
-      if (projectsEqual(nextProject, s.project)) {
-        return {}
-      }
-      return {
-        project: nextProject,
-        history: {
-          past: [...s.history.past, cloneProject(s.project)].slice(-100),
-          future: [],
-          transactionStart: null,
-        },
-      }
-    }),
-
-  duplicateTool: (id) => {
-    const state = get()
-    const sourceTool = state.project.tools.find((tool) => tool.id === id)
-    if (!sourceTool) {
-      return null
-    }
-
-    const nextId = nextUniqueGeneratedId(state.project, 't')
-    const duplicate: Tool = {
-      ...sourceTool,
-      id: nextId,
-      name: duplicateToolName(sourceTool.name, state.project.tools),
-    }
-
-    set((s) => ({
-      project: {
-        ...s.project,
-        tools: [...s.project.tools, duplicate],
-        meta: { ...s.project.meta, modified: new Date().toISOString() },
-      },
-      history: {
-        past: [...s.history.past, cloneProject(s.project)].slice(-100),
-        future: [],
-        transactionStart: null,
-      },
-    }))
-
-    return nextId
-  },
 
   addOperation: (kind, pass, target, libraryTools) => {
     const state = get()
