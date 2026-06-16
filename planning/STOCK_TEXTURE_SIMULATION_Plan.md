@@ -177,6 +177,23 @@ unit-tested), per the validation section below.
 
 ## Open questions / risks
 
+- **Realism reality-check (the two viable routes):** convincing results come from
+  either (a) one large image covering the whole stock (Fit/Cover — no seams, best
+  for a photo of the actual board), or (b) a seamless tile (Tile mode — good for
+  uniform materials). **Wood is the hard case for tiling**: directional grain,
+  knots and color drift make plain `RepeatWrapping` show obvious seams and a
+  wallpaper rhythm. Triplanar does **not** hide tile seams (it only hides
+  projection stretch on steep walls). `MirroredRepeatWrapping` softens seams a bit
+  but gives unnatural mirror-symmetric grain. The genuinely correct answer for wood
+  is procedural/solid grain (Level C, out of scope) — seamless and sharp at any
+  zoom. Expectation: Fit + Tile serve materials broadly; truly convincing wood is a
+  later procedural upgrade.
+- **Resolution vs. the 2048px cap (tablet tradeoff):** the "big image covers the
+  whole stock" route is in tension with the downscale cap — a 2048px image spread
+  across a large stock looks soft when zoomed in. Raising to 4096px restores
+  sharpness but ~quadruples texture VRAM (≈16MB → ≈64MB + mipmaps), which matters
+  on the tablet targets. **Recommendation: keep 2048 as the tablet-safe default**
+  and accept some softness on large-stock Fit, rather than per-device cap logic.
 - **Triplanar seams on Tile mode** with non-seamless images — inherent; acceptable
   for grain. Documented, not solved here.
 - **WebGL float-texture path unchanged** — the color map is a normal 8-bit sRGB
