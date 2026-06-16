@@ -24,6 +24,13 @@ import {
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
 import type { ProjectStore } from '../types'
 import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
+import {
+  mirrorFeatureFromReference,
+  resizeBackdropFromReference,
+  resizeFeatureFromReference,
+  rotateBackdropFromReference,
+  rotateFeatureFromReference,
+} from '../helpers/referenceTransforms'
 
 export interface PendingCompletionSliceDependencies {
   cloneProject: (project: Project) => Project
@@ -55,35 +62,6 @@ export interface PendingCompletionSliceDependencies {
     dy: number,
     copyCount: number,
   ) => Tab[]
-  resizeBackdropFromReference: (
-    backdrop: NonNullable<Project['backdrop']>,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => Project['backdrop']
-  rotateBackdropFromReference: (
-    backdrop: NonNullable<Project['backdrop']>,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => Project['backdrop']
-  resizeFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => SketchFeature | null
-  rotateFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => SketchFeature | null
-  mirrorFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-  ) => SketchFeature | null
   buildRotatedCopies: (
     sourceFeatures: SketchFeature[],
     existingFeatures: SketchFeature[],
@@ -375,8 +353,8 @@ export function createPendingCompletionSlice(
 
           const nextBackdrop =
             pendingTransform.mode === 'resize'
-              ? deps.resizeBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
-              : deps.rotateBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              ? resizeBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              : rotateBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
 
           if (!nextBackdrop) {
             return { pendingTransform: null }
@@ -508,10 +486,10 @@ export function createPendingCompletionSlice(
         for (const feature of sourceFeatures) {
           const transformed =
             pendingTransform.mode === 'resize'
-              ? deps.resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              ? resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
               : pendingTransform.mode === 'rotate'
-                ? deps.rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
-                : deps.mirrorFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+                ? rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+                : mirrorFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd)
           if (!transformed) {
             return { pendingTransform: null }
           }

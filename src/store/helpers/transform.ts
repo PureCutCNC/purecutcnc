@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Point, Segment, SketchFeature, Clamp, Tab } from '../../types/project'
+import type { Point, Segment, SketchFeature, Clamp, Tab, STLFeatureData } from '../../types/project'
 import { normalizePoint, subtractPoint, scalePoint, dotPoint } from './geometry'
 import { angleToPoint, normalizeAngleDegrees } from './normalize'
 
@@ -247,5 +247,16 @@ export function translateTab(tab: Tab, dx: number, dy: number): Tab {
     ...tab,
     x: tab.x + dx,
     y: tab.y + dy,
+  }
+}
+
+export function transformStlFeatureData(
+  stl: STLFeatureData | null | undefined,
+  transformPoint: (point: Point) => Point,
+): STLFeatureData | null | undefined {
+  if (!stl?.silhouettePaths) return stl
+  return {
+    ...stl,
+    silhouettePaths: stl.silhouettePaths.map((path) => path.map(transformPoint)),
   }
 }

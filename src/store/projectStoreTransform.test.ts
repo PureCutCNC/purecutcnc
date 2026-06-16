@@ -21,7 +21,8 @@
  */
 
 import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type SketchFeature } from '../types/project'
-import { mirrorFeatureFromReference, normalizeProject, resizeFeatureFromReference } from './projectStore'
+import { normalizeProject } from './projectStore'
+import { mirrorFeatureFromReference, resizeFeatureFromReference } from './helpers/referenceTransforms'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
