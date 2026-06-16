@@ -29,6 +29,16 @@ the `.camj` so projects stay self-contained.
   with `.camj` being a self-contained format.
 - **Projection:** **triplanar** (Level B), blended by the per-fragment surface
   normal, so steep 3D-carved flanks don't smear.
+- **Downscale on import:** images are downscaled to a max dimension of **2048px**
+  (aspect preserved) before embedding, to keep `.camj` size reasonable.
+
+## Sequencing
+
+**Implementation is deferred until the in-progress major restructuring work
+completes** (see [`REFACTORING_Plan.md`](REFACTORING_Plan.md)); this feature will
+be built on top of the restructured code. The plan stays `Draft` until then. When
+picking it up, re-verify the file paths in "Files affected" against the
+post-restructuring layout before starting.
 
 ## Approach
 
@@ -102,6 +112,11 @@ heightfield fetches the surface shader already does.
 
 ### Texture upload + material wiring (`gpuMesh.ts` + `SimulationViewport.tsx`)
 
+On image import (in the panel handler), downscale the picked file to a max
+dimension of 2048px (preserving aspect, via an offscreen canvas) before encoding
+the data URL. The captured `imageWidthPx` / `imageHeightPx` reflect the
+downscaled size.
+
 - In `SimulationViewport`, when `stock.texture` is set, build a `THREE.Texture`
   from `imageData` once (memoised by `imageData`): `colorSpace = SRGBColorSpace`,
   `wrapS/wrapT` from the resolved `wrap`, `generateMipmaps = true`,
@@ -164,9 +179,6 @@ unit-tested), per the validation section below.
 
 - **Triplanar seams on Tile mode** with non-seamless images — inherent; acceptable
   for grain. Documented, not solved here.
-- **Large embedded images** bloat the `.camj`. Mitigation: downscale on import to a
-  max dimension (e.g. 2048px) before embedding. Flagging as a recommended addition;
-  will include unless you'd rather store the original.
 - **WebGL float-texture path unchanged** — the color map is a normal 8-bit sRGB
   texture, independent of the heightfield float texture, so no new capability risk.
 
