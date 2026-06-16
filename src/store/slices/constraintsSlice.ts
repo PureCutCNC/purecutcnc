@@ -23,17 +23,13 @@ import {
   validateConstraintsOnFeature,
   type ConstraintInput,
 } from '../../sketch/constraintSolver'
-import type { LocalConstraint, Point, Project, SketchFeature } from '../../types/project'
+import type { LocalConstraint, Project } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
+import { translateProfile, transformProfile } from '../helpers/transform'
 
 export interface ConstraintsSliceDependencies {
   cloneProject: (project: Project) => Project
-  translateProfile: (profile: SketchFeature['sketch']['profile'], dx: number, dy: number) => SketchFeature['sketch']['profile']
-  transformProfile: (
-    profile: SketchFeature['sketch']['profile'],
-    transformPoint: (point: Point) => Point,
-  ) => SketchFeature['sketch']['profile']
 }
 
 export type ConstraintsSlice = Pick<
@@ -54,8 +50,6 @@ export function createConstraintsSlice(
 ): ConstraintsSlice {
   const {
     cloneProject,
-    translateProfile,
-    transformProfile,
   } = deps
 
   return {

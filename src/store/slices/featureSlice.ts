@@ -20,7 +20,6 @@ import type {
   FeatureOperation,
   FeatureTreeEntry,
   PersistedImportedMesh,
-  Point,
   Project,
   SketchFeature,
   SketchProfile,
@@ -54,6 +53,7 @@ import {
   clipperContourToProfilePreserving,
 } from '../../engine/toolpaths/arcReconstruction'
 import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipping'
+import { transformProfile } from '../helpers/transform'
 import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
@@ -83,10 +83,6 @@ export interface FeatureSliceDependencies {
     operation: FeatureOperation | undefined,
   ) => string | null
   syncStockFromSourceFeature: (project: Project, featureId: string) => Project
-  transformProfile: (
-    profile: SketchFeature['sketch']['profile'],
-    transformPoint: (point: Point) => Point,
-  ) => SketchFeature['sketch']['profile']
   pruneUnusedModelAssets: (project: Project) => Project
 }
 
@@ -131,7 +127,6 @@ export function createFeatureSlice(
     normalizeImportedModelStorage,
     folderIdForOperation,
     syncStockFromSourceFeature,
-    transformProfile,
     pruneUnusedModelAssets,
   } = deps
 

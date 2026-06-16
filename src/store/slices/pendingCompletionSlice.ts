@@ -23,6 +23,7 @@ import {
 } from '../helpers/derivedFeatures'
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
 import type { ProjectStore } from '../types'
+import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
 
 export interface PendingCompletionSliceDependencies {
   cloneProject: (project: Project) => Project
@@ -31,9 +32,6 @@ export interface PendingCompletionSliceDependencies {
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
-  transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile']
-  translateClamp: (clamp: Clamp, dx: number, dy: number) => Clamp
-  translateTab: (tab: Tab, dx: number, dy: number) => Tab
   buildCopiedFeatures: (
     sourceFeatures: SketchFeature[],
     existingFeatures: SketchFeature[],
@@ -211,7 +209,7 @@ export function createPendingCompletionSlice(
                       origin: ['text', 'stl'].includes(feature.kind) 
                         ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy } 
                         : feature.sketch.origin,
-                      profile: deps.transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
+                      profile: transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
                   }
                 })
@@ -280,7 +278,7 @@ export function createPendingCompletionSlice(
               mode === 'copy'
                 ? [...s.project.tabs, ...createdTabs]
                 : s.project.tabs.map((tab) => (
-                    entityIds.includes(tab.id) ? deps.translateTab(tab, dx, dy) : tab
+                    entityIds.includes(tab.id) ? translateTab(tab, dx, dy) : tab
                   )),
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
@@ -329,7 +327,7 @@ export function createPendingCompletionSlice(
             mode === 'copy'
               ? [...s.project.clamps, ...createdClamps]
               : s.project.clamps.map((clamp) => (
-                  entityIds.includes(clamp.id) ? deps.translateClamp(clamp, dx, dy) : clamp
+                  entityIds.includes(clamp.id) ? translateClamp(clamp, dx, dy) : clamp
                 )),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

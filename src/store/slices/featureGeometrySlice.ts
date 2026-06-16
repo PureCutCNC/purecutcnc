@@ -26,6 +26,7 @@ import {
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
 import { clonePoint, lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
+import { translatePoint, transformProfile } from '../helpers/transform'
 import {
   anchorPointForIndex,
   applyLineCornerFillet,
@@ -46,11 +47,6 @@ export interface FeatureGeometrySliceDependencies {
   projectsEqual: (a: Project, b: Project) => boolean
   syncFeatureTreeProject: (project: Project) => Project
   syncStockFromSourceFeature: (project: Project, featureId: string) => Project
-  translatePoint: (point: Point, dx: number, dy: number) => Point
-  transformProfile: (
-    profile: SketchFeature['sketch']['profile'],
-    transformPoint: (point: Point) => Point,
-  ) => SketchFeature['sketch']['profile']
   joinOpenProfiles: (
     profile: SketchProfile,
     endpoint: OpenProfileEndpoint,
@@ -86,8 +82,6 @@ export function createFeatureGeometrySlice(
     projectsEqual,
     syncFeatureTreeProject,
     syncStockFromSourceFeature,
-    translatePoint,
-    transformProfile,
     joinOpenProfiles,
     inferFeatureKind,
     clearStaleConstraints,
