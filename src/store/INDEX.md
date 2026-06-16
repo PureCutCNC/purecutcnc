@@ -37,6 +37,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
+  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — normalizes incoming/legacy project data

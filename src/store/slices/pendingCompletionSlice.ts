@@ -31,6 +31,7 @@ import {
   rotateBackdropFromReference,
   rotateFeatureFromReference,
 } from '../helpers/referenceTransforms'
+import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies } from '../helpers/copyFeatures'
 
 export interface PendingCompletionSliceDependencies {
   cloneProject: (project: Project) => Project
@@ -39,42 +40,6 @@ export interface PendingCompletionSliceDependencies {
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
-  buildCopiedFeatures: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => SketchFeature[]
-  buildCopiedClamps: (
-    sourceClamps: Clamp[],
-    existingClamps: Clamp[],
-    project: Project,
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => Clamp[]
-  buildCopiedTabs: (
-    sourceTabs: Tab[],
-    existingTabs: Tab[],
-    project: Project,
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => Tab[]
-  buildRotatedCopies: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    pivot: Point,
-    angle: number,
-    copyCount: number,
-  ) => SketchFeature[]
-  buildMirroredCopies: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    lineStart: Point,
-    lineEnd: Point,
-  ) => SketchFeature[]
   previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
   syncFeatureTreeProject: (project: Project) => Project
   createDerivedFeature: (
@@ -161,7 +126,7 @@ export function createPendingCompletionSlice(
 
           const createdFeatures =
             mode === 'copy'
-              ? deps.buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+              ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
               : []
 
           const translatedFeatures =
@@ -247,7 +212,7 @@ export function createPendingCompletionSlice(
 
           const createdTabs =
             mode === 'copy'
-              ? deps.buildCopiedTabs(sourceTabs, s.project.tabs, s.project, dx, dy, normalizedCopyCount)
+              ? buildCopiedTabs(sourceTabs, s.project.tabs, s.project, dx, dy, normalizedCopyCount)
               : []
 
           const nextProject = {
@@ -296,7 +261,7 @@ export function createPendingCompletionSlice(
 
         const createdClamps =
           mode === 'copy'
-            ? deps.buildCopiedClamps(sourceClamps, s.project.clamps, s.project, dx, dy, normalizedCopyCount)
+            ? buildCopiedClamps(sourceClamps, s.project.clamps, s.project, dx, dy, normalizedCopyCount)
             : []
 
         const nextProject = {
@@ -405,7 +370,7 @@ export function createPendingCompletionSlice(
             return { pendingTransform: null }
           }
           const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
-          const createdFeatures = deps.buildRotatedCopies(
+          const createdFeatures = buildRotatedCopies(
             sourceFeatures,
             s.project.features,
             pendingTransform.referenceStart,
@@ -445,7 +410,7 @@ export function createPendingCompletionSlice(
 
         // Mirror+copy: keep originals and add one mirrored copy of each selected feature.
         if (pendingTransform.mode === 'mirror' && pendingTransform.keepOriginals) {
-          const createdFeatures = deps.buildMirroredCopies(
+          const createdFeatures = buildMirroredCopies(
             sourceFeatures,
             s.project.features,
             pendingTransform.referenceStart,
