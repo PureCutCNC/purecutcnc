@@ -10,6 +10,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+- [STOCK_TEXTURE_SIMULATION_Plan.md](STOCK_TEXTURE_SIMULATION_Plan.md) — attach an embedded image to the stock definition and render it on the simulation stock via triplanar projection (Fit/Tile mapping), with a texture control in the stock properties panel
+
 ## Backlog / tech debt
 
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
