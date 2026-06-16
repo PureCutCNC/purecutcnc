@@ -31,6 +31,10 @@ the `.camj` so projects stay self-contained.
   normal, so steep 3D-carved flanks don't smear.
 - **Downscale on import:** images are downscaled to a max dimension of **2048px**
   (aspect preserved) before embedding, to keep `.camj` size reasonable.
+- **Tile wrap:** Tile mode offers **repeat** or **mirror**
+  (`MirroredRepeatWrapping`), defaulting to **mirror** — it's seam-free by
+  construction and, for wood, reads as intentional book-matching. Repeat stays
+  available for images that genuinely tile.
 
 ## Sequencing
 
@@ -59,6 +63,8 @@ export interface StockTexture {
   /** Tile mode only: real-world width one copy of the image spans, in project units.
    *  Height is derived from the pixel aspect ratio. */
   physicalWidth?: number
+  /** Tile mode only: how the image repeats. Defaults to 'mirror' (seam-free). */
+  tileWrap?: 'repeat' | 'mirror'
 }
 
 export interface Stock {
@@ -79,11 +85,11 @@ size one copy of the image spans (the value the shader needs):
 export function resolveTextureWorldSize(
   stockBounds: Bounds2D,
   texture: StockTexture,
-): { worldSizeX: number; worldSizeY: number; wrap: 'repeat' | 'clamp' }
+): { worldSizeX: number; worldSizeY: number; wrap: 'repeat' | 'mirror' | 'clamp' }
 ```
 
 - **tile:** `worldSizeX = physicalWidth`, `worldSizeY = physicalWidth / aspect`,
-  `wrap = 'repeat'`.
+  `wrap = texture.tileWrap ?? 'mirror'`.
 - **fit (cover):** pick the uniform scale that covers the footprint
   (`max` of the two axis ratios), so one copy covers the stock with overflow
   cropped; `wrap = 'clamp'`. Returns the covered world size centered on the stock.
@@ -119,7 +125,9 @@ downscaled size.
 
 - In `SimulationViewport`, when `stock.texture` is set, build a `THREE.Texture`
   from `imageData` once (memoised by `imageData`): `colorSpace = SRGBColorSpace`,
-  `wrapS/wrapT` from the resolved `wrap`, `generateMipmaps = true`,
+  `wrapS/wrapT` from the resolved `wrap` (`repeat → RepeatWrapping`,
+  `mirror → MirroredRepeatWrapping`, `clamp → ClampToEdgeWrapping`),
+  `generateMipmaps = true`,
   `anisotropy = renderer.capabilities.getMaxAnisotropy()`. Dispose on change/unmount.
 - Compute `uTextureWorldSize` / `uTextureOrigin` from `resolveTextureWorldSize`
   using the grid's stock bounds, and feed the uniforms into the materials created
@@ -134,6 +142,7 @@ In the existing stock section (near color/material, around `PropertiesPanel.tsx:
   data URL, capture natural px size, write `texture` via the store.
 - **Mode select** — Fit / Tile.
 - **Physical width field** — shown only in Tile mode, in project units.
+- **Tile wrap selector** — Repeat / Mirror; shown only in Tile mode, default Mirror.
 - **Clear** button — sets `texture` to null.
 
 Gotcha to handle: the panel rebuilds the stock via `defaultStock(...)` and copies
@@ -163,7 +172,8 @@ other stock edit.
 ## Tests
 
 - *(new)* `src/engine/simulation/stockTexture.test.ts` — `resolveTextureWorldSize`:
-  - tile mode: world size from `physicalWidth` + pixel aspect; wrap = repeat.
+  - tile mode: world size from `physicalWidth` + pixel aspect; wrap defaults to
+    `mirror` and honors an explicit `repeat`.
   - fit/cover: uniform scale covers footprint; wider-than-stock and taller-than-stock
     images both crop correctly; wrap = clamp; result centered.
   - square image on non-square stock; non-square image; degenerate/zero guards.
@@ -183,11 +193,13 @@ unit-tested), per the validation section below.
   uniform materials). **Wood is the hard case for tiling**: directional grain,
   knots and color drift make plain `RepeatWrapping` show obvious seams and a
   wallpaper rhythm. Triplanar does **not** hide tile seams (it only hides
-  projection stretch on steep walls). `MirroredRepeatWrapping` softens seams a bit
-  but gives unnatural mirror-symmetric grain. The genuinely correct answer for wood
-  is procedural/solid grain (Level C, out of scope) — seamless and sharp at any
-  zoom. Expectation: Fit + Tile serve materials broadly; truly convincing wood is a
-  later procedural upgrade.
+  projection stretch on steep walls). **Mirror tiling** (`MirroredRepeatWrapping`,
+  the Tile-mode default) removes hard seams by construction and, for wood, reads as
+  intentional book-matching — making Tile viable for carefully chosen images; the
+  cost is mirror-symmetric repeats of any off-center feature (knots, stains). The
+  fully seamless, zoom-independent answer for wood remains procedural/solid grain
+  (Level C, out of scope). Expectation: Fit + mirror-Tile serve materials broadly;
+  truly convincing arbitrary wood is a later procedural upgrade.
 - **Resolution vs. the 2048px cap (tablet tradeoff):** the "big image covers the
   whole stock" route is in tension with the downscale cap — a 2048px image spread
   across a large stock looks soft when zoomed in. Raising to 4096px restores
