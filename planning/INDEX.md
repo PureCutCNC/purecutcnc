@@ -16,6 +16,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
+
 - [FEATURE_CREATION_PICKER_POC_Plan.md](FEATURE_CREATION_PICKER_POC_Plan.md) — compact feature creation picker POC with drawer selection plus a last-used repeat button in the left rail
 
 - [MEASURE_DIMENSIONS_Plan.md](MEASURE_DIMENSIONS_Plan.md) — tape-measure tool (transient distance readout) + permanent CAD dimensions (aligned/horizontal/vertical/radius/diameter/angle) anchored to geometry so they auto-update when features move/change
