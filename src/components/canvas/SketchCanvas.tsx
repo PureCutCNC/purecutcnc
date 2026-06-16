@@ -29,10 +29,8 @@ import {
   buildPendingDraftProfile,
   buildPendingProfile,
   compositeDraftPoints,
-  computeEditDimSteps,
   drawCompositeDraft,
   drawSnapIndicator,
-  type EditDimStep,
   findOpenProfileExtensionEndpoint,
   type PendingSketchExtension,
 } from './draftHelpers'
@@ -45,7 +43,6 @@ import {
   drawRadiusMeasurement,
 } from './measurements'
 import {
-  arcHandleFromRadius,
   computeDimensionEditPreviewPoint,
   computeLinearInputLabel,
   computeMoveDistancePreviewPoint,
@@ -55,7 +52,8 @@ import {
   computeScalePreviewPoint,
   unitDirection,
 } from './manualEntry'
-import type { DimensionEditState, OperationDimEdit } from './manualEntry'
+import type { OperationDimEdit } from './manualEntry'
+import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -288,7 +286,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const suppressClickRef = useRef(false)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const activeSnapRef = useRef<ResolvedSnap | null>(null)
-  const draggingDimensionIdRef = useRef<string | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
@@ -309,17 +306,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [stlImageRevision, setStlImageRevision] = useState(0)
-  const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
   const hoveredEditControlRef = useRef<SketchControlRef | null>(null)
-  const dimensionEditRef = useRef<DimensionEditState | null>(null)
-  const dimensionEditControlRef = useRef<SketchControlRef | null>(null)
-  const dimensionEditFeatureIdRef = useRef<string | null>(null)
-  const editDimStepsRef = useRef<EditDimStep[]>([])
-  const editDimStepIndexRef = useRef(0)
-  const widthInputRef = useRef<HTMLInputElement>(null)
-  const heightInputRef = useRef<HTMLInputElement>(null)
-  const radiusInputRef = useRef<HTMLInputElement>(null)
   const [operationDimEdit, setOperationDimEdit] = useState<OperationDimEdit | null>(null)
   const operationDimEditRef = useRef<OperationDimEdit | null>(null)
   operationDimEditRef.current = operationDimEdit
@@ -338,7 +326,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const shellMode = useShellMode()
   const isTablet = isTabletMode(shellMode)
   const [multiSelectMode, setMultiSelectMode] = useState(false)
-  const [armedForDimension, setArmedForDimension] = useState(false)
 
   const {
     project,
@@ -492,8 +479,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   selectedAnnotationIdRef.current = selectedAnnotationId
   operationHighlightKindRef.current = operationHighlightKind
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
-  dimensionEditRef.current = dimensionEdit
   constraintEditRef.current = constraintEdit
+
+  const dimEdit = useDimensionEditWorkflow({
+    projectRef,
+    canvasRef,
+    commitHistoryTransaction,
+    cancelHistoryTransaction,
+    moveFeatureControl,
+  })
 
   // Axis lock — active whenever a move, node drag, sketch-edit drag, constraint pick, or feature creation is in progress
 
@@ -553,7 +547,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const creationPanelHasPoints = creationPanelShape && pendingAdd && 'points' in pendingAdd && pendingAdd.points.length > 0
   const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
   const creationCanDimEdit = creationPanelHasAnchor || creationPanelHasPoints || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
-  const creationDimEditActive = !!creationCanDimEdit && !!dimensionEdit
+  const creationDimEditActive = !!creationCanDimEdit && !!dimEdit.dimensionEdit
   const creationWorkflowPanel = useCanvasWorkflowPanel({
     open: !!creationPanelShape,
     phaseKey: creationDimEditActive ? 'dimensions'
@@ -576,7 +570,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   })
 
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
-  const editDimEditActive = editModeActive && !!dimensionEdit
+  const editDimEditActive = editModeActive && !!dimEdit.dimensionEdit
   const editWorkflowPanel = useCanvasWorkflowPanel({
     open: editModeActive,
     phaseKey: editDimEditActive ? 'dimensions' : 'editing',
@@ -672,7 +666,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
     hoveredEditControlRef.current = nextControl
-    if (!nextControl) setArmedForDimension(false)
+    if (!nextControl) dimEdit.setArmedForDimension(false)
     scheduleDraw()
   })
 
@@ -865,14 +859,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function commitCreationDimensionEdit() {
-    const edit = dimensionEditRef.current
+    const edit = dimEdit.dimensionEditRef.current
     if (!edit) return
     const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
     const pendingAdd = pendingAddRef.current
     if ((edit.shape === 'polygon' || edit.shape === 'spline') && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')) {
       addPendingPolygonPoint(pt)
       setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-      setDimensionEdit(null)
+      dimEdit.setDimensionEdit(null)
       creationWorkflowPanel.focusCanvasAfterAction()
     } else if (pendingAdd?.shape === 'composite') {
       if (pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd && edit.radius) {
@@ -898,7 +892,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           } else {
             setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
           }
-          setDimensionEdit(null)
+          dimEdit.setDimensionEdit(null)
           creationWorkflowPanel.focusCanvasAfterAction()
           return
         }
@@ -907,30 +901,30 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         addPendingCompositePoint(pt)
         const arcEnd = edit.arcEnd
         setPendingPreviewPointRef({ point: arcEnd, session: pendingAdd.session })
-        setDimensionEdit(null)
+        dimEdit.setDimensionEdit(null)
         creationWorkflowPanel.focusCanvasAfterAction()
       } else {
         addPendingCompositePoint(pt)
         setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-        setDimensionEdit(null)
+        dimEdit.setDimensionEdit(null)
         creationWorkflowPanel.focusCanvasAfterAction()
       }
     } else {
       placePendingAddAt(pt)
       setPendingPreviewPointRef(null)
-      setDimensionEdit(null)
+      dimEdit.setDimensionEdit(null)
       creationWorkflowPanel.focusCanvasAfterAction()
     }
   }
 
   function cancelCreationDimensionEdit() {
-    setDimensionEdit(null)
+    dimEdit.setDimensionEdit(null)
     creationWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelCreationFromPanel() {
     cancelPendingAdd()
-    setDimensionEdit(null)
+    dimEdit.setDimensionEdit(null)
     creationWorkflowPanel.focusCanvasAfterAction()
   }
 
@@ -975,12 +969,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function commitEditDimensionFromPanel() {
-    commitEditDimension()
+    dimEdit.commitEditDimension()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelEditDimensionFromPanel() {
-    cancelEditDimension()
+    dimEdit.cancelEditDimension()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
@@ -1126,7 +1120,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility, operationHighlightKind])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -1137,13 +1131,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   useEffect(() => {
     if (selection.mode !== 'sketch_edit') {
       hoveredEditControlRef.current = null
-      dimensionEditControlRef.current = null
-      dimensionEditFeatureIdRef.current = null
-      editDimStepsRef.current = []
-      editDimStepIndexRef.current = 0
-      setDimensionEdit(null)
+      dimEdit.dimensionEditControlRef.current = null
+      dimEdit.dimensionEditFeatureIdRef.current = null
+      dimEdit.editDimStepsRef.current = []
+      dimEdit.editDimStepIndexRef.current = 0
+      dimEdit.setDimensionEdit(null)
     }
-  }, [selection.mode])
+  }, [selection.mode, dimEdit])
 
   useEffect(() => {
     if (
@@ -1265,15 +1259,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       if (editing) {
         const hoveredEditControl =
-          !isDraggingNodeRef.current && !dimensionEditControlRef.current
+          !isDraggingNodeRef.current && !dimEdit.dimensionEditControlRef.current
             ? hoveredEditControlRef.current
             : null
         const editControl =
           isDraggingNodeRef.current
             ? selection.activeControl
-            : (dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
+            : (dimEdit.dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
         drawSketchControls(ctx, feature.sketch.profile, vt, editControl)
-        if (editControl && (isDraggingNodeRef.current || dimensionEditControlRef.current || hoveredEditControl)) {
+        if (editControl && (isDraggingNodeRef.current || dimEdit.dimensionEditControlRef.current || hoveredEditControl)) {
           drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
       }
@@ -1455,7 +1449,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ctx.restore()
     }
 
-    const dimensionEdit = dimensionEditRef.current
+    const dimensionEdit = dimEdit.dimensionEditRef.current
     const currentPreviewPoint =
       dimensionEdit
         ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
@@ -2012,21 +2006,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   // Re-focus when the active edit field changes or the edit opens/closes; the
   // derived key (null while closed) is statically checkable as a single dep.
-  const dimensionEditActiveField = dimensionEdit?.activeField ?? null
+  const dimensionEditActiveField = dimEdit.dimensionEdit?.activeField ?? null
   useEffect(() => {
     if (dimensionEditActiveField === null) return
     const inputRef =
-      dimensionEditActiveField === 'width' ? widthInputRef
-      : dimensionEditActiveField === 'height' ? heightInputRef
-      : dimensionEditActiveField === 'radius' ? radiusInputRef
-      : dimensionEditActiveField === 'length' ? widthInputRef
-      : heightInputRef  // angle
+      dimensionEditActiveField === 'width' ? dimEdit.widthInputRef
+      : dimensionEditActiveField === 'height' ? dimEdit.heightInputRef
+      : dimensionEditActiveField === 'radius' ? dimEdit.radiusInputRef
+      : dimensionEditActiveField === 'length' ? dimEdit.widthInputRef
+      : dimEdit.heightInputRef  // angle
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [dimensionEditActiveField])
+  }, [dimensionEditActiveField, dimEdit.heightInputRef, dimEdit.radiusInputRef, dimEdit.widthInputRef])
 
   const filletDimensionEditActive = filletDimensionEdit != null
   useEffect(() => {
@@ -2069,10 +2063,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [selection.mode, selection.sketchEditTool])
 
   useEffect(() => {
-    if (!pendingAdd) {
-      setDimensionEdit(null)
+    if (!pendingAdd && selectionRef.current.mode !== 'sketch_edit') {
+      dimEdit.setDimensionEdit(null)
     }
-  }, [pendingAdd])
+  }, [pendingAdd, dimEdit])
 
   useEffect(() => {
     if (!pendingMove) setOperationDimEdit(null)
@@ -2089,13 +2083,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const operationDimEditKind = operationDimEdit?.kind ?? null
   useEffect(() => {
     if (operationDimEditKind === null) return
-    const inputRef = widthInputRef
+    const inputRef = dimEdit.widthInputRef
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [operationDimEditKind])
+  }, [operationDimEditKind, dimEdit.widthInputRef])
 
   useEffect(() => {
     const pendingMove = pendingMoveRef.current
@@ -2417,37 +2411,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const selectedNode = selection.selectedNode
     if (selectedNode?.type !== 'tab') return null
     return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
-  }
-
-  function computeEditStepsForControl(profile: SketchFeature['sketch']['profile'], control: SketchControlRef | null): EditDimStep[] {
-    if (!control) {
-      return []
-    }
-
-    if (control.kind === 'anchor') {
-      return computeEditDimSteps(profile, control.index)
-    }
-
-    if (control.kind === 'circle_center') {
-      return computeEditDimSteps(profile, 0)
-    }
-
-    if (control.kind === 'arc_handle') {
-      return [{ kind: 'arc_radius', control, arcStartAnchorIndex: control.index }]
-    }
-
-    if (control.kind === 'segment') {
-      const seg = profile.segments[control.index]
-      if (seg.type === 'arc') {
-        return [{ kind: 'arc_radius', control: { kind: 'arc_handle', index: control.index }, arcStartAnchorIndex: control.index }]
-      }
-      const endAnchorIndex = profile.closed
-        ? (control.index + 1) % profile.segments.length
-        : control.index + 1
-      return [{ kind: 'endpoint', control: { kind: 'anchor', index: endAnchorIndex }, fromAnchorIndex: control.index }]
-    }
-
-    return []
   }
 
   function projectPointToSegment(point: Point, start: Point, end: Point): { point: Point; t: number; distance: number } {
@@ -2816,7 +2779,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const dim = project.annotations.find((d) => d.id === hitDim)
         if (dim && !dim.locked && offsetForCursor(dim, project, world) !== null) {
           selectAnnotation(hitDim)
-          draggingDimensionIdRef.current = hitDim
+          dimEdit.draggingDimensionIdRef.current = hitDim
           beginHistoryTransaction()
           suppressClickRef.current = true
           return
@@ -2869,7 +2832,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (dimensionEditRef.current) cancelEditDimension()
+    if (dimEdit.dimensionEditRef.current) dimEdit.cancelEditDimension()
     beginHistoryTransaction()
     setActiveControl(nextControl)
     isDraggingNodeRef.current = true
@@ -2921,8 +2884,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     // ── Dragging a dimension: update its offset to follow the cursor ──
-    if (draggingDimensionIdRef.current) {
-      const dim = project.annotations.find((d) => d.id === draggingDimensionIdRef.current)
+    if (dimEdit.draggingDimensionIdRef.current) {
+      const dim = project.annotations.find((d) => d.id === dimEdit.draggingDimensionIdRef.current)
       if (dim) {
         const off = offsetForCursor(dim, project, world)
         if (off !== null) {
@@ -2939,7 +2902,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const dy = point.cy - pending.canvasPoint.cy
       if (dx * dx + dy * dy > 25) {
         touchDragPendingRef.current = null
-        if (dimensionEditRef.current) cancelEditDimension()
+        if (dimEdit.dimensionEditRef.current) dimEdit.cancelEditDimension()
         beginHistoryTransaction()
         setActiveControl(pending.control)
         isDraggingNodeRef.current = true
@@ -3232,7 +3195,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
       const feature = editableFeature()
       const hoveredControl = feature ? hitEditableControl(point, { includeSegments: false }) : null
-      const steps = feature ? computeEditStepsForControl(feature.sketch.profile, hoveredControl) : []
+      const steps = feature ? dimEdit.computeEditStepsForControl(feature.sketch.profile, hoveredControl) : []
       setHoveredEditControl(steps.length > 0 ? hoveredControl : null)
       hoverFeature(null)
       return
@@ -3324,12 +3287,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const pending = touchDragPendingRef.current
       touchDragPendingRef.current = null
       setHoveredEditControl(pending.control)
-      setArmedForDimension(true)
+      dimEdit.setArmedForDimension(true)
       return
     }
 
-    if (draggingDimensionIdRef.current) {
-      draggingDimensionIdRef.current = null
+    if (dimEdit.draggingDimensionIdRef.current) {
+      dimEdit.draggingDimensionIdRef.current = null
       commitHistoryTransaction()
       scheduleDraw()
       return
@@ -3412,8 +3375,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     longPressStartRef.current = null
     touchDragPendingRef.current = null
 
-    if (draggingDimensionIdRef.current) {
-      draggingDimensionIdRef.current = null
+    if (dimEdit.draggingDimensionIdRef.current) {
+      dimEdit.draggingDimensionIdRef.current = null
       commitHistoryTransaction()
     }
 
@@ -3486,7 +3449,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
     const viewState = viewStateRef.current
-    const dimensionEdit = dimensionEditRef.current
+    const dimensionEdit = dimEdit.dimensionEditRef.current
     if (isDraggingNodeRef.current) return
 
     const point = canvasCoordinates(event)
@@ -3772,13 +3735,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (feature) {
           const control = hitEditableControl(point)
           if (control && (control.kind === 'segment' || control.kind === 'anchor' || control.kind === 'arc_handle')) {
-            const steps = computeEditStepsForControl(feature.sketch.profile, control)
+            const steps = dimEdit.computeEditStepsForControl(feature.sketch.profile, control)
             if (steps.length > 0) {
-              editDimStepsRef.current = steps
-              editDimStepIndexRef.current = 0
-              dimensionEditFeatureIdRef.current = selection.selectedFeatureId
+              dimEdit.editDimStepsRef.current = steps
+              dimEdit.editDimStepIndexRef.current = 0
+              dimEdit.dimensionEditFeatureIdRef.current = selection.selectedFeatureId
               beginHistoryTransaction()
-              applyEditDimStep(0, steps, selection.selectedFeatureId, project.meta.units)
+              dimEdit.applyEditDimStep(0, steps, selection.selectedFeatureId, project.meta.units)
               return
             }
           }
@@ -3789,7 +3752,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (dimensionEdit) {
-      commitEditDimension()
+      dimEdit.commitEditDimension()
       return
     }
 
@@ -4082,126 +4045,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     triggerContextMenuAt(event.clientX, event.clientY)
   }
 
-  function applyEditDimStep(stepIndex: number, steps: EditDimStep[], featureId: string, units: 'mm' | 'inch') {
-    if (stepIndex >= steps.length) {
-      cancelEditDimension()
-      return
-    }
-    const step = steps[stepIndex]
-    dimensionEditControlRef.current = step.control
-    const feature = useProjectStore.getState().project.features.find((f) => f.id === featureId)
-    if (!feature) return
-    const profile = feature.sketch.profile
-
-    if (step.kind === 'endpoint') {
-      const fromPoint = anchorPointForIndex(profile, step.fromAnchorIndex)
-      const anchorPos = anchorPointForIndex(profile, step.control.index)
-      const dx = anchorPos.x - fromPoint.x
-      const dy = anchorPos.y - fromPoint.y
-      setDimensionEdit({
-        shape: 'composite',
-        anchor: fromPoint,
-        signX: 1,
-        signY: 1,
-        activeField: 'length',
-        width: '',
-        height: '',
-        radius: '',
-        length: formatLength(Math.hypot(dx, dy), units),
-        angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, ''),
-      })
-    } else {
-      const seg = profile.segments[step.control.index]
-      if (!seg || (seg.type !== 'arc' && seg.type !== 'circle')) return
-      const arcStart = anchorPointForIndex(profile, step.arcStartAnchorIndex)
-      const radius = seg.type === 'arc'
-        ? Math.hypot(arcStart.x - seg.center.x, arcStart.y - seg.center.y)
-        : Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y)
-      const arcMid = seg.type === 'arc'
-        ? arcControlPoint(arcStart, seg)
-        : seg.center
-      setDimensionEdit({
-        shape: 'circle',
-        anchor: arcMid,
-        signX: 1,
-        signY: 1,
-        activeField: 'radius',
-        width: '',
-        height: '',
-        radius: formatLength(radius, units),
-        length: '',
-        angle: '',
-      })
-    }
-  }
-
-  function advanceTabInEditMode() {
-    const currentEdit = dimensionEditRef.current
-    const steps = editDimStepsRef.current
-    const stepIndex = editDimStepIndexRef.current
-    if (!currentEdit) return
-
-    const step = steps[stepIndex]
-    if (step?.kind === 'endpoint' && currentEdit.activeField === 'length') {
-      setDimensionEdit({ ...currentEdit, activeField: 'angle' })
-      return
-    }
-
-    const nextIndex = stepIndex + 1
-    editDimStepIndexRef.current = nextIndex
-    const featureId = dimensionEditFeatureIdRef.current
-    const units = projectRef.current.meta.units
-    if (featureId) {
-      applyEditDimStep(nextIndex, steps, featureId, units)
-    }
-  }
-
-  function commitEditDimension() {
-    commitHistoryTransaction()
-    dimensionEditControlRef.current = null
-    dimensionEditFeatureIdRef.current = null
-    editDimStepsRef.current = []
-    editDimStepIndexRef.current = 0
-    setDimensionEdit(null)
-    canvasRef.current?.focus({ preventScroll: true })
-  }
-
-  function cancelEditDimension() {
-    cancelHistoryTransaction()
-    dimensionEditControlRef.current = null
-    dimensionEditFeatureIdRef.current = null
-    editDimStepsRef.current = []
-    editDimStepIndexRef.current = 0
-    setDimensionEdit(null)
-    canvasRef.current?.focus({ preventScroll: true })
-  }
-
-  function handleEditDimLiveChange(field: 'length' | 'angle' | 'radius', value: string) {
-    const prev = dimensionEditRef.current
-    if (!prev) return
-    const next = { ...prev, [field]: value }
-    setDimensionEdit(next)
-    const control = dimensionEditControlRef.current
-    const fId = dimensionEditFeatureIdRef.current
-    if (!control || !fId) return
-
-    if (control.kind === 'arc_handle') {
-      const feature = projectRef.current.features.find((f) => f.id === fId)
-      if (!feature) return
-      const profile = feature.sketch.profile
-      const seg = profile.segments[control.index]
-      if (!seg || seg.type !== 'arc') return
-      const arcStart = anchorPointForIndex(profile, control.index)
-      const newRadius = parseLengthInput(value, projectRef.current.meta.units) ?? 0
-      if (newRadius <= 0) return
-      const newHandle = arcHandleFromRadius(arcStart, seg, newRadius)
-      if (newHandle) moveFeatureControl(fId, control, newHandle)
-    } else {
-      const pt = computeDimensionEditPreviewPoint(next, projectRef.current.meta.units)
-      moveFeatureControl(fId, control, pt)
-    }
-  }
-
   // Called by the "Type" button in banners — opens dimension input without
   // the Tab toggle-close behaviour. Keyboard Tab keeps its existing logic.
   function triggerDimensionEdit() {
@@ -4221,11 +4064,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
         if (pendingAdd.shape === 'circle') {
           const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-          setDimensionEdit({ shape: 'circle', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: 'circle', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
         } else {
           const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
           const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-          setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
         }
         return
       }
@@ -4234,7 +4077,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
         const dx = previewPoint.x - fromPoint.x
         const dy = previewPoint.y - fromPoint.y
-        setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
+        dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
         return
       }
       if (pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed) {
@@ -4264,7 +4107,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               - (arcEnd.y - arcStart.y) * (previewPoint.x - arcStart.x)
             return cross >= 0 ? 1 : -1
           })() : 1
-          setDimensionEdit({ shape: 'composite', anchor: arcStart, arcStart, arcEnd, arcClockwise: side < 0, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: 'composite', anchor: arcStart, arcStart, arcEnd, arcClockwise: side < 0, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
           return
         }
         const fromPoint = pendingAdd.lastPoint ?? pendingAdd.start
@@ -4274,7 +4117,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const len = Math.hypot(dx, dy)
         const angleDeg = (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
         const defaultRadius = pendingAdd.currentMode === 'arc' ? formatLength(len > 1e-9 ? len : 0.5, units) : ''
-        setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
+        dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
         return
       }
     }
@@ -4331,9 +4174,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (selection.mode === 'sketch_edit' && !pendingAdd && !filletDimensionEditRef.current) {
-      const currentEdit = dimensionEditRef.current
-      if (!currentEdit && dimensionEditControlRef.current) {
-        advanceTabInEditMode()
+      const currentEdit = dimEdit.dimensionEditRef.current
+      if (!currentEdit && dimEdit.dimensionEditControlRef.current) {
+        dimEdit.advanceTabInEditMode()
       }
     }
   }
@@ -4371,7 +4214,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (event.key === 'Tab' && pendingAdd) {
-      const currentEdit = dimensionEditRef.current
+      const currentEdit = dimEdit.dimensionEditRef.current
       const units = projectRef.current.meta.units
 
       if (
@@ -4384,7 +4227,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (!currentEdit) {
           if (pendingAdd.shape === 'circle') {
             const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-            setDimensionEdit({
+            dimEdit.setDimensionEdit({
               shape: 'circle',
               anchor: pendingAdd.anchor,
               signX: 1,
@@ -4399,7 +4242,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           } else {
             const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
             const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-            setDimensionEdit({
+            dimEdit.setDimensionEdit({
               shape: pendingAdd.shape,
               anchor: pendingAdd.anchor,
               signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1,
@@ -4413,9 +4256,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             })
           }
         } else if (currentEdit.shape !== 'circle' && currentEdit.activeField === 'width') {
-          setDimensionEdit({ ...currentEdit, activeField: 'height' })
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'height' })
         } else {
-          setDimensionEdit(null)
+          dimEdit.setDimensionEdit(null)
           canvasRef.current?.focus({ preventScroll: true })
         }
         return
@@ -4431,7 +4274,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const dy = previewPoint.y - fromPoint.y
           const len = Math.hypot(dx, dy)
           const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
-          setDimensionEdit({
+          dimEdit.setDimensionEdit({
             shape: pendingAdd.shape,
             anchor: fromPoint,
             signX: 1,
@@ -4444,9 +4287,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
           })
         } else if (currentEdit.activeField === 'length') {
-          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
         } else {
-          setDimensionEdit(null)
+          dimEdit.setDimensionEdit(null)
           canvasRef.current?.focus({ preventScroll: true })
         }
         return
@@ -4472,7 +4315,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             ? Math.hypot(arcStart.x - arcSeg.center.x, arcStart.y - arcSeg.center.y)
             : Math.hypot(arcEnd.x - arcStart.x, arcEnd.y - arcStart.y) / 2
           // Use current preview point as anchor to determine which side of the chord the arc center lies on
-          setDimensionEdit({
+          dimEdit.setDimensionEdit({
             shape: 'circle',
             anchor: previewPoint,
             arcStart,
@@ -4488,7 +4331,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             angle: '',
           })
         } else {
-          setDimensionEdit(null)
+          dimEdit.setDimensionEdit(null)
           canvasRef.current?.focus({ preventScroll: true })
         }
         return
@@ -4513,7 +4356,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const dy = previewPoint.y - fromPoint.y
           const len = Math.hypot(dx, dy)
           const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
-          setDimensionEdit({
+          dimEdit.setDimensionEdit({
             shape: 'composite',
             anchor: fromPoint,
             signX: 1,
@@ -4526,9 +4369,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
           })
         } else if (currentEdit.activeField === 'length') {
-          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
         } else {
-          setDimensionEdit(null)
+          dimEdit.setDimensionEdit(null)
           canvasRef.current?.focus({ preventScroll: true })
         }
         return
@@ -4648,11 +4491,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (event.key === 'Tab' && selection.mode === 'sketch_edit' && !pendingAdd) {
       event.preventDefault()
-      const currentEdit = dimensionEditRef.current
+      const currentEdit = dimEdit.dimensionEditRef.current
       const units = projectRef.current.meta.units
 
-      if (currentEdit && dimensionEditControlRef.current) {
-        advanceTabInEditMode()
+      if (currentEdit && dimEdit.dimensionEditControlRef.current) {
+        dimEdit.advanceTabInEditMode()
         return
       }
 
@@ -4663,15 +4506,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       const profile = feature.sketch.profile
       const control = selection.activeControl ?? hoveredEditControlRef.current
-      const steps = computeEditStepsForControl(profile, control)
+      const steps = dimEdit.computeEditStepsForControl(profile, control)
 
       if (steps.length === 0) return
 
-      editDimStepsRef.current = steps
-      editDimStepIndexRef.current = 0
-      dimensionEditFeatureIdRef.current = featureId
+      dimEdit.editDimStepsRef.current = steps
+      dimEdit.editDimStepIndexRef.current = 0
+      dimEdit.dimensionEditFeatureIdRef.current = featureId
       beginHistoryTransaction()
-      applyEditDimStep(0, steps, featureId, units)
+      dimEdit.applyEditDimStep(0, steps, featureId, units)
       return
     }
 
@@ -4733,7 +4576,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       originPreviewPointRef.current = null
       cancelPendingAdd()
       setPendingPreviewPointRef(null)
-      setDimensionEdit(null)
+      dimEdit.setDimensionEdit(null)
       return
     }
 
@@ -4812,13 +4655,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
-      commitEditDimension()
+    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && dimEdit.dimensionEditRef.current && dimEdit.dimensionEditControlRef.current) {
+      dimEdit.commitEditDimension()
       return
     }
 
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
-      cancelEditDimension()
+    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && dimEdit.dimensionEditRef.current && dimEdit.dimensionEditControlRef.current) {
+      dimEdit.cancelEditDimension()
       return
     }
 
@@ -4852,7 +4695,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       && selection.selectedNode?.type === 'feature'
       && selection.selectedFeatureId
       && !selection.sketchEditTool
-      && !dimensionEditRef.current
+      && !dimEdit.dimensionEditRef.current
       && !filletDimensionEditRef.current
     ) {
       event.preventDefault()
@@ -4980,7 +4823,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
         />
       )}
-      {dimensionEdit && selection.mode === 'sketch_edit' && !pendingAdd && (() => {
+      {dimEdit.dimensionEdit && selection.mode === 'sketch_edit' && !pendingAdd && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
         const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
@@ -4992,29 +4835,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             e.stopPropagation()
             if (e.key === 'Enter') {
               e.preventDefault()
-              commitEditDimension()
+              dimEdit.commitEditDimension()
             } else if (e.key === 'Escape') {
               e.preventDefault()
-              cancelEditDimension()
+              dimEdit.cancelEditDimension()
             } else if (e.key === 'Tab') {
               e.preventDefault()
-              advanceTabInEditMode()
+              dimEdit.advanceTabInEditMode()
             }
           }
         }
 
-        const handleLiveChange = handleEditDimLiveChange
+        const handleLiveChange = dimEdit.handleEditDimLiveChange
 
         // Arc radius step
-        if (dimensionEdit.shape === 'circle') {
-          const anchorC = worldToCanvas(dimensionEdit.anchor, vt)
+        if (dimEdit.dimensionEdit.shape === 'circle') {
+          const anchorC = worldToCanvas(dimEdit.dimensionEdit.anchor, vt)
           return (
             <input
               key="edit-radius"
-              ref={radiusInputRef}
+              ref={dimEdit.radiusInputRef}
               className="sketch-dim-input"
               style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
-              value={dimensionEdit.radius}
+              value={dimEdit.dimensionEdit.radius}
               onChange={(e) => handleLiveChange('radius', e.target.value)}
               onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
@@ -5023,8 +4866,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         // Endpoint (length + angle) step
-        const previewPt = computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
-        const fromC = worldToCanvas(dimensionEdit.anchor, vt)
+        const previewPt = computeDimensionEditPreviewPoint(dimEdit.dimensionEdit, project.meta.units)
+        const fromC = worldToCanvas(dimEdit.dimensionEdit.anchor, vt)
         const toC = worldToCanvas(previewPt, vt)
         const layout = computeLinearInputLabel(fromC, toC, 14, 40)
         const angleLabelX = layout.midX + layout.perpX * 36
@@ -5033,20 +4876,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           <>
             <input
               key="edit-length"
-              ref={widthInputRef}
+              ref={dimEdit.widthInputRef}
               className="sketch-dim-input"
               style={{ left: layout.labelX, top: layout.labelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimensionEdit.length}
+              value={dimEdit.dimensionEdit.length}
               onChange={(e) => handleLiveChange('length', e.target.value)}
               onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
             />
             <input
               key="edit-angle"
-              ref={heightInputRef}
+              ref={dimEdit.heightInputRef}
               className="sketch-dim-input"
               style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimensionEdit.angle}
+              value={dimEdit.dimensionEdit.angle}
               onChange={(e) => handleLiveChange('angle', e.target.value)}
               onKeyDown={makeEditInputKeyDown()}
               onFocus={(e) => e.currentTarget.select()}
@@ -5172,7 +5015,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input"
                   type="text"
                   inputMode="decimal"
@@ -5411,18 +5254,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               >Spline</button>
             </div>
           )}
-          {creationDimEditActive && dimensionEdit && (
+          {creationDimEditActive && dimEdit.dimensionEdit && (
             <div className="canvas-workflow-panel__meta">
-              {dimensionEdit.shape === 'circle' ? (
+              {dimEdit.dimensionEdit.shape === 'circle' ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
                   <input
-                    ref={radiusInputRef}
+                    ref={dimEdit.radiusInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.radius}
-                    onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -5437,16 +5280,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     autoFocus
                   />
                 </label>
-              ) : (dimensionEdit.shape === 'composite' && dimensionEdit.arcStart && dimensionEdit.arcEnd) ? (
+              ) : (dimEdit.dimensionEdit.shape === 'composite' && dimEdit.dimensionEdit.arcStart && dimEdit.dimensionEdit.arcEnd) ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
                   <input
-                    ref={radiusInputRef}
+                    ref={dimEdit.radiusInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.radius}
-                    onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -5461,17 +5304,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     autoFocus
                   />
                 </label>
-              ) : (dimensionEdit.shape === 'polygon' || dimensionEdit.shape === 'spline' || dimensionEdit.shape === 'composite') ? (
+              ) : (dimEdit.dimensionEdit.shape === 'polygon' || dimEdit.dimensionEdit.shape === 'spline' || dimEdit.dimensionEdit.shape === 'composite') ? (
                 <>
                   <label className="canvas-workflow-panel__field">
                     <span>Length</span>
                     <input
-                      ref={widthInputRef}
+                      ref={dimEdit.widthInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.length}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.length}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
@@ -5483,7 +5326,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          heightInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       autoFocus
@@ -5492,12 +5335,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Angle</span>
                     <input
-                      ref={heightInputRef}
+                      ref={dimEdit.heightInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.angle}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.angle}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
@@ -5510,9 +5353,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           if (pendingAdd?.shape === 'composite' && pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd) {
-                            radiusInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.radiusInputRef.current?.focus({ preventScroll: true })
                           } else {
-                            widthInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                           }
                         }
                       }}
@@ -5522,12 +5365,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     <label className="canvas-workflow-panel__field">
                       <span>Radius</span>
                       <input
-                        ref={radiusInputRef}
+                        ref={dimEdit.radiusInputRef}
                         className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                         type="text"
                         inputMode="decimal"
-                        value={dimensionEdit.radius}
-                        onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                        value={dimEdit.dimensionEdit.radius}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                         onFocus={(e) => e.currentTarget.select()}
                         onKeyDown={(e) => {
                           e.stopPropagation()
@@ -5539,7 +5382,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                             cancelCreationDimensionEdit()
                           } else if (e.key === 'Tab') {
                             e.preventDefault()
-                            widthInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                           }
                         }}
                       />
@@ -5551,12 +5394,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Width</span>
                     <input
-                      ref={widthInputRef}
+                      ref={dimEdit.widthInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.width}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.width}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
@@ -5568,7 +5411,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          heightInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       autoFocus
@@ -5577,12 +5420,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Height</span>
                     <input
-                      ref={heightInputRef}
+                      ref={dimEdit.heightInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.height}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.height}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
@@ -5594,7 +5437,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          widthInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                     />
@@ -5742,7 +5585,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                   type="text"
                   inputMode="decimal"
@@ -5869,7 +5712,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               <label className="canvas-workflow-panel__field">
                 <span>{operationDimEdit.kind === 'scale' ? 'Scale' : 'Angle'}</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input"
                   type="text"
                   inputMode="decimal"
@@ -6033,25 +5876,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             </>
           ) : (
             <>
-              {armedForDimension && (
-                <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); setArmedForDimension(false) }}>Dimension</button>
+              {dimEdit.armedForDimension && (
+                <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }}>Dimension</button>
               )}
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={applyEditFromPanel}>Apply</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditFromPanel}>Cancel</button>
             </>
           )}
         >
-          {editDimEditActive && dimensionEdit ? (
-            dimensionEdit.activeField === 'radius' ? (
+          {editDimEditActive && dimEdit.dimensionEdit ? (
+            dimEdit.dimensionEdit.activeField === 'radius' ? (
               <label className="canvas-workflow-panel__field">
                 <span>Radius</span>
                 <input
-                  ref={radiusInputRef}
+                  ref={dimEdit.radiusInputRef}
                   className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                   type="text"
                   inputMode="decimal"
-                  value={dimensionEdit.radius}
-                  onChange={(e) => handleEditDimLiveChange('radius', e.target.value)}
+                  value={dimEdit.dimensionEdit.radius}
+                  onChange={(e) => dimEdit.handleEditDimLiveChange('radius', e.target.value)}
                   onFocus={(e) => e.currentTarget.select()}
                   onKeyDown={(e) => {
                     e.stopPropagation()
@@ -6071,12 +5914,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 <label className="canvas-workflow-panel__field">
                   <span>Length</span>
                   <input
-                    ref={widthInputRef}
+                    ref={dimEdit.widthInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.length}
-                    onChange={(e) => handleEditDimLiveChange('length', e.target.value)}
+                    value={dimEdit.dimensionEdit.length}
+                    onChange={(e) => dimEdit.handleEditDimLiveChange('length', e.target.value)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -6088,7 +5931,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         cancelEditDimensionFromPanel()
                       } else if (e.key === 'Tab') {
                         e.preventDefault()
-                        heightInputRef.current?.focus({ preventScroll: true })
+                        dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                       }
                     }}
                     autoFocus
@@ -6097,12 +5940,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 <label className="canvas-workflow-panel__field">
                   <span>Angle</span>
                   <input
-                    ref={heightInputRef}
+                    ref={dimEdit.heightInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.angle}
-                    onChange={(e) => handleEditDimLiveChange('angle', e.target.value)}
+                    value={dimEdit.dimensionEdit.angle}
+                    onChange={(e) => dimEdit.handleEditDimLiveChange('angle', e.target.value)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -6114,7 +5957,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         cancelEditDimensionFromPanel()
                       } else if (e.key === 'Tab') {
                         e.preventDefault()
-                        widthInputRef.current?.focus({ preventScroll: true })
+                        dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                       }
                     }}
                   />
