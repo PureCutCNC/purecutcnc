@@ -22,6 +22,7 @@ import {
   type Project,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
+import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 
 export interface ProjectLifecycleSliceDependencies {
@@ -31,7 +32,6 @@ export interface ProjectLifecycleSliceDependencies {
   normalizeProject: (project: Project) => Project
   instantiateProjectTemplate: (template?: Project, name?: string) => Project
   clearProjectMemoryCaches: () => void
-  pruneUnusedModelAssets: (project: Project) => Project
 }
 
 export type ProjectLifecycleSlice = Pick<
@@ -60,7 +60,6 @@ export function createProjectLifecycleSlice(
     normalizeProject,
     instantiateProjectTemplate,
     clearProjectMemoryCaches,
-    pruneUnusedModelAssets,
   } = deps
 
   return {

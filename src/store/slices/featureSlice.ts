@@ -19,11 +19,9 @@ import type {
   FeatureFolder,
   FeatureOperation,
   FeatureTreeEntry,
-  PersistedImportedMesh,
   Project,
   SketchFeature,
   SketchProfile,
-  STLFeatureData,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
@@ -54,6 +52,7 @@ import {
 } from '../../engine/toolpaths/arcReconstruction'
 import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipping'
 import { transformProfile } from '../helpers/transform'
+import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from '../helpers/modelAssets'
 import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
@@ -71,19 +70,12 @@ export interface FeatureSliceDependencies {
     operation: FeatureOperation,
     name: string,
   ) => SketchFeature
-  isImportedModelFeature: (feature: SketchFeature) => boolean
-  normalizeImportedModelStorage: (
-    featureId: string,
-    stl: STLFeatureData | null | undefined,
-    modelAssets: Record<string, PersistedImportedMesh>,
-  ) => STLFeatureData | null | undefined
   folderIdForOperation: (
     project: Project,
     folderId: string | null,
     operation: FeatureOperation | undefined,
   ) => string | null
   syncStockFromSourceFeature: (project: Project, featureId: string) => Project
-  pruneUnusedModelAssets: (project: Project) => Project
 }
 
 export type FeatureSlice = Pick<
@@ -123,11 +115,8 @@ export function createFeatureSlice(
     syncFeatureTreeProject,
     projectsEqual,
     createDerivedFeature,
-    isImportedModelFeature,
-    normalizeImportedModelStorage,
     folderIdForOperation,
     syncStockFromSourceFeature,
-    pruneUnusedModelAssets,
   } = deps
 
   return {

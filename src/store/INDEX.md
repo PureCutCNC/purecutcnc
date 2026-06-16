@@ -34,6 +34,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
+  - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — normalizes incoming/legacy project data

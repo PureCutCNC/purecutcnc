@@ -20,10 +20,6 @@ import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
 import {
   clearImportedModelCaches,
-  loadImportedTriangleMesh,
-  normalizeImportedMeshForStorage,
-  serializeImportedMesh,
-  type ImportedModelFormat,
 } from '../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../engine/csg'
 import { isProfileDegenerate, uniqueName } from '../import'
@@ -54,7 +50,6 @@ import type {
   SketchProfile,
   SketchFeature,
   PersistedImportedMesh,
-  STLFeatureData,
   Tab,
   Tool,
 } from '../types/project'
@@ -100,6 +95,7 @@ import {
   translateProfile,
 } from './helpers/transform'
 import { mirrorFeatureFromReference } from './helpers/referenceTransforms'
+import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from './helpers/modelAssets'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
@@ -289,73 +285,6 @@ function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>)
     return feature
   })
   return anyChanged ? next : features
-}
-
-function modelAssetIdForFeature(featureId: string): string {
-  return `model-asset-${featureId}`
-}
-
-export function normalizeImportedModelStorage(
-  featureId: string,
-  stl: STLFeatureData | null | undefined,
-  modelAssets: Record<string, PersistedImportedMesh>,
-): STLFeatureData | null | undefined {
-  if (!stl) return stl
-  if (stl.meshAssetId && modelAssets[stl.meshAssetId]) {
-    const { mesh, fileData, filePath, ...rest } = stl
-    return rest
-  }
-
-  const transientMesh = stl.mesh
-  if (transientMesh) {
-    const meshAssetId = stl.meshAssetId ?? modelAssetIdForFeature(featureId)
-    modelAssets[meshAssetId] = transientMesh
-    const { mesh, fileData, filePath, ...rest } = stl
-    return {
-      ...rest,
-      meshAssetId,
-      scale: stl.scale ?? 1,
-      axisSwap: 'none',
-    }
-  }
-
-  if (!stl.fileData) return stl
-
-  const format: ImportedModelFormat = stl.format ?? 'stl'
-  const mesh = loadImportedTriangleMesh(format, stl.fileData, stl.axisSwap ?? 'none')
-  if (!mesh) return stl
-
-  const normalizedMesh = normalizeImportedMeshForStorage(mesh, stl.scale ?? 1)
-  const meshAssetId = stl.meshAssetId ?? modelAssetIdForFeature(featureId)
-  modelAssets[meshAssetId] = serializeImportedMesh(normalizedMesh, format)
-  return {
-    ...stl,
-    format,
-    meshAssetId,
-    filePath: undefined,
-    fileData: undefined,
-    mesh: undefined,
-    scale: 1,
-    axisSwap: 'none',
-  }
-}
-
-export function pruneUnusedModelAssets(project: Project): Project {
-  const usedAssetIds = new Set(
-    project.features
-      .map((feature) => feature.stl?.meshAssetId ?? null)
-      .filter((id): id is string => id !== null),
-  )
-  const nextAssets: Record<string, PersistedImportedMesh> = {}
-  for (const [id, asset] of Object.entries(project.modelAssets ?? {})) {
-    if (usedAssetIds.has(id)) {
-      nextAssets[id] = asset
-    }
-  }
-  if (Object.keys(nextAssets).length === Object.keys(project.modelAssets ?? {}).length) {
-    return project
-  }
-  return { ...project, modelAssets: nextAssets }
 }
 
 function duplicateFeatureName(name: string, features: SketchFeature[], totalCount: number, step: number): string {
@@ -1452,10 +1381,6 @@ export function projectsEqual(a: Project, b: Project): boolean {
 // only feature in a project, so they are exempt from the base-solid rule.
 // ============================================================
 
-export function isImportedModelFeature(feature: SketchFeature): boolean {
-  return feature.kind === 'stl' && feature.operation === 'model'
-}
-
 export function isFirstFeatureValid(features: SketchFeature[]): boolean {
   const firstMachiningFeature = features.find((feature) => feature.operation !== 'region')
   if (!firstMachiningFeature) return true
@@ -1648,11 +1573,8 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     syncFeatureTreeProject,
     projectsEqual,
     createDerivedFeature,
-    isImportedModelFeature,
-    normalizeImportedModelStorage,
     folderIdForOperation,
     syncStockFromSourceFeature,
-    pruneUnusedModelAssets,
   }),
   ...createFeatureGeometrySlice(set, get, {
     cloneProject,
@@ -1675,7 +1597,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     normalizeProject,
     instantiateProjectTemplate,
     clearProjectMemoryCaches,
-    pruneUnusedModelAssets,
   }),
   ...createHistorySlice(set, get, {
     cloneProject,
