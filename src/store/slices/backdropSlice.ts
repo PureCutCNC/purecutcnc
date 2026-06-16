@@ -20,11 +20,7 @@ import type { ProjectStore } from '../types'
 import { getStockBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import { normalizeAngleDegrees } from '../helpers/normalize'
-
-export interface BackdropSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 
 export type BackdropSlice = Pick<
   ProjectStore,
@@ -125,10 +121,7 @@ export function normalizeBackdrop(backdrop: BackdropImage | null | undefined, pr
 
 export function createBackdropSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: BackdropSliceDependencies,
 ): BackdropSlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
     loadBackdropImage: (input) =>

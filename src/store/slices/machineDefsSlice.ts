@@ -15,15 +15,10 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { copyBundledDefinitions } from '../../engine/gcode/definitions'
 import { validateMachineDefinition } from '../../engine/gcode/types'
-
-export interface MachineDefsSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 
 export type MachineDefsSlice = Pick<
   ProjectStore,
@@ -35,10 +30,7 @@ export type MachineDefsSlice = Pick<
 
 export function createMachineDefsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: MachineDefsSliceDependencies,
 ): MachineDefsSlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
     setSelectedMachineId: (id) =>

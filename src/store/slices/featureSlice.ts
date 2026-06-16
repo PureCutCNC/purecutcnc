@@ -17,18 +17,19 @@
 import type { StateCreator } from 'zustand'
 import type {
   FeatureFolder,
-  FeatureOperation,
   FeatureTreeEntry,
-  PersistedImportedMesh,
-  Point,
   Project,
   SketchFeature,
-  SketchProfile,
-  STLFeatureData,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
-import { normalizeFeatureZRange } from '../helpers/normalize'
+import {
+  cloneProject,
+  normalizeFeatureZRange,
+  projectsEqual,
+  syncFeatureTreeProject,
+  syncStockFromSourceFeature,
+} from '../helpers/normalize'
 import {
   getStockBounds,
   rectProfile,
@@ -45,7 +46,8 @@ import {
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
   cutFeaturesByCutterGrouped,
-  previewOffsetFeatures as previewOffsetFeaturesRaw,
+  createDerivedFeature,
+  previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
 import {
@@ -54,41 +56,14 @@ import {
   clipperContourToProfilePreserving,
 } from '../../engine/toolpaths/arcReconstruction'
 import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipping'
+import { transformProfile } from '../helpers/transform'
+import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from '../helpers/modelAssets'
+import { folderIdForOperation } from '../helpers/operationDefaults'
 import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
   type FeatureOffset,
 } from '../../sketch/constraintSolver'
-
-export interface FeatureSliceDependencies {
-  cloneProject: (project: Project) => Project
-  syncFeatureTreeProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-  createDerivedFeature: (
-    project: Project,
-    baseFeature: SketchFeature,
-    profile: SketchProfile,
-    operation: FeatureOperation,
-    name: string,
-  ) => SketchFeature
-  isImportedModelFeature: (feature: SketchFeature) => boolean
-  normalizeImportedModelStorage: (
-    featureId: string,
-    stl: STLFeatureData | null | undefined,
-    modelAssets: Record<string, PersistedImportedMesh>,
-  ) => STLFeatureData | null | undefined
-  folderIdForOperation: (
-    project: Project,
-    folderId: string | null,
-    operation: FeatureOperation | undefined,
-  ) => string | null
-  syncStockFromSourceFeature: (project: Project, featureId: string) => Project
-  transformProfile: (
-    profile: SketchFeature['sketch']['profile'],
-    transformPoint: (point: Point) => Point,
-  ) => SketchFeature['sketch']['profile']
-  pruneUnusedModelAssets: (project: Project) => Project
-}
 
 export type FeatureSlice = Pick<
   ProjectStore,
@@ -120,20 +95,7 @@ export type FeatureSlice = Pick<
 export function createFeatureSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: FeatureSliceDependencies,
 ): FeatureSlice {
-  const {
-    cloneProject,
-    syncFeatureTreeProject,
-    projectsEqual,
-    createDerivedFeature,
-    isImportedModelFeature,
-    normalizeImportedModelStorage,
-    folderIdForOperation,
-    syncStockFromSourceFeature,
-    transformProfile,
-    pruneUnusedModelAssets,
-  } = deps
 
   return {
     // ── Feature folders ──────────────────────────────────────
@@ -756,7 +718,7 @@ export function createFeatureSlice(
 
     offsetSelectedFeatures: (distance) => {
       const state = get()
-      const createdFeatures = previewOffsetFeaturesRaw(state.project, state.selection.selectedFeatureIds, distance, createDerivedFeature)
+      const createdFeatures = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
 
       if (createdFeatures.length === 0) {
         return []

@@ -21,11 +21,7 @@ import { getProfileBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { emptySelection, sanitizeSelection } from './selectionSlice'
-
-export interface TabsSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 
 export type TabsSlice = Pick<
   ProjectStore,
@@ -132,10 +128,7 @@ function buildAutoTabsForFeature(
 
 export function createTabsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: TabsSliceDependencies,
 ): TabsSlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
     updateTab: (id, patch) =>

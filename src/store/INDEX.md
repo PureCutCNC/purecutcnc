@@ -30,11 +30,17 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions, folders, region folders, and folder selection
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
-  - `derivedFeatures.ts` — computes derived features from the feature tree
+  - `derivedFeatures.ts` — computes derived features from the feature tree; also createDerivedFeature, previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `geometry.ts` — geometric utilities (bounds, transforms)
+  - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
+  - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
+  - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
+  - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
+  - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
+  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — normalizes incoming/legacy project data
+  - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests

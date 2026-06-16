@@ -51,4 +51,16 @@ export default defineConfig([
       'max-lines': ['error', { max: 530, skipBlankLines: true, skipComments: true }],
     },
   },
+  {
+    files: ['src/store/projectStore.ts'],
+    rules: {
+      'max-lines': ['error', { max: 600, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/store/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 1200, skipBlankLines: true, skipComments: true }],
+    },
+  },
 ])

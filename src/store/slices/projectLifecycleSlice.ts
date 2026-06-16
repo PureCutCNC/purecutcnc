@@ -22,16 +22,18 @@ import {
   type Project,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
+import {
+  clearProjectMemoryCaches,
+  cloneProject,
+  instantiateProjectTemplate,
+  projectsEqual,
+} from '../helpers/normalize'
+import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 
 export interface ProjectLifecycleSliceDependencies {
   rawSet: Parameters<StateCreator<ProjectStore>>[0]
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
   normalizeProject: (project: Project) => Project
-  instantiateProjectTemplate: (template?: Project, name?: string) => Project
-  clearProjectMemoryCaches: () => void
-  pruneUnusedModelAssets: (project: Project) => Project
 }
 
 export type ProjectLifecycleSlice = Pick<
@@ -55,12 +57,7 @@ export function createProjectLifecycleSlice(
   deps: ProjectLifecycleSliceDependencies,
 ): ProjectLifecycleSlice {
   const {
-    cloneProject,
-    projectsEqual,
     normalizeProject,
-    instantiateProjectTemplate,
-    clearProjectMemoryCaches,
-    pruneUnusedModelAssets,
   } = deps
 
   return {

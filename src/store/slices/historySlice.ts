@@ -17,11 +17,10 @@
 import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { sanitizeSelection } from './selectionSlice'
 
 export interface HistorySliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
   normalizeProject: (project: Project) => Project
 }
 
@@ -40,8 +39,6 @@ export function createHistorySlice(
   deps: HistorySliceDependencies,
 ): HistorySlice {
   const {
-    cloneProject,
-    projectsEqual,
     normalizeProject,
   } = deps
 

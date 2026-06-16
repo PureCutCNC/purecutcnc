@@ -22,7 +22,8 @@
 
 import { newProject, polygonProfile, profileVertices, type Point, type SketchFeature, type SketchProfile } from '../types/project'
 import type { OpenProfileEndpoint } from './types'
-import { joinOpenProfiles, useProjectStore } from './projectStore'
+import { useProjectStore } from './projectStore'
+import { joinOpenProfiles } from './helpers/derivedFeatures'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
