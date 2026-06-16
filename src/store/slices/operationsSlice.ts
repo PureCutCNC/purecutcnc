@@ -22,8 +22,6 @@ import { defaultTool, inferFeatureKind } from '../../types/project'
 import type {
   FeatureFolder,
   Operation,
-  OperationKind,
-  OperationPass,
   OperationTarget,
   Project,
   SketchFeature,
@@ -32,22 +30,12 @@ import type {
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { normalizeFeatureZRange } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
+import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate } from '../helpers/operationDefaults'
 import type { ProjectStore } from '../types'
 
 export interface OperationsSliceDependencies {
   cloneProject: (project: Project) => Project
   projectsEqual: (a: Project, b: Project) => boolean
-  toolMatchesTemplate: (existingTool: Tool, candidate: Omit<Tool, 'id'>) => boolean
-  isOperationTargetValid: (project: Project, kind: OperationKind, target: OperationTarget) => boolean
-  defaultOperationForTarget: (
-    project: Project,
-    kind: OperationKind,
-    pass: OperationPass,
-    target: OperationTarget,
-    index: number,
-    resolved?: { tool: Tool; toolRef: string | null },
-  ) => Operation
-  defaultOperationName: (kind: OperationKind, pass: OperationPass, operations: Operation[]) => string
   syncFeatureTreeProject: (project: Project) => Project
 }
 
@@ -83,10 +71,6 @@ export function createOperationsSlice(
   const {
     cloneProject,
     projectsEqual,
-    toolMatchesTemplate,
-    isOperationTargetValid,
-    defaultOperationForTarget,
-    defaultOperationName,
     syncFeatureTreeProject,
   } = deps
 

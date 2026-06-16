@@ -53,6 +53,7 @@ import {
 import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipping'
 import { transformProfile } from '../helpers/transform'
 import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from '../helpers/modelAssets'
+import { folderIdForOperation } from '../helpers/operationDefaults'
 import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
@@ -70,11 +71,6 @@ export interface FeatureSliceDependencies {
     operation: FeatureOperation,
     name: string,
   ) => SketchFeature
-  folderIdForOperation: (
-    project: Project,
-    folderId: string | null,
-    operation: FeatureOperation | undefined,
-  ) => string | null
   syncStockFromSourceFeature: (project: Project, featureId: string) => Project
 }
 
@@ -115,7 +111,6 @@ export function createFeatureSlice(
     syncFeatureTreeProject,
     projectsEqual,
     createDerivedFeature,
-    folderIdForOperation,
     syncStockFromSourceFeature,
   } = deps
 

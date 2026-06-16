@@ -20,11 +20,11 @@ import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { defaultTool } from '../../types/project'
 import { normalizeTool } from '../helpers/normalize'
+import { toolMatchesTemplate } from '../helpers/operationDefaults'
 
 export interface ToolsSliceDependencies {
   cloneProject: (project: Project) => Project
   projectsEqual: (a: Project, b: Project) => boolean
-  toolMatchesTemplate: (existingTool: Tool, candidate: Omit<Tool, 'id'>) => boolean
 }
 
 export type ToolsSlice = Pick<
@@ -54,7 +54,7 @@ export function createToolsSlice(
   get: Parameters<StateCreator<ProjectStore>>[1],
   deps: ToolsSliceDependencies,
 ): ToolsSlice {
-  const { cloneProject, projectsEqual, toolMatchesTemplate } = deps
+  const { cloneProject, projectsEqual } = deps
 
   return {
     addTool: () => {
