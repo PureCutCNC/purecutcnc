@@ -21,7 +21,8 @@ import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { OpenProfileEndpoint, SketchControlRef, SketchEditTool } from '../../store/types'
-import { previewOffsetFeatures, useProjectStore } from '../../store/projectStore'
+import { useProjectStore } from '../../store/projectStore'
+import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
 import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference } from '../../store/helpers/referenceTransforms'
 import {
   buildArcSegmentFromThreePoints,

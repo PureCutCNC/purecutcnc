@@ -28,33 +28,22 @@ import {
   circleProfile,
 } from '../types/project'
 import type {
-  FeatureOperation,
   Project,
   SketchProfile,
-  SketchFeature,
   PersistedImportedMesh,
 } from '../types/project'
-import type { OpenProfileEndpoint } from './types'
+import type { ProfileBreakResult } from './helpers/profileEdit'
 import {
-  clonePoint,
-  pointsEqual,
-} from './helpers/geometry'
-import {
-  cloneSegment,
-  endPointForOpenProfile,
-  normalizeEditableProfileClosure,
-  orientOpenProfileFromEndpoint,
-  orientOpenProfileTowardEndpoint,
-  type ProfileBreakResult,
-} from './helpers/profileEdit'
-import {
+  clearStaleConstraints,
+  createDerivedFeature,
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
+  joinOpenProfiles,
   normalizeDerivedFeatureNameStem,
-  previewOffsetFeatures as previewOffsetFeaturesWithFactory,
+  previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from './helpers/derivedFeatures'
-import { nextUniqueGeneratedId, syncIdCounter } from './helpers/ids'
+import { syncIdCounter } from './helpers/ids'
 import {
   cloneProject,
   dedupeProjectIds,
@@ -95,173 +84,9 @@ import { createWorkpieceSlice } from './slices/workpieceSlice'
 import {
   propagateConstraintsOnTranslate,
   propagateConstraintsOnRotate,
-  rederiveConstraintGeometry,
   validateConstraintsOnFeature,
 } from '../sketch/constraintSolver'
 import type { ProjectStore } from './types'
-
-export function createDerivedFeature(
-  project: Project,
-  baseFeature: SketchFeature,
-  profile: SketchProfile,
-  operation: FeatureOperation,
-  name: string,
-): SketchFeature {
-  return normalizeFeatureZRange({
-    id: nextUniqueGeneratedId(project, 'f'),
-    name,
-    kind: inferFeatureKind(profile),
-    folderId: baseFeature.folderId,
-    sketch: {
-      profile,
-      origin: clonePoint(baseFeature.sketch.origin),
-      orientationAngle: baseFeature.sketch.orientationAngle,
-      dimensions: [],
-      constraints: [],
-    },
-    operation,
-    z_top: baseFeature.z_top,
-    z_bottom: baseFeature.z_bottom,
-    visible: true,
-    locked: false,
-  })
-}
-
-export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): SketchFeature[] {
-  return previewOffsetFeaturesWithFactory(project, featureIds, distance, createDerivedFeature)
-}
-
-export function joinOpenProfiles(
-  profile: SketchProfile,
-  endpoint: OpenProfileEndpoint,
-  targetProfile: SketchProfile,
-  targetEndpoint: OpenProfileEndpoint,
-): SketchProfile | null {
-  if (profile.closed || targetProfile.closed || profile.segments.length === 0 || targetProfile.segments.length === 0) {
-    return null
-  }
-
-  const leading = orientOpenProfileTowardEndpoint(profile, endpoint)
-  const trailing = orientOpenProfileFromEndpoint(targetProfile, targetEndpoint)
-  const leadingEnd = endPointForOpenProfile(leading)
-  const trailingStart = trailing.start
-  const segments = leading.segments.map(cloneSegment)
-
-  if (!pointsEqual(leadingEnd, trailingStart)) {
-    segments.push({ type: 'line', to: clonePoint(trailingStart) })
-  }
-
-  segments.push(...trailing.segments.map(cloneSegment))
-
-  return normalizeEditableProfileClosure({
-    ...profile,
-    start: clonePoint(leading.start),
-    segments,
-    closed: false,
-  })
-}
-
-function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>): SketchFeature[] {
-  // Policy: when the OWNER is moved/edited, update constraint value to new distance.
-  // Do NOT delete constraints — they persist as persistent dimensions.
-  if (movedIds.size === 0) return features
-  let anyChanged = false
-  const featureById = new Map(features.map((f) => [f.id, f]))
-  const next = features.map((feature) => {
-    if (!movedIds.has(feature.id)) return feature
-    // This feature was moved — update constraint values to reflect new distances
-    const updatedConstraints = feature.sketch.constraints.map((c) => {
-      if (c.type !== 'fixed_distance') return c
-      // Issue 11: Never update invalid constraints — keep them frozen at last valid position
-      if (c.is_invalid) return c
-      const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
-      const refFeature = refFeatureId ? featureById.get(refFeatureId) : null
-      // Re-derive geometry to get current positions
-      const result = rederiveConstraintGeometry(
-        feature.sketch.profile,
-        refFeature?.sketch.profile ?? null,
-        c,
-      )
-      if (result && result.isValid) {
-        // Compute new distance from re-derived geometry
-        let newValue: number | undefined
-        if (result.referenceSegment) {
-          const { a, b } = result.referenceSegment
-          const sx = b.x - a.x
-          const sy = b.y - a.y
-          const segLen = Math.hypot(sx, sy)
-          if (segLen > 1e-12) {
-            const nx = -sy / segLen
-            const ny = sx / segLen
-            const rawSigned = (result.anchorPoint.x - a.x) * nx + (result.anchorPoint.y - a.y) * ny
-            // Issue 14: Preserve the original sign — only update the magnitude.
-            // This prevents the side from flipping when the feature drifts near the segment.
-            const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
-            newValue = originalSign * Math.abs(rawSigned)
-          }
-        } else if (result.referencePoint) {
-          newValue = Math.hypot(
-            result.anchorPoint.x - result.referencePoint.x,
-            result.anchorPoint.y - result.referencePoint.y,
-          )
-        }
-        if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
-          anyChanged = true
-          return {
-            ...c,
-            value: newValue,
-            anchor_point: result.anchorPoint,
-            reference_point: result.referencePoint,
-            reference_segment: result.referenceSegment,
-            is_invalid: false,
-            error_message: undefined,
-          }
-        }
-        // Update cached coords even if value unchanged
-        return {
-          ...c,
-          anchor_point: result.anchorPoint,
-          reference_point: result.referencePoint,
-          reference_segment: result.referenceSegment,
-          is_invalid: false,
-          error_message: undefined,
-        }
-      }
-      // No semantic fields — fall back to legacy coordinate update
-      if (!c.anchor_point) return c
-      let newValue: number | undefined
-      if (c.reference_segment) {
-        const { a, b } = c.reference_segment
-        const sx = b.x - a.x
-        const sy = b.y - a.y
-        const segLen = Math.hypot(sx, sy)
-        if (segLen > 1e-12) {
-          const nx = -sy / segLen
-          const ny = sx / segLen
-          const rawSigned = (c.anchor_point.x - a.x) * nx + (c.anchor_point.y - a.y) * ny
-          const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
-          newValue = originalSign * Math.abs(rawSigned)
-        }
-      } else if (c.reference_point) {
-        newValue = Math.hypot(
-          c.anchor_point.x - c.reference_point.x,
-          c.anchor_point.y - c.reference_point.y,
-        )
-      }
-      if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
-        anyChanged = true
-        return { ...c, value: newValue }
-      }
-      return c
-    })
-    if (updatedConstraints.some((c, i) => c !== feature.sketch.constraints[i])) {
-      anyChanged = true
-      return { ...feature, sketch: { ...feature.sketch, constraints: updatedConstraints } }
-    }
-    return feature
-  })
-  return anyChanged ? next : features
-}
 
 export function normalizeProject(project: Project): Project {
   const modelAssets: Record<string, PersistedImportedMesh> = { ...(project.modelAssets ?? {}) }
@@ -508,9 +333,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createMachineDefsSlice(set),
   ...createOperationsSlice(set, get),
   ...createImportMergeSlice(set, get),
-  ...createFeatureSlice(set, get, {
-    createDerivedFeature,
-  }),
+  ...createFeatureSlice(set, get),
   ...createFeatureGeometrySlice(set, get, {
     joinOpenProfiles,
     inferFeatureKind,

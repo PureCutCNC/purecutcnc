@@ -17,11 +17,9 @@
 import type { StateCreator } from 'zustand'
 import type {
   FeatureFolder,
-  FeatureOperation,
   FeatureTreeEntry,
   Project,
   SketchFeature,
-  SketchProfile,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
@@ -48,7 +46,8 @@ import {
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
   cutFeaturesByCutterGrouped,
-  previewOffsetFeatures as previewOffsetFeaturesRaw,
+  createDerivedFeature,
+  previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
 import {
@@ -65,16 +64,6 @@ import {
   validateConstraintsOnFeature,
   type FeatureOffset,
 } from '../../sketch/constraintSolver'
-
-export interface FeatureSliceDependencies {
-  createDerivedFeature: (
-    project: Project,
-    baseFeature: SketchFeature,
-    profile: SketchProfile,
-    operation: FeatureOperation,
-    name: string,
-  ) => SketchFeature
-}
 
 export type FeatureSlice = Pick<
   ProjectStore,
@@ -106,11 +95,7 @@ export type FeatureSlice = Pick<
 export function createFeatureSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: FeatureSliceDependencies,
 ): FeatureSlice {
-  const {
-    createDerivedFeature,
-  } = deps
 
   return {
     // ── Feature folders ──────────────────────────────────────
@@ -733,7 +718,7 @@ export function createFeatureSlice(
 
     offsetSelectedFeatures: (distance) => {
       const state = get()
-      const createdFeatures = previewOffsetFeaturesRaw(state.project, state.selection.selectedFeatureIds, distance, createDerivedFeature)
+      const createdFeatures = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
 
       if (createdFeatures.length === 0) {
         return []
