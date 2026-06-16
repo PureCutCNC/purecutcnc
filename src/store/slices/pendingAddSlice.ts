@@ -16,9 +16,9 @@
 
 import type { StateCreator } from 'zustand'
 import { convertLength } from '../../utils/units'
-import type { Clamp, Point, Project, Segment, SketchFeature, Tab } from '../../types/project'
-import type { TextToolConfig } from '../../text'
+import type { Clamp, Project, Segment, SketchFeature, Tab } from '../../types/project'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
+import { createTextFeatureAt } from '../helpers/naming'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
 import {
   appendSplineDraftSegment,
@@ -32,7 +32,6 @@ import type { CompositeSegmentMode, ProjectStore } from '../types'
 export interface PendingAddSliceDependencies {
   cloneProject: (project: Project) => Project
   syncFeatureTreeProject: (project: Project) => Project
-  createTextFeatureAt: (project: Project, config: TextToolConfig, anchor: Point) => SketchFeature | null
 }
 
 export type PendingAddSlice = Pick<
@@ -316,7 +315,7 @@ export function createPendingAddSlice(
         return []
       }
 
-      const createdFeature = deps.createTextFeatureAt(state.project, state.pendingAdd.config, point)
+      const createdFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
       if (!createdFeature) {
         return []
       }

@@ -31,6 +31,7 @@ import type {
 } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { normalizeFeatureZRange } from '../helpers/normalize'
+import { uniqueFolderName } from '../helpers/naming'
 import type { ProjectStore } from '../types'
 
 export interface OperationsSliceDependencies {
@@ -47,7 +48,6 @@ export interface OperationsSliceDependencies {
     resolved?: { tool: Tool; toolRef: string | null },
   ) => Operation
   defaultOperationName: (kind: OperationKind, pass: OperationPass, operations: Operation[]) => string
-  uniqueFolderName: (preferred: string, folders: FeatureFolder[]) => string
   syncFeatureTreeProject: (project: Project) => Project
 }
 
@@ -87,7 +87,6 @@ export function createOperationsSlice(
     isOperationTargetValid,
     defaultOperationForTarget,
     defaultOperationName,
-    uniqueFolderName,
     syncFeatureTreeProject,
   } = deps
 

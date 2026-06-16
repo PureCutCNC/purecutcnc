@@ -22,7 +22,7 @@ import {
   clearImportedModelCaches,
 } from '../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../engine/csg'
-import { isProfileDegenerate, uniqueName } from '../import'
+import { uniqueName } from '../import'
 import {
   defaultOrigin,
   defaultTool,
@@ -34,12 +34,10 @@ import {
   inferFeatureKind,
   newProject,
   circleProfile,
-  type TextFeatureData,
 } from '../types/project'
 import type {
   Clamp,
   FeatureOperation,
-  FeatureFolder,
   FeatureTreeEntry,
   Operation,
   OperationKind,
@@ -57,9 +55,6 @@ import type { OpenProfileEndpoint } from './types'
 import { convertLength } from '../utils/units'
 import {
   featureHasClosedGeometry,
-  generateTextShapes,
-  getTextFrameProfile,
-  type TextToolConfig,
 } from '../text'
 import {
   clonePoint,
@@ -96,6 +91,7 @@ import {
 } from './helpers/transform'
 import { mirrorFeatureFromReference } from './helpers/referenceTransforms'
 import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from './helpers/modelAssets'
+import { duplicateClampName, duplicateFeatureName, duplicateTabName } from './helpers/naming'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
@@ -285,95 +281,6 @@ function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>)
     return feature
   })
   return anyChanged ? next : features
-}
-
-function duplicateFeatureName(name: string, features: SketchFeature[], totalCount: number, step: number): string {
-  if (totalCount === 1) {
-    // Single copy: "Name Copy"
-    const baseName = `${name} Copy`
-    if (!features.some((f) => f.name === baseName)) return baseName
-    let index = 2
-    while (features.some((f) => f.name === `${baseName} ${index}`)) index += 1
-    return `${baseName} ${index}`
-  }
-  // Multiple copies: "Name Copy 1", "Name Copy 2", …
-  let index = step
-  while (features.some((f) => f.name === `${name} Copy ${index}`)) index += 1
-  return `${name} Copy ${index}`
-}
-
-function uniqueFolderName(preferred: string, folders: FeatureFolder[]): string {
-  return uniqueName(preferred, folders.map((folder) => folder.name))
-}
-
-function textFolderBaseName(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim()
-  if (!normalized) {
-    return 'Text'
-  }
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized
-}
-
-function createTextFeatureAt(project: Project, config: TextToolConfig, anchor: Point): SketchFeature | null {
-  const generatedShapes = generateTextShapes(config, { x: 0, y: 0 }).filter((shape) => !isProfileDegenerate(shape.profile))
-  if (generatedShapes.length === 0) {
-    return null
-  }
-
-  const featureName = uniqueName(textFolderBaseName(config.text), project.features.map((feature) => feature.name))
-  const isFirstMachiningFeature = !project.features.some((feature) => feature.operation !== 'region')
-  const textData: TextFeatureData = {
-    text: config.text,
-    style: config.style,
-    fontId: config.fontId,
-    size: config.size,
-  }
-
-  return normalizeFeatureZRange({
-    id: nextUniqueGeneratedId(project, 'f'),
-    name: featureName,
-    kind: 'text',
-    text: textData,
-    folderId: null,
-    sketch: {
-      profile: getTextFrameProfile(config, anchor),
-      origin: { x: 0, y: 0 },
-      orientationAngle: 90,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: isFirstMachiningFeature ? 'add' : config.operation,
-    z_top: project.stock.thickness,
-    z_bottom: 0,
-    visible: true,
-    locked: false,
-  })
-}
-
-function duplicateClampName(name: string, clamps: Clamp[]): string {
-  const baseName = `${name} Copy`
-  if (!clamps.some((clamp) => clamp.name === baseName)) {
-    return baseName
-  }
-
-  let index = 2
-  while (clamps.some((clamp) => clamp.name === `${baseName} ${index}`)) {
-    index += 1
-  }
-  return `${baseName} ${index}`
-}
-
-function duplicateTabName(name: string, tabs: Tab[]): string {
-  const baseName = `${name} Copy`
-  if (!tabs.some((tab) => tab.name === baseName)) {
-    return baseName
-  }
-
-  let index = 2
-  while (tabs.some((tab) => tab.name === `${baseName} ${index}`)) {
-    index += 1
-  }
-  return `${baseName} ${index}`
 }
 
 export function folderIdForOperation(project: Project, folderId: string | null, operation: FeatureOperation | undefined): string | null {
@@ -1544,12 +1451,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createPendingAddSlice(set, get, {
     cloneProject,
     syncFeatureTreeProject,
-    createTextFeatureAt,
   }),
   ...createDimensionsSlice(set, get, { cloneProject }),
   ...createDimensionToolSlice(set, get),
   ...createToolsSlice(set, get, { cloneProject, projectsEqual, toolMatchesTemplate }),
-  ...createClampsSlice(set, get, { cloneProject, projectsEqual, duplicateClampName }),
+  ...createClampsSlice(set, get, { cloneProject, projectsEqual }),
   ...createTabsSlice(set, get, { cloneProject, projectsEqual }),
   ...createBackdropSlice(set, get, { cloneProject, projectsEqual }),
   ...createMachineDefsSlice(set, get, { cloneProject, projectsEqual }),
@@ -1560,12 +1466,10 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     isOperationTargetValid,
     defaultOperationForTarget,
     defaultOperationName,
-    uniqueFolderName,
     syncFeatureTreeProject,
   }),
   ...createImportMergeSlice(set, get, {
     cloneProject,
-    uniqueFolderName,
     syncFeatureTreeProject,
   }),
   ...createFeatureSlice(set, get, {
