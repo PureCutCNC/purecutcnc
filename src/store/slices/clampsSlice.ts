@@ -15,18 +15,14 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Clamp, Project } from '../../types/project'
+import type { Clamp } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { getStockBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { duplicateClampName } from '../helpers/naming'
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { emptySelection, sanitizeSelection } from './selectionSlice'
-
-export interface ClampsSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
 
 export type ClampsSlice = Pick<
   ProjectStore,
@@ -41,9 +37,7 @@ export type ClampsSlice = Pick<
 export function createClampsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: ClampsSliceDependencies,
 ): ClampsSlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
     addClamp: () => {

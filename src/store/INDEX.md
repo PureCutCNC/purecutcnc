@@ -40,7 +40,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — normalizes incoming/legacy project data
+  - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests

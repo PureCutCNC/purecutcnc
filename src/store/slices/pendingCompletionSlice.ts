@@ -17,6 +17,11 @@
 import type { StateCreator } from 'zustand'
 import type { Clamp, Point, Project, SketchFeature, Tab } from '../../types/project'
 import {
+  cloneProject,
+  projectsEqual,
+  syncFeatureTreeProject,
+} from '../helpers/normalize'
+import {
   cutFeaturesByCutterGrouped,
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
@@ -34,14 +39,11 @@ import {
 import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies } from '../helpers/copyFeatures'
 
 export interface PendingCompletionSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
   previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
-  syncFeatureTreeProject: (project: Project) => Project
   createDerivedFeature: (
     project: Project,
     baseFeature: SketchFeature,
@@ -101,7 +103,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -109,7 +111,7 @@ export function createPendingCompletionSlice(
             project: nextProject,
             pendingMove: null,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -176,7 +178,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -195,7 +197,7 @@ export function createPendingCompletionSlice(
                   }
                 : s.selection,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -226,7 +228,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -245,7 +247,7 @@ export function createPendingCompletionSlice(
                   }
                 : s.selection,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -275,7 +277,7 @@ export function createPendingCompletionSlice(
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 
-        if (deps.projectsEqual(nextProject, s.project)) {
+        if (projectsEqual(nextProject, s.project)) {
           return { pendingMove: null }
         }
 
@@ -294,7 +296,7 @@ export function createPendingCompletionSlice(
                 }
               : s.selection,
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -331,7 +333,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingTransform: null }
           }
 
@@ -339,7 +341,7 @@ export function createPendingCompletionSlice(
             project: nextProject,
             pendingTransform: null,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -401,7 +403,7 @@ export function createPendingCompletionSlice(
                 : s.selection.selectedNode,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -440,7 +442,7 @@ export function createPendingCompletionSlice(
                 : s.selection.selectedNode,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -488,7 +490,7 @@ export function createPendingCompletionSlice(
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 
-        if (deps.projectsEqual(nextProject, s.project)) {
+        if (projectsEqual(nextProject, s.project)) {
           return { pendingTransform: null }
         }
 
@@ -496,7 +498,7 @@ export function createPendingCompletionSlice(
           project: nextProject,
           pendingTransform: null,
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -516,7 +518,7 @@ export function createPendingCompletionSlice(
       }
 
       set((s) => {
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, ...createdFeatures],
           meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -535,7 +537,7 @@ export function createPendingCompletionSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -595,7 +597,7 @@ export function createPendingCompletionSlice(
             ? []
             : pendingShapeAction.targetIds,
         )
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
           featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
@@ -615,7 +617,7 @@ export function createPendingCompletionSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },

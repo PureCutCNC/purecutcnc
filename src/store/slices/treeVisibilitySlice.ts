@@ -15,13 +15,8 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
-
-export interface TreeVisibilitySliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
+import { cloneProject, projectsEqual } from '../helpers/normalize'
 
 export type TreeVisibilitySlice = Pick<
   ProjectStore,
@@ -33,10 +28,7 @@ export type TreeVisibilitySlice = Pick<
 
 export function createTreeVisibilitySlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: TreeVisibilitySliceDependencies,
 ): TreeVisibilitySlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
   setAllRegionsVisible: (visible) =>

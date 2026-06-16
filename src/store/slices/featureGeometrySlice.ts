@@ -17,9 +17,14 @@
 import type { StateCreator } from 'zustand'
 import { propagateConstraintsOnTranslate, validateConstraintsOnFeature } from '../../sketch/constraintSolver'
 import {
+  cloneProject,
+  projectsEqual,
+  syncFeatureTreeProject,
+  syncStockFromSourceFeature,
+} from '../helpers/normalize'
+import {
   profileVertices,
   type Point,
-  type Project,
   type SketchFeature,
   type SketchProfile,
 } from '../../types/project'
@@ -32,7 +37,6 @@ import {
   applyLineCornerFillet,
   arcControlPoint,
   buildArcSegmentFromThreePoints,
-  cloneSegment,
   closeOpenProfile,
   deleteAnchorFromProfile,
   deleteSegmentFromProfile,
@@ -43,10 +47,6 @@ import {
 } from '../helpers/profileEdit'
 
 export interface FeatureGeometrySliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-  syncFeatureTreeProject: (project: Project) => Project
-  syncStockFromSourceFeature: (project: Project, featureId: string) => Project
   joinOpenProfiles: (
     profile: SketchProfile,
     endpoint: OpenProfileEndpoint,
@@ -78,10 +78,6 @@ export function createFeatureGeometrySlice(
   deps: FeatureGeometrySliceDependencies,
 ): FeatureGeometrySlice {
   const {
-    cloneProject,
-    projectsEqual,
-    syncFeatureTreeProject,
-    syncStockFromSourceFeature,
     joinOpenProfiles,
     inferFeatureKind,
     clearStaleConstraints,
@@ -100,7 +96,6 @@ export function createFeatureGeometrySlice(
           const nextProfile = {
             ...profile,
             start: clonePoint(profile.start),
-            segments: profile.segments.map(cloneSegment),
           }
 
           const anchorCount = profileVertices(nextProfile).length

@@ -23,21 +23,14 @@ import type {
   FeatureFolder,
   Operation,
   OperationTarget,
-  Project,
   SketchFeature,
   Tool,
 } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
-import { normalizeFeatureZRange } from '../helpers/normalize'
+import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
 import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate } from '../helpers/operationDefaults'
 import type { ProjectStore } from '../types'
-
-export interface OperationsSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-  syncFeatureTreeProject: (project: Project) => Project
-}
 
 export type OperationsSlice = Pick<
   ProjectStore,
@@ -66,13 +59,7 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
 export function createOperationsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: OperationsSliceDependencies,
 ): OperationsSlice {
-  const {
-    cloneProject,
-    projectsEqual,
-    syncFeatureTreeProject,
-  } = deps
 
   return {
     addOperation: (kind, pass, target, libraryTools) => {

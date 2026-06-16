@@ -18,14 +18,9 @@ import type { StateCreator } from 'zustand'
 import { createImportedFeature, isProfileDegenerate, mergeCamjFolders, uniqueName } from '../../import'
 import type { FeatureFolder, FeatureOperation, Project, SketchFeature } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
-import { normalizeFeatureZRange } from '../helpers/normalize'
+import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
 import type { ProjectStore } from '../types'
-
-export interface ImportMergeSliceDependencies {
-  cloneProject: (project: Project) => Project
-  syncFeatureTreeProject: (project: Project) => Project
-}
 
 export type ImportMergeSlice = Pick<
   ProjectStore,
@@ -36,9 +31,7 @@ export type ImportMergeSlice = Pick<
 export function createImportMergeSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: ImportMergeSliceDependencies,
 ): ImportMergeSlice {
-  const { cloneProject, syncFeatureTreeProject } = deps
 
   return {
     importShapes: (input) => {

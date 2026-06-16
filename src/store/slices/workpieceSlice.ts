@@ -20,17 +20,11 @@ import {
   getStockBounds,
   rectProfile,
   stockFromFeature,
-  type Project,
   type SketchFeature,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
-
-export interface WorkpieceSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-  syncFeatureTreeProject: (project: Project) => Project
-}
+import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 
 export type WorkpieceSlice = Pick<
   ProjectStore,
@@ -47,14 +41,7 @@ export type WorkpieceSlice = Pick<
 
 export function createWorkpieceSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: WorkpieceSliceDependencies,
 ): WorkpieceSlice {
-  const {
-    cloneProject,
-    projectsEqual,
-    syncFeatureTreeProject,
-  } = deps
 
   return {
     setCreationTarget: (target) =>

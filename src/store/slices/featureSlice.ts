@@ -25,7 +25,13 @@ import type {
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
-import { normalizeFeatureZRange } from '../helpers/normalize'
+import {
+  cloneProject,
+  normalizeFeatureZRange,
+  projectsEqual,
+  syncFeatureTreeProject,
+  syncStockFromSourceFeature,
+} from '../helpers/normalize'
 import {
   getStockBounds,
   rectProfile,
@@ -61,9 +67,6 @@ import {
 } from '../../sketch/constraintSolver'
 
 export interface FeatureSliceDependencies {
-  cloneProject: (project: Project) => Project
-  syncFeatureTreeProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
   createDerivedFeature: (
     project: Project,
     baseFeature: SketchFeature,
@@ -71,7 +74,6 @@ export interface FeatureSliceDependencies {
     operation: FeatureOperation,
     name: string,
   ) => SketchFeature
-  syncStockFromSourceFeature: (project: Project, featureId: string) => Project
 }
 
 export type FeatureSlice = Pick<
@@ -107,11 +109,7 @@ export function createFeatureSlice(
   deps: FeatureSliceDependencies,
 ): FeatureSlice {
   const {
-    cloneProject,
-    syncFeatureTreeProject,
-    projectsEqual,
     createDerivedFeature,
-    syncStockFromSourceFeature,
   } = deps
 
   return {

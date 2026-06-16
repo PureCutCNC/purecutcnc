@@ -15,17 +15,12 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Tool, Project } from '../../types/project'
+import type { Tool } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { defaultTool } from '../../types/project'
-import { normalizeTool } from '../helpers/normalize'
+import { cloneProject, normalizeTool, projectsEqual } from '../helpers/normalize'
 import { toolMatchesTemplate } from '../helpers/operationDefaults'
-
-export interface ToolsSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
-}
 
 export type ToolsSlice = Pick<
   ProjectStore,
@@ -52,9 +47,7 @@ function duplicateToolName(name: string, tools: Tool[]): string {
 export function createToolsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: ToolsSliceDependencies,
 ): ToolsSlice {
-  const { cloneProject, projectsEqual } = deps
 
   return {
     addTool: () => {

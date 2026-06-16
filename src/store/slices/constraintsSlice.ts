@@ -23,14 +23,11 @@ import {
   validateConstraintsOnFeature,
   type ConstraintInput,
 } from '../../sketch/constraintSolver'
-import type { LocalConstraint, Project } from '../../types/project'
+import type { LocalConstraint } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { translateProfile, transformProfile } from '../helpers/transform'
-
-export interface ConstraintsSliceDependencies {
-  cloneProject: (project: Project) => Project
-}
+import { cloneProject } from '../helpers/normalize'
 
 export type ConstraintsSlice = Pick<
   ProjectStore,
@@ -45,12 +42,7 @@ export type ConstraintsSlice = Pick<
 
 export function createConstraintsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
-  _get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: ConstraintsSliceDependencies,
 ): ConstraintsSlice {
-  const {
-    cloneProject,
-  } = deps
 
   return {
   beginConstraint: (featureId) =>

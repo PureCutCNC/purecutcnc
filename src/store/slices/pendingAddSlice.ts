@@ -16,7 +16,8 @@
 
 import type { StateCreator } from 'zustand'
 import { convertLength } from '../../utils/units'
-import type { Clamp, Project, Segment, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
+import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { createTextFeatureAt } from '../helpers/naming'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
@@ -28,11 +29,6 @@ import {
   resolveOpenCompositeDraftSegments,
 } from '../helpers/profileEdit'
 import type { CompositeSegmentMode, ProjectStore } from '../types'
-
-export interface PendingAddSliceDependencies {
-  cloneProject: (project: Project) => Project
-  syncFeatureTreeProject: (project: Project) => Project
-}
 
 export type PendingAddSlice = Pick<
   ProjectStore,
@@ -74,7 +70,6 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
 export function createPendingAddSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: PendingAddSliceDependencies,
 ): PendingAddSlice {
   return {
     pendingAdd: null,
@@ -247,7 +242,7 @@ export function createPendingAddSlice(
               activeControl: null,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -288,7 +283,7 @@ export function createPendingAddSlice(
               activeControl: null,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -321,7 +316,7 @@ export function createPendingAddSlice(
       }
 
       set((s) => {
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, createdFeature],
           featureTree: [...s.project.featureTree, { type: 'feature', featureId: createdFeature.id }],
@@ -341,7 +336,7 @@ export function createPendingAddSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
