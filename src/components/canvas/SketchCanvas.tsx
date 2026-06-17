@@ -15,7 +15,7 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import type { KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, WheelEvent } from 'react'
+import type { KeyboardEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { ToolpathVisibility } from '../toolpathVisibility'
@@ -46,7 +46,6 @@ import {
   computeMoveDistancePreviewPoint,
   computeRotateDegreesFromPreview,
   computeScaleFactorFromPreview,
-  unitDirection,
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
@@ -58,10 +57,10 @@ import { useTransformExactWorkflow } from './useTransformExactWorkflow'
 import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
 import { useClickPlacement } from './useClickPlacement'
+import { usePointerGestures } from './usePointerGestures'
 import { useSnapPreview } from './useSnapPreview'
 import { useCanvasContextMenu } from './useCanvasContextMenu'
-import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
-import { offsetForCursor } from '../../sketch/dimensions'
+import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
   drawFeature,
   drawMoveGuide,
@@ -76,7 +75,6 @@ import {
   canvasToWorld,
   computeBaseViewTransform,
   computeFitViewState,
-  computeFitViewStateForBounds,
   computeViewTransform,
   worldToCanvas,
 } from './viewTransform'
@@ -84,10 +82,6 @@ import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransfor
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
-  featureFullyInsideRect,
-  findHitClampId,
-  findHitFeatureId,
-  findHitTabId,
 } from './hitTest'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
@@ -115,7 +109,6 @@ import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
 import { useStableEvent } from '../../hooks/useStableEvent'
-import { useEventListener } from '../../hooks/useEventListener'
 import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
@@ -126,10 +119,6 @@ const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 const OPEN_ENDPOINT_JOIN_HIT_RADIUS = 14
 const MIN_SKETCH_ZOOM = 0.02
-
-// Stable (module-level) so the wheel listener subscribes once; `passive: false`
-// lets handleWheelEvent call preventDefault to suppress page scroll/zoom.
-const WHEEL_LISTENER_OPTIONS = { passive: false } as const
 
 interface PendingPreviewPoint {
   point: Point
@@ -294,6 +283,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetRawPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const livePointerWorldRef = useRef<Point | null>(null)
+
+  function stopPan() {
+    isPanningRef.current = false
+    lastPanPointRef.current = null
+  }
+
+  function stopNodeDrag() {
+    if (!isDraggingNodeRef.current && selection.activeControl === null) return
+    isDraggingNodeRef.current = false
+    dragStartWorldRef.current = null
+    setActiveControl(null)
+    commitHistoryTransaction()
+  }
+
   const drawRef = useRef<() => void>(() => {})
   // Stable, frame-coalescing redraw. Replaces the former ad-hoc `scheduleDraw`
   // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
@@ -649,7 +652,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function clearTransientCanvasState() {
     suppressClickRef.current = false
     didPanRef.current = false
-    stopPan()
+    gestures.stopPan()
     marqueeStartRef.current = null
     marqueeCurrentRef.current = null
     touchDragPendingRef.current = null
@@ -733,14 +736,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function applyEditFromPanel() {
-    stopNodeDrag()
+    gestures.stopNodeDrag()
     resetLock()
     applySketchEdit()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelEditFromPanel() {
-    stopNodeDrag()
+    gestures.stopNodeDrag()
     resetLock()
     cancelSketchEdit()
     editWorkflowPanel.focusCanvasAfterAction()
@@ -1813,22 +1816,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [move.copyCountPromptActive, transformExact.rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   // Native pointermove (not React's synthetic) so we can read coalesced events.
-  // Routed through useStableEvent so the listener subscribes once while the body
-  // still sees the latest state — clears the exhaustive-deps warning without a
-  // hand-maintained state dependency list.
-  const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {
-    contextMenu.handleLongPressMove(event)
-    const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
-    const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
-    handleCanvasPointerMove(canvasCoordinates(sourceEvent))
-  })
-  useEventListener(canvasRef, 'pointermove', onCanvasPointerMove)
-
-  const onCanvasWheel = useStableEvent((event: globalThis.WheelEvent) => {
-    handleWheelEvent(event)
-  })
-  useEventListener(canvasRef, 'wheel', onCanvasWheel, WHEEL_LISTENER_OPTIONS)
-
   const { isGestureActive: isGestureActiveRef } = useCanvasGestures({
     getCanvas: () => canvasRef.current,
     getViewState: () => viewStateRef.current,
@@ -1848,10 +1835,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     minZoom: MIN_SKETCH_ZOOM,
   })
 
-  function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement> | globalThis.WheelEvent, 'clientX' | 'clientY'>): CanvasPoint {
-    const rect = canvasRef.current!.getBoundingClientRect()
-    return { cx: event.clientX - rect.left, cy: event.clientY - rect.top }
-  }
 
   function editableFeature(): SketchFeature | null {
     const selection = selectionRef.current
@@ -1878,20 +1861,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return kind === 'extend_start' ? 'start' : 'end'
   }
 
-  function openEndpointForAnchorControl(feature: SketchFeature, control: SketchControlRef): OpenProfileEndpoint | null {
-    if (control.kind !== 'anchor' || feature.sketch.profile.closed || feature.sketch.profile.segments.length === 0) {
-      return null
-    }
-
-    const lastAnchorIndex = profileVertices(feature.sketch.profile).length - 1
-    if (control.index === 0) {
-      return 'start'
-    }
-    if (control.index === lastAnchorIndex) {
-      return 'end'
-    }
-    return null
-  }
 
   function findOpenEndpointHit(
     rawPoint: Point,
@@ -1980,31 +1949,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
   }
 
-  function projectPointToSegment(point: Point, start: Point, end: Point): { point: Point; t: number; distance: number } {
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const lengthSq = dx * dx + dy * dy
-    if (lengthSq <= 1e-12) {
-      return {
-        point: start,
-        t: 0,
-        distance: Math.hypot(point.x - start.x, point.y - start.y),
-      }
-    }
-
-    const rawT = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq
-    const t = Math.max(0, Math.min(1, rawT))
-    const projectedPoint = {
-      x: start.x + dx * t,
-      y: start.y + dy * t,
-    }
-
-    return {
-      point: projectedPoint,
-      t,
-      distance: Math.hypot(point.x - projectedPoint.x, point.y - projectedPoint.y),
-    }
-  }
 
   function hitEditableControl(point: CanvasPoint, options?: { includeSegments?: boolean }): SketchControlRef | null {
     const feature = editableFeature()
@@ -2252,784 +2196,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     runLivePointerPreview()
   }, [runLivePointerPreview, snapSettings, viewState, pendingAdd, pendingMove, pendingTransform, pendingOffset, selection.mode, selection.sketchEditTool, selection.selectedFeatureId, selection.selectedNode])
 
-  function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (isGestureActiveRef.current) return
-
-    if (event.pointerType === 'touch') {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    }
-
-    contextMenu.startLongPress(event)
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const pendingShapeAction = pendingShapeActionRef.current
-    const viewState = viewStateRef.current
-    const point = canvasCoordinates(event)
-
-    if (zoomWindowActive && event.button === 0) {
-      zoomWindowStartRef.current = point
-      zoomWindowCurrentRef.current = point
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      snap.updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    const shiftStartsPan = event.button === 0 && event.shiftKey && !pendingShapeAction
-    const isTouch = event.pointerType === 'touch'
-    if (event.button === 1 || event.button === 2 || shiftStartsPan) {
-      isPanningRef.current = true
-      didPanRef.current = false
-      lastPanPointRef.current = point
-      setHoveredEditControl(null)
-      return
-    }
-
-    if (pendingOffset) {
-      return
-    }
-
-    // Measure/dimension placement is handled on click — don't start marquee here.
-    if (event.button === 0 && !pendingAddRef.current && (tapeMeasureRef.current || pendingDimensionRef.current || dimensionDeleteArmedRef.current)) {
-      return
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.sketchEditTool) {
-      return
-    }
-
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-
-    // ── Begin dragging a dimension annotation to reposition it ──
-    if (
-      event.button === 0 && selection.mode === 'feature'
-      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
-      && !pendingOffset && !pendingShapeAction && !pendingConstraintRef.current
-      && !tapeMeasureRef.current && !pendingDimensionRef.current
-      && project.meta.showDimensions
-    ) {
-      const hitDim = pickDimensionAt(project, vt, point, 8)
-      if (hitDim) {
-        const dim = project.annotations.find((d) => d.id === hitDim)
-        if (dim && !dim.locked && offsetForCursor(dim, project, world) !== null) {
-          selectAnnotation(hitDim)
-          dimEdit.draggingDimensionIdRef.current = hitDim
-          beginHistoryTransaction()
-          suppressClickRef.current = true
-          return
-        }
-      }
-    }
-
-    const control = hitEditableControl(point)
-    const hitClampId = findHitClampId(world, project.clamps)
-    const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, project.features, vt)
-    if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
-      if (isTouch) {
-        isPanningRef.current = true
-        didPanRef.current = false
-        lastPanPointRef.current = point
-        setHoveredEditControl(null)
-        return
-      }
-      marqueeStartRef.current = point
-      marqueeCurrentRef.current = point
-      setHoveredEditControl(null)
-      scheduleDraw()
-      return
-    }
-
-    if (!control) {
-      return
-    }
-
-    let nextControl = control
-    if (control.kind === 'segment' && selection.selectedFeatureId) {
-      const resolvedSnap = snap.resolveCurrentSketchSnap(world, vt)
-      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
-      const feature = editableFeature()
-      const segment = feature?.sketch.profile.segments[control.index]
-      if (feature && segment?.type === 'line') {
-        const segmentStart = anchorPointForIndex(feature.sketch.profile, control.index)
-        const projected = projectPointToSegment(targetPoint, segmentStart, segment.to)
-        nextControl = {
-          kind: 'segment',
-          index: control.index,
-          t: projected.t,
-        }
-      }
-    }
-
-    if (isTouch && selection.mode === 'sketch_edit' && !selection.sketchEditTool) {
-      touchDragPendingRef.current = { control: nextControl, world, canvasPoint: point }
-      return
-    }
-
-    if (dimEdit.dimensionEditRef.current) dimEdit.cancelEditDimension()
-    beginHistoryTransaction()
-    setActiveControl(nextControl)
-    isDraggingNodeRef.current = true
-    dragStartWorldRef.current = world
-
-    if (nextControl.kind === 'segment' && selection.selectedFeatureId) {
-      const resolvedSnap = snap.resolveCurrentSketchSnap(world, vt)
-      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
-      moveFeatureControl(selection.selectedFeatureId, nextControl, targetPoint)
-      snap.updateActiveSnap(resolvedSnap.mode ? resolvedSnap : null)
-    }
-  }
-
-  function handleCanvasPointerMove(point: CanvasPoint) {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    if (isGestureActiveRef.current) {
-      if (isPanningRef.current) stopPan()
-      touchDragPendingRef.current = null
-      contextMenu.cancelLongPress()
-      return
-    }
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const viewState = viewStateRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    livePointerWorldRef.current = world
-    const sketchEditTool = selection.sketchEditTool
-
-    // ── Delete-dimension mode: highlight the dimension under the cursor ──
-    if (dimensionDeleteArmedRef.current) {
-      const hit = project.meta.showDimensions ? pickDimensionAt(project, vt, point, 8) : null
-      if (hit !== deleteHoverDimIdRef.current) {
-        deleteHoverDimIdRef.current = hit
-        scheduleDraw()
-      }
-      return
-    }
-
-    // ── Dragging a dimension: update its offset to follow the cursor ──
-    if (dimEdit.draggingDimensionIdRef.current) {
-      const dim = project.annotations.find((d) => d.id === dimEdit.draggingDimensionIdRef.current)
-      if (dim) {
-        const off = offsetForCursor(dim, project, world)
-        if (off !== null) {
-          updateDimensionAnnotation(dim.id, { offset: off })
-        }
-      }
-      scheduleDraw()
-      return
-    }
-
-    if (touchDragPendingRef.current) {
-      const pending = touchDragPendingRef.current
-      const dx = point.cx - pending.canvasPoint.cx
-      const dy = point.cy - pending.canvasPoint.cy
-      if (dx * dx + dy * dy > 25) {
-        touchDragPendingRef.current = null
-        if (dimEdit.dimensionEditRef.current) dimEdit.cancelEditDimension()
-        beginHistoryTransaction()
-        setActiveControl(pending.control)
-        isDraggingNodeRef.current = true
-        dragStartWorldRef.current = pending.world
-        if (pending.control.kind === 'segment' && selection.selectedFeatureId) {
-          moveFeatureControl(selection.selectedFeatureId, pending.control, world)
-        }
-      }
-      return
-    }
-
-    if (isPanningRef.current && lastPanPointRef.current) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      snap.updateActiveSnap(null)
-      const dx = point.cx - lastPanPointRef.current.cx
-      const dy = point.cy - lastPanPointRef.current.cy
-      if (dx !== 0 || dy !== 0) {
-        didPanRef.current = true
-      }
-      lastPanPointRef.current = point
-      setViewState((previous) => ({
-        ...previous,
-        panX: previous.panX + dx,
-        panY: previous.panY + dy,
-      }))
-      return
-    }
-
-    if (marqueeStartRef.current) {
-      marqueeCurrentRef.current = point
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      hoverFeature(null)
-      snap.updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    if (zoomWindowStartRef.current) {
-      zoomWindowCurrentRef.current = point
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      hoverFeature(null)
-      snap.updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    const pendingConstraintLive = pendingConstraintRef.current
-    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
-    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
-    const constraintPicking = constraintAnchorPicking || constraintRefPicking
-    const shouldPreviewSnap =
-      !zoomWindowActive && (
-        !!pendingAdd
-        || !!pendingMove
-        || !!pendingTransform
-        || !!pendingOffset
-        || !!tapeMeasureRef.current
-        || !!pendingDimensionRef.current
-        || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
-        || isDraggingNodeRef.current
-        || constraintPicking
-      )
-    const resolvedSnap = shouldPreviewSnap
-      ? snap.resolveCurrentSketchSnap(world, vt, {
-          excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
-        })
-      : { rawPoint: world, point: world, mode: null as null }
-    const snapped = resolvedSnap.point
-    const activeEditControl = selection.activeControl
-    const constrainedPoint =
-      snap.requiresResolvedSnapForPointPick() && !resolvedSnap.mode
-        ? activeEditControl?.kind === 'segment'
-          ? world
-          : null
-        : snapped
-    snap.updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
-
-    if (pendingAdd) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      if (pendingAdd.shape === 'origin') {
-        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
-        scheduleDraw()
-        return
-      }
-      // Apply axis lock to preview for polygon/spline/composite
-      let previewSnapped = snapped
-      if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
-        const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        if (lastPoint) previewSnapped = applyLock(snapped, lastPoint)
-      } else if (pendingAdd.shape === 'composite') {
-        const compositeOrigin = pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start
-        if (compositeOrigin) previewSnapped = applyLock(snapped, compositeOrigin)
-      }
-      setPendingPreviewPointRef({ point: previewSnapped, session: pendingAdd.session })
-      return
-    }
-
-    if (pendingMove) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      const moveEdit = operationDimEditRef.current
-      if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
-        const distance = parseLengthInput(moveEdit.distance, project.meta.units)
-        const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? snapped
-        const direction = unitDirection(pendingMove.fromPoint, referencePoint)
-        setPendingMovePreviewPointRef({
-          point: distance !== null
-            ? {
-                x: pendingMove.fromPoint.x + direction.x * Math.abs(distance),
-                y: pendingMove.fromPoint.y + direction.y * Math.abs(distance),
-              }
-            : referencePoint,
-          session: pendingMove.session,
-        })
-        return
-      }
-      const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
-      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
-      return
-    }
-
-    if (pendingTransform) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      const constrainedPoint =
-        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
-          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
-          : snapped
-      setPendingTransformPreviewPointRef({ point: constrainedPoint, session: pendingTransform.session })
-      return
-    }
-
-    if (pendingOffset) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      setPendingOffsetRawPreviewPointRef({ point: world, session: pendingOffset.session })
-      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      const dragOrigin = dragStartWorldRef.current ?? constrainedPoint
-      const lockedPoint = applyLock(constrainedPoint, dragOrigin)
-      // When lock is active, move the snap indicator to the locked position
-      if (lockModeRef.current !== 'none' && snap.activeSnapRef.current) {
-        snap.activeSnapRef.current = { ...snap.activeSnapRef.current, point: lockedPoint }
-      }
-      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, lockedPoint)
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'clamp' && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      moveClampControl(selection.selectedNode.clampId, selection.activeControl, constrainedPoint)
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'tab' && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      moveTabControl(selection.selectedNode.tabId, selection.activeControl, constrainedPoint)
-      return
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-      const feature = editableFeature()
-      if (feature && sketchEditTool === 'add_point') {
-        pendingSketchFilletRef.current = null
-        if (pendingSketchExtensionRef.current) {
-          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
-          sketchEditPreviewRef.current = { point: lockedSnapped, mode: 'add_point' }
-        } else {
-          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
-          if (endpoint) {
-            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
-          } else {
-            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
-            sketchEditPreviewRef.current =
-              target
-                ? { point: target.point, mode: 'add_point' }
-                : null
-          }
-        }
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'delete_point') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const control = hitEditableControl(point, { includeSegments: false })
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
-            : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'delete_segment') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const target = findSketchSegmentHit(feature.sketch.profile, world, vt)
-        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'disconnect') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const control = hitEditableControl(point, { includeSegments: false })
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
-            : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'fillet') {
-        pendingSketchExtensionRef.current = null
-        if (pendingSketchFilletRef.current) {
-          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
-        } else {
-          const control = hitEditableControl(point, { includeSegments: false })
-          if (control?.kind === 'anchor') {
-            const corner = anchorPointForIndex(feature.sketch.profile, control.index)
-            sketchEditPreviewRef.current = { point: corner, mode: 'add_point' }
-          } else {
-            sketchEditPreviewRef.current = null
-          }
-        }
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-      const feature = editableFeature()
-      const hoveredControl = feature ? hitEditableControl(point, { includeSegments: false }) : null
-      const steps = feature ? dimEdit.computeEditStepsForControl(feature.sketch.profile, hoveredControl) : []
-      setHoveredEditControl(steps.length > 0 ? hoveredControl : null)
-      hoverFeature(null)
-      return
-    }
-
-    sketchEditPreviewRef.current = null
-    pendingSketchExtensionRef.current = null
-    pendingSketchFilletRef.current = null
-    setHoveredEditControl(null)
-
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      hoverFeature(null)
-      return
-    }
-
-    const hitId = findHitFeatureId(world, project.features, vt)
-    hoverFeature(hitId)
-  }
-
-  function stopNodeDrag() {
-    if (!isDraggingNodeRef.current && selection.activeControl === null) return
-    isDraggingNodeRef.current = false
-    dragStartWorldRef.current = null
-    setActiveControl(null)
-    commitHistoryTransaction()
-  }
-
-  function tryJoinDraggedOpenEndpoint(): boolean {
-    const canvas = canvasRef.current
-    const rawPoint = livePointerWorldRef.current
-    const selection = selectionRef.current
-    const feature = editableFeature()
-    if (
-      !canvas
-      || !rawPoint
-      || !feature
-      || !isDraggingNodeRef.current
-      || selection.mode !== 'sketch_edit'
-      || selection.selectedNode?.type !== 'feature'
-      || !selection.selectedFeatureId
-      || !selection.activeControl
-    ) {
-      return false
-    }
-
-    const sourceEndpoint = openEndpointForAnchorControl(feature, selection.activeControl)
-    if (!sourceEndpoint) {
-      return false
-    }
-
-    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
-    const targetEndpoint = findOpenEndpointHit(rawPoint, vt, {
-      exclude: {
-        featureId: selection.selectedFeatureId,
-        endpoint: sourceEndpoint,
-        anchor: openEndpointAnchor(feature, sourceEndpoint),
-      },
-    })
-    if (!targetEndpoint) {
-      return false
-    }
-
-    return joinOpenFeatureEndpoints(
-      selection.selectedFeatureId,
-      sourceEndpoint,
-      targetEndpoint.featureId,
-      targetEndpoint.endpoint,
-    )
-  }
-
-  function stopPan() {
-    isPanningRef.current = false
-    lastPanPointRef.current = null
-  }
-
-  function handlePointerUp(event?: ReactPointerEvent<HTMLCanvasElement>) {
-    if (event?.pointerType === 'touch') {
-      try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
-    }
-
-    contextMenu.cancelLongPress()
-
-    if (touchDragPendingRef.current) {
-      const pending = touchDragPendingRef.current
-      touchDragPendingRef.current = null
-      setHoveredEditControl(pending.control)
-      dimEdit.setArmedForDimension(true)
-      return
-    }
-
-    if (dimEdit.draggingDimensionIdRef.current) {
-      dimEdit.draggingDimensionIdRef.current = null
-      commitHistoryTransaction()
-      scheduleDraw()
-      return
-    }
-
-    const canvas = canvasRef.current
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const viewState = viewStateRef.current
-
-    if (canvas && zoomWindowStartRef.current && zoomWindowCurrentRef.current) {
-      const dx = zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx
-      const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
-      const movedEnough = Math.hypot(dx, dy) >= 6
-      if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
-        const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
-        setViewState(
-          computeFitViewStateForBounds(
-            project.stock,
-            {
-              minX: Math.min(startWorld.x, endWorld.x),
-              maxX: Math.max(startWorld.x, endWorld.x),
-              minY: Math.min(startWorld.y, endWorld.y),
-              maxY: Math.max(startWorld.y, endWorld.y),
-            },
-            canvas.width,
-            canvas.height,
-          ),
-        )
-      }
-      suppressClickRef.current = true
-      zoomWindowStartRef.current = null
-      zoomWindowCurrentRef.current = null
-      scheduleDraw()
-      onZoomWindowComplete?.()
-    }
-
-    if (canvas && marqueeStartRef.current && marqueeCurrentRef.current) {
-      const dx = marqueeCurrentRef.current.cx - marqueeStartRef.current.cx
-      const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
-      const movedEnough = Math.hypot(dx, dy) >= 6
-      if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
-        const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
-        const minX = Math.min(startWorld.x, endWorld.x)
-        const minY = Math.min(startWorld.y, endWorld.y)
-        const maxX = Math.max(startWorld.x, endWorld.x)
-        const maxY = Math.max(startWorld.y, endWorld.y)
-        const enclosedIds = project.features
-          .filter((feature) => feature.visible)
-          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
-          .map((feature) => feature.id)
-        const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
-          .filter((id, index, array) => array.indexOf(id) === index)
-        if (nextIds.length > 0) {
-          selectFeatures(nextIds)
-        }
-        suppressClickRef.current = true
-      }
-      marqueeStartRef.current = null
-      marqueeCurrentRef.current = null
-      scheduleDraw()
-    }
-    if (tryJoinDraggedOpenEndpoint()) {
-      suppressClickRef.current = true
-      scheduleDraw()
-    }
-    stopNodeDrag()
-    stopPan()
-  }
-
-  function handlePointerLeave() {
-    contextMenu.cancelLongPress()
-    touchDragPendingRef.current = null
-
-    if (dimEdit.draggingDimensionIdRef.current) {
-      dimEdit.draggingDimensionIdRef.current = null
-      commitHistoryTransaction()
-    }
-
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-
-    marqueeStartRef.current = null
-    marqueeCurrentRef.current = null
-    zoomWindowStartRef.current = null
-    zoomWindowCurrentRef.current = null
-    stopNodeDrag()
-    stopPan()
-    livePointerWorldRef.current = null
-    sketchEditPreviewRef.current = null
-    pendingSketchFilletRef.current = null
-    setHoveredEditControl(null)
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    hoverFeature(null)
-    snap.updateActiveSnap(null)
-    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
-      setPendingPreviewPointRef(null)
-    } else if (pendingAdd?.shape === 'origin') {
-      originPreviewPointRef.current = null
-      scheduleDraw()
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
-      setPendingPreviewPointRef({ point: pendingAdd.anchor, session: pendingAdd.session })
-    } else {
-      setPendingPreviewPointRef(null)
-    }
-    if (pendingMove?.fromPoint) {
-      setPendingMovePreviewPointRef({
-        point: pendingMove.toPoint ?? pendingMove.fromPoint,
-        session: pendingMove.session,
-      })
-    } else {
-      setPendingMovePreviewPointRef(null)
-    }
-    if (pendingTransform?.referenceStart) {
-      setPendingTransformPreviewPointRef({
-        point: pendingTransform.referenceEnd ?? pendingTransform.referenceStart,
-        session: pendingTransform.session,
-      })
-    } else {
-      setPendingTransformPreviewPointRef(null)
-    }
-  }
-
-  function handleWheelEvent(event: Pick<globalThis.WheelEvent, 'clientX' | 'clientY' | 'deltaY' | 'preventDefault'>) {
-    if (zoomWindowActive) {
-      return
-    }
-
-    event.preventDefault()
-
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const point = canvasCoordinates(event)
-    const project = projectRef.current
-    const currentViewState = viewStateRef.current
-    const base = computeBaseViewTransform(project.stock, canvas.width, canvas.height)
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, currentViewState)
-    const worldBefore = canvasToWorld(point.cx, point.cy, vt)
-    const zoomFactor = Math.exp(-event.deltaY * 0.0015)
-    const nextZoom = Math.max(MIN_SKETCH_ZOOM, currentViewState.zoom * zoomFactor)
-    const nextScale = base.scale * nextZoom
-
-    setViewState({
-      zoom: nextZoom,
-      panX: point.cx - base.offsetX - worldBefore.x * nextScale,
-      panY: point.cy - base.offsetY - worldBefore.y * nextScale,
-    })
-  }
-
-  function handleDoubleClick(event: MouseEvent<HTMLCanvasElement>) {
-    if (zoomWindowActive) {
-      return
-    }
-
-    const project = projectRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    if (pendingAdd) {
-      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 2) {
-        event.preventDefault()
-        if (creationTargetRef.current === 'region') {
-          return
-        }
-        completePendingOpenPath()
-        setPendingPreviewPointRef(null)
-      }
-      return
-    }
-
-    if (pendingMove || pendingTransform || pendingOffset) {
-      return
-    }
-
-    const point = canvasCoordinates(event)
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
-    if (hitClampId) {
-      enterClampEdit(hitClampId)
-      return
-    }
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      enterTabEdit(hitTabId)
-      return
-    }
-    const hitId = findHitFeatureId(world, project.features, vt)
-    if (hitId) enterSketchEdit(hitId)
-  }
-
   // Called by the "Type" button in banners — opens dimension input without
   // the Tab toggle-close behaviour. Keyboard Tab keeps its existing logic.
   function triggerDimensionEdit() {
@@ -3229,6 +2395,80 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     resetLock,
   })
 
+  const gestures = usePointerGestures({
+    isDraggingNodeRef,
+    dragStartWorldRef,
+    touchDragPendingRef,
+    isPanningRef,
+    didPanRef,
+    lastPanPointRef,
+    marqueeStartRef,
+    marqueeCurrentRef,
+    zoomWindowStartRef,
+    zoomWindowCurrentRef,
+    suppressClickRef,
+    projectRef,
+    selectionRef,
+    viewStateRef,
+    canvasRef,
+    livePointerWorldRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    pendingShapeActionRef,
+    pendingMovePreviewPointRef,
+    pendingConstraintRef,
+    pendingDimensionRef,
+    dimensionDeleteArmedRef,
+    deleteHoverDimIdRef,
+    pendingSketchExtensionRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    originPreviewPointRef,
+    tapeMeasureRef,
+    creationTargetRef,
+    operationDimEditRef,
+    lockModeRef,
+    snap,
+    contextMenu,
+    dimEdit,
+    isGestureActiveRef,
+    hitEditableControl,
+    editableFeature,
+    findSketchSegmentHit,
+    findOpenEndpointHit,
+    openEndpointAnchor,
+    setViewState,
+    moveFeatureControl,
+    beginHistoryTransaction,
+    commitHistoryTransaction,
+    setActiveControl,
+    completePendingOpenPath,
+    enterClampEdit,
+    enterTabEdit,
+    enterSketchEdit,
+    hoverFeature,
+    selectFeatures,
+    selectAnnotation,
+    updateDimensionAnnotation,
+    moveClampControl,
+    moveTabControl,
+    joinOpenFeatureEndpoints,
+    stopPan,
+    stopNodeDrag,
+    scheduleDraw,
+    applyLock,
+    setPendingPreviewPointRef,
+    setPendingMovePreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    setHoveredEditControl,
+    zoomWindowActive,
+    onZoomWindowComplete,
+  })
+
   const clickPlacement = useClickPlacement({
     suppressClickRef,
     didPanRef,
@@ -3261,7 +2501,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     transformExact,
     fillet,
     constraint,
-    canvasCoordinates,
+    canvasCoordinates: gestures.canvasCoordinates,
     editableFeature,
     endpointFromSketchExtension,
     findOpenEndpointHit,
@@ -3356,12 +2596,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       <canvas
         ref={canvasRef}
         className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction ? 'sketch-canvas--placing' : ''}`}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
+        onPointerDown={gestures.handlePointerDown}
+        onPointerUp={gestures.handlePointerUp}
+        onPointerCancel={gestures.handlePointerUp}
+        onPointerLeave={gestures.handlePointerLeave}
         onClick={clickPlacement.handleClick}
-        onDoubleClick={handleDoubleClick}
+        onDoubleClick={gestures.handleDoubleClick}
         onKeyDown={keyboard.handleKeyDown}
         onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
