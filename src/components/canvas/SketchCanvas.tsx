@@ -2664,26 +2664,55 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         />
       )}
       {constraint.constraintEdit && (
-        <input
-          key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
-          ref={constraint.constraintEditInputRef}
-          className="sketch-dim-input"
-          style={{ left: constraint.constraintEdit.cx, top: constraint.constraintEdit.cy, transform: 'translate(-50%, -50%)' }}
-          value={constraint.constraintEdit.value}
-          onChange={(e) => constraint.setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              constraint.commitConstraintEdit()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              constraint.cancelConstraintEdit()
-            }
-          }}
-          onBlur={() => constraint.setConstraintEdit(null)}
-          onFocus={(e) => e.currentTarget.select()}
-        />
+        <CanvasWorkflowPanel
+          title="Edit Constraint"
+          step="Set distance"
+          position={constraint.constraintEditWorkflowPanel.position}
+          panelRef={constraint.constraintEditWorkflowPanel.panelRef}
+          handleProps={constraint.constraintEditWorkflowPanel.handleProps}
+          actionRowProps={constraint.constraintEditWorkflowPanel.actionRowProps}
+          className="canvas-workflow-panel--constraint-edit"
+          moveLabel="Move constraint edit controls"
+          actions={(
+            <>
+              <button
+                type="button"
+                className="tablet-cmd-btn tablet-cmd-btn--confirm"
+                onClick={constraint.commitConstraintEditFromPanel}
+              >Apply</button>
+              <button
+                type="button"
+                className="tablet-cmd-btn tablet-cmd-btn--cancel"
+                onClick={constraint.cancelConstraintEditFromPanel}
+              >Cancel</button>
+            </>
+          )}
+        >
+          <label className="canvas-workflow-panel__field">
+            <span>Distance</span>
+            <input
+              key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
+              ref={constraint.constraintEditInputRef}
+              className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+              type="text"
+              inputMode="decimal"
+              value={constraint.constraintEdit.value}
+              onChange={(e) => constraint.setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  constraint.commitConstraintEditFromPanel()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  constraint.cancelConstraintEditFromPanel()
+                }
+              }}
+              autoFocus
+            />
+          </label>
+        </CanvasWorkflowPanel>
       )}
       {pendingOffset && (
         <CanvasWorkflowPanel

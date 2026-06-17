@@ -46,8 +46,6 @@ type ConstraintEditState = {
   featureId: string
   constraintId: string
   value: string
-  cx: number
-  cy: number
 } | null
 
 export interface ConstraintWorkflow {
@@ -60,10 +58,13 @@ export interface ConstraintWorkflow {
   constraintDistanceInputRef: RefObject<HTMLInputElement | null>
   constraintDistanceReady: boolean
   constraintWorkflowPanel: ReturnType<typeof useCanvasWorkflowPanel>
+  constraintEditWorkflowPanel: ReturnType<typeof useCanvasWorkflowPanel>
   commitConstraintFromPanel: () => void
   cancelConstraintFromPanel: () => void
   commitConstraintEdit: () => void
   cancelConstraintEdit: () => void
+  commitConstraintEditFromPanel: () => void
+  cancelConstraintEditFromPanel: () => void
   handleConstraintKeyDown: (e: KeyboardEvent<HTMLCanvasElement>) => boolean
 }
 
@@ -104,6 +105,14 @@ export function useConstraintWorkflow(ctx: ConstraintWorkflowCtx): ConstraintWor
     clearTransientCanvasState,
   })
 
+  const constraintEditWorkflowPanel = useCanvasWorkflowPanel({
+    open: !!constraintEdit,
+    phaseKey: 'editing',
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   function commitConstraintFromPanel() {
     const parsed = parseLengthInput(constraintDistanceInput ?? '', projectRef.current.meta.units)
     if (parsed != null && parsed >= 0) {
@@ -133,6 +142,22 @@ export function useConstraintWorkflow(ctx: ConstraintWorkflowCtx): ConstraintWor
   function cancelConstraintEdit() {
     setConstraintEdit(null)
     canvasRef.current?.focus({ preventScroll: true })
+  }
+
+  function commitConstraintEditFromPanel() {
+    const edit = constraintEditRef.current
+    if (!edit) return
+    const parsed = parseLengthInput(edit.value, projectRef.current.meta.units)
+    if (parsed != null && parsed >= 0) {
+      updateConstraintValue(edit.featureId, edit.constraintId, parsed)
+    }
+    setConstraintEdit(null)
+    constraintEditWorkflowPanel.focusCanvasAfterAction()
+  }
+
+  function cancelConstraintEditFromPanel() {
+    setConstraintEdit(null)
+    constraintEditWorkflowPanel.focusCanvasAfterAction()
   }
 
   function handleConstraintKeyDown(e: KeyboardEvent<HTMLCanvasElement>): boolean {
@@ -191,10 +216,13 @@ export function useConstraintWorkflow(ctx: ConstraintWorkflowCtx): ConstraintWor
     constraintDistanceInputRef,
     constraintDistanceReady,
     constraintWorkflowPanel,
+    constraintEditWorkflowPanel,
     commitConstraintFromPanel,
     cancelConstraintFromPanel,
     commitConstraintEdit,
     cancelConstraintEdit,
+    commitConstraintEditFromPanel,
+    cancelConstraintEditFromPanel,
     handleConstraintKeyDown,
   }
 }
