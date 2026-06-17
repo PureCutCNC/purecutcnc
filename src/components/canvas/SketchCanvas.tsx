@@ -501,9 +501,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
   const editDimEditActive = editModeActive && !!dimEdit.dimensionEdit
+  const editFilletActive = editModeActive && fillet.filletDimensionEditActive
   const editWorkflowPanel = useCanvasWorkflowPanel({
     open: editModeActive,
-    phaseKey: editDimEditActive ? 'dimensions' : 'editing',
+    phaseKey: editFilletActive ? 'fillet' : editDimEditActive ? 'dimensions' : 'editing',
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -757,6 +758,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
+  function commitFilletFromPanel() {
+    fillet.commitFilletDimension()
+    editWorkflowPanel.focusCanvasAfterAction()
+  }
+
+  function cancelFilletFromPanel() {
+    fillet.cancelFilletDimension()
+    editWorkflowPanel.focusCanvasAfterAction()
+  }
 
   useEffect(() => {
     if (!project.backdrop?.imageDataUrl) {
@@ -2653,43 +2663,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
         />
       )}
-      {fillet.filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
-        const canvas = canvasRef.current
-        if (!canvas) return null
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const cornerC = worldToCanvas(fillet.filletDimensionEdit.corner, vt)
-        return (
-          <input
-            key="fillet-radius"
-            ref={fillet.filletRadiusInputRef}
-            className="sketch-dim-input"
-            style={{ left: cornerC.cx, top: cornerC.cy, transform: 'translate(-50%, -50%)' }}
-            value={fillet.filletDimensionEdit.radius}
-            onChange={(e) => {
-              const value = e.target.value
-              fillet.setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: value } : null))
-              scheduleDraw()
-            }}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                fillet.commitFilletDimension()
-                canvasRef.current?.focus({ preventScroll: true })
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                fillet.cancelFilletDimension()
-                canvasRef.current?.focus({ preventScroll: true })
-              } else if (e.key === 'Tab') {
-                e.preventDefault()
-                fillet.setFilletDimensionEdit(null)
-                canvasRef.current?.focus({ preventScroll: true })
-              }
-            }}
-            onFocus={(e) => e.currentTarget.select()}
-          />
-        )
-      })()}
       {constraint.constraintEdit && (
         <input
           key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
@@ -3581,7 +3554,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         <CanvasWorkflowPanel
           title="Edit"
           step={
-            editDimEditActive ? 'Enter dimensions'
+            editFilletActive ? 'Enter radius'
+            : editDimEditActive ? 'Enter dimensions'
             : selection.sketchEditTool === 'add_point' ? 'Click to add points'
             : selection.sketchEditTool === 'delete_point' ? 'Click to delete points'
             : selection.sketchEditTool === 'delete_segment' ? 'Click to delete segments'
@@ -3592,7 +3566,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={editWorkflowPanel.position}
           panelRef={editWorkflowPanel.panelRef}
           handleProps={editWorkflowPanel.handleProps}
-          actions={editDimEditActive ? (
+          actions={editFilletActive ? (
+            <>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitFilletFromPanel}>Apply</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelFilletFromPanel}>Cancel</button>
+            </>
+          ) : editDimEditActive ? (
             <>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitEditDimensionFromPanel}>Confirm</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditDimensionFromPanel}>Cancel</button>
@@ -3607,7 +3586,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             </>
           )}
         >
-          {editDimEditActive && dimEdit.dimensionEdit ? (
+          {editFilletActive ? (
+            <label className="canvas-workflow-panel__field">
+              <span>Radius</span>
+              <input
+                ref={fillet.filletRadiusInputRef}
+                className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                type="text"
+                inputMode="decimal"
+                value={fillet.filletDimensionEdit?.radius ?? ''}
+                onChange={(e) => {
+                  fillet.setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: e.target.value } : null))
+                  scheduleDraw()
+                }}
+                onFocus={(e) => e.currentTarget.select()}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commitFilletFromPanel()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelFilletFromPanel()
+                  }
+                }}
+              />
+            </label>
+          ) : editDimEditActive && dimEdit.dimensionEdit ? (
             dimEdit.dimensionEdit.activeField === 'radius' ? (
               <label className="canvas-workflow-panel__field">
                 <span>Radius</span>
