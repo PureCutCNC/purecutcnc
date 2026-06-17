@@ -15,7 +15,6 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { ToolpathVisibility } from '../toolpathVisibility'
@@ -42,7 +41,6 @@ import {
 } from './measurements'
 import {
   computeDimensionEditPreviewPoint,
-  computeLinearInputLabel,
   computeMoveDistancePreviewPoint,
   computeRotateDegreesFromPreview,
   computeScaleFactorFromPreview,
@@ -2655,80 +2653,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
         />
       )}
-      {dimEdit.dimensionEdit && selection.mode === 'sketch_edit' && !pendingAdd && (() => {
-        const canvas = canvasRef.current
-        if (!canvas) return null
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const featureId = selection.selectedFeatureId
-        if (!featureId) return null
-
-        function makeEditInputKeyDown() {
-          return (e: KeyboardEvent<HTMLInputElement>) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              dimEdit.commitEditDimension()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              dimEdit.cancelEditDimension()
-            } else if (e.key === 'Tab') {
-              e.preventDefault()
-              dimEdit.advanceTabInEditMode()
-            }
-          }
-        }
-
-        const handleLiveChange = dimEdit.handleEditDimLiveChange
-
-        // Arc radius step
-        if (dimEdit.dimensionEdit.shape === 'circle') {
-          const anchorC = worldToCanvas(dimEdit.dimensionEdit.anchor, vt)
-          return (
-            <input
-              key="edit-radius"
-              ref={dimEdit.radiusInputRef}
-              className="sketch-dim-input"
-              style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
-              value={dimEdit.dimensionEdit.radius}
-              onChange={(e) => handleLiveChange('radius', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          )
-        }
-
-        // Endpoint (length + angle) step
-        const previewPt = computeDimensionEditPreviewPoint(dimEdit.dimensionEdit, project.meta.units)
-        const fromC = worldToCanvas(dimEdit.dimensionEdit.anchor, vt)
-        const toC = worldToCanvas(previewPt, vt)
-        const layout = computeLinearInputLabel(fromC, toC, 14, 40)
-        const angleLabelX = layout.midX + layout.perpX * 36
-        const angleLabelY = layout.midY + layout.perpY * 36
-        return (
-          <>
-            <input
-              key="edit-length"
-              ref={dimEdit.widthInputRef}
-              className="sketch-dim-input"
-              style={{ left: layout.labelX, top: layout.labelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimEdit.dimensionEdit.length}
-              onChange={(e) => handleLiveChange('length', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <input
-              key="edit-angle"
-              ref={dimEdit.heightInputRef}
-              className="sketch-dim-input"
-              style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimEdit.dimensionEdit.angle}
-              onChange={(e) => handleLiveChange('angle', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          </>
-        )
-      })()}
       {fillet.filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
