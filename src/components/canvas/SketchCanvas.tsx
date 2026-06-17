@@ -47,9 +47,7 @@ import {
   computeLinearInputLabel,
   computeMoveDistancePreviewPoint,
   computeRotateDegreesFromPreview,
-  computeRotatePreviewPoint,
   computeScaleFactorFromPreview,
-  computeScalePreviewPoint,
   unitDirection,
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
@@ -57,6 +55,7 @@ import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
 import { useMoveWorkflow } from './useMoveWorkflow'
+import { useTransformExactWorkflow } from './useTransformExactWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -303,9 +302,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
   const scheduleDraw = useRafScheduler(() => drawRef.current())
   const [copyCountDraft, setCopyCountDraft] = useState('1')
-  const [rotateCopyCountDraft, setRotateCopyCountDraft] = useState('1')
-  const [pendingRotateCopyPoint, setPendingRotateCopyPoint] = useState<Point | null>(null)
-  const rotateCopyCountInputRef = useRef<HTMLInputElement>(null)
+
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [stlImageRevision, setStlImageRevision] = useState(0)
@@ -406,21 +403,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
   } = useProjectStore()
-  const transformScaleEditActive =
-    !!pendingTransform
-    && pendingTransform.mode === 'resize'
-    && !!pendingTransform.referenceStart
-    && !!pendingTransform.referenceEnd
-    && operationDimEdit?.kind === 'scale'
-  const transformRotateEditActive =
-    !!pendingTransform
-    && pendingTransform.mode === 'rotate'
-    && !!pendingTransform.referenceStart
-    && !!pendingTransform.referenceEnd
-    && operationDimEdit?.kind === 'rotate'
-  const transformExactEditActive = transformScaleEditActive || transformRotateEditActive
   const offsetDistanceEditActive = !!pendingOffset && operationDimEdit?.kind === 'offset'
-  const rotateCopyCountPromptActive = !!pendingRotateCopyPoint
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
   const pendingAddRef = useRef(pendingAdd)
@@ -517,13 +500,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
   })
-  const transformWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingTransform,
-    phaseKey: transformExactEditActive ? 'exact' : pendingTransform?.referenceEnd ? 'commit' : (pendingTransform?.referenceStart ? 'end' : 'start'),
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
+
   const offsetWorkflowPanel = useCanvasWorkflowPanel({
     open: !!pendingOffset,
     phaseKey: offsetDistanceEditActive ? 'distance' : 'offset',
@@ -692,6 +669,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
+  const transformExact = useTransformExactWorkflow({
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    pendingTransform,
+    pendingTransformRef,
+    pendingTransformPreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    cancelPendingTransform,
+    completePendingTransform,
+    triggerDimensionEdit,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   function confirmCutCuttersFromTabletPanel() {
     confirmCutCutters()
     cutWorkflowPanel.focusCanvasAfterAction()
@@ -715,61 +708,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function cancelJoinFromPanel() {
     cancelPendingShapeAction()
     joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelTransformFromPanel() {
-    cancelPendingTransform()
-    setPendingTransformPreviewPointRef(null)
-    setPendingRotateCopyPoint(null)
-    setRotateCopyCountDraft('1')
-    setOperationDimEdit(null)
-    transformWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromTransformPanel() {
-    triggerDimensionEdit()
-    transformWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitTransformExactEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    const pendingTransform = pendingTransformRef.current
-    if (!currentEdit || !pendingTransform?.referenceStart || !pendingTransform.referenceEnd) return
-
-    if (currentEdit.kind === 'scale') {
-      if (pendingTransform.mode !== 'resize') return
-      const factor = Number(currentEdit.factor)
-      if (!Number.isFinite(factor) || factor <= 0) return
-      const previewPoint = computeScalePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        factor,
-      )
-      completePendingTransform(previewPoint)
-      setPendingTransformPreviewPointRef(null)
-      setOperationDimEdit(null)
-      transformWorkflowPanel.focusCanvasAfterAction()
-      return
-    }
-
-    if (currentEdit.kind === 'rotate') {
-      if (pendingTransform.mode !== 'rotate') return
-      const angleDegrees = Number(currentEdit.angle)
-      if (!Number.isFinite(angleDegrees)) return
-      const previewPoint = computeRotatePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        angleDegrees,
-      )
-      if (pendingTransform.keepOriginals) {
-        setPendingRotateCopyPoint(previewPoint)
-      } else {
-        completePendingTransform(previewPoint)
-        setPendingTransformPreviewPointRef(null)
-      }
-      setOperationDimEdit(null)
-      transformWorkflowPanel.focusCanvasAfterAction()
-    }
   }
 
   function cancelOffsetFromPanel() {
@@ -1921,19 +1859,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
   }, [completePendingComposite, pendingAdd])
 
-  useEffect(() => {
-    if (!rotateCopyCountPromptActive) {
-      return
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      rotateCopyCountInputRef.current?.focus({ preventScroll: true })
-      rotateCopyCountInputRef.current?.select()
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [rotateCopyCountPromptActive])
-
   // Re-focus when the active edit field changes or the edit opens/closes; the
   // derived key (null while closed) is statically checkable as a single dep.
   const dimensionEditActiveField = dimEdit.dimensionEdit?.activeField ?? null
@@ -1992,55 +1917,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [operationDimEditKind, dimEdit.widthInputRef])
 
-  useEffect(() => {
-    const pendingTransform = pendingTransformRef.current
-    if (
-      !operationDimEdit
-      || (operationDimEdit.kind !== 'scale' && operationDimEdit.kind !== 'rotate')
-      || !pendingTransform
-      || !pendingTransform.referenceStart
-      || !pendingTransform.referenceEnd
-    ) {
-      return
-    }
-
-    if (operationDimEdit.kind === 'scale') {
-      if (pendingTransform.mode !== 'resize') {
-        return
-      }
-      const factor = Number(operationDimEdit.factor)
-      if (!Number.isFinite(factor) || factor <= 0) {
-        return
-      }
-      setPendingTransformPreviewPointRef({
-        point: computeScalePreviewPoint(
-          pendingTransform.referenceStart,
-          pendingTransform.referenceEnd,
-          factor,
-        ),
-        session: pendingTransform.session,
-      })
-      return
-    }
-
-    if (pendingTransform.mode !== 'rotate') {
-      return
-    }
-
-    const angleDegrees = Number(operationDimEdit.angle)
-    if (!Number.isFinite(angleDegrees)) {
-      return
-    }
-    setPendingTransformPreviewPointRef({
-      point: computeRotatePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        angleDegrees,
-      ),
-      session: pendingTransform.session,
-    })
-  }, [operationDimEdit, setPendingTransformPreviewPointRef])
-
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
       const canvas = canvasRef.current
@@ -2094,7 +1970,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [])
 
   useEffect(() => {
-    if (move.copyCountPromptActive || rotateCopyCountPromptActive) {
+    if (move.copyCountPromptActive || transformExact.rotateCopyCountPromptActive) {
       return
     }
 
@@ -2111,7 +1987,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [move.copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [move.copyCountPromptActive, transformExact.rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   // Native pointermove (not React's synthetic) so we can read coalesced events.
   // Routed through useStableEvent so the listener subscribes once while the body
@@ -3728,7 +3604,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           setPendingTransformPreviewPointRef(null)
         }
       } else if (pendingTransform.mode === 'rotate' && pendingTransform.keepOriginals) {
-        setPendingRotateCopyPoint(constrainedPoint)
+        transformExact.setPendingRotateCopyPoint(constrainedPoint)
       } else {
         completePendingTransform(constrainedPoint)
         setPendingTransformPreviewPointRef(null)
@@ -4467,8 +4343,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (event.key === 'Escape' && pendingTransform) {
       cancelPendingTransform()
       setPendingTransformPreviewPointRef(null)
-      setPendingRotateCopyPoint(null)
-      setRotateCopyCountDraft('1')
+      transformExact.setPendingRotateCopyPoint(null)
+      transformExact.setRotateCopyCountDraft('1')
       setOperationDimEdit(null)
       return
     }
@@ -5467,9 +5343,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingTransform && (
         <CanvasWorkflowPanel
           title={pendingTransform.mode === 'resize' ? 'Resize' : pendingTransform.mode === 'mirror' ? 'Mirror' : 'Rotate'}
-          step={transformExactEditActive
-            ? transformScaleEditActive ? 'Set scale' : 'Set angle'
-            : rotateCopyCountPromptActive
+          step={transformExact.transformExactEditActive
+            ? transformExact.transformScaleEditActive ? 'Set scale' : 'Set angle'
+            : transformExact.rotateCopyCountPromptActive
             ? 'Set copy count'
             : pendingTransform.mode === 'resize'
               ? !pendingTransform.referenceStart
@@ -5486,53 +5362,46 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   : !pendingTransform.referenceEnd
                     ? 'Select reference direction'
                     : 'Rotate to commit'}
-          position={transformWorkflowPanel.position}
-          panelRef={transformWorkflowPanel.panelRef}
-          handleProps={transformWorkflowPanel.handleProps}
-          actionRowProps={transformWorkflowPanel.actionRowProps}
+          position={transformExact.transformWorkflowPanel.position}
+          panelRef={transformExact.transformWorkflowPanel.panelRef}
+          handleProps={transformExact.transformWorkflowPanel.handleProps}
+          actionRowProps={transformExact.transformWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--transform"
           moveLabel={`Move ${pendingTransform.mode} controls`}
           actions={(
             <>
-              {transformExactEditActive && (
+              {transformExact.transformExactEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitTransformExactEditFromPanel}
+                  onClick={transformExact.commitTransformExactEditFromPanel}
                 >Confirm</button>
               )}
-              {!transformExactEditActive && !rotateCopyCountPromptActive
+              {!transformExact.transformExactEditActive && !transformExact.rotateCopyCountPromptActive
                 && ((pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
                   || (pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)) && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromTransformPanel}
+                  onClick={transformExact.triggerDimensionFromTransformPanel}
                 >{pendingTransform.mode === 'resize' ? 'Scale' : 'Angle'}</button>
               )}
-              {!transformExactEditActive && rotateCopyCountPromptActive && (
+              {!transformExact.transformExactEditActive && transformExact.rotateCopyCountPromptActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={() => {
-                    const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1))
-                    completePendingTransform(pendingRotateCopyPoint!, n)
-                    setPendingTransformPreviewPointRef(null)
-                    setPendingRotateCopyPoint(null)
-                    setRotateCopyCountDraft('1')
-                    transformWorkflowPanel.focusCanvasAfterAction()
-                  }}
+                  onClick={transformExact.commitRotateCopyFromPanel}
                 >Confirm</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelTransformFromPanel}
+                onClick={transformExact.cancelTransformFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {transformExactEditActive && (operationDimEdit?.kind === 'scale' || operationDimEdit?.kind === 'rotate') ? (
+          {transformExact.transformExactEditActive && (operationDimEdit?.kind === 'scale' || operationDimEdit?.kind === 'rotate') ? (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>{operationDimEdit.kind === 'scale' ? 'Scale' : 'Angle'}</span>
@@ -5554,41 +5423,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitTransformExactEditFromPanel()
+                      transformExact.commitTransformExactEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelTransformFromPanel()
+                      transformExact.cancelTransformFromPanel()
                     }
                   }}
                   autoFocus
                 />
               </label>
             </div>
-          ) : rotateCopyCountPromptActive ? (
+          ) : transformExact.rotateCopyCountPromptActive ? (
             <>
               <div className="canvas-workflow-panel__meta">
                 <label className="canvas-workflow-panel__field">
                   <span>Copies</span>
                   <input
-                    ref={rotateCopyCountInputRef}
+                    ref={transformExact.rotateCopyCountInputRef}
                     className="canvas-workflow-panel__count-input"
                     type="text"
                     inputMode="numeric"
-                    value={rotateCopyCountDraft}
-                    onChange={(event) => setRotateCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
+                    value={transformExact.rotateCopyCountDraft}
+                    onChange={(event) => transformExact.setRotateCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
                     onFocus={(event) => event.currentTarget.select()}
                     onKeyDown={(event) => {
                       event.stopPropagation()
                       if (event.key === 'Enter') {
-                        const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1))
-                        completePendingTransform(pendingRotateCopyPoint!, n)
-                        setPendingTransformPreviewPointRef(null)
-                        setPendingRotateCopyPoint(null)
-                        setRotateCopyCountDraft('1')
-                        transformWorkflowPanel.focusCanvasAfterAction()
+                        transformExact.commitRotateCopyFromPanel()
                       } else if (event.key === 'Escape') {
                         event.preventDefault()
-                        cancelTransformFromPanel()
+                        transformExact.cancelTransformFromPanel()
                       }
                     }}
                     autoFocus
@@ -5620,7 +5484,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       checked={pendingTransform.keepOriginals}
                       onChange={(event) => {
                         setPendingTransformKeepOriginals(event.target.checked)
-                        transformWorkflowPanel.focusCanvasAfterAction()
+                        transformExact.transformWorkflowPanel.focusCanvasAfterAction()
                       }}
                     />
                     <span>Keep originals</span>
