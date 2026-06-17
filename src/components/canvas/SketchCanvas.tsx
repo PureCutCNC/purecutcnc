@@ -55,6 +55,7 @@ import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
 import { useMoveWorkflow } from './useMoveWorkflow'
+import { useOffsetWorkflow } from './useOffsetWorkflow'
 import { useTransformExactWorkflow } from './useTransformExactWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
@@ -403,7 +404,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
   } = useProjectStore()
-  const offsetDistanceEditActive = !!pendingOffset && operationDimEdit?.kind === 'offset'
+
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
   const pendingAddRef = useRef(pendingAdd)
@@ -501,13 +502,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
-  const offsetWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingOffset,
-    phaseKey: offsetDistanceEditActive ? 'distance' : 'offset',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
   const creationPanelShape = pendingAdd && (
     pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
     || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
@@ -685,6 +679,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
+  const offset = useOffsetWorkflow({
+    projectRef,
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    pendingOffset,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    cancelPendingOffset,
+    completePendingOffset,
+    triggerDimensionEdit,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   function confirmCutCuttersFromTabletPanel() {
     confirmCutCutters()
     cutWorkflowPanel.focusCanvasAfterAction()
@@ -708,31 +718,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function cancelJoinFromPanel() {
     cancelPendingShapeAction()
     joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelOffsetFromPanel() {
-    cancelPendingOffset()
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    setOperationDimEdit(null)
-    offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromOffsetPanel() {
-    triggerDimensionEdit()
-    offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitOffsetDistanceEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    if (!currentEdit || currentEdit.kind !== 'offset') return
-    const distance = parseLengthInput(currentEdit.distance, projectRef.current.meta.units)
-    if (distance === null) return
-    completePendingOffset(distance)
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    setOperationDimEdit(null)
-    offsetWorkflowPanel.focusCanvasAfterAction()
   }
 
   function triggerDimensionFromCreationPanel() {
@@ -4681,37 +4666,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingOffset && (
         <CanvasWorkflowPanel
           title="Offset"
-          step={offsetDistanceEditActive ? 'Set distance' : 'Preview distance'}
-          position={offsetWorkflowPanel.position}
-          panelRef={offsetWorkflowPanel.panelRef}
-          handleProps={offsetWorkflowPanel.handleProps}
-          actionRowProps={offsetWorkflowPanel.actionRowProps}
+          step={offset.offsetDistanceEditActive ? 'Set distance' : 'Preview distance'}
+          position={offset.offsetWorkflowPanel.position}
+          panelRef={offset.offsetWorkflowPanel.panelRef}
+          handleProps={offset.offsetWorkflowPanel.handleProps}
+          actionRowProps={offset.offsetWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--offset"
           moveLabel="Move offset controls"
           actions={(
             <>
-              {offsetDistanceEditActive ? (
+              {offset.offsetDistanceEditActive ? (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitOffsetDistanceEditFromPanel}
+                  onClick={offset.commitOffsetDistanceEditFromPanel}
                 >Confirm</button>
               ) : (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromOffsetPanel}
+                  onClick={offset.triggerDimensionFromOffsetPanel}
                 >Distance</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelOffsetFromPanel}
+                onClick={offset.cancelOffsetFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {offsetDistanceEditActive && operationDimEdit?.kind === 'offset' ? (
+          {offset.offsetDistanceEditActive && operationDimEdit?.kind === 'offset' ? (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
@@ -4727,10 +4712,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitOffsetDistanceEditFromPanel()
+                      offset.commitOffsetDistanceEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelOffsetFromPanel()
+                      offset.cancelOffsetFromPanel()
                     }
                   }}
                   autoFocus
