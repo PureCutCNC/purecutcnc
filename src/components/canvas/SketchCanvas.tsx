@@ -59,6 +59,7 @@ import { useTransformExactWorkflow } from './useTransformExactWorkflow'
 import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
 import { useSnapPreview } from './useSnapPreview'
+import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
 import { circleEdgeAnchorFromPoint, offsetForCursor } from '../../sketch/dimensions'
 import {
@@ -279,8 +280,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const longPressStartRef = useRef<{ cx: number; cy: number; clientX: number; clientY: number } | null>(null)
   const marqueeStartRef = useRef<CanvasPoint | null>(null)
   const marqueeCurrentRef = useRef<CanvasPoint | null>(null)
   const zoomWindowStartRef = useRef<CanvasPoint | null>(null)
@@ -564,6 +563,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingConstraintRef,
     scheduleDraw,
     onActiveSnapModeChange: onActiveSnapModeChange ?? (() => {}),
+  })
+
+  const contextMenu = useCanvasContextMenu({
+    canvasRef,
+    projectRef,
+    selectionRef,
+    viewStateRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    didPanRef,
+    suppressClickRef,
+    zoomWindowActive,
+    stopPan,
+    selectClamp,
+    selectTab,
+    selectFeature,
+    onFeatureContextMenu,
+    onTabContextMenu,
+    onClampContextMenu,
   })
 
   const setPendingPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
@@ -1798,15 +1818,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // still sees the latest state — clears the exhaustive-deps warning without a
   // hand-maintained state dependency list.
   const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {
-    if (longPressTimerRef.current && longPressStartRef.current) {
-      const dx = event.clientX - longPressStartRef.current.clientX
-      const dy = event.clientY - longPressStartRef.current.clientY
-      if (dx * dx + dy * dy > 100) {
-        clearTimeout(longPressTimerRef.current)
-        longPressTimerRef.current = null
-        longPressStartRef.current = null
-      }
-    }
+    contextMenu.handleLongPressMove(event)
     const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
     const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
     handleCanvasPointerMove(canvasCoordinates(sourceEvent))
@@ -2248,31 +2260,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       event.currentTarget.setPointerCapture(event.pointerId)
     }
 
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-
-    if (event.pointerType === 'touch' && event.button === 0) {
-      const startCx = event.clientX
-      const startCy = event.clientY
-      const rect = canvasRef.current?.getBoundingClientRect()
-      longPressStartRef.current = {
-        cx: rect ? startCx - rect.left : startCx,
-        cy: rect ? startCy - rect.top : startCy,
-        clientX: startCx,
-        clientY: startCy,
-      }
-      longPressTimerRef.current = setTimeout(() => {
-        longPressTimerRef.current = null
-        if (longPressStartRef.current) {
-          triggerContextMenuAt(longPressStartRef.current.clientX, longPressStartRef.current.clientY)
-          suppressClickRef.current = true
-          stopPan()
-          longPressStartRef.current = null
-        }
-      }, 500)
-    }
+    contextMenu.startLongPress(event)
 
     const project = projectRef.current
     const selection = selectionRef.current
@@ -2409,11 +2397,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (isGestureActiveRef.current) {
       if (isPanningRef.current) stopPan()
       touchDragPendingRef.current = null
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current)
-        longPressTimerRef.current = null
-      }
-      longPressStartRef.current = null
+      contextMenu.cancelLongPress()
       return
     }
 
@@ -2833,11 +2817,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
     }
 
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    longPressStartRef.current = null
+    contextMenu.cancelLongPress()
 
     if (touchDragPendingRef.current) {
       const pending = touchDragPendingRef.current
@@ -2924,11 +2904,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function handlePointerLeave() {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    longPressStartRef.current = null
+    contextMenu.cancelLongPress()
     touchDragPendingRef.current = null
 
     if (dimEdit.draggingDimensionIdRef.current) {
@@ -3554,53 +3530,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (hitId) enterSketchEdit(hitId)
   }
 
-  function triggerContextMenuAt(clientX: number, clientY: number) {
-    if (zoomWindowActive) return
-    if (pendingAddRef.current || pendingMoveRef.current || pendingTransformRef.current || pendingOffsetRef.current) return
-
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const rect = canvas.getBoundingClientRect()
-    const point: CanvasPoint = { cx: clientX - rect.left, cy: clientY - rect.top }
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
-    if (hitClampId) {
-      selectClamp(hitClampId)
-      onClampContextMenu?.(hitClampId, clientX, clientY)
-      return
-    }
-
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      selectTab(hitTabId)
-      onTabContextMenu?.(hitTabId, clientX, clientY)
-      return
-    }
-
-    const hitId = findHitFeatureId(world, project.features, vt)
-    if (!hitId) return
-
-    if (!selection.selectedFeatureIds.includes(hitId)) {
-      selectFeature(hitId)
-    }
-    onFeatureContextMenu?.(hitId, clientX, clientY)
-  }
-
-  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
-    event.preventDefault()
-
-    if (didPanRef.current) {
-      didPanRef.current = false
-      return
-    }
-
-    triggerContextMenuAt(event.clientX, event.clientY)
-  }
-
   // Called by the "Type" button in banners — opens dimension input without
   // the Tab toggle-close behaviour. Keyboard Tab keeps its existing logic.
   function triggerDimensionEdit() {
@@ -3854,7 +3783,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={keyboard.handleKeyDown}
-        onContextMenu={handleContextMenu}
+        onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
       />
       {!depthLegendCollapsed ? (
