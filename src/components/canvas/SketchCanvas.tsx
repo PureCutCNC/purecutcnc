@@ -55,6 +55,7 @@ import {
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
+import { useFilletWorkflow } from './useFilletWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -312,10 +313,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const [operationDimEdit, setOperationDimEdit] = useState<OperationDimEdit | null>(null)
   const operationDimEditRef = useRef<OperationDimEdit | null>(null)
   operationDimEditRef.current = operationDimEdit
-  const [filletDimensionEdit, setFilletDimensionEdit] = useState<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
-  const filletDimensionEditRef = useRef<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
-  filletDimensionEditRef.current = filletDimensionEdit
-  const filletRadiusInputRef = useRef<HTMLInputElement>(null)
   // Stores label hit areas for click detection: { featureId, constraintId, cx, cy, halfW, halfH }
   const constraintLabelRectsRef = useRef<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>([])
 
@@ -494,6 +491,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     commitConstraintDistance,
     cancelPendingConstraint,
     updateConstraintValue,
+  })
+
+  const fillet = useFilletWorkflow({
+    projectRef,
+    selectionRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    filletFeaturePoint,
+    scheduleDraw,
   })
 
   // Axis lock — active whenever a move, node drag, sketch-edit drag, constraint pick, or feature creation is in progress
@@ -1885,8 +1891,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
-        const typedRadius = filletDimensionEditRef.current
-          ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+        const typedRadius = fillet.filletDimensionEditRef.current
+          ? parseLengthInput(fillet.filletDimensionEditRef.current.radius, project.meta.units)
           : null
         const useTyped = typedRadius !== null && typedRadius > 0
         if (!useTyped) {
@@ -1905,7 +1911,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
       }
-      if (!filletDimensionEditRef.current) {
+      if (!fillet.filletDimensionEditRef.current) {
         drawSketchEditPreviewPoint(ctx, sketchEditPreviewRef.current, vt)
       }
     }
@@ -2006,16 +2012,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [dimensionEditActiveField, dimEdit.heightInputRef, dimEdit.radiusInputRef, dimEdit.widthInputRef])
 
-  const filletDimensionEditActive = filletDimensionEdit != null
-  useEffect(() => {
-    if (!filletDimensionEditActive) return
-    const frame = window.requestAnimationFrame(() => {
-      filletRadiusInputRef.current?.focus({ preventScroll: true })
-      filletRadiusInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [filletDimensionEditActive])
-
   useEffect(() => {
     if (!pendingConstraint) constraint.setConstraintDistanceInput(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setConstraintDistanceInput is a stable useState setter
@@ -2023,9 +2019,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
-      setFilletDimensionEdit(null)
+      fillet.setFilletDimensionEdit(null)
     }
-  }, [selection.mode, selection.sketchEditTool])
+  }, [selection.mode, selection.sketchEditTool, fillet])
 
   useEffect(() => {
     if (!pendingAdd && selectionRef.current.mode !== 'sketch_edit') {
@@ -3661,8 +3657,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
         if (feature && selection.sketchEditTool === 'fillet') {
           if (pendingSketchFilletRef.current) {
-            const typedRadius = filletDimensionEditRef.current
-              ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+            const typedRadius = fillet.filletDimensionEditRef.current
+              ? parseLengthInput(fillet.filletDimensionEditRef.current.radius, project.meta.units)
               : null
             if (typedRadius !== null && typedRadius > 0) {
               filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
@@ -3677,7 +3673,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
             pendingSketchFilletRef.current = null
             sketchEditPreviewRef.current = null
-            setFilletDimensionEdit(null)
+            fillet.setFilletDimensionEdit(null)
             scheduleDraw()
             return
           }
@@ -4134,11 +4130,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const feature = featureId ? project.features.find((f) => f.id === featureId) ?? null : null
       if (!feature) return
       const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
-      setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
+      fillet.setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
       return
     }
 
-    if (selection.mode === 'sketch_edit' && !pendingAdd && !filletDimensionEditRef.current) {
+    if (selection.mode === 'sketch_edit' && !pendingAdd && !fillet.filletDimensionEditRef.current) {
       const currentEdit = dimEdit.dimensionEditRef.current
       if (!currentEdit && dimEdit.dimensionEditControlRef.current) {
         dimEdit.advanceTabInEditMode()
@@ -4439,16 +4435,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const featureId = selection.selectedFeatureId
       const feature = featureId ? projectRef.current.features.find((f) => f.id === featureId) ?? null : null
       if (!feature) return
-      const current = filletDimensionEditRef.current
+      const current = fillet.filletDimensionEditRef.current
       if (!current) {
         const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
-        setFilletDimensionEdit({
+        fillet.setFilletDimensionEdit({
           anchorIndex: pendingSketchFilletRef.current.anchorIndex,
           corner: pendingSketchFilletRef.current.corner,
           radius: radius ? formatLength(radius, units) : '',
         })
       } else {
-        setFilletDimensionEdit(null)
+        fillet.setFilletDimensionEdit(null)
         canvasRef.current?.focus({ preventScroll: true })
       }
       return
@@ -4599,24 +4595,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
-      const featureId = selection.selectedFeatureId
-      const typedRadius = parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
-      if (featureId && typedRadius !== null && typedRadius > 0) {
-        filletFeaturePoint(featureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
-      }
-      pendingSketchFilletRef.current = null
-      sketchEditPreviewRef.current = null
-      setFilletDimensionEdit(null)
-      scheduleDraw()
+    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && fillet.filletDimensionEditRef.current && pendingSketchFilletRef.current) {
+      fillet.commitFilletDimension()
       return
     }
 
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
-      pendingSketchFilletRef.current = null
-      sketchEditPreviewRef.current = null
-      setFilletDimensionEdit(null)
-      scheduleDraw()
+    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && fillet.filletDimensionEditRef.current && pendingSketchFilletRef.current) {
+      fillet.cancelFilletDimension()
       return
     }
 
@@ -4642,7 +4627,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       && selection.selectedFeatureId
       && !selection.sketchEditTool
       && !dimEdit.dimensionEditRef.current
-      && !filletDimensionEditRef.current
+      && !fillet.filletDimensionEditRef.current
     ) {
       event.preventDefault()
       beginConstraint(selection.selectedFeatureId)
@@ -4843,49 +4828,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </>
         )
       })()}
-      {filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
+      {fillet.filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
         const canvas = canvasRef.current
         if (!canvas) return null
         const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const cornerC = worldToCanvas(filletDimensionEdit.corner, vt)
+        const cornerC = worldToCanvas(fillet.filletDimensionEdit.corner, vt)
         return (
           <input
             key="fillet-radius"
-            ref={filletRadiusInputRef}
+            ref={fillet.filletRadiusInputRef}
             className="sketch-dim-input"
             style={{ left: cornerC.cx, top: cornerC.cy, transform: 'translate(-50%, -50%)' }}
-            value={filletDimensionEdit.radius}
+            value={fillet.filletDimensionEdit.radius}
             onChange={(e) => {
               const value = e.target.value
-              setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: value } : null))
+              fillet.setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: value } : null))
               scheduleDraw()
             }}
             onKeyDown={(e) => {
               e.stopPropagation()
               if (e.key === 'Enter') {
                 e.preventDefault()
-                const current = filletDimensionEditRef.current
-                const featureId = selectionRef.current.selectedFeatureId
-                if (!current || !featureId) return
-                const typedRadius = parseLengthInput(current.radius, projectRef.current.meta.units)
-                if (typedRadius !== null && typedRadius > 0) {
-                  filletFeaturePoint(featureId, current.anchorIndex, typedRadius)
-                }
-                pendingSketchFilletRef.current = null
-                sketchEditPreviewRef.current = null
-                setFilletDimensionEdit(null)
+                fillet.commitFilletDimension()
                 canvasRef.current?.focus({ preventScroll: true })
-                scheduleDraw()
               } else if (e.key === 'Escape') {
                 e.preventDefault()
-                pendingSketchFilletRef.current = null
-                sketchEditPreviewRef.current = null
-                setFilletDimensionEdit(null)
+                fillet.cancelFilletDimension()
                 canvasRef.current?.focus({ preventScroll: true })
-                scheduleDraw()
               } else if (e.key === 'Tab') {
                 e.preventDefault()
-                setFilletDimensionEdit(null)
+                fillet.setFilletDimensionEdit(null)
                 canvasRef.current?.focus({ preventScroll: true })
               }
             }}
