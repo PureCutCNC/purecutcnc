@@ -54,6 +54,7 @@ import {
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
+import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -315,11 +316,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const filletDimensionEditRef = useRef<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
   filletDimensionEditRef.current = filletDimensionEdit
   const filletRadiusInputRef = useRef<HTMLInputElement>(null)
-  const [constraintDistanceInput, setConstraintDistanceInput] = useState<string | null>(null)
-  const constraintDistanceInputRef = useRef<HTMLInputElement>(null)
-  const [constraintEdit, setConstraintEdit] = useState<{ featureId: string; constraintId: string; value: string; cx: number; cy: number } | null>(null)
-  const constraintEditRef = useRef<typeof constraintEdit>(null)
-  const constraintEditInputRef = useRef<HTMLInputElement>(null)
   // Stores label hit areas for click detection: { featureId, constraintId, cx, cy, halfW, halfH }
   const constraintLabelRectsRef = useRef<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>([])
 
@@ -479,7 +475,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   selectedAnnotationIdRef.current = selectedAnnotationId
   operationHighlightKindRef.current = operationHighlightKind
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
-  constraintEditRef.current = constraintEdit
 
   const dimEdit = useDimensionEditWorkflow({
     projectRef,
@@ -487,6 +482,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     commitHistoryTransaction,
     cancelHistoryTransaction,
     moveFeatureControl,
+  })
+
+  const constraint = useConstraintWorkflow({
+    projectRef,
+    canvasRef,
+    containerRef,
+    pendingConstraint,
+    pendingConstraintRef,
+    clearTransientCanvasState,
+    commitConstraintDistance,
+    cancelPendingConstraint,
+    updateConstraintValue,
   })
 
   // Axis lock — active whenever a move, node drag, sketch-edit drag, constraint pick, or feature creation is in progress
@@ -526,14 +533,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const offsetWorkflowPanel = useCanvasWorkflowPanel({
     open: !!pendingOffset,
     phaseKey: offsetDistanceEditActive ? 'distance' : 'offset',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const constraintDistanceReady = !!pendingConstraint && !!pendingConstraint.anchor && !!pendingConstraint.reference
-  const constraintWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingConstraint,
-    phaseKey: constraintDistanceReady ? 'distance' : pendingConstraint?.anchor ? 'reference' : 'anchor',
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -820,21 +819,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingOffsetRawPreviewPointRef(null)
     setOperationDimEdit(null)
     offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitConstraintFromPanel() {
-    const parsed = parseLengthInput(constraintDistanceInput ?? '', projectRef.current.meta.units)
-    if (parsed != null && parsed >= 0) {
-      commitConstraintDistance(parsed)
-      setConstraintDistanceInput(null)
-    }
-    constraintWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelConstraintFromPanel() {
-    cancelPendingConstraint()
-    setConstraintDistanceInput(null)
-    constraintWorkflowPanel.focusCanvasAfterAction()
   }
 
   function triggerDimensionFromOffsetPanel() {
@@ -2032,28 +2016,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return () => window.cancelAnimationFrame(frame)
   }, [filletDimensionEditActive])
 
-  const hasConstraintDistanceInput = constraintDistanceInput != null
   useEffect(() => {
-    if (!hasConstraintDistanceInput) return
-    const frame = window.requestAnimationFrame(() => {
-      constraintDistanceInputRef.current?.focus({ preventScroll: true })
-      constraintDistanceInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [hasConstraintDistanceInput])
-
-  const constraintEditId = constraintEdit?.constraintId ?? null
-  useEffect(() => {
-    if (constraintEditId == null) return
-    const frame = window.requestAnimationFrame(() => {
-      constraintEditInputRef.current?.focus({ preventScroll: true })
-      constraintEditInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [constraintEditId])
-
-  useEffect(() => {
-    if (!pendingConstraint) setConstraintDistanceInput(null)
+    if (!pendingConstraint) constraint.setConstraintDistanceInput(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setConstraintDistanceInput is a stable useState setter
   }, [pendingConstraint])
 
   useEffect(() => {
@@ -3601,7 +3566,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const dx = pendingConstraint.anchor.point.x - lockedPickedPoint.x
       const dy = pendingConstraint.anchor.point.y - lockedPickedPoint.y
       const currentDistance = Math.hypot(dx, dy)
-      setConstraintDistanceInput(formatLength(currentDistance, project.meta.units))
+      constraint.setConstraintDistanceInput(formatLength(currentDistance, project.meta.units))
       return
     }
 
@@ -3887,12 +3852,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           point.cy >= rect.cy - rect.halfH && point.cy <= rect.cy + rect.halfH
         ) {
           const feature = project.features.find((f) => f.id === rect.featureId)
-          const constraint = feature?.sketch.constraints.find((c) => c.id === rect.constraintId)
-          if (constraint && typeof constraint.value === 'number') {
-            setConstraintEdit({
+          const foundConstraint = feature?.sketch.constraints.find((c) => c.id === rect.constraintId)
+          if (foundConstraint && typeof foundConstraint.value === 'number') {
+            constraint.setConstraintEdit({
               featureId: rect.featureId,
               constraintId: rect.constraintId,
-              value: formatLength(constraint.value, project.meta.units),
+              value: formatLength(foundConstraint.value, project.meta.units),
               cx: rect.cx,
               cy: rect.cy,
             })
@@ -4665,26 +4630,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
 
-    if (pendingConstraintRef.current) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        cancelPendingConstraint()
-        setConstraintDistanceInput(null)
-        canvasRef.current?.focus({ preventScroll: true })
-        return
-      }
-      if (event.key === 'Enter' && pendingConstraintRef.current.reference && constraintDistanceInput != null) {
-        event.preventDefault()
-        const parsed = parseLengthInput(constraintDistanceInput, project.meta.units)
-        if (parsed != null && parsed >= 0) {
-          commitConstraintDistance(parsed)
-          setConstraintDistanceInput(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-      return
-    }
+    if (constraint.handleConstraintKeyDown(event)) return
 
     if (
       event.key === 'c'
@@ -4947,33 +4893,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           />
         )
       })()}
-      {constraintEdit && (
+      {constraint.constraintEdit && (
         <input
-          key={`constraint-edit-${constraintEdit.constraintId}`}
-          ref={constraintEditInputRef}
+          key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
+          ref={constraint.constraintEditInputRef}
           className="sketch-dim-input"
-          style={{ left: constraintEdit.cx, top: constraintEdit.cy, transform: 'translate(-50%, -50%)' }}
-          value={constraintEdit.value}
-          onChange={(e) => setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
+          style={{ left: constraint.constraintEdit.cx, top: constraint.constraintEdit.cy, transform: 'translate(-50%, -50%)' }}
+          value={constraint.constraintEdit.value}
+          onChange={(e) => constraint.setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === 'Enter') {
               e.preventDefault()
-              const edit = constraintEditRef.current
-              if (!edit) return
-              const parsed = parseLengthInput(edit.value, project.meta.units)
-              if (parsed != null && parsed >= 0) {
-                updateConstraintValue(edit.featureId, edit.constraintId, parsed)
-              }
-              setConstraintEdit(null)
-              canvasRef.current?.focus({ preventScroll: true })
+              constraint.commitConstraintEdit()
             } else if (e.key === 'Escape') {
               e.preventDefault()
-              setConstraintEdit(null)
-              canvasRef.current?.focus({ preventScroll: true })
+              constraint.cancelConstraintEdit()
             }
           }}
-          onBlur={() => setConstraintEdit(null)}
+          onBlur={() => constraint.setConstraintEdit(null)}
           onFocus={(e) => e.currentTarget.select()}
         />
       )}
@@ -5482,37 +5420,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? 'Pick reference point'
                 : 'Set distance'
           }
-          position={constraintWorkflowPanel.position}
-          panelRef={constraintWorkflowPanel.panelRef}
-          handleProps={constraintWorkflowPanel.handleProps}
-          actions={constraintDistanceReady ? (
+          position={constraint.constraintWorkflowPanel.position}
+          panelRef={constraint.constraintWorkflowPanel.panelRef}
+          handleProps={constraint.constraintWorkflowPanel.handleProps}
+          actions={constraint.constraintDistanceReady ? (
             <>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitConstraintFromPanel}>Confirm</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelConstraintFromPanel}>Cancel</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={constraint.commitConstraintFromPanel}>Confirm</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>Cancel</button>
             </>
           ) : (
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelConstraintFromPanel}>Cancel</button>
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>Cancel</button>
           )}
         >
-          {constraintDistanceReady && constraintDistanceInput != null && (
+          {constraint.constraintDistanceReady && constraint.constraintDistanceInput != null && (
             <label className="canvas-workflow-panel__field">
               <span>Distance</span>
               <input
-                ref={constraintDistanceInputRef}
+                ref={constraint.constraintDistanceInputRef}
                 className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                 type="text"
                 inputMode="decimal"
-                value={constraintDistanceInput}
-                onChange={(e) => setConstraintDistanceInput(e.target.value)}
+                value={constraint.constraintDistanceInput}
+                onChange={(e) => constraint.setConstraintDistanceInput(e.target.value)}
                 onFocus={(e) => e.currentTarget.select()}
                 onKeyDown={(e) => {
                   e.stopPropagation()
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    commitConstraintFromPanel()
+                    constraint.commitConstraintFromPanel()
                   } else if (e.key === 'Escape') {
                     e.preventDefault()
-                    cancelConstraintFromPanel()
+                    constraint.cancelConstraintFromPanel()
                   }
                 }}
                 autoFocus
