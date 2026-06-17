@@ -57,6 +57,7 @@ import { useFilletWorkflow } from './useFilletWorkflow'
 import { useMoveWorkflow } from './useMoveWorkflow'
 import { useOffsetWorkflow } from './useOffsetWorkflow'
 import { useTransformExactWorkflow } from './useTransformExactWorkflow'
+import { useCreationWorkflow } from './useCreationWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -502,37 +503,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
-  const creationPanelShape = pendingAdd && (
-    pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
-    || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
-    || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
-  ) ? pendingAdd.shape : null
-  const creationPanelHasAnchor = creationPanelShape && pendingAdd && 'anchor' in pendingAdd && !!pendingAdd.anchor
-  const creationPanelHasPoints = creationPanelShape && pendingAdd && 'points' in pendingAdd && pendingAdd.points.length > 0
-  const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
-  const creationCanDimEdit = creationPanelHasAnchor || creationPanelHasPoints || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
-  const creationDimEditActive = !!creationCanDimEdit && !!dimEdit.dimensionEdit
-  const creationWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!creationPanelShape,
-    phaseKey: creationDimEditActive ? 'dimensions'
-      : creationPanelHasAnchor ? 'place'
-      : creationPanelHasPoints ? 'adding'
-      : creationPanelHasStart ? 'drawing'
-      : 'start',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-
-  const placementPanelActive = !!pendingAdd && !creationPanelShape
-  const placementWorkflowPanel = useCanvasWorkflowPanel({
-    open: placementPanelActive,
-    phaseKey: pendingAdd?.shape ?? 'place',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
   const editDimEditActive = editModeActive && !!dimEdit.dimensionEdit
   const editWorkflowPanel = useCanvasWorkflowPanel({
@@ -599,6 +569,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const setPendingPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingPreviewPointRef.current = nextPoint
     scheduleDraw()
+  })
+
+  const creation = useCreationWorkflow({
+    projectRef,
+    pendingAdd,
+    pendingAddRef,
+    dimensionEdit: dimEdit.dimensionEdit,
+    dimensionEditRef: dimEdit.dimensionEditRef,
+    setDimensionEdit: dimEdit.setDimensionEdit,
+    triggerDimensionEdit,
+    setPendingPreviewPointRef,
+    placePendingAddAt,
+    cancelPendingAdd,
+    addPendingPolygonPoint,
+    addPendingCompositePoint,
+    undoPendingPolygonPoint,
+    undoPendingCompositeStep,
+    completePendingOpenPath,
+    completePendingOpenComposite,
+    setPendingCompositeMode,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
   })
 
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
@@ -718,106 +711,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function cancelJoinFromPanel() {
     cancelPendingShapeAction()
     joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromCreationPanel() {
-    triggerDimensionEdit()
-  }
-
-  function commitCreationDimensionEdit() {
-    const edit = dimEdit.dimensionEditRef.current
-    if (!edit) return
-    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
-    const pendingAdd = pendingAddRef.current
-    if ((edit.shape === 'polygon' || edit.shape === 'spline') && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')) {
-      addPendingPolygonPoint(pt)
-      setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-      dimEdit.setDimensionEdit(null)
-      creationWorkflowPanel.focusCanvasAfterAction()
-    } else if (pendingAdd?.shape === 'composite') {
-      if (pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd && edit.radius) {
-        const units = projectRef.current.meta.units
-        const r = parseLengthInput(edit.radius, units)
-        if (r != null && r > 0) {
-          addPendingCompositePoint(pt)
-          const arcStart = edit.anchor
-          const arcEnd = pt
-          const midX = (arcStart.x + arcEnd.x) / 2
-          const midY = (arcStart.y + arcEnd.y) / 2
-          const chordDx = arcEnd.x - arcStart.x
-          const chordDy = arcEnd.y - arcStart.y
-          const halfChord = Math.hypot(chordDx, chordDy) / 2
-          if (halfChord > 1e-9 && r >= halfChord) {
-            const chordLen = halfChord * 2
-            const perpX = -chordDy / chordLen
-            const perpY = chordDx / chordLen
-            const sagitta = r - Math.sqrt(r * r - halfChord * halfChord)
-            const throughPt = { x: midX + sagitta * perpX, y: midY + sagitta * perpY }
-            addPendingCompositePoint(throughPt)
-            setPendingPreviewPointRef({ point: arcEnd, session: pendingAdd.session })
-          } else {
-            setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-          }
-          dimEdit.setDimensionEdit(null)
-          creationWorkflowPanel.focusCanvasAfterAction()
-          return
-        }
-      }
-      if (edit.arcStart && edit.arcEnd) {
-        addPendingCompositePoint(pt)
-        const arcEnd = edit.arcEnd
-        setPendingPreviewPointRef({ point: arcEnd, session: pendingAdd.session })
-        dimEdit.setDimensionEdit(null)
-        creationWorkflowPanel.focusCanvasAfterAction()
-      } else {
-        addPendingCompositePoint(pt)
-        setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-        dimEdit.setDimensionEdit(null)
-        creationWorkflowPanel.focusCanvasAfterAction()
-      }
-    } else {
-      placePendingAddAt(pt)
-      setPendingPreviewPointRef(null)
-      dimEdit.setDimensionEdit(null)
-      creationWorkflowPanel.focusCanvasAfterAction()
-    }
-  }
-
-  function cancelCreationDimensionEdit() {
-    dimEdit.setDimensionEdit(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelCreationFromPanel() {
-    cancelPendingAdd()
-    dimEdit.setDimensionEdit(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function undoFromCreationPanel() {
-    const pendingAdd = pendingAddRef.current
-    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
-      undoPendingPolygonPoint()
-    } else if (pendingAdd?.shape === 'composite') {
-      undoPendingCompositeStep()
-    }
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function finishOpenPathFromPanel() {
-    completePendingOpenPath()
-    setPendingPreviewPointRef(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function finishOpenCompositeFromPanel() {
-    completePendingOpenComposite()
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function setCompositeModeFromPanel(mode: 'line' | 'arc' | 'spline') {
-    setPendingCompositeMode(mode)
-    creationWorkflowPanel.focusCanvasAfterAction()
   }
 
   function applyEditFromPanel() {
@@ -4834,113 +4727,113 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </div>
         </CanvasWorkflowPanel>
       )}
-      {creationPanelShape && pendingAdd && (
+      {creation.creationPanelShape && pendingAdd && (
         <CanvasWorkflowPanel
           title={
-            creationPanelShape === 'rect' ? 'Rectangle'
-            : creationPanelShape === 'circle' ? 'Circle'
-            : creationPanelShape === 'ellipse' ? 'Ellipse'
-            : creationPanelShape === 'tab' ? 'Tab'
-            : creationPanelShape === 'clamp' ? 'Clamp'
-            : creationPanelShape === 'polygon' ? 'Polygon'
-            : creationPanelShape === 'spline' ? 'Spline'
+            creation.creationPanelShape === 'rect' ? 'Rectangle'
+            : creation.creationPanelShape === 'circle' ? 'Circle'
+            : creation.creationPanelShape === 'ellipse' ? 'Ellipse'
+            : creation.creationPanelShape === 'tab' ? 'Tab'
+            : creation.creationPanelShape === 'clamp' ? 'Clamp'
+            : creation.creationPanelShape === 'polygon' ? 'Polygon'
+            : creation.creationPanelShape === 'spline' ? 'Spline'
             : 'Composite'
           }
           step={
-            creationDimEditActive ? 'Enter dimensions'
-            : creationPanelShape === 'composite'
+            creation.creationDimEditActive ? 'Enter dimensions'
+            : creation.creationPanelShape === 'composite'
               ? (pendingAdd.shape === 'composite' && pendingAdd.start
                 ? (pendingAdd.currentMode === 'arc' && pendingAdd.pendingArcEnd
                   ? 'Click arc curvature point'
                   : `Add ${pendingAdd.currentMode} points`)
                 : 'Click first point')
-            : (creationPanelShape === 'polygon' || creationPanelShape === 'spline')
-              ? (creationPanelHasPoints
+            : (creation.creationPanelShape === 'polygon' || creation.creationPanelShape === 'spline')
+              ? (creation.creationPanelHasPoints
                 ? ('points' in pendingAdd && pendingAdd.points.length < 2
                   ? 'Add one more point'
                   : 'Add points or close')
                 : 'Click first point')
-            : creationPanelHasAnchor
-              ? (creationPanelShape === 'circle'
+            : creation.creationPanelHasAnchor
+              ? (creation.creationPanelShape === 'circle'
                 ? 'Click to set radius or enter dimensions'
-                : creationPanelShape === 'ellipse'
+                : creation.creationPanelShape === 'ellipse'
                   ? 'Click to set radii or enter dimensions'
                   : 'Click opposite corner or enter dimensions')
-              : (creationPanelShape === 'circle' || creationPanelShape === 'ellipse')
+              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse')
                 ? 'Click center point'
                 : 'Click first corner'
           }
-          position={creationWorkflowPanel.position}
-          panelRef={creationWorkflowPanel.panelRef}
-          handleProps={creationWorkflowPanel.handleProps}
-          actionRowProps={creationWorkflowPanel.actionRowProps}
+          position={creation.creationWorkflowPanel.position}
+          panelRef={creation.creationWorkflowPanel.panelRef}
+          handleProps={creation.creationWorkflowPanel.handleProps}
+          actionRowProps={creation.creationWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--creation"
           moveLabel="Move creation controls"
           actions={(
             <>
-              {creationDimEditActive && (
+              {creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitCreationDimensionEdit}
+                  onClick={creation.commitCreationDimensionEdit}
                 >Confirm</button>
               )}
-              {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creationDimEditActive && (
+              {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={finishOpenPathFromPanel}
+                  onClick={creation.finishOpenPathFromPanel}
                 >Finish</button>
               )}
-              {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creationDimEditActive && (
+              {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={finishOpenCompositeFromPanel}
+                  onClick={creation.finishOpenCompositeFromPanel}
                 >Finish</button>
               )}
-              {creationCanDimEdit && !creationDimEditActive && (
+              {creation.creationCanDimEdit && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromCreationPanel}
+                  onClick={creation.triggerDimensionFromCreationPanel}
                 >Dimensions</button>
               )}
-              {(creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creationDimEditActive && (
+              {(creation.creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={undoFromCreationPanel}
+                  onClick={creation.undoFromCreationPanel}
                 >Undo</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelCreationFromPanel}
+                onClick={creation.cancelCreationFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed && !creationDimEditActive && (
+          {pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed && !creation.creationDimEditActive && (
             <div className="canvas-workflow-panel__meta canvas-workflow-panel__mode-row">
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'line' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('line')}
+                onClick={() => creation.setCompositeModeFromPanel('line')}
               >Line</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'arc' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('arc')}
+                onClick={() => creation.setCompositeModeFromPanel('arc')}
               >Arc</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'spline' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('spline')}
+                onClick={() => creation.setCompositeModeFromPanel('spline')}
               >Spline</button>
             </div>
           )}
-          {creationDimEditActive && dimEdit.dimensionEdit && (
+          {creation.creationDimEditActive && dimEdit.dimensionEdit && (
             <div className="canvas-workflow-panel__meta">
               {dimEdit.dimensionEdit.shape === 'circle' ? (
                 <label className="canvas-workflow-panel__field">
@@ -4957,10 +4850,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       e.stopPropagation()
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        commitCreationDimensionEdit()
+                        creation.commitCreationDimensionEdit()
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
-                        cancelCreationDimensionEdit()
+                        creation.cancelCreationDimensionEdit()
                       }
                     }}
                     autoFocus
@@ -4981,10 +4874,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       e.stopPropagation()
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        commitCreationDimensionEdit()
+                        creation.commitCreationDimensionEdit()
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
-                        cancelCreationDimensionEdit()
+                        creation.cancelCreationDimensionEdit()
                       }
                     }}
                     autoFocus
@@ -5006,10 +4899,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           dimEdit.heightInputRef.current?.focus({ preventScroll: true })
@@ -5032,10 +4925,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           if (pendingAdd?.shape === 'composite' && pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd) {
@@ -5062,10 +4955,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           e.stopPropagation()
                           if (e.key === 'Enter') {
                             e.preventDefault()
-                            commitCreationDimensionEdit()
+                            creation.commitCreationDimensionEdit()
                           } else if (e.key === 'Escape') {
                             e.preventDefault()
-                            cancelCreationDimensionEdit()
+                            creation.cancelCreationDimensionEdit()
                           } else if (e.key === 'Tab') {
                             e.preventDefault()
                             dimEdit.widthInputRef.current?.focus({ preventScroll: true })
@@ -5091,10 +4984,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           dimEdit.heightInputRef.current?.focus({ preventScroll: true })
@@ -5117,10 +5010,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           dimEdit.widthInputRef.current?.focus({ preventScroll: true })
@@ -5140,7 +5033,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           ) : null}
         </CanvasWorkflowPanel>
       )}
-      {placementPanelActive && (
+      {creation.placementPanelActive && (
         <CanvasWorkflowPanel
           title={pendingAdd!.shape === 'origin' ? 'Place Origin' : 'Place Text'}
           step={
@@ -5148,9 +5041,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
               : 'Tap the sketch to place the text.'
           }
-          position={placementWorkflowPanel.position}
-          panelRef={placementWorkflowPanel.panelRef}
-          handleProps={placementWorkflowPanel.handleProps}
+          position={creation.placementWorkflowPanel.position}
+          panelRef={creation.placementWorkflowPanel.panelRef}
+          handleProps={creation.placementWorkflowPanel.handleProps}
           actions={
             <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelPendingAdd}>Cancel</button>
           }
