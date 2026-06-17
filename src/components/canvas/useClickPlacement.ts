@@ -753,8 +753,6 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
               featureId: rect.featureId,
               constraintId: rect.constraintId,
               value: formatLength(foundConstraint.value, project.meta.units),
-              cx: rect.cx,
-              cy: rect.cy,
             })
           }
           return
