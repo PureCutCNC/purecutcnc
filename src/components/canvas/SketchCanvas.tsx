@@ -56,6 +56,7 @@ import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
+import { useMoveWorkflow } from './useMoveWorkflow'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
@@ -405,12 +406,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
   } = useProjectStore()
-  const moveDistanceEditActive =
-    !!pendingMove
-    && !!pendingMove.fromPoint
-    && !!pendingMove.toPoint
-    && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy')
-  const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint && !moveDistanceEditActive
   const transformScaleEditActive =
     !!pendingTransform
     && pendingTransform.mode === 'resize'
@@ -518,13 +513,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const joinWorkflowPanel = useCanvasWorkflowPanel({
     open: !!showJoinFlowPanel,
     phaseKey: 'join',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const moveWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingMove,
-    phaseKey: pendingMove?.fromPoint ? (moveDistanceEditActive ? 'distance' : pendingMove.toPoint ? 'count' : 'to') : 'from',
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -685,6 +673,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     livePointerWorldRef.current = null
   }
 
+  const move = useMoveWorkflow({
+    projectRef,
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    setCopyCountDraft,
+    copyCountInputRef,
+    pendingMove,
+    pendingMoveRef,
+    pendingMovePreviewPointRef,
+    setPendingMovePreviewPointRef,
+    cancelPendingMove,
+    setPendingMoveTo,
+    completePendingMove,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   function confirmCutCuttersFromTabletPanel() {
     confirmCutCutters()
     cutWorkflowPanel.focusCanvasAfterAction()
@@ -708,60 +715,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function cancelJoinFromPanel() {
     cancelPendingShapeAction()
     joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelMoveFromPanel() {
-    cancelPendingMove()
-    setPendingMovePreviewPointRef(null)
-    setCopyCountDraft('1')
-    setOperationDimEdit(null)
-    moveWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function beginMoveDistanceEntry(referencePoint: Point) {
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const dx = referencePoint.x - pendingMove.fromPoint.x
-    const dy = referencePoint.y - pendingMove.fromPoint.y
-    const distance = Math.hypot(dx, dy)
-    setPendingMoveTo(referencePoint)
-    setPendingMovePreviewPointRef({ point: referencePoint, session: pendingMove.session })
-    setOperationDimEdit({
-      kind: pendingMove.mode,
-      distance: formatLength(distance, projectRef.current.meta.units),
-    })
-  }
-
-  function beginMoveDistanceEntryFromPreview() {
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const previewPoint =
-      pendingMovePreviewPointRef.current?.session === pendingMove.session
-        ? pendingMovePreviewPointRef.current.point
-        : pendingMove.fromPoint
-    beginMoveDistanceEntry(previewPoint)
-    moveWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitMoveDistanceEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    if (!currentEdit || (currentEdit.kind !== 'move' && currentEdit.kind !== 'copy')) return
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const distance = parseLengthInput(currentEdit.distance, projectRef.current.meta.units)
-    if (distance === null) return
-    const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
-    const toPoint = computeMoveDistancePreviewPoint(pendingMove.fromPoint, referencePoint, distance)
-    if (currentEdit.kind === 'move') {
-      completePendingMove(toPoint)
-      setPendingMovePreviewPointRef(null)
-    } else {
-      setPendingMoveTo(toPoint)
-      setPendingMovePreviewPointRef({ point: toPoint, session: pendingMove.session })
-      setCopyCountDraft('1')
-    }
-    setOperationDimEdit(null)
-    moveWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelTransformFromPanel() {
@@ -1969,19 +1922,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [completePendingComposite, pendingAdd])
 
   useEffect(() => {
-    if (!copyCountPromptActive) {
-      return
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      copyCountInputRef.current?.focus({ preventScroll: true })
-      copyCountInputRef.current?.select()
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive])
-
-  useEffect(() => {
     if (!rotateCopyCountPromptActive) {
       return
     }
@@ -2051,31 +1991,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
     return () => window.cancelAnimationFrame(frame)
   }, [operationDimEditKind, dimEdit.widthInputRef])
-
-  useEffect(() => {
-    const pendingMove = pendingMoveRef.current
-    if (!operationDimEdit || !pendingMove?.fromPoint) {
-      return
-    }
-
-    if (operationDimEdit.kind !== 'move' && operationDimEdit.kind !== 'copy') {
-      return
-    }
-
-    const units = projectRef.current.meta.units
-    const distance = parseLengthInput(operationDimEdit.distance, units)
-    if (distance === null) {
-      return
-    }
-    setPendingMovePreviewPointRef({
-      point: computeMoveDistancePreviewPoint(
-        pendingMove.fromPoint,
-        pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint,
-        distance,
-      ),
-      session: pendingMove.session,
-    })
-  }, [operationDimEdit, setPendingMovePreviewPointRef])
 
   useEffect(() => {
     const pendingTransform = pendingTransformRef.current
@@ -2179,7 +2094,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [])
 
   useEffect(() => {
-    if (copyCountPromptActive || rotateCopyCountPromptActive) {
+    if (move.copyCountPromptActive || rotateCopyCountPromptActive) {
       return
     }
 
@@ -2196,7 +2111,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [move.copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   // Native pointermove (not React's synthetic) so we can read coalesced events.
   // Routed through useStableEvent so the listener subscribes once while the body
@@ -3786,7 +3701,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       } else if (!pendingMove.toPoint) {
         const lockedSnapped = applyLock(snapped, pendingMove.fromPoint)
-        beginMoveDistanceEntry(lockedSnapped)
+        move.beginMoveDistanceEntry(lockedSnapped)
       }
       return
     }
@@ -4085,7 +4000,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingMove?.fromPoint && !pendingMove.toPoint) {
       const previewPoint = pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
-      beginMoveDistanceEntry(previewPoint)
+      move.beginMoveDistanceEntry(previewPoint)
       return
     }
 
@@ -4343,7 +4258,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       event.preventDefault()
       const currentEdit = operationDimEditRef.current
       if (!currentEdit) {
-        beginMoveDistanceEntryFromPreview()
+        move.beginMoveDistanceEntryFromPreview()
       } else if (currentEdit.kind === 'move' || currentEdit.kind === 'copy') {
         setOperationDimEdit(null)
         canvasRef.current?.focus({ preventScroll: true })
@@ -5440,7 +5355,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingMove && (
         <CanvasWorkflowPanel
           title={pendingMove.mode === 'copy' ? 'Copy' : 'Move'}
-          step={moveDistanceEditActive
+          step={move.moveDistanceEditActive
             ? 'Set distance'
             : !pendingMove.fromPoint
               ? 'Select from point'
@@ -5449,22 +5364,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 : pendingMove.mode === 'copy'
                   ? 'Set copy count'
                   : undefined}
-          position={moveWorkflowPanel.position}
-          panelRef={moveWorkflowPanel.panelRef}
-          handleProps={moveWorkflowPanel.handleProps}
-          actionRowProps={moveWorkflowPanel.actionRowProps}
+          position={move.moveWorkflowPanel.position}
+          panelRef={move.moveWorkflowPanel.panelRef}
+          handleProps={move.moveWorkflowPanel.handleProps}
+          actionRowProps={move.moveWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--move"
           moveLabel={`Move ${pendingMove.mode} controls`}
           actions={(
             <>
-              {moveDistanceEditActive && (
+              {move.moveDistanceEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitMoveDistanceEditFromPanel}
+                  onClick={move.commitMoveDistanceEditFromPanel}
                 >Confirm</button>
               )}
-              {!moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
+              {!move.moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
@@ -5473,14 +5388,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     completePendingMove(pendingMove.toPoint!, n)
                     setPendingMovePreviewPointRef(null)
                     setCopyCountDraft('1')
-                    moveWorkflowPanel.focusCanvasAfterAction()
+                    move.moveWorkflowPanel.focusCanvasAfterAction()
                   }}
                 >Confirm</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelMoveFromPanel}
+                onClick={move.cancelMoveFromPanel}
               >Cancel</button>
             </>
           )}
@@ -5490,7 +5405,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               Select a target point to set the direction and default distance.
             </div>
           )}
-          {moveDistanceEditActive && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy') && (
+          {move.moveDistanceEditActive && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy') && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
@@ -5506,10 +5421,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitMoveDistanceEditFromPanel()
+                      move.commitMoveDistanceEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelMoveFromPanel()
+                      move.cancelMoveFromPanel()
                     }
                   }}
                   autoFocus
@@ -5517,7 +5432,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               </label>
             </div>
           )}
-          {!moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
+          {!move.moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Copies</span>
@@ -5536,10 +5451,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       completePendingMove(pendingMove.toPoint!, nextCount)
                       setPendingMovePreviewPointRef(null)
                       setCopyCountDraft('1')
-                      moveWorkflowPanel.focusCanvasAfterAction()
+                      move.moveWorkflowPanel.focusCanvasAfterAction()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelMoveFromPanel()
+                      move.cancelMoveFromPanel()
                     }
                   }}
                   autoFocus
