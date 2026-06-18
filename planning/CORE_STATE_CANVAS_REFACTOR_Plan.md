@@ -44,7 +44,7 @@ These are **additive UX changes** surfaced while browser-verifying P7. They are 
 
 ### P7.4 — Reactive fillet panel: state-driven step + "Radius" button (no Tab required)
 
-**Status:** ⬜ Not started (proposed 2026-06-17; user-requested follow-up)
+**Status:** ✅ Done (merge `37541ca`, 2026-06-17; user-verified desktop). Implemented as a round in its own worktree off the cumulative branch, reviewed + merged `--no-ff`. **Review-found bug fixed in the same round:** `handlePointerLeave` (in `usePointerGestures.ts`) was cancelling a *picked* fillet + its preview whenever the pointer left the canvas — which broke the new button flow, since reaching the docked "Radius" button requires moving the cursor off the canvas onto the panel. Guarded so a pending fillet (and its preview) survives pointer-leave; preview still clears for the other sketch-edit tools; Esc/Cancel still clears. Shared `enterFilletRadiusEdit()` helper backs both the button and the Tab key. Build green, lint clean (only the pre-existing `SketchCanvas.tsx:1788` warning), both `max-lines` guards pass (SketchCanvas 3777/3800). **Separately surfaced during this test (NOT P7.4, NOT P7):** the feature-**create** "Dimensions" button does nothing — wiring reads correct on paper; the creation-dimension path was last touched in P6 R7 (`556d6fb`) and is untouched by P7/P7.4, so it's an older latent bug. Logged for its own investigation.
 **Risk:** Low–medium; tablet-sensitive (this is the tablet command surface).
 
 **Problem (observed in browser test):**

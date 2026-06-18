@@ -17,7 +17,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## In progress
 
 - [CORE_STATE_CANVAS_REFACTOR_Plan.md](CORE_STATE_CANVAS_REFACTOR_Plan.md) — **approved umbrella plan** (status: In progress) for the core state/canvas/app architecture simplification. Runs on a cumulative `feat/core-arch-simplification` branch with each phase in its own worktree. Phase 0 has archived the stale shipped plans (measure & dimensions, feature-creation picker, both waterline plans) and the superseded REFACTORING_Plan.
-- [P7_4_FILLET_PANEL_Plan.md](P7_4_FILLET_PANEL_Plan.md) — **P7 follow-up** (status: Approved 2026-06-17). Reactive fillet panel: state-driven step text + a "Radius" button so picking a corner offers radius entry without **Tab** (keyboard-only today → unusable on tablet). Additive UX, not part of P7's faithful migration; runs as a round off `feat/core-arch-simplification`.
+- [P7_4_FILLET_PANEL_Plan.md](P7_4_FILLET_PANEL_Plan.md) — **P7 follow-up** (status: Done, merge `37541ca` 2026-06-17; user-verified desktop). Reactive fillet panel: state-driven step + a "Radius" button so picking a corner offers radius entry without **Tab**. Review found + fixed a pointer-leave bug that cancelled a picked fillet when moving to the docked panel. Kept on the cumulative branch (ships with the umbrella effort).
 
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.

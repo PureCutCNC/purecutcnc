@@ -1,7 +1,8 @@
 ---
-status: Approved   # Draft → Approved → In progress → Done | Abandoned
+status: Done   # Draft → Approved → In progress → Done | Abandoned
 created: 2026-06-17
 approved: 2026-06-17
+done: 2026-06-17   # merge 37541ca; user-verified desktop. Review-found pointer-leave cancel bug fixed in the same round.
 ---
 
 # P7.4 — Reactive fillet panel (state-driven step + "Radius" button) Plan
