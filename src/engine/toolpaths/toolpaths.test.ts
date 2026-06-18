@@ -275,6 +275,88 @@ function cutClusterSequence(moves: ToolpathMove[], classifyX: (x: number) => str
   return sequence
 }
 
+interface ClosedCutLoop {
+  points: { x: number; y: number }[]
+  bounds: XYBounds
+  signedArea: number
+}
+
+interface XYBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+function pointEquals(a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+  return approx(a.x, b.x) && approx(a.y, b.y)
+}
+
+function pointsBounds(points: { x: number; y: number }[]): XYBounds {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const point of points) {
+    minX = Math.min(minX, point.x)
+    minY = Math.min(minY, point.y)
+    maxX = Math.max(maxX, point.x)
+    maxY = Math.max(maxY, point.y)
+  }
+
+  return { minX, minY, maxX, maxY }
+}
+
+function polygonSignedArea(points: { x: number; y: number }[]): number {
+  let area = 0
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    area += current.x * next.y - next.x * current.y
+  }
+  return area / 2
+}
+
+function closedCutLoopsAtZ(moves: ToolpathMove[], z: number): ClosedCutLoop[] {
+  const loops: ClosedCutLoop[] = []
+  let run: ToolpathMove[] = []
+
+  const emitLoop = (loopMoves: ToolpathMove[]) => {
+    const points = loopMoves.map((move) => ({ x: move.from.x, y: move.from.y }))
+    loops.push({
+      points,
+      bounds: pointsBounds(points),
+      signedArea: polygonSignedArea(points),
+    })
+  }
+
+  const flushRun = () => {
+    if (run.length > 0 && pointEquals(run[0].from, run[run.length - 1].to)) {
+      emitLoop(run)
+    }
+    run = []
+  }
+
+  for (const move of moves) {
+    if (move.kind === 'cut' && approx(move.to.z, z)) {
+      run.push(move)
+      for (let startIndex = run.length - 1; startIndex >= 0; startIndex -= 1) {
+        if (run.length - startIndex >= 3 && pointEquals(run[startIndex].from, move.to)) {
+          emitLoop(run.slice(startIndex))
+          run = []
+          break
+        }
+      }
+    } else {
+      flushRun()
+    }
+  }
+  flushRun()
+
+  return loops
+}
+
 function movesEqual(a: ToolpathMove[], b: ToolpathMove[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i += 1) {
@@ -526,6 +608,88 @@ function testPocketFeatureFirstNearestBlockOrder() {
   assert(cutZTransitions(result.moves).length === 6, 'three feature blocks retain two depth passes each')
 
   console.log('pocket feature_first nearest block ordering: PASSED')
+}
+
+function pocketOffsetLoops(direction: NonNullable<Operation['cutDirection']>): ClosedCutLoop[] {
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makePocketFeature('a', 0, 0, 20, 20, 0, -2)
+  const project = baseProject([tool], [feature])
+  const operation = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.5,
+    cutDirection: direction,
+  })
+
+  const result = generatePocketToolpath(project, operation)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const loops = closedCutLoopsAtZ(result.moves, -2)
+  assert(loops.length >= 3, `expected multiple offset loops, got ${loops.length}`)
+  return loops
+}
+
+function assertPocketLoopsCutInnerFirst(loops: ClosedCutLoop[], label: string) {
+  const first = loops[0]
+  const last = loops[loops.length - 1]
+  const firstArea = Math.abs(first.signedArea)
+  const lastArea = Math.abs(last.signedArea)
+
+  assert(firstArea < lastArea, `${label}: expected first loop area ${firstArea} to be smaller than last loop area ${lastArea}`)
+  assert(first.bounds.minX > last.bounds.minX, `${label}: expected first loop to be inset from final loop on minX`)
+  assert(first.bounds.minY > last.bounds.minY, `${label}: expected first loop to be inset from final loop on minY`)
+  assert(first.bounds.maxX < last.bounds.maxX, `${label}: expected first loop to be inset from final loop on maxX`)
+  assert(first.bounds.maxY < last.bounds.maxY, `${label}: expected first loop to be inset from final loop on maxY`)
+  assert(last.bounds.minX <= 2.1 && last.bounds.minY <= 2.1, `${label}: expected final loop to reach wall-adjacent inset`)
+  assert(last.bounds.maxX >= 17.9 && last.bounds.maxY >= 17.9, `${label}: expected final loop to reach wall-adjacent inset`)
+}
+
+function testPocketOffsetCutsInnerFirst() {
+  console.log('Testing pocket offset cuts inner loops before wall-adjacent loops...')
+
+  const conventionalLoops = pocketOffsetLoops('conventional')
+  const climbLoops = pocketOffsetLoops('climb')
+
+  assertPocketLoopsCutInnerFirst(conventionalLoops, 'conventional')
+  assertPocketLoopsCutInnerFirst(climbLoops, 'climb')
+  assert(
+    conventionalLoops[0].signedArea * climbLoops[0].signedArea < 0,
+    'expected climb and conventional loops to keep opposite winding after order reversal',
+  )
+
+  console.log('pocket offset inner-first ordering: PASSED')
+}
+
+function testPocketLevelTransitionsPlungeVerticallyFromSafeZ() {
+  console.log('Testing pocket level transitions rapid at safe Z before plunging...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makePocketFeature('a', 0, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [feature])
+  const operation = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.5,
+  })
+
+  const result = generatePocketToolpath(project, operation)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const firstDeepCutIndex = result.moves.findIndex((move) => move.kind === 'cut' && approx(move.to.z, -4))
+  assert(firstDeepCutIndex > 0, 'expected a cut at the second pocket level')
+
+  const plunge = result.moves[firstDeepCutIndex - 1]
+  const firstDeepCut = result.moves[firstDeepCutIndex]
+  assert(plunge.kind === 'plunge', `expected plunge before first deep-level cut, got ${plunge.kind}`)
+  assert(approx(plunge.from.x, plunge.to.x) && approx(plunge.from.y, plunge.to.y), 'deep-level entry plunge should be vertical')
+  assert(approx(plunge.to.x, firstDeepCut.from.x) && approx(plunge.to.y, firstDeepCut.from.y), 'plunge should end at the first deep-level cut start')
+  assert(approx(plunge.to.z, firstDeepCut.from.z) && approx(firstDeepCut.from.z, -4), 'first deep-level cut should start at cut depth')
+
+  console.log('pocket level transition vertical plunge: PASSED')
 }
 
 function testPocketSingleFeatureParity() {
@@ -1231,6 +1395,8 @@ try {
   testPocketLevelFirstOrder()
   testPocketFeatureFirstOrder()
   testPocketFeatureFirstNearestBlockOrder()
+  testPocketOffsetCutsInnerFirst()
+  testPocketLevelTransitionsPlungeVerticallyFromSafeZ()
   testPocketSingleFeatureParity()
   testPocketRejectsRegionOnlyTarget()
   testPocketRegionClipsMachiningArea()

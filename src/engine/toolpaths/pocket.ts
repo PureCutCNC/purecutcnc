@@ -217,6 +217,8 @@ export function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null,
  */
 export type SafeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint) => boolean
 
+type OffsetTraversalMode = 'outer-first' | 'inner-first'
+
 const XY_ALIGN_EPS = 1e-6
 
 export function transitionToCutEntry(
@@ -243,6 +245,13 @@ export function transitionToCutEntry(
         moves.push({ kind: 'rapid', from, to: toXY })
       }
       return toXY
+    }
+
+    const isStartingFromSafeZ = Math.abs(from.z - safeZ) <= XY_ALIGN_EPS
+    const isDescendingToCut = toXY.z < safeZ - XY_ALIGN_EPS
+    if (isStartingFromSafeZ && isDescendingToCut) {
+      // After a level retract, keep XY travel at safe Z and enter the next level vertically.
+      return pushRapidAndPlunge(moves, from, toXY, safeZ)
     }
 
     if (distance <= maxLinkDistance) {
@@ -803,29 +812,40 @@ export function cutOffsetRegionRecursive(
   currentPosition: ToolpathPoint | null,
   direction: CutDirection = 'conventional',
   safeLinkCheck?: SafeLinkCheck,
+  traversalMode: OffsetTraversalMode = 'outer-first',
 ): ToolpathPoint | null {
   const childRegions = buildInsetRegions(region, stepoverDistance)
-  const childAnchors = childRegions
-    .map((child) => child.outer)
-    .filter((contour) => contour.length > 0)
-    .map((contour) => contour[0])
-  const preparedContours = buildContourLoops([region]).map((contour) => rotateContourToBestEntry(
-    contour,
-    currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    childAnchors,
-  ))
 
-  let nextPosition = cutClosedContours(
-    moves,
-    preparedContours,
-    z,
-    safeZ,
-    maxLinkDistance,
-    currentPosition,
-    true,
-    direction,
-    safeLinkCheck,
-  )
+  const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
+    const childAnchors = traversalMode === 'outer-first'
+      ? childRegions
+        .map((child) => child.outer)
+        .filter((contour) => contour.length > 0)
+        .map((contour) => contour[0])
+      : []
+    const preparedContours = buildContourLoops([region]).map((contour) => rotateContourToBestEntry(
+      contour,
+      fromPosition ? { x: fromPosition.x, y: fromPosition.y } : null,
+      childAnchors,
+    ))
+
+    return cutClosedContours(
+      moves,
+      preparedContours,
+      z,
+      safeZ,
+      maxLinkDistance,
+      fromPosition,
+      true,
+      direction,
+      safeLinkCheck,
+    )
+  }
+
+  let nextPosition = currentPosition
+  if (traversalMode === 'outer-first') {
+    nextPosition = cutCurrentRegion(nextPosition)
+  }
 
   const orderedChildren = orderRegionsGreedy(
     childRegions,
@@ -843,7 +863,12 @@ export function cutOffsetRegionRecursive(
       nextPosition,
       direction,
       safeLinkCheck,
+      traversalMode,
     )
+  }
+
+  if (traversalMode === 'inner-first') {
+    nextPosition = cutCurrentRegion(nextPosition)
   }
 
   return nextPosition
@@ -965,6 +990,8 @@ function generateRoughBandMoves(
         maxLinkDistance,
         currentPosition,
         direction,
+        undefined,
+        'inner-first',
       )
     }
 

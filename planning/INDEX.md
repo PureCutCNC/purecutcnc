@@ -10,11 +10,15 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+- [POCKET_OFFSET_ENTRY_FEED_REDUCTION_Plan.md](POCKET_OFFSET_ENTRY_FEED_REDUCTION_Plan.md) — follow-up plan for optionally cutting the first innermost offset loop at reduced feed before restoring normal pocket feed
+
 ## Backlog / tech debt
 
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
 
 ## In progress
+
+- [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
 
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
