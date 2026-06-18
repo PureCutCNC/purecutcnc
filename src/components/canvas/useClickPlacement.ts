@@ -573,6 +573,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
             pendingSketchFilletRef.current = null
             sketchEditPreviewRef.current = null
             fillet.setFilletDimensionEdit(null)
+            fillet.setFilletCornerPicked(false)
             scheduleDraw()
             return
           }
@@ -584,6 +585,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
               corner: anchorPointForIndex(feature.sketch.profile, control.index),
             }
             sketchEditPreviewRef.current = { point: pendingSketchFilletRef.current.corner, mode: 'add_point' }
+            fillet.setFilletCornerPicked(true)
             scheduleDraw()
           }
           return
