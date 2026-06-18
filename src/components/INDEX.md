@@ -20,8 +20,8 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
 - `simulation/` — voxel toolpath simulation viewport and playback controls
 - `cam/` — CAM panels (tools, operations, parameters)
-- `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping)
-- `layout/` — app shell (toolbars, sidebars, mode switching)
+- `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu
+- `layout/` — app shell (toolbars, sidebars, mode switching); toolbar internals are documented in `layout/toolbar/INDEX.md`
 - `project/` — project-level UI (new/open/save, stock, machine, units)
 - `export/` — export dialogs (G-code, SVG, DXF, STL preview)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.

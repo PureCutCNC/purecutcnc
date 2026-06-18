@@ -17,10 +17,10 @@
 import type { StateCreator } from 'zustand'
 import type { Project, SketchFeature } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
+import { cloneProject } from '../helpers/normalize'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 
 export interface SelectionSliceDependencies {
-  cloneProject: (project: Project) => Project
   normalizeProject: (project: Project) => Project
 }
 
@@ -579,7 +579,7 @@ export function createSelectionSlice(
         sketchEditSession: {
           entityType: 'feature',
           entityId: id,
-          snapshot: deps.cloneProject(s.project),
+          snapshot: cloneProject(s.project),
           pastLength: s.history.past.length,
         },
       })),
@@ -600,7 +600,7 @@ export function createSelectionSlice(
         sketchEditSession: {
           entityType: 'clamp',
           entityId: id,
-          snapshot: deps.cloneProject(s.project),
+          snapshot: cloneProject(s.project),
           pastLength: s.history.past.length,
         },
       })),
@@ -621,7 +621,7 @@ export function createSelectionSlice(
         sketchEditSession: {
           entityType: 'tab',
           entityId: id,
-          snapshot: deps.cloneProject(s.project),
+          snapshot: cloneProject(s.project),
           pastLength: s.history.past.length,
         },
       })),
@@ -681,7 +681,7 @@ export function createSelectionSlice(
           }
         }
 
-        const restored = deps.normalizeProject(deps.cloneProject(s.sketchEditSession.snapshot))
+        const restored = deps.normalizeProject(cloneProject(s.sketchEditSession.snapshot))
         return {
           project: restored,
           selection: {

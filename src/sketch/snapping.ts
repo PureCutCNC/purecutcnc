@@ -28,8 +28,6 @@ export interface SnapSettings {
   pixelRadius: number
 }
 
-export const SNAP_SETTINGS_STORAGE_KEY = 'camcam.snapSettings'
-
 export const ALL_SNAP_MODES: SnapMode[] = [
   'grid',
   'point',

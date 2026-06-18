@@ -45,6 +45,15 @@ Read `ARCHITECTURE.md` for the full picture. The critical points:
 - **Coordinate system:** Internal uses screen coords (Y increases downward). Machine/G-code uses Cartesian (Y increases upward). The `MachineOrigin` and G-code export handle inversion.
 - **Units:** Project can be `mm` or `inch`. Check `project.meta.units` and use helpers in `src/utils/units.ts`.
 
+## Structural Conventions (apply to all new work)
+
+These are the patterns the `feat/core-arch-simplification` effort established (see `planning/CORE_STATE_CANVAS_REFACTOR_Plan.md`). Build new code this way from the start so we don't have to refactor "files too big to touch safely" later — the `max-lines` ESLint guards on `App.tsx`/`src/app`, `src/store`, and `src/components/canvas` are ratchets (don't grow past them), **not** targets to fill.
+
+- **Keep modules single-responsibility and small.** A file approaching its `max-lines` cap is a design smell — split before adding, don't bump the cap.
+- **Big stores = composition root + slices.** `projectStore.ts` is a thin root that spreads per-domain `store/slices/*Slice.ts` (`createXxxSlice(set, get, deps)`) and pure `store/helpers/*`. The public `ProjectStore` interface in `store/types.ts` is a **frozen contract** — add behavior in a slice, don't widen the interface casually.
+- **Big components = thin shell + per-interaction hooks.** Follow `SketchCanvas.tsx`: the shell owns shared refs/JSX; each interaction machine lives in its own `use*` hook that takes a typed `ctx` and returns only what the shell consumes. Public props/handle (e.g. `SketchCanvasProps`/`SketchCanvasHandle`) stay frozen.
+- **Never put a whole hook-return object in a React dep array.** Hook returns (e.g. `dimEdit`, `fillet`, the slice objects) are recreated every render, so listing them makes `useEffect`/`useCallback`/`useMemo` fire every render — this caused two real "field gets wiped" regressions during the refactor. Depend on the **primitives** that actually gate the effect (`selection.mode`, `pendingAdd`, …); the `useState` setters and `useRef` objects you call are already stable. Add a `// eslint-disable-next-line react-hooks/exhaustive-deps` with a one-line reason when the linter wants the unstable object.
+
 ## Directory Layout
 
 ```

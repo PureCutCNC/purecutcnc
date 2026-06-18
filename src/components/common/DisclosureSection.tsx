@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { useState, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Icon } from '../Icon'
+import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import {
   disclosureStorageKey,
   parseDisclosureOpen,
@@ -37,17 +38,6 @@ interface DisclosureSectionProps {
   className?: string
 }
 
-function readInitialOpen(storageKey: string | undefined, defaultOpen: boolean): boolean {
-  if (storageKey && typeof window !== 'undefined') {
-    try {
-      return parseDisclosureOpen(window.localStorage.getItem(disclosureStorageKey(storageKey)), defaultOpen)
-    } catch {
-      return defaultOpen
-    }
-  }
-  return defaultOpen
-}
-
 /**
  * A1.1: a reusable collapsible section so progressive disclosure ("Advanced"
  * groups) looks and behaves the same across the Properties and CAM panels.
@@ -60,20 +50,24 @@ export function DisclosureSection({
   defaultOpen = false,
   className,
 }: DisclosureSectionProps) {
-  const [open, setOpen] = useState<boolean>(() => readInitialOpen(storageKey, defaultOpen))
+  // Persist the open/collapsed boolean via the existing pure disclosureState
+  // helpers ('open'/'closed' strings), so the stored format and corrupt-value
+  // fallback are unchanged. No storageKey → in-memory only (enabled:false).
+  const codec = useMemo<StorageCodec<boolean>>(
+    () => ({
+      serialize: serializeDisclosureOpen,
+      deserialize: (raw) => parseDisclosureOpen(raw, defaultOpen),
+    }),
+    [defaultOpen],
+  )
+  const [open, setOpen] = useLocalStorageState<boolean>(
+    storageKey ? disclosureStorageKey(storageKey) : 'disclosure',
+    defaultOpen,
+    { codec, enabled: Boolean(storageKey) },
+  )
 
   function toggle() {
-    setOpen((prev) => {
-      const next = !prev
-      if (storageKey && typeof window !== 'undefined') {
-        try {
-          window.localStorage.setItem(disclosureStorageKey(storageKey), serializeDisclosureOpen(next))
-        } catch {
-          // Persistence is best-effort; ignore quota/availability errors.
-        }
-      }
-      return next
-    })
+    setOpen((prev) => !prev)
   }
 
   return (

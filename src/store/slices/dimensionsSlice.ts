@@ -17,11 +17,8 @@
 import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
+import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
-
-export interface DimensionsSliceDependencies {
-  cloneProject: (project: Project) => Project
-}
 
 export type DimensionsSlice = Pick<
   ProjectStore,
@@ -35,9 +32,7 @@ export type DimensionsSlice = Pick<
 export function createDimensionsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: DimensionsSliceDependencies,
 ): DimensionsSlice {
-  const { cloneProject } = deps
 
   /** Build a history-aware state patch for a project mutation. */
   function commit(s: ProjectStore, nextProject: Project): Partial<ProjectStore> {

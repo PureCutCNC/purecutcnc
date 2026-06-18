@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { platform } from '../../platform'
@@ -61,6 +62,24 @@ function nextTab<T extends string>(tabs: readonly T[], current: T, direction: 1 
   const nextIndex = (currentIndex + direction + tabs.length) % tabs.length
   return tabs[nextIndex]
 }
+
+// Panel-split fractions persist as a bare number string, with the same
+// `parseFloat` + (0,1) range guard the panels used inline. An out-of-range or
+// non-finite stored value throws on deserialize so the hook falls back to the
+// panel's default ratio.
+const PANEL_RATIO_CODEC: StorageCodec<number> = {
+  serialize: (ratio) => String(ratio),
+  deserialize: (raw) => {
+    const parsed = parseFloat(raw)
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+      throw new Error('panel ratio out of range')
+    }
+    return parsed
+  },
+}
+
+const LC_STORAGE_KEY = 'panel-split:left-center'
+const CR_STORAGE_KEY = 'panel-split:center-right'
 
 export function AppShell({
   globalToolbar,
@@ -109,28 +128,16 @@ export function AppShell({
     }
   }, [onShowAbout])
 
-  const LC_STORAGE_KEY = 'panel-split:left-center'
-  const CR_STORAGE_KEY = 'panel-split:center-right'
   const MIN_LEFT_WIDTH = 200
   const MIN_CENTER_WIDTH = 300
   const MIN_RIGHT_WIDTH = 200
 
-  const [leftPanelRatio, setLeftPanelRatio] = useState<number>(() => {
-    const stored = localStorage.getItem(LC_STORAGE_KEY)
-    if (stored !== null) {
-      const parsed = parseFloat(stored)
-      if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) return parsed
-    }
-    return 0.17
+  const [leftPanelRatio, setLeftPanelRatio] = useLocalStorageState<number>(LC_STORAGE_KEY, 0.17, {
+    codec: PANEL_RATIO_CODEC,
   })
 
-  const [rightPanelRatio, setRightPanelRatio] = useState<number>(() => {
-    const stored = localStorage.getItem(CR_STORAGE_KEY)
-    if (stored !== null) {
-      const parsed = parseFloat(stored)
-      if (Number.isFinite(parsed) && parsed > 0 && parsed < 1) return parsed
-    }
-    return 0.265
+  const [rightPanelRatio, setRightPanelRatio] = useLocalStorageState<number>(CR_STORAGE_KEY, 0.265, {
+    codec: PANEL_RATIO_CODEC,
   })
 
   const leftPanelRef = useRef<HTMLElement>(null)
@@ -179,10 +186,10 @@ export function AppShell({
       const minRatio = MIN_LEFT_WIDTH / totalWidth
       const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
       const newRatio = Math.max(minRatio, Math.min(maxRatio, offsetX / totalWidth))
+      // useLocalStorageState persists leftPanelRatio to LC_STORAGE_KEY on change.
       setLeftPanelRatio(newRatio)
-      localStorage.setItem(LC_STORAGE_KEY, String(newRatio))
     },
-    [],
+    [setLeftPanelRatio],
   )
 
   const resizeRightPanel = useCallback(
@@ -197,10 +204,10 @@ export function AppShell({
       const minRatio = MIN_RIGHT_WIDTH / totalWidth
       const maxRatio = 1 - MIN_CENTER_WIDTH / totalWidth
       const newRatio = Math.max(minRatio, Math.min(maxRatio, 1 - offsetX / totalWidth))
+      // useLocalStorageState persists rightPanelRatio to CR_STORAGE_KEY on change.
       setRightPanelRatio(newRatio)
-      localStorage.setItem(CR_STORAGE_KEY, String(newRatio))
     },
-    [],
+    [setRightPanelRatio],
   )
 
   const startDividerResize = useCallback((side: 'left' | 'right', e: React.PointerEvent<HTMLDivElement>) => {

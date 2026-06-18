@@ -1,4 +1,13 @@
+---
+status: Superseded   # replaced by CORE_STATE_CANVAS_REFACTOR_Plan.md; closed in core-arch Phase 0
+closed: 2026-06-14
+---
+
 # Source Refactoring Plan
+
+> **Superseded** by `CORE_STATE_CANVAS_REFACTOR_Plan.md` for the store/canvas/app hotspots. Kept for
+> history only. The store/canvas line-count "Status" notes below are stale (the files regrew after the
+> April extraction). Do not act on this doc.
 
 ## Overview
 

@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Done   # fix present in modelProtection.ts on main; closed in core-arch Phase 0, not re-verified
 created: 2026-05-24
 ---
 

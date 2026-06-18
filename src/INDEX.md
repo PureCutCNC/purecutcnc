@@ -8,6 +8,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - `App.css`, `index.css` — global styles
 
 ## Subfolders
+- [app/](app/) — app-level orchestration hooks (starting with `useToolpathGeneration`)
 - [store/](store/INDEX.md) — Zustand state (the single source of truth for projects). **All mutations go through here.**
 - [engine/](engine/INDEX.md) — pure-logic CAM core: toolpaths, G-code, simulation, CSG, mesh import
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
@@ -15,6 +16,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed `parseFontJson` font-parse seam
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
+- [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
 - [platform/](platform/) — platform abstraction (web vs Tauri)

@@ -26,7 +26,19 @@ import type {
   SketchFeature,
   SketchProfile,
 } from '../../types/project'
-import { polygonProfile } from '../../types/project'
+import { inferFeatureKind, polygonProfile } from '../../types/project'
+import type { OpenProfileEndpoint } from '../types'
+import { clonePoint, pointsEqual } from './geometry'
+import { nextUniqueGeneratedId } from './ids'
+import { normalizeFeatureZRange } from './normalize'
+import {
+  cloneSegment,
+  endPointForOpenProfile,
+  normalizeEditableProfileClosure,
+  orientOpenProfileFromEndpoint,
+  orientOpenProfileTowardEndpoint,
+} from './profileEdit'
+import { rederiveConstraintGeometry } from '../../sketch/constraintSolver'
 import {
   executeClipTree,
   flattenFeatureToClipperPath,
@@ -369,7 +381,7 @@ export function selectedClosedFeaturesFromIds(project: Project, featureIds: stri
     .filter((feature) => feature.sketch.profile.closed)
 }
 
-export function previewOffsetFeatures(
+export function previewOffsetFeaturesInternal(
   project: Project,
   featureIds: string[],
   distance: number,
@@ -406,4 +418,157 @@ export function previewOffsetFeatures(
   }
 
   return createdFeatures
+}
+
+export function createDerivedFeature(
+  project: Project,
+  baseFeature: SketchFeature,
+  profile: SketchProfile,
+  operation: FeatureOperation,
+  name: string,
+): SketchFeature {
+  return normalizeFeatureZRange({
+    id: nextUniqueGeneratedId(project, 'f'),
+    name,
+    kind: inferFeatureKind(profile),
+    folderId: baseFeature.folderId,
+    sketch: {
+      profile,
+      origin: clonePoint(baseFeature.sketch.origin),
+      orientationAngle: baseFeature.sketch.orientationAngle,
+      dimensions: [],
+      constraints: [],
+    },
+    operation,
+    z_top: baseFeature.z_top,
+    z_bottom: baseFeature.z_bottom,
+    visible: true,
+    locked: false,
+  })
+}
+
+export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): SketchFeature[] {
+  return previewOffsetFeaturesInternal(project, featureIds, distance, createDerivedFeature)
+}
+
+export function joinOpenProfiles(
+  profile: SketchProfile,
+  endpoint: OpenProfileEndpoint,
+  targetProfile: SketchProfile,
+  targetEndpoint: OpenProfileEndpoint,
+): SketchProfile | null {
+  if (profile.closed || targetProfile.closed || profile.segments.length === 0 || targetProfile.segments.length === 0) {
+    return null
+  }
+
+  const leading = orientOpenProfileTowardEndpoint(profile, endpoint)
+  const trailing = orientOpenProfileFromEndpoint(targetProfile, targetEndpoint)
+  const leadingEnd = endPointForOpenProfile(leading)
+  const trailingStart = trailing.start
+  const segments = leading.segments.map(cloneSegment)
+
+  if (!pointsEqual(leadingEnd, trailingStart)) {
+    segments.push({ type: 'line', to: clonePoint(trailingStart) })
+  }
+
+  segments.push(...trailing.segments.map(cloneSegment))
+
+  return normalizeEditableProfileClosure({
+    ...profile,
+    start: clonePoint(leading.start),
+    segments,
+    closed: false,
+  })
+}
+
+export function clearStaleConstraints(features: SketchFeature[], movedIds: Set<string>): SketchFeature[] {
+  if (movedIds.size === 0) return features
+  let anyChanged = false
+  const featureById = new Map(features.map((f) => [f.id, f]))
+  const next = features.map((feature) => {
+    if (!movedIds.has(feature.id)) return feature
+    const updatedConstraints = feature.sketch.constraints.map((c) => {
+      if (c.type !== 'fixed_distance') return c
+      if (c.is_invalid) return c
+      const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
+      const refFeature = refFeatureId ? featureById.get(refFeatureId) : null
+      const result = rederiveConstraintGeometry(
+        feature.sketch.profile,
+        refFeature?.sketch.profile ?? null,
+        c,
+      )
+      if (result && result.isValid) {
+        let newValue: number | undefined
+        if (result.referenceSegment) {
+          const { a, b } = result.referenceSegment
+          const sx = b.x - a.x
+          const sy = b.y - a.y
+          const segLen = Math.hypot(sx, sy)
+          if (segLen > 1e-12) {
+            const nx = -sy / segLen
+            const ny = sx / segLen
+            const rawSigned = (result.anchorPoint.x - a.x) * nx + (result.anchorPoint.y - a.y) * ny
+            const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
+            newValue = originalSign * Math.abs(rawSigned)
+          }
+        } else if (result.referencePoint) {
+          newValue = Math.hypot(
+            result.anchorPoint.x - result.referencePoint.x,
+            result.anchorPoint.y - result.referencePoint.y,
+          )
+        }
+        if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
+          anyChanged = true
+          return {
+            ...c,
+            value: newValue,
+            anchor_point: result.anchorPoint,
+            reference_point: result.referencePoint,
+            reference_segment: result.referenceSegment,
+            is_invalid: false,
+            error_message: undefined,
+          }
+        }
+        return {
+          ...c,
+          anchor_point: result.anchorPoint,
+          reference_point: result.referencePoint,
+          reference_segment: result.referenceSegment,
+          is_invalid: false,
+          error_message: undefined,
+        }
+      }
+      if (!c.anchor_point) return c
+      let newValue: number | undefined
+      if (c.reference_segment) {
+        const { a, b } = c.reference_segment
+        const sx = b.x - a.x
+        const sy = b.y - a.y
+        const segLen = Math.hypot(sx, sy)
+        if (segLen > 1e-12) {
+          const nx = -sy / segLen
+          const ny = sx / segLen
+          const rawSigned = (c.anchor_point.x - a.x) * nx + (c.anchor_point.y - a.y) * ny
+          const originalSign = (c.value ?? 0) >= 0 ? 1 : -1
+          newValue = originalSign * Math.abs(rawSigned)
+        }
+      } else if (c.reference_point) {
+        newValue = Math.hypot(
+          c.anchor_point.x - c.reference_point.x,
+          c.anchor_point.y - c.reference_point.y,
+        )
+      }
+      if (newValue !== undefined && Math.abs((c.value ?? 0) - newValue) > 1e-9) {
+        anyChanged = true
+        return { ...c, value: newValue }
+      }
+      return c
+    })
+    if (updatedConstraints.some((c, i) => c !== feature.sketch.constraints[i])) {
+      anyChanged = true
+      return { ...feature, sketch: { ...feature.sketch, constraints: updatedConstraints } }
+    }
+    return feature
+  })
+  return anyChanged ? next : features
 }
