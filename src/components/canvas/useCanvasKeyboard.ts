@@ -34,7 +34,6 @@ import type {
 } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import { formatLength } from '../../utils/units'
-import { filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { buildArcSegmentFromThreePoints } from './draftHelpers'
 import { resolveOffsetPreview } from './draftGeometry'
 import {
@@ -486,18 +485,9 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       && sketchEditPreviewRef.current
     ) {
       event.preventDefault()
-      const units = projectRef.current.meta.units
-      const featureId = selection.selectedFeatureId
-      const feature = featureId ? projectRef.current.features.find((f) => f.id === featureId) ?? null : null
-      if (!feature) return
       const current = fillet.filletDimensionEditRef.current
       if (!current) {
-        const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
-        fillet.setFilletDimensionEdit({
-          anchorIndex: pendingSketchFilletRef.current.anchorIndex,
-          corner: pendingSketchFilletRef.current.corner,
-          radius: radius ? formatLength(radius, units) : '',
-        })
+        fillet.enterFilletRadiusEdit()
       } else {
         fillet.setFilletDimensionEdit(null)
         canvasRef.current?.focus({ preventScroll: true })

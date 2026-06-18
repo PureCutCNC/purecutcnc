@@ -841,6 +841,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
     pendingSketchFilletRef.current = null
+    fillet.setFilletCornerPicked(false)
+  // fillet.setFilletCornerPicked is a useState setter (stable identity), but the
+  // lint rule sees `fillet` (the hook-return object) which is recreated each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection.mode, selection.sketchEditTool, selection.selectedFeatureId])
 
   useEffect(() => {
@@ -2140,6 +2144,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const feature = editableFeature()
       if (feature && sketchEditTool === 'add_point') {
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         if (pendingSketchExtensionRef.current) {
           const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
           const targetEndpoint = findOpenEndpointHit(livePoint, vt, {
@@ -2167,6 +2172,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'delete_segment') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
         sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
         scheduleDraw()
@@ -2176,6 +2182,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'disconnect') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         const control = hitEditableControl(worldToCanvas(livePoint, vt), { includeSegments: false })
         sketchEditPreviewRef.current =
           control?.kind === 'anchor'
@@ -3589,7 +3596,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : selection.sketchEditTool === 'delete_point' ? 'Click to delete points'
             : selection.sketchEditTool === 'delete_segment' ? 'Click to delete segments'
             : selection.sketchEditTool === 'disconnect' ? 'Click an anchor to split'
-            : selection.sketchEditTool === 'fillet' ? (pendingSketchFilletRef.current ? 'Click second point or enter radius' : 'Click a corner')
+            : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? 'Click second point or enter radius' : 'Click a corner')
             : 'Drag nodes or click segments'
           }
           position={editWorkflowPanel.position}
@@ -3609,6 +3616,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             <>
               {dimEdit.armedForDimension && (
                 <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }}>Dimension</button>
+              )}
+              {fillet.filletCornerPicked && !editFilletActive && (
+                <button type="button" className="tablet-cmd-btn" onClick={() => fillet.enterFilletRadiusEdit()}>Radius</button>
               )}
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={applyEditFromPanel}>Apply</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditFromPanel}>Cancel</button>

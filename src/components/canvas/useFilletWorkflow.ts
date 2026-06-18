@@ -25,8 +25,9 @@ import {
   useState,
 } from 'react'
 import type { SelectionState, SketchEditTool } from '../../store/types'
+import { filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import type { Point, Project } from '../../types/project'
-import { parseLengthInput } from '../../utils/units'
+import { formatLength, parseLengthInput } from '../../utils/units'
 
 export interface FilletWorkflowCtx {
   projectRef: MutableRefObject<Project>
@@ -43,6 +44,9 @@ export interface FilletWorkflow {
   filletDimensionEditRef: MutableRefObject<{ anchorIndex: number; corner: Point; radius: string } | null>
   filletRadiusInputRef: RefObject<HTMLInputElement | null>
   filletDimensionEditActive: boolean
+  filletCornerPicked: boolean
+  setFilletCornerPicked: (picked: boolean) => void
+  enterFilletRadiusEdit: () => void
   commitFilletDimension: () => void
   cancelFilletDimension: () => void
 }
@@ -75,6 +79,20 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
 
   const filletDimensionEditActive = filletDimensionEdit != null
 
+  // Reactive mirror of pendingSketchFilletRef so the panel re-renders
+  // immediately after a corner pick instead of waiting for a mouse move.
+  const [filletCornerPicked, setFilletCornerPicked] = useState(false)
+
+  // Sync the reactive filletCornerPicked flag from the ref every render so the
+  // panel steps/actions update on any clear path (including pointer-gesture clears
+  // that don't call the explicit setter). Runs without a dependency array
+  // intentionally: pendingSketchFilletRef is a ref whose identity never changes,
+  // so listing it wouldn't cause re-fires; the sync must run each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    setFilletCornerPicked(!!pendingSketchFilletRef.current)
+  })
+
   // Focus the radius input when it becomes active
   useEffect(() => {
     if (!filletDimensionEditActive) return
@@ -84,6 +102,27 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     })
     return () => window.cancelAnimationFrame(frame)
   }, [filletDimensionEditActive])
+
+  /** Shared helper: enters the fillet radius-edit mode from either the
+   *  "Radius" button or the Tab keyboard handler. Computes the initial
+   *  radius from the picked corner + preview point so the two entry
+   *  paths can't diverge. */
+  function enterFilletRadiusEdit() {
+    const pending = pendingSketchFilletRef.current
+    const preview = sketchEditPreviewRef.current
+    if (!pending || !preview) return
+    const featureId = selectionRef.current.selectedFeatureId
+    if (!featureId) return
+    const feature = projectRef.current.features.find((f) => f.id === featureId) ?? null
+    if (!feature) return
+    const units = projectRef.current.meta.units
+    const radius = filletRadiusFromPoint(feature, pending.anchorIndex, preview.point)
+    setFilletDimensionEdit({
+      anchorIndex: pending.anchorIndex,
+      corner: pending.corner,
+      radius: radius ? formatLength(radius, units) : '',
+    })
+  }
 
   function commitFilletDimension() {
     const current = filletDimensionEditRef.current
@@ -97,6 +136,7 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     pendingSketchFilletRef.current = null
     sketchEditPreviewRef.current = null
     setFilletDimensionEdit(null)
+    setFilletCornerPicked(false)
     scheduleDraw()
   }
 
@@ -104,6 +144,7 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     pendingSketchFilletRef.current = null
     sketchEditPreviewRef.current = null
     setFilletDimensionEdit(null)
+    setFilletCornerPicked(false)
     scheduleDraw()
   }
 
@@ -113,6 +154,9 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     filletDimensionEditRef,
     filletRadiusInputRef,
     filletDimensionEditActive,
+    filletCornerPicked,
+    setFilletCornerPicked,
+    enterFilletRadiusEdit,
     commitFilletDimension,
     cancelFilletDimension,
   }

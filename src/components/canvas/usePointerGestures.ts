@@ -983,8 +983,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     stopNodeDrag()
     stopPan()
     livePointerWorldRef.current = null
-    sketchEditPreviewRef.current = null
-    pendingSketchFilletRef.current = null
+    // Keep a picked fillet + its preview when the pointer leaves the canvas: the
+    // radius is entered via the docked workflow panel, which the cursor must move
+    // off the canvas to reach. Clearing here would cancel the fillet mid-workflow
+    // (regression the panel "Radius" button exposed). Only clear when no corner is
+    // pending — preview cleanup for the other sketch-edit tools. Esc/Cancel still
+    // clears a pending fillet.
+    if (!pendingSketchFilletRef.current) {
+      sketchEditPreviewRef.current = null
+    }
     setHoveredEditControl(null)
     setPendingOffsetPreviewPointRef(null)
     setPendingOffsetRawPreviewPointRef(null)
