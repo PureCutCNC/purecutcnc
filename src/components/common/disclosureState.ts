@@ -18,8 +18,10 @@
  * Pure persistence helpers for `DisclosureSection`'s open/collapsed state.
  *
  * Kept free of React and `localStorage` so the parse/serialize/default logic is
- * unit-testable in the DOM-less test runner; the component owns the actual
- * storage I/O (guarded for environments without `window`).
+ * unit-testable in the DOM-less test runner. `DisclosureSection` wires these into
+ * a `useLocalStorageState` codec, which performs the actual (SSR-guarded,
+ * best-effort) storage I/O — these helpers stay the single source for the
+ * `disclosure:` key namespace and the `open`/`closed` on-disk format.
  */
 
 const DISCLOSURE_STORAGE_PREFIX = 'disclosure:'

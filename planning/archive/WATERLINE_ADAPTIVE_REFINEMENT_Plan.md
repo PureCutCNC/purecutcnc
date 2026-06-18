@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Done   # shipped to main (PR #100); closed in core-arch Phase 0, not re-verified
 created: 2026-05-23
 ---
 

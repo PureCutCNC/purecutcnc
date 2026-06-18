@@ -15,22 +15,19 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import type { KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, WheelEvent } from 'react'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { OpenProfileEndpoint, SketchControlRef, SketchEditTool } from '../../store/types'
-import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, previewOffsetFeatures, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference, useProjectStore } from '../../store/projectStore'
+import { useProjectStore } from '../../store/projectStore'
+import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
+import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference } from '../../store/helpers/referenceTransforms'
 import {
-  buildArcSegmentFromThreePoints,
   buildPendingDraftProfile,
   buildPendingProfile,
-  compositeDraftPoints,
-  computeEditDimSteps,
   drawCompositeDraft,
   drawSnapIndicator,
-  type EditDimStep,
   findOpenProfileExtensionEndpoint,
   type PendingSketchExtension,
 } from './draftHelpers'
@@ -43,21 +40,25 @@ import {
   drawRadiusMeasurement,
 } from './measurements'
 import {
-  arcHandleFromRadius,
   computeDimensionEditPreviewPoint,
-  computeLinearInputLabel,
   computeMoveDistancePreviewPoint,
   computeRotateDegreesFromPreview,
-  computeRotatePreviewPoint,
   computeScaleFactorFromPreview,
-  computeScalePreviewPoint,
-  unitDirection,
 } from './manualEntry'
-import type { DimensionEditState, OperationDimEdit } from './manualEntry'
-import { resolveSketchSnap } from './snappingHelpers'
-import type { ResolvedSnap } from './snappingHelpers'
-import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure, pickDimensionAt } from './dimensionRendering'
-import { circleEdgeAnchorFromPoint, offsetForCursor } from '../../sketch/dimensions'
+import type { OperationDimEdit } from './manualEntry'
+import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
+import { useConstraintWorkflow } from './useConstraintWorkflow'
+import { useFilletWorkflow } from './useFilletWorkflow'
+import { useMoveWorkflow } from './useMoveWorkflow'
+import { useOffsetWorkflow } from './useOffsetWorkflow'
+import { useTransformExactWorkflow } from './useTransformExactWorkflow'
+import { useCreationWorkflow } from './useCreationWorkflow'
+import { useCanvasKeyboard } from './useCanvasKeyboard'
+import { useClickPlacement } from './useClickPlacement'
+import { usePointerGestures } from './usePointerGestures'
+import { useSnapPreview } from './useSnapPreview'
+import { useCanvasContextMenu } from './useCanvasContextMenu'
+import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
   drawFeature,
   drawMoveGuide,
@@ -72,7 +73,6 @@ import {
   canvasToWorld,
   computeBaseViewTransform,
   computeFitViewState,
-  computeFitViewStateForBounds,
   computeViewTransform,
   worldToCanvas,
 } from './viewTransform'
@@ -80,11 +80,6 @@ import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransfor
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
-  featureFullyInsideRect,
-  findHitClampId,
-  findHitFeatureId,
-  findHitTabId,
-  pointsEqual,
 } from './hitTest'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
@@ -96,7 +91,6 @@ import {
   drawSketchEditPreviewPoint,
   drawStockOutline,
   drawTabFootprint,
-  hitBackdrop,
 } from './scenePrimitives'
 import { generateTextShapes } from '../../text'
 import {
@@ -107,13 +101,12 @@ import {
   profileVertices,
   rectProfile,
 } from '../../types/project'
-import type { Clamp, DimensionAnchor, DimensionAnnotation, OperationKind, Point, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, OperationKind, Point, SketchFeature, Tab } from '../../types/project'
 import { compatibleFeatureIdsForOperation } from '../cam/operationValidity'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useAxisLock, lockModeGuideColor } from '../../sketch/useAxisLock'
 import { useCanvasGestures } from '../../sketch/useCanvasGestures'
 import { useStableEvent } from '../../hooks/useStableEvent'
-import { useEventListener } from '../../hooks/useEventListener'
 import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
@@ -124,10 +117,6 @@ const HANDLE_HIT_RADIUS = 7
 const POLYGON_CLOSE_RADIUS = 12
 const OPEN_ENDPOINT_JOIN_HIT_RADIUS = 14
 const MIN_SKETCH_ZOOM = 0.02
-
-// Stable (module-level) so the wheel listener subscribes once; `passive: false`
-// lets handleWheelEvent call preventDefault to suppress page scroll/zoom.
-const WHEEL_LISTENER_OPTIONS = { passive: false } as const
 
 interface PendingPreviewPoint {
   point: Point
@@ -277,16 +266,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const lastPanPointRef = useRef<CanvasPoint | null>(null)
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const longPressStartRef = useRef<{ cx: number; cy: number; clientX: number; clientY: number } | null>(null)
   const marqueeStartRef = useRef<CanvasPoint | null>(null)
   const marqueeCurrentRef = useRef<CanvasPoint | null>(null)
   const zoomWindowStartRef = useRef<CanvasPoint | null>(null)
   const zoomWindowCurrentRef = useRef<CanvasPoint | null>(null)
   const suppressClickRef = useRef(false)
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
-  const activeSnapRef = useRef<ResolvedSnap | null>(null)
-  const draggingDimensionIdRef = useRef<string | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
@@ -296,47 +281,40 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetRawPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const livePointerWorldRef = useRef<Point | null>(null)
+
+  function stopPan() {
+    isPanningRef.current = false
+    lastPanPointRef.current = null
+  }
+
+  function stopNodeDrag() {
+    if (!isDraggingNodeRef.current && selection.activeControl === null) return
+    isDraggingNodeRef.current = false
+    dragStartWorldRef.current = null
+    setActiveControl(null)
+    commitHistoryTransaction()
+  }
+
   const drawRef = useRef<() => void>(() => {})
   // Stable, frame-coalescing redraw. Replaces the former ad-hoc `scheduleDraw`
   // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
   const scheduleDraw = useRafScheduler(() => drawRef.current())
   const [copyCountDraft, setCopyCountDraft] = useState('1')
-  const [rotateCopyCountDraft, setRotateCopyCountDraft] = useState('1')
-  const [pendingRotateCopyPoint, setPendingRotateCopyPoint] = useState<Point | null>(null)
-  const rotateCopyCountInputRef = useRef<HTMLInputElement>(null)
+
   const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [stlImageRevision, setStlImageRevision] = useState(0)
-  const [dimensionEdit, setDimensionEdit] = useState<DimensionEditState | null>(null)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
   const hoveredEditControlRef = useRef<SketchControlRef | null>(null)
-  const dimensionEditRef = useRef<DimensionEditState | null>(null)
-  const dimensionEditControlRef = useRef<SketchControlRef | null>(null)
-  const dimensionEditFeatureIdRef = useRef<string | null>(null)
-  const editDimStepsRef = useRef<EditDimStep[]>([])
-  const editDimStepIndexRef = useRef(0)
-  const widthInputRef = useRef<HTMLInputElement>(null)
-  const heightInputRef = useRef<HTMLInputElement>(null)
-  const radiusInputRef = useRef<HTMLInputElement>(null)
   const [operationDimEdit, setOperationDimEdit] = useState<OperationDimEdit | null>(null)
   const operationDimEditRef = useRef<OperationDimEdit | null>(null)
   operationDimEditRef.current = operationDimEdit
-  const [filletDimensionEdit, setFilletDimensionEdit] = useState<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
-  const filletDimensionEditRef = useRef<{ anchorIndex: number; corner: Point; radius: string } | null>(null)
-  filletDimensionEditRef.current = filletDimensionEdit
-  const filletRadiusInputRef = useRef<HTMLInputElement>(null)
-  const [constraintDistanceInput, setConstraintDistanceInput] = useState<string | null>(null)
-  const constraintDistanceInputRef = useRef<HTMLInputElement>(null)
-  const [constraintEdit, setConstraintEdit] = useState<{ featureId: string; constraintId: string; value: string; cx: number; cy: number } | null>(null)
-  const constraintEditRef = useRef<typeof constraintEdit>(null)
-  const constraintEditInputRef = useRef<HTMLInputElement>(null)
   // Stores label hit areas for click detection: { featureId, constraintId, cx, cy, halfW, halfH }
   const constraintLabelRectsRef = useRef<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>([])
 
   const shellMode = useShellMode()
   const isTablet = isTabletMode(shellMode)
   const [multiSelectMode, setMultiSelectMode] = useState(false)
-  const [armedForDimension, setArmedForDimension] = useState(false)
 
   const {
     project,
@@ -423,27 +401,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
   } = useProjectStore()
-  const moveDistanceEditActive =
-    !!pendingMove
-    && !!pendingMove.fromPoint
-    && !!pendingMove.toPoint
-    && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy')
-  const copyCountPromptActive = pendingMove?.mode === 'copy' && !!pendingMove.fromPoint && !!pendingMove.toPoint && !moveDistanceEditActive
-  const transformScaleEditActive =
-    !!pendingTransform
-    && pendingTransform.mode === 'resize'
-    && !!pendingTransform.referenceStart
-    && !!pendingTransform.referenceEnd
-    && operationDimEdit?.kind === 'scale'
-  const transformRotateEditActive =
-    !!pendingTransform
-    && pendingTransform.mode === 'rotate'
-    && !!pendingTransform.referenceStart
-    && !!pendingTransform.referenceEnd
-    && operationDimEdit?.kind === 'rotate'
-  const transformExactEditActive = transformScaleEditActive || transformRotateEditActive
-  const offsetDistanceEditActive = !!pendingOffset && operationDimEdit?.kind === 'offset'
-  const rotateCopyCountPromptActive = !!pendingRotateCopyPoint
+
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
   const pendingAddRef = useRef(pendingAdd)
@@ -490,8 +448,35 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   selectedAnnotationIdRef.current = selectedAnnotationId
   operationHighlightKindRef.current = operationHighlightKind
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
-  dimensionEditRef.current = dimensionEdit
-  constraintEditRef.current = constraintEdit
+
+  const dimEdit = useDimensionEditWorkflow({
+    projectRef,
+    canvasRef,
+    commitHistoryTransaction,
+    cancelHistoryTransaction,
+    moveFeatureControl,
+  })
+
+  const constraint = useConstraintWorkflow({
+    projectRef,
+    canvasRef,
+    containerRef,
+    pendingConstraint,
+    pendingConstraintRef,
+    clearTransientCanvasState,
+    commitConstraintDistance,
+    cancelPendingConstraint,
+    updateConstraintValue,
+  })
+
+  const fillet = useFilletWorkflow({
+    projectRef,
+    selectionRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    filletFeaturePoint,
+    scheduleDraw,
+  })
 
   // Axis lock — active whenever a move, node drag, sketch-edit drag, constraint pick, or feature creation is in progress
 
@@ -513,71 +498,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
   })
-  const moveWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingMove,
-    phaseKey: pendingMove?.fromPoint ? (moveDistanceEditActive ? 'distance' : pendingMove.toPoint ? 'count' : 'to') : 'from',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const transformWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingTransform,
-    phaseKey: transformExactEditActive ? 'exact' : pendingTransform?.referenceEnd ? 'commit' : (pendingTransform?.referenceStart ? 'end' : 'start'),
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const offsetWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingOffset,
-    phaseKey: offsetDistanceEditActive ? 'distance' : 'offset',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const constraintDistanceReady = !!pendingConstraint && !!pendingConstraint.anchor && !!pendingConstraint.reference
-  const constraintWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!pendingConstraint,
-    phaseKey: constraintDistanceReady ? 'distance' : pendingConstraint?.anchor ? 'reference' : 'anchor',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-  const creationPanelShape = pendingAdd && (
-    pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
-    || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
-    || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
-  ) ? pendingAdd.shape : null
-  const creationPanelHasAnchor = creationPanelShape && pendingAdd && 'anchor' in pendingAdd && !!pendingAdd.anchor
-  const creationPanelHasPoints = creationPanelShape && pendingAdd && 'points' in pendingAdd && pendingAdd.points.length > 0
-  const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
-  const creationCanDimEdit = creationPanelHasAnchor || creationPanelHasPoints || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
-  const creationDimEditActive = !!creationCanDimEdit && !!dimensionEdit
-  const creationWorkflowPanel = useCanvasWorkflowPanel({
-    open: !!creationPanelShape,
-    phaseKey: creationDimEditActive ? 'dimensions'
-      : creationPanelHasAnchor ? 'place'
-      : creationPanelHasPoints ? 'adding'
-      : creationPanelHasStart ? 'drawing'
-      : 'start',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
-
-  const placementPanelActive = !!pendingAdd && !creationPanelShape
-  const placementWorkflowPanel = useCanvasWorkflowPanel({
-    open: placementPanelActive,
-    phaseKey: pendingAdd?.shape ?? 'place',
-    containerRef,
-    canvasRef,
-    clearTransientCanvasState,
-  })
 
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
-  const editDimEditActive = editModeActive && !!dimensionEdit
+  const editDimEditActive = editModeActive && !!dimEdit.dimensionEdit
+  const editFilletActive = editModeActive && fillet.filletDimensionEditActive
   const editWorkflowPanel = useCanvasWorkflowPanel({
     open: editModeActive,
-    phaseKey: editDimEditActive ? 'dimensions' : 'editing',
+    phaseKey: editFilletActive ? 'fillet' : editDimEditActive ? 'dimensions' : 'editing',
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -627,18 +554,65 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return n === 0 ? 'Click the first point' : n === 1 ? 'Click the second point' : 'Click to set the offset'
   })()
 
-  // Transient-preview ref setters. Wrapped in `useStableEvent` so they have a
-  // stable identity and can be listed as effect deps without re-subscribing
-  // (the bodies only touch refs, the stable `scheduleDraw`, and props).
-  const updateActiveSnap = useStableEvent((nextSnap: ResolvedSnap | null) => {
-    activeSnapRef.current = nextSnap?.mode ? nextSnap : null
-    onActiveSnapModeChange?.(nextSnap?.mode ?? null)
-    scheduleDraw()
+  const snap = useSnapPreview({
+    snapSettingsRef,
+    projectRef,
+    selectionRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingAddRef,
+    pendingConstraintRef,
+    scheduleDraw,
+    onActiveSnapModeChange: onActiveSnapModeChange ?? (() => {}),
+  })
+
+  const contextMenu = useCanvasContextMenu({
+    canvasRef,
+    projectRef,
+    selectionRef,
+    viewStateRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    didPanRef,
+    suppressClickRef,
+    zoomWindowActive,
+    stopPan,
+    selectClamp,
+    selectTab,
+    selectFeature,
+    onFeatureContextMenu,
+    onTabContextMenu,
+    onClampContextMenu,
   })
 
   const setPendingPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingPreviewPointRef.current = nextPoint
     scheduleDraw()
+  })
+
+  const creation = useCreationWorkflow({
+    projectRef,
+    pendingAdd,
+    pendingAddRef,
+    dimensionEdit: dimEdit.dimensionEdit,
+    dimensionEditRef: dimEdit.dimensionEditRef,
+    setDimensionEdit: dimEdit.setDimensionEdit,
+    triggerDimensionEdit,
+    setPendingPreviewPointRef,
+    placePendingAddAt,
+    cancelPendingAdd,
+    addPendingPolygonPoint,
+    addPendingCompositePoint,
+    undoPendingPolygonPoint,
+    undoPendingCompositeStep,
+    completePendingOpenPath,
+    completePendingOpenComposite,
+    setPendingCompositeMode,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
   })
 
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
@@ -670,19 +644,70 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       return
     }
     hoveredEditControlRef.current = nextControl
-    if (!nextControl) setArmedForDimension(false)
+    if (!nextControl) dimEdit.setArmedForDimension(false)
     scheduleDraw()
   })
 
   function clearTransientCanvasState() {
     suppressClickRef.current = false
     didPanRef.current = false
-    stopPan()
+    gestures.stopPan()
     marqueeStartRef.current = null
     marqueeCurrentRef.current = null
     touchDragPendingRef.current = null
     livePointerWorldRef.current = null
   }
+
+  const move = useMoveWorkflow({
+    projectRef,
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    setCopyCountDraft,
+    copyCountInputRef,
+    pendingMove,
+    pendingMoveRef,
+    pendingMovePreviewPointRef,
+    setPendingMovePreviewPointRef,
+    cancelPendingMove,
+    setPendingMoveTo,
+    completePendingMove,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
+  const transformExact = useTransformExactWorkflow({
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    pendingTransform,
+    pendingTransformRef,
+    pendingTransformPreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    cancelPendingTransform,
+    completePendingTransform,
+    triggerDimensionEdit,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
+  const offset = useOffsetWorkflow({
+    projectRef,
+    operationDimEdit,
+    setOperationDimEdit,
+    operationDimEditRef,
+    pendingOffset,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    cancelPendingOffset,
+    completePendingOffset,
+    triggerDimensionEdit,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
 
   function confirmCutCuttersFromTabletPanel() {
     confirmCutCutters()
@@ -709,352 +734,38 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     joinWorkflowPanel.focusCanvasAfterAction()
   }
 
-  function cancelMoveFromPanel() {
-    cancelPendingMove()
-    setPendingMovePreviewPointRef(null)
-    setCopyCountDraft('1')
-    setOperationDimEdit(null)
-    moveWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function beginMoveDistanceEntry(referencePoint: Point) {
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const dx = referencePoint.x - pendingMove.fromPoint.x
-    const dy = referencePoint.y - pendingMove.fromPoint.y
-    const distance = Math.hypot(dx, dy)
-    setPendingMoveTo(referencePoint)
-    setPendingMovePreviewPointRef({ point: referencePoint, session: pendingMove.session })
-    setOperationDimEdit({
-      kind: pendingMove.mode,
-      distance: formatLength(distance, projectRef.current.meta.units),
-    })
-  }
-
-  function beginMoveDistanceEntryFromPreview() {
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const previewPoint =
-      pendingMovePreviewPointRef.current?.session === pendingMove.session
-        ? pendingMovePreviewPointRef.current.point
-        : pendingMove.fromPoint
-    beginMoveDistanceEntry(previewPoint)
-    moveWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitMoveDistanceEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    if (!currentEdit || (currentEdit.kind !== 'move' && currentEdit.kind !== 'copy')) return
-    const pendingMove = pendingMoveRef.current
-    if (!pendingMove?.fromPoint) return
-    const distance = parseLengthInput(currentEdit.distance, projectRef.current.meta.units)
-    if (distance === null) return
-    const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
-    const toPoint = computeMoveDistancePreviewPoint(pendingMove.fromPoint, referencePoint, distance)
-    if (currentEdit.kind === 'move') {
-      completePendingMove(toPoint)
-      setPendingMovePreviewPointRef(null)
-    } else {
-      setPendingMoveTo(toPoint)
-      setPendingMovePreviewPointRef({ point: toPoint, session: pendingMove.session })
-      setCopyCountDraft('1')
-    }
-    setOperationDimEdit(null)
-    moveWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelTransformFromPanel() {
-    cancelPendingTransform()
-    setPendingTransformPreviewPointRef(null)
-    setPendingRotateCopyPoint(null)
-    setRotateCopyCountDraft('1')
-    setOperationDimEdit(null)
-    transformWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromTransformPanel() {
-    triggerDimensionEdit()
-    transformWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitTransformExactEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    const pendingTransform = pendingTransformRef.current
-    if (!currentEdit || !pendingTransform?.referenceStart || !pendingTransform.referenceEnd) return
-
-    if (currentEdit.kind === 'scale') {
-      if (pendingTransform.mode !== 'resize') return
-      const factor = Number(currentEdit.factor)
-      if (!Number.isFinite(factor) || factor <= 0) return
-      const previewPoint = computeScalePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        factor,
-      )
-      completePendingTransform(previewPoint)
-      setPendingTransformPreviewPointRef(null)
-      setOperationDimEdit(null)
-      transformWorkflowPanel.focusCanvasAfterAction()
-      return
-    }
-
-    if (currentEdit.kind === 'rotate') {
-      if (pendingTransform.mode !== 'rotate') return
-      const angleDegrees = Number(currentEdit.angle)
-      if (!Number.isFinite(angleDegrees)) return
-      const previewPoint = computeRotatePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        angleDegrees,
-      )
-      if (pendingTransform.keepOriginals) {
-        setPendingRotateCopyPoint(previewPoint)
-      } else {
-        completePendingTransform(previewPoint)
-        setPendingTransformPreviewPointRef(null)
-      }
-      setOperationDimEdit(null)
-      transformWorkflowPanel.focusCanvasAfterAction()
-    }
-  }
-
-  function cancelOffsetFromPanel() {
-    cancelPendingOffset()
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    setOperationDimEdit(null)
-    offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitConstraintFromPanel() {
-    const parsed = parseLengthInput(constraintDistanceInput ?? '', projectRef.current.meta.units)
-    if (parsed != null && parsed >= 0) {
-      commitConstraintDistance(parsed)
-      setConstraintDistanceInput(null)
-    }
-    constraintWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelConstraintFromPanel() {
-    cancelPendingConstraint()
-    setConstraintDistanceInput(null)
-    constraintWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromOffsetPanel() {
-    triggerDimensionEdit()
-    offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitOffsetDistanceEditFromPanel() {
-    const currentEdit = operationDimEditRef.current
-    if (!currentEdit || currentEdit.kind !== 'offset') return
-    const distance = parseLengthInput(currentEdit.distance, projectRef.current.meta.units)
-    if (distance === null) return
-    completePendingOffset(distance)
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    setOperationDimEdit(null)
-    offsetWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function triggerDimensionFromCreationPanel() {
-    triggerDimensionEdit()
-  }
-
-  function commitCreationDimensionEdit() {
-    const edit = dimensionEditRef.current
-    if (!edit) return
-    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
-    const pendingAdd = pendingAddRef.current
-    if ((edit.shape === 'polygon' || edit.shape === 'spline') && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')) {
-      addPendingPolygonPoint(pt)
-      setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-      setDimensionEdit(null)
-      creationWorkflowPanel.focusCanvasAfterAction()
-    } else if (pendingAdd?.shape === 'composite') {
-      if (pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd && edit.radius) {
-        const units = projectRef.current.meta.units
-        const r = parseLengthInput(edit.radius, units)
-        if (r != null && r > 0) {
-          addPendingCompositePoint(pt)
-          const arcStart = edit.anchor
-          const arcEnd = pt
-          const midX = (arcStart.x + arcEnd.x) / 2
-          const midY = (arcStart.y + arcEnd.y) / 2
-          const chordDx = arcEnd.x - arcStart.x
-          const chordDy = arcEnd.y - arcStart.y
-          const halfChord = Math.hypot(chordDx, chordDy) / 2
-          if (halfChord > 1e-9 && r >= halfChord) {
-            const chordLen = halfChord * 2
-            const perpX = -chordDy / chordLen
-            const perpY = chordDx / chordLen
-            const sagitta = r - Math.sqrt(r * r - halfChord * halfChord)
-            const throughPt = { x: midX + sagitta * perpX, y: midY + sagitta * perpY }
-            addPendingCompositePoint(throughPt)
-            setPendingPreviewPointRef({ point: arcEnd, session: pendingAdd.session })
-          } else {
-            setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-          }
-          setDimensionEdit(null)
-          creationWorkflowPanel.focusCanvasAfterAction()
-          return
-        }
-      }
-      if (edit.arcStart && edit.arcEnd) {
-        addPendingCompositePoint(pt)
-        const arcEnd = edit.arcEnd
-        setPendingPreviewPointRef({ point: arcEnd, session: pendingAdd.session })
-        setDimensionEdit(null)
-        creationWorkflowPanel.focusCanvasAfterAction()
-      } else {
-        addPendingCompositePoint(pt)
-        setPendingPreviewPointRef({ point: pt, session: pendingAdd.session })
-        setDimensionEdit(null)
-        creationWorkflowPanel.focusCanvasAfterAction()
-      }
-    } else {
-      placePendingAddAt(pt)
-      setPendingPreviewPointRef(null)
-      setDimensionEdit(null)
-      creationWorkflowPanel.focusCanvasAfterAction()
-    }
-  }
-
-  function cancelCreationDimensionEdit() {
-    setDimensionEdit(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelCreationFromPanel() {
-    cancelPendingAdd()
-    setDimensionEdit(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function undoFromCreationPanel() {
-    const pendingAdd = pendingAddRef.current
-    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') {
-      undoPendingPolygonPoint()
-    } else if (pendingAdd?.shape === 'composite') {
-      undoPendingCompositeStep()
-    }
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function finishOpenPathFromPanel() {
-    completePendingOpenPath()
-    setPendingPreviewPointRef(null)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function finishOpenCompositeFromPanel() {
-    completePendingOpenComposite()
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function setCompositeModeFromPanel(mode: 'line' | 'arc' | 'spline') {
-    setPendingCompositeMode(mode)
-    creationWorkflowPanel.focusCanvasAfterAction()
-  }
-
   function applyEditFromPanel() {
-    stopNodeDrag()
+    gestures.stopNodeDrag()
     resetLock()
     applySketchEdit()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelEditFromPanel() {
-    stopNodeDrag()
+    gestures.stopNodeDrag()
     resetLock()
     cancelSketchEdit()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
   function commitEditDimensionFromPanel() {
-    commitEditDimension()
+    dimEdit.commitEditDimension()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
   function cancelEditDimensionFromPanel() {
-    cancelEditDimension()
+    dimEdit.cancelEditDimension()
     editWorkflowPanel.focusCanvasAfterAction()
   }
 
-  function isActiveSnapPoint(point: Point | null | undefined): boolean {
-    return !!point && !!activeSnapRef.current?.mode && pointsEqual(point, activeSnapRef.current.point, 1e-6)
+  function commitFilletFromPanel() {
+    fillet.commitFilletDimension()
+    editWorkflowPanel.focusCanvasAfterAction()
   }
 
-  function currentSnapReferencePoint(): Point | null {
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingConstraintLive = pendingConstraintRef.current
-
-    if (pendingConstraintLive?.anchor && !pendingConstraintLive.reference) {
-      return pendingConstraintLive.anchor.point
-    }
-
-    if (pendingMove?.fromPoint) {
-      return pendingMove.fromPoint
-    }
-
-    if (pendingTransform?.mode === 'rotate' || pendingTransform?.mode === 'mirror') {
-      return pendingTransform.referenceStart
-    }
-
-    if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
-      return pendingAdd.anchor
-    }
-
-    if ((pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline') && pendingAdd.points.length > 0) {
-      return pendingAdd.points[pendingAdd.points.length - 1]
-    }
-
-    if (pendingAdd?.shape === 'composite') {
-      return pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start ?? null
-    }
-
-    return null
-  }
-
-  function requiresResolvedSnapForPointPick(): boolean {
-    const snapSettings = snapSettingsRef.current
-    return snapSettings.enabled && snapSettings.modes.length > 0
-  }
-
-  function resolveCurrentSketchSnap(
-    rawPoint: Point,
-    vt: ViewTransform,
-    options?: {
-      excludeActiveEditGeometry?: boolean
-    },
-  ): ResolvedSnap {
-    const selection = selectionRef.current
-    const excludeFeatureId =
-      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'feature'
-        ? selection.selectedNode.featureId
-        : null
-    const excludeTabId =
-      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'tab'
-        ? selection.selectedNode.tabId
-        : null
-    const excludeClampId =
-      options?.excludeActiveEditGeometry && selection.selectedNode?.type === 'clamp'
-        ? selection.selectedNode.clampId
-        : null
-
-    return resolveSketchSnap({
-      rawPoint,
-      vt,
-      snapSettings: snapSettingsRef.current,
-      project: projectRef.current,
-      referencePoint: currentSnapReferencePoint(),
-      excludeFeatureId,
-      excludeTabId,
-      excludeClampId,
-    })
+  function cancelFilletFromPanel() {
+    fillet.cancelFilletDimension()
+    editWorkflowPanel.focusCanvasAfterAction()
   }
 
   useEffect(() => {
@@ -1124,23 +835,30 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimensionEdit, toolpathVisibility, operationHighlightKind])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
     pendingSketchFilletRef.current = null
+    fillet.setFilletCornerPicked(false)
+  // fillet.setFilletCornerPicked is a useState setter (stable identity), but the
+  // lint rule sees `fillet` (the hook-return object) which is recreated each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection.mode, selection.sketchEditTool, selection.selectedFeatureId])
 
   useEffect(() => {
     if (selection.mode !== 'sketch_edit') {
       hoveredEditControlRef.current = null
-      dimensionEditControlRef.current = null
-      dimensionEditFeatureIdRef.current = null
-      editDimStepsRef.current = []
-      editDimStepIndexRef.current = 0
-      setDimensionEdit(null)
+      dimEdit.dimensionEditControlRef.current = null
+      dimEdit.dimensionEditFeatureIdRef.current = null
+      dimEdit.editDimStepsRef.current = []
+      dimEdit.editDimStepIndexRef.current = 0
+      dimEdit.setDimensionEdit(null)
     }
+  // The dimension workflow object is intentionally not a dependency here: the cleanup
+  // is mode-scoped, and the hook return object is recreated on each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection.mode])
 
   useEffect(() => {
@@ -1263,15 +981,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       if (editing) {
         const hoveredEditControl =
-          !isDraggingNodeRef.current && !dimensionEditControlRef.current
+          !isDraggingNodeRef.current && !dimEdit.dimensionEditControlRef.current
             ? hoveredEditControlRef.current
             : null
         const editControl =
           isDraggingNodeRef.current
             ? selection.activeControl
-            : (dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
+            : (dimEdit.dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
         drawSketchControls(ctx, feature.sketch.profile, vt, editControl)
-        if (editControl && (isDraggingNodeRef.current || dimensionEditControlRef.current || hoveredEditControl)) {
+        if (editControl && (isDraggingNodeRef.current || dimEdit.dimensionEditControlRef.current || hoveredEditControl)) {
           drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
       }
@@ -1453,7 +1171,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ctx.restore()
     }
 
-    const dimensionEdit = dimensionEditRef.current
+    const dimensionEdit = dimEdit.dimensionEditRef.current
     const currentPreviewPoint =
       dimensionEdit
         ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
@@ -1474,7 +1192,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : false
       if (pendingAdd.points.length > 0) {
         if (pendingAdd.shape === 'spline') {
-          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, project.meta.units, isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
+          drawPendingSplineLoop(ctx, pendingAdd.points, currentPreviewPoint, vt, closePreview, project.meta.units, snap.isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
         } else {
           drawPendingPathLoop(
             ctx,
@@ -1485,15 +1203,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             polygonProfile,
             'Pending polygon',
             project.meta.units,
-            isActiveSnapPoint(currentPreviewPoint),
+            snap.isActiveSnapPoint(currentPreviewPoint),
             lockModeGuideColor(lockModeRef.current),
           )
         }
       } else if (currentPreviewPoint) {
-        drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       }
     } else if (pendingAdd?.shape === 'composite') {
-      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
+      drawCompositeDraft(ctx, pendingAdd, currentPreviewPoint, vt, project.meta.units, snap.isActiveSnapPoint(currentPreviewPoint), lockModeGuideColor(lockModeRef.current))
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor && currentPreviewPoint) {
       const previewProfile = buildPendingProfile(pendingAdd, currentPreviewPoint, project.meta.units)
       const label =
@@ -1508,7 +1226,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : 'Pending circle'
       drawPreviewProfile(ctx, previewProfile, vt, label)
       drawPendingPoint(ctx, pendingAdd.anchor, vt)
-      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+      drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       if (pendingAdd.shape === 'circle') {
         drawMoveGuide(ctx, pendingAdd.anchor, currentPreviewPoint, vt)
         drawRadiusMeasurement(ctx, pendingAdd.anchor, currentPreviewPoint, vt, project.meta.units)
@@ -1523,9 +1241,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       for (const shape of previewShapes) {
         drawPreviewProfile(ctx, shape.profile, vt, '')
       }
-      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+      drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
     } else if (pendingAdd && currentPreviewPoint) {
-      drawPendingPoint(ctx, currentPreviewPoint, vt, isActiveSnapPoint(currentPreviewPoint))
+      drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
     }
 
     const currentMovePreviewPoint =
@@ -1573,7 +1291,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             'Move preview',
           )
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, snap.isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else if (pendingMove.entityType === 'feature') {
         const features = pendingMove.entityIds
@@ -1609,7 +1327,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, snap.isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else if (pendingMove.entityType === 'clamp') {
         const clamps = pendingMove.entityIds
@@ -1657,7 +1375,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, snap.isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else {
         const tabs = pendingMove.entityIds
@@ -1703,7 +1421,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             }
           }
         } else if (currentMovePreviewPoint) {
-          drawPendingPoint(ctx, currentMovePreviewPoint, vt, isActiveSnapPoint(currentMovePreviewPoint))
+          drawPendingPoint(ctx, currentMovePreviewPoint, vt, snap.isActiveSnapPoint(currentMovePreviewPoint))
         }
       }
     }
@@ -1734,7 +1452,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         }
 
         if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint) {
-          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, snap.isActiveSnapPoint(currentTransformPreviewPoint))
           drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
           if (pendingTransform.mode === 'resize') {
             drawLineLengthMeasurement(
@@ -1769,7 +1487,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             )
           }
         } else if (currentTransformPreviewPoint) {
-          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
+          drawPendingPoint(ctx, currentTransformPreviewPoint, vt, snap.isActiveSnapPoint(currentTransformPreviewPoint))
         }
 
         return
@@ -1793,7 +1511,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const visibleReferenceEnd = mirrorPreviewEnd ?? pendingTransform.referenceEnd
 
       if (pendingTransform.referenceStart && visibleReferenceEnd) {
-        drawPendingPoint(ctx, visibleReferenceEnd, vt, isActiveSnapPoint(visibleReferenceEnd))
+        drawPendingPoint(ctx, visibleReferenceEnd, vt, snap.isActiveSnapPoint(visibleReferenceEnd))
         drawMoveGuide(ctx, pendingTransform.referenceStart, visibleReferenceEnd, vt)
         if (pendingTransform.mode === 'resize') {
           drawLineLengthMeasurement(
@@ -1808,7 +1526,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
 
       if (pendingTransform.referenceStart && pendingTransform.referenceEnd && currentTransformPreviewPoint && pendingTransform.mode !== 'mirror') {
-        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, snap.isActiveSnapPoint(currentTransformPreviewPoint))
         drawMoveGuide(ctx, pendingTransform.referenceStart, currentTransformPreviewPoint, vt)
         if (pendingTransform.mode === 'resize') {
           drawLineLengthMeasurement(
@@ -1850,7 +1568,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
       } else if (currentTransformPreviewPoint) {
-        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, isActiveSnapPoint(currentTransformPreviewPoint))
+        drawPendingPoint(ctx, currentTransformPreviewPoint, vt, snap.isActiveSnapPoint(currentTransformPreviewPoint))
       }
     }
 
@@ -1859,11 +1577,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
         .filter((feature): feature is SketchFeature => feature !== null)
         .filter((feature) => feature.sketch.profile.closed)
-      const rawOffsetPoint = currentOffsetRawPreviewPoint ?? livePointerWorldRef.current ?? activeSnapRef.current?.rawPoint ?? null
-      const snappedOffsetPoint = currentOffsetPreviewPoint ?? activeSnapRef.current?.point ?? rawOffsetPoint
+      const rawOffsetPoint = currentOffsetRawPreviewPoint ?? livePointerWorldRef.current ?? snap.activeSnapRef.current?.rawPoint ?? null
+      const snappedOffsetPoint = currentOffsetPreviewPoint ?? snap.activeSnapRef.current?.point ?? rawOffsetPoint
 
       if (snappedOffsetPoint) {
-        drawPendingPoint(ctx, snappedOffsetPoint, vt, isActiveSnapPoint(snappedOffsetPoint))
+        drawPendingPoint(ctx, snappedOffsetPoint, vt, snap.isActiveSnapPoint(snappedOffsetPoint))
       }
 
       const typedOffsetDistance =
@@ -1875,7 +1593,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           && features.length > 0
           && rawOffsetPoint
           && snappedOffsetPoint
-          ? resolveOffsetPreview(features, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
+          ? resolveOffsetPreview(features, rawOffsetPoint, snappedOffsetPoint, snap.activeSnapRef.current?.mode ?? null, vt)
           : null
 
       if (previewInput && typedOffsetDistance === null) {
@@ -1905,8 +1623,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
-        const typedRadius = filletDimensionEditRef.current
-          ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
+        const typedRadius = fillet.filletDimensionEditRef.current
+          ? parseLengthInput(fillet.filletDimensionEditRef.current.radius, project.meta.units)
           : null
         const useTyped = typedRadius !== null && typedRadius > 0
         if (!useTyped) {
@@ -1925,7 +1643,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
       }
-      if (!filletDimensionEditRef.current) {
+      if (!fillet.filletDimensionEditRef.current) {
         drawSketchEditPreviewPoint(ctx, sketchEditPreviewRef.current, vt)
       }
     }
@@ -1942,18 +1660,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Transient tape measure overlay.
     const tape = tapeMeasureRef.current
     if (tape) {
-      const liveTapePoint = activeSnapRef.current?.point ?? livePointerWorldRef.current
+      const liveTapePoint = snap.activeSnapRef.current?.point ?? livePointerWorldRef.current
       drawTapeMeasure(ctx, tape, liveTapePoint, vt, project.meta.units)
     }
 
     // In-progress permanent dimension: preview from picked anchors to cursor.
     const pendingDim = pendingDimensionRef.current
     if (pendingDim) {
-      const livePreviewPoint = activeSnapRef.current?.point ?? livePointerWorldRef.current
+      const livePreviewPoint = snap.activeSnapRef.current?.point ?? livePointerWorldRef.current
       drawPendingDimensionPreview(ctx, pendingDim, livePreviewPoint, vt, project, project.meta.units)
     }
 
-    drawSnapIndicator(ctx, activeSnapRef.current, vt)
+    drawSnapIndicator(ctx, snap.activeSnapRef.current, vt)
   }
 
   useEffect(() => {
@@ -1982,95 +1700,42 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
   }, [completePendingComposite, pendingAdd])
 
-  useEffect(() => {
-    if (!copyCountPromptActive) {
-      return
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      copyCountInputRef.current?.focus({ preventScroll: true })
-      copyCountInputRef.current?.select()
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive])
-
-  useEffect(() => {
-    if (!rotateCopyCountPromptActive) {
-      return
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      rotateCopyCountInputRef.current?.focus({ preventScroll: true })
-      rotateCopyCountInputRef.current?.select()
-    })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [rotateCopyCountPromptActive])
-
   // Re-focus when the active edit field changes or the edit opens/closes; the
   // derived key (null while closed) is statically checkable as a single dep.
-  const dimensionEditActiveField = dimensionEdit?.activeField ?? null
+  const dimensionEditActiveField = dimEdit.dimensionEdit?.activeField ?? null
   useEffect(() => {
     if (dimensionEditActiveField === null) return
     const inputRef =
-      dimensionEditActiveField === 'width' ? widthInputRef
-      : dimensionEditActiveField === 'height' ? heightInputRef
-      : dimensionEditActiveField === 'radius' ? radiusInputRef
-      : dimensionEditActiveField === 'length' ? widthInputRef
-      : heightInputRef  // angle
+      dimensionEditActiveField === 'width' ? dimEdit.widthInputRef
+      : dimensionEditActiveField === 'height' ? dimEdit.heightInputRef
+      : dimensionEditActiveField === 'radius' ? dimEdit.radiusInputRef
+      : dimensionEditActiveField === 'length' ? dimEdit.widthInputRef
+      : dimEdit.heightInputRef  // angle
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [dimensionEditActiveField])
-
-  const filletDimensionEditActive = filletDimensionEdit != null
-  useEffect(() => {
-    if (!filletDimensionEditActive) return
-    const frame = window.requestAnimationFrame(() => {
-      filletRadiusInputRef.current?.focus({ preventScroll: true })
-      filletRadiusInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [filletDimensionEditActive])
-
-  const hasConstraintDistanceInput = constraintDistanceInput != null
-  useEffect(() => {
-    if (!hasConstraintDistanceInput) return
-    const frame = window.requestAnimationFrame(() => {
-      constraintDistanceInputRef.current?.focus({ preventScroll: true })
-      constraintDistanceInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [hasConstraintDistanceInput])
-
-  const constraintEditId = constraintEdit?.constraintId ?? null
-  useEffect(() => {
-    if (constraintEditId == null) return
-    const frame = window.requestAnimationFrame(() => {
-      constraintEditInputRef.current?.focus({ preventScroll: true })
-      constraintEditInputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [constraintEditId])
+  }, [dimensionEditActiveField, dimEdit.heightInputRef, dimEdit.radiusInputRef, dimEdit.widthInputRef])
 
   useEffect(() => {
-    if (!pendingConstraint) setConstraintDistanceInput(null)
+    if (!pendingConstraint) constraint.setConstraintDistanceInput(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setConstraintDistanceInput is a stable useState setter
   }, [pendingConstraint])
 
   useEffect(() => {
     if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
-      setFilletDimensionEdit(null)
+      fillet.setFilletDimensionEdit(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilletDimensionEdit is a stable useState setter; the hook return object is recreated each render
   }, [selection.mode, selection.sketchEditTool])
 
   useEffect(() => {
-    if (!pendingAdd) {
-      setDimensionEdit(null)
+    if (!pendingAdd && selection.mode !== 'sketch_edit') {
+      dimEdit.setDimensionEdit(null)
     }
-  }, [pendingAdd])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDimensionEdit is a stable useState setter; the hook return object is recreated each render
+  }, [pendingAdd, selection.mode])
 
   useEffect(() => {
     if (!pendingMove) setOperationDimEdit(null)
@@ -2087,87 +1752,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const operationDimEditKind = operationDimEdit?.kind ?? null
   useEffect(() => {
     if (operationDimEditKind === null) return
-    const inputRef = widthInputRef
+    const inputRef = dimEdit.widthInputRef
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true })
       inputRef.current?.select()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [operationDimEditKind])
-
-  useEffect(() => {
-    const pendingMove = pendingMoveRef.current
-    if (!operationDimEdit || !pendingMove?.fromPoint) {
-      return
-    }
-
-    if (operationDimEdit.kind !== 'move' && operationDimEdit.kind !== 'copy') {
-      return
-    }
-
-    const units = projectRef.current.meta.units
-    const distance = parseLengthInput(operationDimEdit.distance, units)
-    if (distance === null) {
-      return
-    }
-    setPendingMovePreviewPointRef({
-      point: computeMoveDistancePreviewPoint(
-        pendingMove.fromPoint,
-        pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint,
-        distance,
-      ),
-      session: pendingMove.session,
-    })
-  }, [operationDimEdit, setPendingMovePreviewPointRef])
-
-  useEffect(() => {
-    const pendingTransform = pendingTransformRef.current
-    if (
-      !operationDimEdit
-      || (operationDimEdit.kind !== 'scale' && operationDimEdit.kind !== 'rotate')
-      || !pendingTransform
-      || !pendingTransform.referenceStart
-      || !pendingTransform.referenceEnd
-    ) {
-      return
-    }
-
-    if (operationDimEdit.kind === 'scale') {
-      if (pendingTransform.mode !== 'resize') {
-        return
-      }
-      const factor = Number(operationDimEdit.factor)
-      if (!Number.isFinite(factor) || factor <= 0) {
-        return
-      }
-      setPendingTransformPreviewPointRef({
-        point: computeScalePreviewPoint(
-          pendingTransform.referenceStart,
-          pendingTransform.referenceEnd,
-          factor,
-        ),
-        session: pendingTransform.session,
-      })
-      return
-    }
-
-    if (pendingTransform.mode !== 'rotate') {
-      return
-    }
-
-    const angleDegrees = Number(operationDimEdit.angle)
-    if (!Number.isFinite(angleDegrees)) {
-      return
-    }
-    setPendingTransformPreviewPointRef({
-      point: computeRotatePreviewPoint(
-        pendingTransform.referenceStart,
-        pendingTransform.referenceEnd,
-        angleDegrees,
-      ),
-      session: pendingTransform.session,
-    })
-  }, [operationDimEdit, setPendingTransformPreviewPointRef])
+  }, [operationDimEditKind, dimEdit.widthInputRef])
 
   useImperativeHandle(ref, () => ({
     zoomToModel: () => {
@@ -2222,7 +1813,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [])
 
   useEffect(() => {
-    if (copyCountPromptActive || rotateCopyCountPromptActive) {
+    if (move.copyCountPromptActive || transformExact.rotateCopyCountPromptActive) {
       return
     }
 
@@ -2239,33 +1830,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [copyCountPromptActive, rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
+  }, [move.copyCountPromptActive, transformExact.rotateCopyCountPromptActive, operationDimEdit, pendingMove, pendingTransform, pendingOffset, pendingShapeAction, selection.mode, selection.selectedFeatureId, selection.selectedFeatureIds.length])
 
   // Native pointermove (not React's synthetic) so we can read coalesced events.
-  // Routed through useStableEvent so the listener subscribes once while the body
-  // still sees the latest state — clears the exhaustive-deps warning without a
-  // hand-maintained state dependency list.
-  const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {
-    if (longPressTimerRef.current && longPressStartRef.current) {
-      const dx = event.clientX - longPressStartRef.current.clientX
-      const dy = event.clientY - longPressStartRef.current.clientY
-      if (dx * dx + dy * dy > 100) {
-        clearTimeout(longPressTimerRef.current)
-        longPressTimerRef.current = null
-        longPressStartRef.current = null
-      }
-    }
-    const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : []
-    const sourceEvent = coalesced.length > 0 ? coalesced[coalesced.length - 1] : event
-    handleCanvasPointerMove(canvasCoordinates(sourceEvent))
-  })
-  useEventListener(canvasRef, 'pointermove', onCanvasPointerMove)
-
-  const onCanvasWheel = useStableEvent((event: globalThis.WheelEvent) => {
-    handleWheelEvent(event)
-  })
-  useEventListener(canvasRef, 'wheel', onCanvasWheel, WHEEL_LISTENER_OPTIONS)
-
   const { isGestureActive: isGestureActiveRef } = useCanvasGestures({
     getCanvas: () => canvasRef.current,
     getViewState: () => viewStateRef.current,
@@ -2285,10 +1852,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     minZoom: MIN_SKETCH_ZOOM,
   })
 
-  function canvasCoordinates(event: Pick<MouseEvent<HTMLCanvasElement> | WheelEvent<HTMLCanvasElement> | globalThis.WheelEvent, 'clientX' | 'clientY'>): CanvasPoint {
-    const rect = canvasRef.current!.getBoundingClientRect()
-    return { cx: event.clientX - rect.left, cy: event.clientY - rect.top }
-  }
 
   function editableFeature(): SketchFeature | null {
     const selection = selectionRef.current
@@ -2315,20 +1878,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return kind === 'extend_start' ? 'start' : 'end'
   }
 
-  function openEndpointForAnchorControl(feature: SketchFeature, control: SketchControlRef): OpenProfileEndpoint | null {
-    if (control.kind !== 'anchor' || feature.sketch.profile.closed || feature.sketch.profile.segments.length === 0) {
-      return null
-    }
-
-    const lastAnchorIndex = profileVertices(feature.sketch.profile).length - 1
-    if (control.index === 0) {
-      return 'start'
-    }
-    if (control.index === lastAnchorIndex) {
-      return 'end'
-    }
-    return null
-  }
 
   function findOpenEndpointHit(
     rawPoint: Point,
@@ -2417,62 +1966,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
   }
 
-  function computeEditStepsForControl(profile: SketchFeature['sketch']['profile'], control: SketchControlRef | null): EditDimStep[] {
-    if (!control) {
-      return []
-    }
-
-    if (control.kind === 'anchor') {
-      return computeEditDimSteps(profile, control.index)
-    }
-
-    if (control.kind === 'circle_center') {
-      return computeEditDimSteps(profile, 0)
-    }
-
-    if (control.kind === 'arc_handle') {
-      return [{ kind: 'arc_radius', control, arcStartAnchorIndex: control.index }]
-    }
-
-    if (control.kind === 'segment') {
-      const seg = profile.segments[control.index]
-      if (seg.type === 'arc') {
-        return [{ kind: 'arc_radius', control: { kind: 'arc_handle', index: control.index }, arcStartAnchorIndex: control.index }]
-      }
-      const endAnchorIndex = profile.closed
-        ? (control.index + 1) % profile.segments.length
-        : control.index + 1
-      return [{ kind: 'endpoint', control: { kind: 'anchor', index: endAnchorIndex }, fromAnchorIndex: control.index }]
-    }
-
-    return []
-  }
-
-  function projectPointToSegment(point: Point, start: Point, end: Point): { point: Point; t: number; distance: number } {
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const lengthSq = dx * dx + dy * dy
-    if (lengthSq <= 1e-12) {
-      return {
-        point: start,
-        t: 0,
-        distance: Math.hypot(point.x - start.x, point.y - start.y),
-      }
-    }
-
-    const rawT = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq
-    const t = Math.max(0, Math.min(1, rawT))
-    const projectedPoint = {
-      x: start.x + dx * t,
-      y: start.y + dy * t,
-    }
-
-    return {
-      point: projectedPoint,
-      t,
-      distance: Math.hypot(point.x - projectedPoint.x, point.y - projectedPoint.y),
-    }
-  }
 
   function hitEditableControl(point: CanvasPoint, options?: { includeSegments?: boolean }): SketchControlRef | null {
     const feature = editableFeature()
@@ -2593,7 +2086,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
     const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
     const constraintPicking = constraintAnchorPicking || constraintRefPicking
-    const resolvedSnap = resolveCurrentSketchSnap(livePoint, vt, {
+    const resolvedSnap = snap.resolveCurrentSketchSnap(livePoint, vt, {
       excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
     })
     const snapped = resolvedSnap.point
@@ -2608,7 +2101,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || isDraggingNodeRef.current
       || constraintPicking
 
-    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
+    snap.updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
 
     if (pendingAdd) {
       if (pendingAdd.shape === 'origin') {
@@ -2656,6 +2149,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const feature = editableFeature()
       if (feature && sketchEditTool === 'add_point') {
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         if (pendingSketchExtensionRef.current) {
           const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
           const targetEndpoint = findOpenEndpointHit(livePoint, vt, {
@@ -2683,6 +2177,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'delete_segment') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
         sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
         scheduleDraw()
@@ -2692,6 +2187,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && sketchEditTool === 'disconnect') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
         const control = hitEditableControl(worldToCanvas(livePoint, vt), { includeSegments: false })
         sketchEditPreviewRef.current =
           control?.kind === 'anchor'
@@ -2720,1486 +2216,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     runLivePointerPreview()
   }, [runLivePointerPreview, snapSettings, viewState, pendingAdd, pendingMove, pendingTransform, pendingOffset, selection.mode, selection.sketchEditTool, selection.selectedFeatureId, selection.selectedNode])
 
-  function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (isGestureActiveRef.current) return
-
-    if (event.pointerType === 'touch') {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    }
-
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-
-    if (event.pointerType === 'touch' && event.button === 0) {
-      const startCx = event.clientX
-      const startCy = event.clientY
-      const rect = canvasRef.current?.getBoundingClientRect()
-      longPressStartRef.current = {
-        cx: rect ? startCx - rect.left : startCx,
-        cy: rect ? startCy - rect.top : startCy,
-        clientX: startCx,
-        clientY: startCy,
-      }
-      longPressTimerRef.current = setTimeout(() => {
-        longPressTimerRef.current = null
-        if (longPressStartRef.current) {
-          triggerContextMenuAt(longPressStartRef.current.clientX, longPressStartRef.current.clientY)
-          suppressClickRef.current = true
-          stopPan()
-          longPressStartRef.current = null
-        }
-      }, 500)
-    }
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const pendingShapeAction = pendingShapeActionRef.current
-    const viewState = viewStateRef.current
-    const point = canvasCoordinates(event)
-
-    if (zoomWindowActive && event.button === 0) {
-      zoomWindowStartRef.current = point
-      zoomWindowCurrentRef.current = point
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    const shiftStartsPan = event.button === 0 && event.shiftKey && !pendingShapeAction
-    const isTouch = event.pointerType === 'touch'
-    if (event.button === 1 || event.button === 2 || shiftStartsPan) {
-      isPanningRef.current = true
-      didPanRef.current = false
-      lastPanPointRef.current = point
-      setHoveredEditControl(null)
-      return
-    }
-
-    if (pendingOffset) {
-      return
-    }
-
-    // Measure/dimension placement is handled on click — don't start marquee here.
-    if (event.button === 0 && !pendingAddRef.current && (tapeMeasureRef.current || pendingDimensionRef.current || dimensionDeleteArmedRef.current)) {
-      return
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.sketchEditTool) {
-      return
-    }
-
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-
-    // ── Begin dragging a dimension annotation to reposition it ──
-    if (
-      event.button === 0 && selection.mode === 'feature'
-      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
-      && !pendingOffset && !pendingShapeAction && !pendingConstraintRef.current
-      && !tapeMeasureRef.current && !pendingDimensionRef.current
-      && project.meta.showDimensions
-    ) {
-      const hitDim = pickDimensionAt(project, vt, point, 8)
-      if (hitDim) {
-        const dim = project.annotations.find((d) => d.id === hitDim)
-        if (dim && !dim.locked && offsetForCursor(dim, project, world) !== null) {
-          selectAnnotation(hitDim)
-          draggingDimensionIdRef.current = hitDim
-          beginHistoryTransaction()
-          suppressClickRef.current = true
-          return
-        }
-      }
-    }
-
-    const control = hitEditableControl(point)
-    const hitClampId = findHitClampId(world, project.clamps)
-    const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, project.features, vt)
-    if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
-      if (isTouch) {
-        isPanningRef.current = true
-        didPanRef.current = false
-        lastPanPointRef.current = point
-        setHoveredEditControl(null)
-        return
-      }
-      marqueeStartRef.current = point
-      marqueeCurrentRef.current = point
-      setHoveredEditControl(null)
-      scheduleDraw()
-      return
-    }
-
-    if (!control) {
-      return
-    }
-
-    let nextControl = control
-    if (control.kind === 'segment' && selection.selectedFeatureId) {
-      const resolvedSnap = resolveCurrentSketchSnap(world, vt)
-      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
-      const feature = editableFeature()
-      const segment = feature?.sketch.profile.segments[control.index]
-      if (feature && segment?.type === 'line') {
-        const segmentStart = anchorPointForIndex(feature.sketch.profile, control.index)
-        const projected = projectPointToSegment(targetPoint, segmentStart, segment.to)
-        nextControl = {
-          kind: 'segment',
-          index: control.index,
-          t: projected.t,
-        }
-      }
-    }
-
-    if (isTouch && selection.mode === 'sketch_edit' && !selection.sketchEditTool) {
-      touchDragPendingRef.current = { control: nextControl, world, canvasPoint: point }
-      return
-    }
-
-    if (dimensionEditRef.current) cancelEditDimension()
-    beginHistoryTransaction()
-    setActiveControl(nextControl)
-    isDraggingNodeRef.current = true
-    dragStartWorldRef.current = world
-
-    if (nextControl.kind === 'segment' && selection.selectedFeatureId) {
-      const resolvedSnap = resolveCurrentSketchSnap(world, vt)
-      const targetPoint = resolvedSnap.mode ? resolvedSnap.point : world
-      moveFeatureControl(selection.selectedFeatureId, nextControl, targetPoint)
-      updateActiveSnap(resolvedSnap.mode ? resolvedSnap : null)
-    }
-  }
-
-  function handleCanvasPointerMove(point: CanvasPoint) {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    if (isGestureActiveRef.current) {
-      if (isPanningRef.current) stopPan()
-      touchDragPendingRef.current = null
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current)
-        longPressTimerRef.current = null
-      }
-      longPressStartRef.current = null
-      return
-    }
-
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const viewState = viewStateRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    livePointerWorldRef.current = world
-    const sketchEditTool = selection.sketchEditTool
-
-    // ── Delete-dimension mode: highlight the dimension under the cursor ──
-    if (dimensionDeleteArmedRef.current) {
-      const hit = project.meta.showDimensions ? pickDimensionAt(project, vt, point, 8) : null
-      if (hit !== deleteHoverDimIdRef.current) {
-        deleteHoverDimIdRef.current = hit
-        scheduleDraw()
-      }
-      return
-    }
-
-    // ── Dragging a dimension: update its offset to follow the cursor ──
-    if (draggingDimensionIdRef.current) {
-      const dim = project.annotations.find((d) => d.id === draggingDimensionIdRef.current)
-      if (dim) {
-        const off = offsetForCursor(dim, project, world)
-        if (off !== null) {
-          updateDimensionAnnotation(dim.id, { offset: off })
-        }
-      }
-      scheduleDraw()
-      return
-    }
-
-    if (touchDragPendingRef.current) {
-      const pending = touchDragPendingRef.current
-      const dx = point.cx - pending.canvasPoint.cx
-      const dy = point.cy - pending.canvasPoint.cy
-      if (dx * dx + dy * dy > 25) {
-        touchDragPendingRef.current = null
-        if (dimensionEditRef.current) cancelEditDimension()
-        beginHistoryTransaction()
-        setActiveControl(pending.control)
-        isDraggingNodeRef.current = true
-        dragStartWorldRef.current = pending.world
-        if (pending.control.kind === 'segment' && selection.selectedFeatureId) {
-          moveFeatureControl(selection.selectedFeatureId, pending.control, world)
-        }
-      }
-      return
-    }
-
-    if (isPanningRef.current && lastPanPointRef.current) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      updateActiveSnap(null)
-      const dx = point.cx - lastPanPointRef.current.cx
-      const dy = point.cy - lastPanPointRef.current.cy
-      if (dx !== 0 || dy !== 0) {
-        didPanRef.current = true
-      }
-      lastPanPointRef.current = point
-      setViewState((previous) => ({
-        ...previous,
-        panX: previous.panX + dx,
-        panY: previous.panY + dy,
-      }))
-      return
-    }
-
-    if (marqueeStartRef.current) {
-      marqueeCurrentRef.current = point
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      hoverFeature(null)
-      updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    if (zoomWindowStartRef.current) {
-      zoomWindowCurrentRef.current = point
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      hoverFeature(null)
-      updateActiveSnap(null)
-      scheduleDraw()
-      return
-    }
-
-    const pendingConstraintLive = pendingConstraintRef.current
-    const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
-    const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
-    const constraintPicking = constraintAnchorPicking || constraintRefPicking
-    const shouldPreviewSnap =
-      !zoomWindowActive && (
-        !!pendingAdd
-        || !!pendingMove
-        || !!pendingTransform
-        || !!pendingOffset
-        || !!tapeMeasureRef.current
-        || !!pendingDimensionRef.current
-        || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
-        || isDraggingNodeRef.current
-        || constraintPicking
-      )
-    const resolvedSnap = shouldPreviewSnap
-      ? resolveCurrentSketchSnap(world, vt, {
-          excludeActiveEditGeometry: isDraggingNodeRef.current || constraintRefPicking,
-        })
-      : { rawPoint: world, point: world, mode: null as null }
-    const snapped = resolvedSnap.point
-    const activeEditControl = selection.activeControl
-    const constrainedPoint =
-      requiresResolvedSnapForPointPick() && !resolvedSnap.mode
-        ? activeEditControl?.kind === 'segment'
-          ? world
-          : null
-        : snapped
-    updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
-
-    if (pendingAdd) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      if (pendingAdd.shape === 'origin') {
-        originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
-        scheduleDraw()
-        return
-      }
-      // Apply axis lock to preview for polygon/spline/composite
-      let previewSnapped = snapped
-      if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
-        const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        if (lastPoint) previewSnapped = applyLock(snapped, lastPoint)
-      } else if (pendingAdd.shape === 'composite') {
-        const compositeOrigin = pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start
-        if (compositeOrigin) previewSnapped = applyLock(snapped, compositeOrigin)
-      }
-      setPendingPreviewPointRef({ point: previewSnapped, session: pendingAdd.session })
-      return
-    }
-
-    if (pendingMove) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      const moveEdit = operationDimEditRef.current
-      if ((moveEdit?.kind === 'move' || moveEdit?.kind === 'copy') && pendingMove.fromPoint) {
-        const distance = parseLengthInput(moveEdit.distance, project.meta.units)
-        const referencePoint = pendingMove.toPoint ?? pendingMovePreviewPointRef.current?.point ?? snapped
-        const direction = unitDirection(pendingMove.fromPoint, referencePoint)
-        setPendingMovePreviewPointRef({
-          point: distance !== null
-            ? {
-                x: pendingMove.fromPoint.x + direction.x * Math.abs(distance),
-                y: pendingMove.fromPoint.y + direction.y * Math.abs(distance),
-              }
-            : referencePoint,
-          session: pendingMove.session,
-        })
-        return
-      }
-      const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
-      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
-      return
-    }
-
-    if (pendingTransform) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      const constrainedPoint =
-        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
-          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
-          : snapped
-      setPendingTransformPreviewPointRef({ point: constrainedPoint, session: pendingTransform.session })
-      return
-    }
-
-    if (pendingOffset) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      hoverFeature(null)
-      setPendingOffsetRawPreviewPointRef({ point: world, session: pendingOffset.session })
-      setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedFeatureId && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      const dragOrigin = dragStartWorldRef.current ?? constrainedPoint
-      const lockedPoint = applyLock(constrainedPoint, dragOrigin)
-      // When lock is active, move the snap indicator to the locked position
-      if (lockModeRef.current !== 'none' && activeSnapRef.current) {
-        activeSnapRef.current = { ...activeSnapRef.current, point: lockedPoint }
-      }
-      moveFeatureControl(selection.selectedFeatureId, selection.activeControl, lockedPoint)
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'clamp' && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      moveClampControl(selection.selectedNode.clampId, selection.activeControl, constrainedPoint)
-      return
-    }
-
-    if (isDraggingNodeRef.current && selection.selectedNode?.type === 'tab' && selection.activeControl) {
-      sketchEditPreviewRef.current = null
-      pendingSketchExtensionRef.current = null
-      pendingSketchFilletRef.current = null
-      setHoveredEditControl(null)
-      if (!constrainedPoint) {
-        scheduleDraw()
-        return
-      }
-      moveTabControl(selection.selectedNode.tabId, selection.activeControl, constrainedPoint)
-      return
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-      const feature = editableFeature()
-      if (feature && sketchEditTool === 'add_point') {
-        pendingSketchFilletRef.current = null
-        if (pendingSketchExtensionRef.current) {
-          const lockedSnapped = applyLock(snapped, pendingSketchExtensionRef.current.anchor)
-          sketchEditPreviewRef.current = { point: lockedSnapped, mode: 'add_point' }
-        } else {
-          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
-          if (endpoint) {
-            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
-          } else {
-            const target = findSketchInsertTarget(feature.sketch.profile, snapped, vt)
-            sketchEditPreviewRef.current =
-              target
-                ? { point: target.point, mode: 'add_point' }
-                : null
-          }
-        }
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'delete_point') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const control = hitEditableControl(point, { includeSegments: false })
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'delete_point' }
-            : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'delete_segment') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const target = findSketchSegmentHit(feature.sketch.profile, world, vt)
-        sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'disconnect') {
-        pendingSketchExtensionRef.current = null
-        pendingSketchFilletRef.current = null
-        const control = hitEditableControl(point, { includeSegments: false })
-        sketchEditPreviewRef.current =
-          control?.kind === 'anchor'
-            ? { point: anchorPointForIndex(feature.sketch.profile, control.index), mode: 'disconnect' }
-            : null
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-
-      if (feature && sketchEditTool === 'fillet') {
-        pendingSketchExtensionRef.current = null
-        if (pendingSketchFilletRef.current) {
-          sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
-        } else {
-          const control = hitEditableControl(point, { includeSegments: false })
-          if (control?.kind === 'anchor') {
-            const corner = anchorPointForIndex(feature.sketch.profile, control.index)
-            sketchEditPreviewRef.current = { point: corner, mode: 'add_point' }
-          } else {
-            sketchEditPreviewRef.current = null
-          }
-        }
-        scheduleDraw()
-        setHoveredEditControl(null)
-        hoverFeature(null)
-        return
-      }
-    }
-
-    if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-      const feature = editableFeature()
-      const hoveredControl = feature ? hitEditableControl(point, { includeSegments: false }) : null
-      const steps = feature ? computeEditStepsForControl(feature.sketch.profile, hoveredControl) : []
-      setHoveredEditControl(steps.length > 0 ? hoveredControl : null)
-      hoverFeature(null)
-      return
-    }
-
-    sketchEditPreviewRef.current = null
-    pendingSketchExtensionRef.current = null
-    pendingSketchFilletRef.current = null
-    setHoveredEditControl(null)
-
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      hoverFeature(null)
-      return
-    }
-
-    const hitId = findHitFeatureId(world, project.features, vt)
-    hoverFeature(hitId)
-  }
-
-  function stopNodeDrag() {
-    if (!isDraggingNodeRef.current && selection.activeControl === null) return
-    isDraggingNodeRef.current = false
-    dragStartWorldRef.current = null
-    setActiveControl(null)
-    commitHistoryTransaction()
-  }
-
-  function tryJoinDraggedOpenEndpoint(): boolean {
-    const canvas = canvasRef.current
-    const rawPoint = livePointerWorldRef.current
-    const selection = selectionRef.current
-    const feature = editableFeature()
-    if (
-      !canvas
-      || !rawPoint
-      || !feature
-      || !isDraggingNodeRef.current
-      || selection.mode !== 'sketch_edit'
-      || selection.selectedNode?.type !== 'feature'
-      || !selection.selectedFeatureId
-      || !selection.activeControl
-    ) {
-      return false
-    }
-
-    const sourceEndpoint = openEndpointForAnchorControl(feature, selection.activeControl)
-    if (!sourceEndpoint) {
-      return false
-    }
-
-    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
-    const targetEndpoint = findOpenEndpointHit(rawPoint, vt, {
-      exclude: {
-        featureId: selection.selectedFeatureId,
-        endpoint: sourceEndpoint,
-        anchor: openEndpointAnchor(feature, sourceEndpoint),
-      },
-    })
-    if (!targetEndpoint) {
-      return false
-    }
-
-    return joinOpenFeatureEndpoints(
-      selection.selectedFeatureId,
-      sourceEndpoint,
-      targetEndpoint.featureId,
-      targetEndpoint.endpoint,
-    )
-  }
-
-  function stopPan() {
-    isPanningRef.current = false
-    lastPanPointRef.current = null
-  }
-
-  function handlePointerUp(event?: ReactPointerEvent<HTMLCanvasElement>) {
-    if (event?.pointerType === 'touch') {
-      try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
-    }
-
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    longPressStartRef.current = null
-
-    if (touchDragPendingRef.current) {
-      const pending = touchDragPendingRef.current
-      touchDragPendingRef.current = null
-      setHoveredEditControl(pending.control)
-      setArmedForDimension(true)
-      return
-    }
-
-    if (draggingDimensionIdRef.current) {
-      draggingDimensionIdRef.current = null
-      commitHistoryTransaction()
-      scheduleDraw()
-      return
-    }
-
-    const canvas = canvasRef.current
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const viewState = viewStateRef.current
-
-    if (canvas && zoomWindowStartRef.current && zoomWindowCurrentRef.current) {
-      const dx = zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx
-      const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
-      const movedEnough = Math.hypot(dx, dy) >= 6
-      if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
-        const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
-        setViewState(
-          computeFitViewStateForBounds(
-            project.stock,
-            {
-              minX: Math.min(startWorld.x, endWorld.x),
-              maxX: Math.max(startWorld.x, endWorld.x),
-              minY: Math.min(startWorld.y, endWorld.y),
-              maxY: Math.max(startWorld.y, endWorld.y),
-            },
-            canvas.width,
-            canvas.height,
-          ),
-        )
-      }
-      suppressClickRef.current = true
-      zoomWindowStartRef.current = null
-      zoomWindowCurrentRef.current = null
-      scheduleDraw()
-      onZoomWindowComplete?.()
-    }
-
-    if (canvas && marqueeStartRef.current && marqueeCurrentRef.current) {
-      const dx = marqueeCurrentRef.current.cx - marqueeStartRef.current.cx
-      const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
-      const movedEnough = Math.hypot(dx, dy) >= 6
-      if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
-        const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
-        const minX = Math.min(startWorld.x, endWorld.x)
-        const minY = Math.min(startWorld.y, endWorld.y)
-        const maxX = Math.max(startWorld.x, endWorld.x)
-        const maxY = Math.max(startWorld.y, endWorld.y)
-        const enclosedIds = project.features
-          .filter((feature) => feature.visible)
-          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
-          .map((feature) => feature.id)
-        const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
-          .filter((id, index, array) => array.indexOf(id) === index)
-        if (nextIds.length > 0) {
-          selectFeatures(nextIds)
-        }
-        suppressClickRef.current = true
-      }
-      marqueeStartRef.current = null
-      marqueeCurrentRef.current = null
-      scheduleDraw()
-    }
-    if (tryJoinDraggedOpenEndpoint()) {
-      suppressClickRef.current = true
-      scheduleDraw()
-    }
-    stopNodeDrag()
-    stopPan()
-  }
-
-  function handlePointerLeave() {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    longPressStartRef.current = null
-    touchDragPendingRef.current = null
-
-    if (draggingDimensionIdRef.current) {
-      draggingDimensionIdRef.current = null
-      commitHistoryTransaction()
-    }
-
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-
-    marqueeStartRef.current = null
-    marqueeCurrentRef.current = null
-    zoomWindowStartRef.current = null
-    zoomWindowCurrentRef.current = null
-    stopNodeDrag()
-    stopPan()
-    livePointerWorldRef.current = null
-    sketchEditPreviewRef.current = null
-    pendingSketchFilletRef.current = null
-    setHoveredEditControl(null)
-    setPendingOffsetPreviewPointRef(null)
-    setPendingOffsetRawPreviewPointRef(null)
-    hoverFeature(null)
-    updateActiveSnap(null)
-    if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {
-      setPendingPreviewPointRef(null)
-    } else if (pendingAdd?.shape === 'origin') {
-      originPreviewPointRef.current = null
-      scheduleDraw()
-    } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
-      setPendingPreviewPointRef({ point: pendingAdd.anchor, session: pendingAdd.session })
-    } else {
-      setPendingPreviewPointRef(null)
-    }
-    if (pendingMove?.fromPoint) {
-      setPendingMovePreviewPointRef({
-        point: pendingMove.toPoint ?? pendingMove.fromPoint,
-        session: pendingMove.session,
-      })
-    } else {
-      setPendingMovePreviewPointRef(null)
-    }
-    if (pendingTransform?.referenceStart) {
-      setPendingTransformPreviewPointRef({
-        point: pendingTransform.referenceEnd ?? pendingTransform.referenceStart,
-        session: pendingTransform.session,
-      })
-    } else {
-      setPendingTransformPreviewPointRef(null)
-    }
-  }
-
-  function handleClick(event: MouseEvent<HTMLCanvasElement>) {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false
-      return
-    }
-
-    if (zoomWindowActive) {
-      return
-    }
-
-    if (didPanRef.current) {
-      didPanRef.current = false
-      return
-    }
-
-    const selection = selectionRef.current
-    const project = projectRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const pendingShapeAction = pendingShapeActionRef.current
-    const viewState = viewStateRef.current
-    const dimensionEdit = dimensionEditRef.current
-    if (isDraggingNodeRef.current) return
-
-    const point = canvasCoordinates(event)
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    const pendingConstraint = pendingConstraintRef.current
-    const constraintRefPickingClick = !!pendingConstraint && !!pendingConstraint.anchor && !pendingConstraint.reference
-    const resolvedSnap = resolveCurrentSketchSnap(world, vt, {
-      excludeActiveEditGeometry: constraintRefPickingClick,
-    })
-    const pickedPoint = requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
-
-    // ── Delete-dimension mode: click a dimension to remove it (stays armed) ──
-    if (!pendingAdd && dimensionDeleteArmedRef.current) {
-      if (project.meta.showDimensions) {
-        const hit = pickDimensionAt(project, vt, point, 8)
-        if (hit) {
-          deleteDimensionAnnotation(hit)
-          deleteHoverDimIdRef.current = null
-        }
-      }
-      return
-    }
-
-    // ── Tape measure: each click sets/advances the transient measurement ──
-    if (!pendingAdd && tapeMeasureRef.current) {
-      tapeMeasureClick(resolvedSnap.point)
-      return
-    }
-
-    // ── Permanent dimension placement ──
-    const pendingDim = pendingAdd ? null : pendingDimensionRef.current
-    if (pendingDim) {
-      const anchor: DimensionAnchor = resolvedSnap.anchor ?? { kind: 'free', point: resolvedSnap.point }
-      const need = pendingDim.type === 'angle' ? 3 : 2
-      const picked = [pendingDim.a, pendingDim.b, pendingDim.c].filter(Boolean).length
-      // Radius/diameter have no cursor-driven offset (line is always center→edge),
-      // so commit immediately on the final anchor click instead of asking for an
-      // extra "click to place" step.
-      const isRadial = pendingDim.type === 'radius' || pendingDim.type === 'diameter'
-      // For radius/diameter the first click MUST identify a circle/arc center —
-      // otherwise the dimension would be measured between arbitrary points and
-      // the value would be meaningless. Silently ignore non-center clicks; the
-      // CanvasWorkflowPanel already says "Click the circle / arc center".
-      if (isRadial && picked === 0 && anchor.kind !== 'center') {
-        return
-      }
-      if (isRadial && picked === need - 1) {
-        // If the edge click landed off-circle (or via a non-anchored snap), but
-        // anchor a pins the circle's center, project onto that circle and store
-        // an angle-relative anchor so the dim direction follows the feature.
-        const edgeAnchor =
-          anchor.kind === 'free' && pendingDim.a
-            ? (circleEdgeAnchorFromPoint(anchor.point, pendingDim.a, project) ?? anchor)
-            : anchor
-        addDimensionAnnotation({
-          type: pendingDim.type,
-          a: pendingDim.a!,
-          b: edgeAnchor,
-          offset: 0,
-          visible: true,
-          locked: false,
-          textOverride: null,
-          precisionOverride: null,
-        })
-        cancelPendingDimension()
-        return
-      }
-      if (picked < need) {
-        pendingDimensionPick(anchor)
-        return
-      }
-      // All anchors picked → this click chooses the offset and commits.
-      const temp: DimensionAnnotation = {
-        id: '__commit__',
-        type: pendingDim.type,
-        a: pendingDim.a!,
-        b: pendingDim.b ?? undefined,
-        c: pendingDim.c ?? undefined,
-        offset: 0,
-        visible: true,
-        locked: false,
-        textOverride: null,
-        precisionOverride: null,
-      }
-      const off = offsetForCursor(temp, project, world) ?? 0
-      addDimensionAnnotation({
-        type: pendingDim.type,
-        a: pendingDim.a!,
-        b: pendingDim.b ?? undefined,
-        c: pendingDim.c ?? undefined,
-        offset: off,
-        visible: true,
-        locked: false,
-        textOverride: null,
-        precisionOverride: null,
-      })
-      cancelPendingDimension()
-      return
-    }
-
-    // ── Select an existing dimension annotation (plain select mode) ──
-    if (
-      selection.mode === 'feature'
-      && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset
-      && !pendingShapeAction && !pendingConstraint
-      && project.meta.showDimensions
-    ) {
-      const hitDim = pickDimensionAt(project, vt, point, 8)
-      if (hitDim) {
-        selectAnnotation(hitDim)
-        return
-      }
-      if (selectedAnnotationIdRef.current) {
-        selectAnnotation(null)
-      }
-    }
-
-    if (pendingConstraint && !pendingConstraint.anchor) {
-      if (!pickedPoint) {
-        return
-      }
-      setConstraintAnchor({
-        point: pickedPoint,
-        snapMode: resolvedSnap.mode,
-      })
-      return
-    }
-
-    if (pendingConstraint && pendingConstraint.anchor && !pendingConstraint.reference) {
-      if (!pickedPoint) {
-        return
-      }
-      const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
-      const targetFeatureId = findHitFeatureId(lockedPickedPoint, project.features, vt)
-      const targetId =
-        targetFeatureId && targetFeatureId !== pendingConstraint.featureId
-          ? targetFeatureId
-          : null
-      setConstraintReference({
-        point: lockedPickedPoint,
-        featureId: targetId,
-        snapMode: resolvedSnap.mode,
-        segment: resolvedSnap.mode === 'perpendicular' ? resolvedSnap.perpendicularSegment : undefined,
-      })
-      const dx = pendingConstraint.anchor.point.x - lockedPickedPoint.x
-      const dy = pendingConstraint.anchor.point.y - lockedPickedPoint.y
-      const currentDistance = Math.hypot(dx, dy)
-      setConstraintDistanceInput(formatLength(currentDistance, project.meta.units))
-      return
-    }
-
-    if (selection.mode === 'sketch_edit') {
-      if (selection.selectedNode?.type === 'feature' && selection.selectedFeatureId) {
-        const feature = editableFeature()
-        if (feature && selection.sketchEditTool === 'add_point') {
-          if (pendingSketchExtensionRef.current) {
-            const sourceEndpoint = endpointFromSketchExtension(pendingSketchExtensionRef.current.kind)
-            const targetEndpoint = findOpenEndpointHit(world, vt, {
-              exclude: {
-                featureId: selection.selectedFeatureId,
-                endpoint: sourceEndpoint,
-                anchor: pendingSketchExtensionRef.current.anchor,
-              },
-            })
-            if (targetEndpoint) {
-              const joined = joinOpenFeatureEndpoints(
-                selection.selectedFeatureId,
-                sourceEndpoint,
-                targetEndpoint.featureId,
-                targetEndpoint.endpoint,
-              )
-              if (joined) {
-                pendingSketchExtensionRef.current = null
-                sketchEditPreviewRef.current = null
-                scheduleDraw()
-              }
-              return
-            }
-
-            if (!pickedPoint) {
-              return
-            }
-            const lockedPickedPoint = applyLock(pickedPoint, pendingSketchExtensionRef.current.anchor)
-            insertFeaturePoint(selection.selectedFeatureId, {
-              kind: pendingSketchExtensionRef.current.kind,
-              point: lockedPickedPoint,
-            })
-            pendingSketchExtensionRef.current = null
-            sketchEditPreviewRef.current = null
-            scheduleDraw()
-            return
-          }
-
-          const endpoint = findOpenProfileExtensionEndpoint(feature.sketch.profile, world, vt)
-          if (endpoint) {
-            pendingSketchExtensionRef.current = endpoint
-            sketchEditPreviewRef.current = { point: endpoint.anchor, mode: 'add_point' }
-            scheduleDraw()
-            return
-          }
-
-          if (!pickedPoint) {
-            return
-          }
-
-          const target = findSketchInsertTarget(feature.sketch.profile, pickedPoint, vt)
-          if (target?.kind === 'segment') {
-            insertFeaturePoint(selection.selectedFeatureId, target)
-          }
-          return
-        }
-
-        if (feature && selection.sketchEditTool === 'delete_point') {
-          const control = hitEditableControl(point, { includeSegments: false })
-          if (control?.kind === 'anchor') {
-            deleteFeaturePoint(selection.selectedFeatureId, control.index)
-          }
-          return
-        }
-
-        if (feature && selection.sketchEditTool === 'delete_segment') {
-          const target = findSketchSegmentHit(feature.sketch.profile, world, vt)
-          if (target) {
-            deleteFeatureSegment(selection.selectedFeatureId, target.segmentIndex)
-            sketchEditPreviewRef.current = null
-            scheduleDraw()
-          }
-          return
-        }
-
-        if (feature && selection.sketchEditTool === 'disconnect') {
-          const control = hitEditableControl(point, { includeSegments: false })
-          if (control?.kind === 'anchor') {
-            disconnectFeaturePoint(selection.selectedFeatureId, control.index)
-            sketchEditPreviewRef.current = null
-            scheduleDraw()
-          }
-          return
-        }
-
-        if (feature && selection.sketchEditTool === 'fillet') {
-          if (pendingSketchFilletRef.current) {
-            const typedRadius = filletDimensionEditRef.current
-              ? parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
-              : null
-            if (typedRadius !== null && typedRadius > 0) {
-              filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
-            } else {
-              if (!pickedPoint) {
-                return
-              }
-              const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
-              if (radius) {
-                filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
-              }
-            }
-            pendingSketchFilletRef.current = null
-            sketchEditPreviewRef.current = null
-            setFilletDimensionEdit(null)
-            scheduleDraw()
-            return
-          }
-
-          const control = hitEditableControl(point, { includeSegments: false })
-          if (control?.kind === 'anchor') {
-            pendingSketchFilletRef.current = {
-              anchorIndex: control.index,
-              corner: anchorPointForIndex(feature.sketch.profile, control.index),
-            }
-            sketchEditPreviewRef.current = { point: pendingSketchFilletRef.current.corner, mode: 'add_point' }
-            scheduleDraw()
-          }
-          return
-        }
-      }
-
-      if (selection.selectedNode?.type === 'feature' && selection.selectedFeatureId && !selection.sketchEditTool && !dimensionEdit) {
-        const feature = editableFeature()
-        if (feature) {
-          const control = hitEditableControl(point)
-          if (control && (control.kind === 'segment' || control.kind === 'anchor' || control.kind === 'arc_handle')) {
-            const steps = computeEditStepsForControl(feature.sketch.profile, control)
-            if (steps.length > 0) {
-              editDimStepsRef.current = steps
-              editDimStepIndexRef.current = 0
-              dimensionEditFeatureIdRef.current = selection.selectedFeatureId
-              beginHistoryTransaction()
-              applyEditDimStep(0, steps, selection.selectedFeatureId, project.meta.units)
-              return
-            }
-          }
-        }
-      }
-
-      return
-    }
-
-    if (dimensionEdit) {
-      commitEditDimension()
-      return
-    }
-
-    if (pendingAdd) {
-      if (!pickedPoint) {
-        return
-      }
-
-      const snapped = pickedPoint
-
-      if (pendingAdd.shape === 'origin') {
-        originPreviewPointRef.current = null
-        placeOriginAt(snapped)
-        setPendingPreviewPointRef(null)
-        return
-      }
-
-      if (pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') {
-        const lastPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        if (pendingAdd.points.length >= 3 && isLoopCloseCandidate(point, pendingAdd.points, vt, POLYGON_CLOSE_RADIUS)) {
-          completePendingPolygon()
-          setPendingPreviewPointRef(null)
-          return
-        }
-        const lockedSnapped = lastPoint ? applyLock(snapped, lastPoint) : snapped
-        if (!lastPoint || lastPoint.x !== lockedSnapped.x || lastPoint.y !== lockedSnapped.y) {
-          addPendingPolygonPoint(lockedSnapped)
-        }
-        setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
-        setPendingAddAnchor(snapped)
-        setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
-        placePendingAddAt(snapped)
-        setPendingPreviewPointRef(null)
-      } else if (pendingAdd.shape === 'text') {
-        placePendingTextAt(snapped)
-        setPendingPreviewPointRef(null)
-      } else if (pendingAdd.shape === 'composite') {
-        const draftPoints = compositeDraftPoints(pendingAdd)
-        const closeCandidate =
-          pendingAdd.currentMode !== 'arc' &&
-          !pendingAdd.pendingArcEnd &&
-          draftPoints.length >= 3 &&
-          isLoopCloseCandidate(point, draftPoints, vt, POLYGON_CLOSE_RADIUS)
-
-        if (closeCandidate) {
-          completePendingComposite()
-          setPendingPreviewPointRef(null)
-          return
-        }
-
-        const compositeOrigin = pendingAdd.pendingArcEnd ?? pendingAdd.lastPoint ?? pendingAdd.start
-        const lockedCompositeSnapped = compositeOrigin ? applyLock(snapped, compositeOrigin) : snapped
-        addPendingCompositePoint(lockedCompositeSnapped)
-        setPendingPreviewPointRef({ point: lockedCompositeSnapped, session: pendingAdd.session })
-      }
-      return
-    }
-
-    if (pendingMove) {
-      if (!pickedPoint) {
-        return
-      }
-
-      const snapped = pickedPoint
-
-      if (!pendingMove.fromPoint) {
-        setPendingMoveFrom(snapped)
-        setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
-      } else if (!pendingMove.toPoint) {
-        const lockedSnapped = applyLock(snapped, pendingMove.fromPoint)
-        beginMoveDistanceEntry(lockedSnapped)
-      }
-      return
-    }
-
-    if (pendingTransform) {
-      if (!pickedPoint) {
-        return
-      }
-
-      const snapped = pickedPoint
-      const constrainedPoint =
-        pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd
-          ? projectPointOntoLine(snapped, pendingTransform.referenceStart, pendingTransform.referenceEnd)
-          : snapped
-
-      if (!pendingTransform.referenceStart) {
-        setPendingTransformReferenceStart(snapped)
-        setPendingTransformPreviewPointRef({ point: snapped, session: pendingTransform.session })
-      } else if (!pendingTransform.referenceEnd) {
-        setPendingTransformReferenceEnd(snapped)
-        setPendingTransformPreviewPointRef({ point: snapped, session: pendingTransform.session })
-        if (pendingTransform.mode === 'mirror') {
-          completePendingTransform(snapped)
-          setPendingTransformPreviewPointRef(null)
-        }
-      } else if (pendingTransform.mode === 'rotate' && pendingTransform.keepOriginals) {
-        setPendingRotateCopyPoint(constrainedPoint)
-      } else {
-        completePendingTransform(constrainedPoint)
-        setPendingTransformPreviewPointRef(null)
-      }
-      return
-    }
-
-    if (pendingOffset) {
-      const sourceFeatures = pendingOffset.entityIds
-        .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
-        .filter((feature) => feature.sketch.profile.closed)
-      if (!pickedPoint) {
-        return
-      }
-      const previewInput = resolveOffsetPreview(sourceFeatures, world, pickedPoint, resolvedSnap.mode, vt)
-      if (previewInput) {
-        completePendingOffset(previewInput.signedDistance)
-      } else {
-        cancelPendingOffset()
-      }
-      setPendingOffsetPreviewPointRef(null)
-      setPendingOffsetRawPreviewPointRef(null)
-      return
-    }
-
-    // Hit-test constraint labels for click-to-edit
-    if (!pendingConstraint && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset) {
-      for (const rect of constraintLabelRectsRef.current) {
-        if (
-          point.cx >= rect.cx - rect.halfW && point.cx <= rect.cx + rect.halfW &&
-          point.cy >= rect.cy - rect.halfH && point.cy <= rect.cy + rect.halfH
-        ) {
-          const feature = project.features.find((f) => f.id === rect.featureId)
-          const constraint = feature?.sketch.constraints.find((c) => c.id === rect.constraintId)
-          if (constraint && typeof constraint.value === 'number') {
-            setConstraintEdit({
-              featureId: rect.featureId,
-              constraintId: rect.constraintId,
-              value: formatLength(constraint.value, project.meta.units),
-              cx: rect.cx,
-              cy: rect.cy,
-            })
-          }
-          return
-        }
-      }
-    }
-
-    const hitClampId = findHitClampId(world, project.clamps)
-    if (hitClampId) {
-      selectClamp(hitClampId)
-      return
-    }
-
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      selectTab(hitTabId)
-      return
-    }
-
-    const hitId = findHitFeatureId(world, project.features, vt)
-    const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
-    if (hitId) {
-      selectFeature(hitId, additive)
-    } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
-      selectBackdrop()
-    } else if (!additive) {
-      selectFeature(null)
-    }
-  }
-
-  function handleWheelEvent(event: Pick<globalThis.WheelEvent, 'clientX' | 'clientY' | 'deltaY' | 'preventDefault'>) {
-    if (zoomWindowActive) {
-      return
-    }
-
-    event.preventDefault()
-
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const point = canvasCoordinates(event)
-    const project = projectRef.current
-    const currentViewState = viewStateRef.current
-    const base = computeBaseViewTransform(project.stock, canvas.width, canvas.height)
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, currentViewState)
-    const worldBefore = canvasToWorld(point.cx, point.cy, vt)
-    const zoomFactor = Math.exp(-event.deltaY * 0.0015)
-    const nextZoom = Math.max(MIN_SKETCH_ZOOM, currentViewState.zoom * zoomFactor)
-    const nextScale = base.scale * nextZoom
-
-    setViewState({
-      zoom: nextZoom,
-      panX: point.cx - base.offsetX - worldBefore.x * nextScale,
-      panY: point.cy - base.offsetY - worldBefore.y * nextScale,
-    })
-  }
-
-  function handleDoubleClick(event: MouseEvent<HTMLCanvasElement>) {
-    if (zoomWindowActive) {
-      return
-    }
-
-    const project = projectRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    if (pendingAdd) {
-      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 2) {
-        event.preventDefault()
-        if (creationTargetRef.current === 'region') {
-          return
-        }
-        completePendingOpenPath()
-        setPendingPreviewPointRef(null)
-      }
-      return
-    }
-
-    if (pendingMove || pendingTransform || pendingOffset) {
-      return
-    }
-
-    const point = canvasCoordinates(event)
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
-    if (hitClampId) {
-      enterClampEdit(hitClampId)
-      return
-    }
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      enterTabEdit(hitTabId)
-      return
-    }
-    const hitId = findHitFeatureId(world, project.features, vt)
-    if (hitId) enterSketchEdit(hitId)
-  }
-
-  function triggerContextMenuAt(clientX: number, clientY: number) {
-    if (zoomWindowActive) return
-    if (pendingAddRef.current || pendingMoveRef.current || pendingTransformRef.current || pendingOffsetRef.current) return
-
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const rect = canvas.getBoundingClientRect()
-    const point: CanvasPoint = { cx: clientX - rect.left, cy: clientY - rect.top }
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
-    const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
-    if (hitClampId) {
-      selectClamp(hitClampId)
-      onClampContextMenu?.(hitClampId, clientX, clientY)
-      return
-    }
-
-    const hitTabId = findHitTabId(world, project.tabs)
-    if (hitTabId) {
-      selectTab(hitTabId)
-      onTabContextMenu?.(hitTabId, clientX, clientY)
-      return
-    }
-
-    const hitId = findHitFeatureId(world, project.features, vt)
-    if (!hitId) return
-
-    if (!selection.selectedFeatureIds.includes(hitId)) {
-      selectFeature(hitId)
-    }
-    onFeatureContextMenu?.(hitId, clientX, clientY)
-  }
-
-  function handleContextMenu(event: MouseEvent<HTMLCanvasElement>) {
-    event.preventDefault()
-
-    if (didPanRef.current) {
-      didPanRef.current = false
-      return
-    }
-
-    triggerContextMenuAt(event.clientX, event.clientY)
-  }
-
-  function applyEditDimStep(stepIndex: number, steps: EditDimStep[], featureId: string, units: 'mm' | 'inch') {
-    if (stepIndex >= steps.length) {
-      cancelEditDimension()
-      return
-    }
-    const step = steps[stepIndex]
-    dimensionEditControlRef.current = step.control
-    const feature = useProjectStore.getState().project.features.find((f) => f.id === featureId)
-    if (!feature) return
-    const profile = feature.sketch.profile
-
-    if (step.kind === 'endpoint') {
-      const fromPoint = anchorPointForIndex(profile, step.fromAnchorIndex)
-      const anchorPos = anchorPointForIndex(profile, step.control.index)
-      const dx = anchorPos.x - fromPoint.x
-      const dy = anchorPos.y - fromPoint.y
-      setDimensionEdit({
-        shape: 'composite',
-        anchor: fromPoint,
-        signX: 1,
-        signY: 1,
-        activeField: 'length',
-        width: '',
-        height: '',
-        radius: '',
-        length: formatLength(Math.hypot(dx, dy), units),
-        angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, ''),
-      })
-    } else {
-      const seg = profile.segments[step.control.index]
-      if (!seg || (seg.type !== 'arc' && seg.type !== 'circle')) return
-      const arcStart = anchorPointForIndex(profile, step.arcStartAnchorIndex)
-      const radius = seg.type === 'arc'
-        ? Math.hypot(arcStart.x - seg.center.x, arcStart.y - seg.center.y)
-        : Math.hypot(profile.start.x - seg.center.x, profile.start.y - seg.center.y)
-      const arcMid = seg.type === 'arc'
-        ? arcControlPoint(arcStart, seg)
-        : seg.center
-      setDimensionEdit({
-        shape: 'circle',
-        anchor: arcMid,
-        signX: 1,
-        signY: 1,
-        activeField: 'radius',
-        width: '',
-        height: '',
-        radius: formatLength(radius, units),
-        length: '',
-        angle: '',
-      })
-    }
-  }
-
-  function advanceTabInEditMode() {
-    const currentEdit = dimensionEditRef.current
-    const steps = editDimStepsRef.current
-    const stepIndex = editDimStepIndexRef.current
-    if (!currentEdit) return
-
-    const step = steps[stepIndex]
-    if (step?.kind === 'endpoint' && currentEdit.activeField === 'length') {
-      setDimensionEdit({ ...currentEdit, activeField: 'angle' })
-      return
-    }
-
-    const nextIndex = stepIndex + 1
-    editDimStepIndexRef.current = nextIndex
-    const featureId = dimensionEditFeatureIdRef.current
-    const units = projectRef.current.meta.units
-    if (featureId) {
-      applyEditDimStep(nextIndex, steps, featureId, units)
-    }
-  }
-
-  function commitEditDimension() {
-    commitHistoryTransaction()
-    dimensionEditControlRef.current = null
-    dimensionEditFeatureIdRef.current = null
-    editDimStepsRef.current = []
-    editDimStepIndexRef.current = 0
-    setDimensionEdit(null)
-    canvasRef.current?.focus({ preventScroll: true })
-  }
-
-  function cancelEditDimension() {
-    cancelHistoryTransaction()
-    dimensionEditControlRef.current = null
-    dimensionEditFeatureIdRef.current = null
-    editDimStepsRef.current = []
-    editDimStepIndexRef.current = 0
-    setDimensionEdit(null)
-    canvasRef.current?.focus({ preventScroll: true })
-  }
-
-  function handleEditDimLiveChange(field: 'length' | 'angle' | 'radius', value: string) {
-    const prev = dimensionEditRef.current
-    if (!prev) return
-    const next = { ...prev, [field]: value }
-    setDimensionEdit(next)
-    const control = dimensionEditControlRef.current
-    const fId = dimensionEditFeatureIdRef.current
-    if (!control || !fId) return
-
-    if (control.kind === 'arc_handle') {
-      const feature = projectRef.current.features.find((f) => f.id === fId)
-      if (!feature) return
-      const profile = feature.sketch.profile
-      const seg = profile.segments[control.index]
-      if (!seg || seg.type !== 'arc') return
-      const arcStart = anchorPointForIndex(profile, control.index)
-      const newRadius = parseLengthInput(value, projectRef.current.meta.units) ?? 0
-      if (newRadius <= 0) return
-      const newHandle = arcHandleFromRadius(arcStart, seg, newRadius)
-      if (newHandle) moveFeatureControl(fId, control, newHandle)
-    } else {
-      const pt = computeDimensionEditPreviewPoint(next, projectRef.current.meta.units)
-      moveFeatureControl(fId, control, pt)
-    }
-  }
-
   // Called by the "Type" button in banners — opens dimension input without
   // the Tab toggle-close behaviour. Keyboard Tab keeps its existing logic.
   function triggerDimensionEdit() {
@@ -4219,11 +2235,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
         if (pendingAdd.shape === 'circle') {
           const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-          setDimensionEdit({ shape: 'circle', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: 'circle', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
         } else {
           const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
           const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-          setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
         }
         return
       }
@@ -4232,7 +2248,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
         const dx = previewPoint.x - fromPoint.x
         const dy = previewPoint.y - fromPoint.y
-        setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
+        dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
         return
       }
       if (pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed) {
@@ -4262,7 +2278,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               - (arcEnd.y - arcStart.y) * (previewPoint.x - arcStart.x)
             return cross >= 0 ? 1 : -1
           })() : 1
-          setDimensionEdit({ shape: 'composite', anchor: arcStart, arcStart, arcEnd, arcClockwise: side < 0, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
+          dimEdit.setDimensionEdit({ shape: 'composite', anchor: arcStart, arcStart, arcEnd, arcClockwise: side < 0, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: '' })
           return
         }
         const fromPoint = pendingAdd.lastPoint ?? pendingAdd.start
@@ -4272,14 +2288,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const len = Math.hypot(dx, dy)
         const angleDeg = (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
         const defaultRadius = pendingAdd.currentMode === 'arc' ? formatLength(len > 1e-9 ? len : 0.5, units) : ''
-        setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
+        dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
         return
       }
     }
 
     if (pendingMove?.fromPoint && !pendingMove.toPoint) {
       const previewPoint = pendingMovePreviewPointRef.current?.point ?? pendingMove.fromPoint
-      beginMoveDistanceEntry(previewPoint)
+      move.beginMoveDistanceEntry(previewPoint)
       return
     }
 
@@ -4311,7 +2327,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             .map((id) => project.features.find((f) => f.id === id) ?? null)
             .filter((f): f is SketchFeature => f !== null)
             .filter((f) => f.sketch.profile.closed)
-          const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
+          const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, snap.activeSnapRef.current?.mode ?? null, vt)
           if (previewInput) distance = formatLength(previewInput.signedDistance, units)
         }
       }
@@ -4324,553 +2340,234 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const feature = featureId ? project.features.find((f) => f.id === featureId) ?? null : null
       if (!feature) return
       const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
-      setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
+      fillet.setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
       return
     }
 
-    if (selection.mode === 'sketch_edit' && !pendingAdd && !filletDimensionEditRef.current) {
-      const currentEdit = dimensionEditRef.current
-      if (!currentEdit && dimensionEditControlRef.current) {
-        advanceTabInEditMode()
+    if (selection.mode === 'sketch_edit' && !pendingAdd && !fillet.filletDimensionEditRef.current) {
+      const currentEdit = dimEdit.dimensionEditRef.current
+      if (!currentEdit && dimEdit.dimensionEditControlRef.current) {
+        dimEdit.advanceTabInEditMode()
       }
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
-    const project = projectRef.current
-    const selection = selectionRef.current
-    const pendingAdd = pendingAddRef.current
-    const pendingMove = pendingMoveRef.current
-    const pendingTransform = pendingTransformRef.current
-    const pendingOffset = pendingOffsetRef.current
-    const pendingShapeAction = pendingShapeActionRef.current
-    const viewState = viewStateRef.current
+  const keyboard = useCanvasKeyboard({
+    projectRef,
+    selectionRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    pendingShapeActionRef,
+    viewStateRef,
+    tapeMeasureRef,
+    pendingDimensionRef,
+    dimensionDeleteArmedRef,
+    selectedAnnotationIdRef,
+    pendingPreviewPointRef,
+    operationDimEditRef,
+    pendingTransformPreviewPointRef,
+    pendingOffsetRawPreviewPointRef,
+    pendingOffsetPreviewPointRef,
+    activeSnapRef: snap.activeSnapRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    originPreviewPointRef,
+    hoveredEditControlRef,
+    canvasRef,
+    dimEdit,
+    constraint,
+    move,
+    transformExact,
+    fillet,
+    clearTapeMeasure,
+    cancelPendingDimension,
+    setDimensionDeleteArmed,
+    deleteDimensionAnnotation,
+    undoPendingPolygonPoint,
+    completePendingOpenPath,
+    setPendingCompositeMode,
+    undoPendingCompositeStep,
+    completePendingOpenComposite,
+    cancelPendingAdd,
+    cancelPendingMove,
+    cancelPendingTransform,
+    cancelPendingOffset,
+    confirmCutCutters,
+    cancelPendingShapeAction,
+    completePendingMove,
+    completePendingShapeAction,
+    beginHistoryTransaction,
+    applySketchEdit,
+    cancelSketchEdit,
+    beginConstraint,
+    setPendingPreviewPointRef,
+    setPendingMovePreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    setCopyCountDraft,
+    setOperationDimEdit,
+    copyCountDraft,
+    creationTarget,
+    stopNodeDrag,
+    resetLock,
+  })
 
-    // ── Measure & dimension tools ──
-    if (event.key === 'Escape' && tapeMeasureRef.current) {
-      event.preventDefault()
-      clearTapeMeasure()
-      return
-    }
-    if (event.key === 'Escape' && pendingDimensionRef.current) {
-      event.preventDefault()
-      cancelPendingDimension()
-      return
-    }
-    if (event.key === 'Escape' && dimensionDeleteArmedRef.current) {
-      event.preventDefault()
-      setDimensionDeleteArmed(false)
-      return
-    }
-    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedAnnotationIdRef.current) {
-      event.preventDefault()
-      deleteDimensionAnnotation(selectedAnnotationIdRef.current)
-      return
-    }
+  const gestures = usePointerGestures({
+    isDraggingNodeRef,
+    dragStartWorldRef,
+    touchDragPendingRef,
+    isPanningRef,
+    didPanRef,
+    lastPanPointRef,
+    marqueeStartRef,
+    marqueeCurrentRef,
+    zoomWindowStartRef,
+    zoomWindowCurrentRef,
+    suppressClickRef,
+    projectRef,
+    selectionRef,
+    viewStateRef,
+    canvasRef,
+    livePointerWorldRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    pendingShapeActionRef,
+    pendingMovePreviewPointRef,
+    pendingConstraintRef,
+    pendingDimensionRef,
+    dimensionDeleteArmedRef,
+    deleteHoverDimIdRef,
+    pendingSketchExtensionRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    originPreviewPointRef,
+    tapeMeasureRef,
+    creationTargetRef,
+    operationDimEditRef,
+    lockModeRef,
+    snap,
+    contextMenu,
+    dimEdit,
+    isGestureActiveRef,
+    hitEditableControl,
+    editableFeature,
+    findSketchSegmentHit,
+    findOpenEndpointHit,
+    openEndpointAnchor,
+    setViewState,
+    moveFeatureControl,
+    beginHistoryTransaction,
+    commitHistoryTransaction,
+    setActiveControl,
+    completePendingOpenPath,
+    enterClampEdit,
+    enterTabEdit,
+    enterSketchEdit,
+    hoverFeature,
+    selectFeatures,
+    selectAnnotation,
+    updateDimensionAnnotation,
+    moveClampControl,
+    moveTabControl,
+    joinOpenFeatureEndpoints,
+    stopPan,
+    stopNodeDrag,
+    scheduleDraw,
+    applyLock,
+    setPendingPreviewPointRef,
+    setPendingMovePreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    setHoveredEditControl,
+    zoomWindowActive,
+    onZoomWindowComplete,
+  })
 
-    if (event.key === 'Tab' && pendingAdd) {
-      const currentEdit = dimensionEditRef.current
-      const units = projectRef.current.meta.units
-
-      if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
-        && pendingAdd.anchor
-      ) {
-        event.preventDefault()
-        const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
-
-        if (!currentEdit) {
-          if (pendingAdd.shape === 'circle') {
-            const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-            setDimensionEdit({
-              shape: 'circle',
-              anchor: pendingAdd.anchor,
-              signX: 1,
-              signY: 1,
-              activeField: 'radius',
-              width: '',
-              height: '',
-              radius: formatLength(r, units),
-              length: '',
-              angle: '',
-            })
-          } else {
-            const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
-            const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-            setDimensionEdit({
-              shape: pendingAdd.shape,
-              anchor: pendingAdd.anchor,
-              signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1,
-              signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1,
-              activeField: 'width',
-              width: formatLength(w, units),
-              height: formatLength(h, units),
-              radius: '',
-              length: '',
-              angle: '',
-            })
-          }
-        } else if (currentEdit.shape !== 'circle' && currentEdit.activeField === 'width') {
-          setDimensionEdit({ ...currentEdit, activeField: 'height' })
-        } else {
-          setDimensionEdit(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-
-      if ((pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && pendingAdd.points.length >= 1) {
-        event.preventDefault()
-        const fromPoint = pendingAdd.points[pendingAdd.points.length - 1]
-        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
-
-        if (!currentEdit) {
-          const dx = previewPoint.x - fromPoint.x
-          const dy = previewPoint.y - fromPoint.y
-          const len = Math.hypot(dx, dy)
-          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
-          setDimensionEdit({
-            shape: pendingAdd.shape,
-            anchor: fromPoint,
-            signX: 1,
-            signY: 1,
-            activeField: 'length',
-            width: '',
-            height: '',
-            radius: '',
-            length: formatLength(len, units),
-            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
-          })
-        } else if (currentEdit.activeField === 'length') {
-          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
-        } else {
-          setDimensionEdit(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-
-      if (
-        pendingAdd.shape === 'composite'
-        && pendingAdd.start
-        && !pendingAdd.closed
-        && pendingAdd.currentMode === 'arc'
-        && pendingAdd.pendingArcEnd
-      ) {
-        // Arc phase 2: typing a radius for the arc
-        event.preventDefault()
-        const arcStart = pendingAdd.lastPoint ?? pendingAdd.start
-        const arcEnd = pendingAdd.pendingArcEnd
-        const previewPoint = pendingPreviewPointRef.current?.point ?? arcEnd
-
-        if (!currentEdit) {
-          // Estimate radius from current through-point preview
-          const arcSeg = buildArcSegmentFromThreePoints(arcStart, arcEnd, previewPoint)
-          const r = arcSeg && arcSeg.type === 'arc'
-            ? Math.hypot(arcStart.x - arcSeg.center.x, arcStart.y - arcSeg.center.y)
-            : Math.hypot(arcEnd.x - arcStart.x, arcEnd.y - arcStart.y) / 2
-          // Use current preview point as anchor to determine which side of the chord the arc center lies on
-          setDimensionEdit({
-            shape: 'circle',
-            anchor: previewPoint,
-            arcStart,
-            arcEnd,
-            arcClockwise: arcSeg?.type === 'arc' ? arcSeg.clockwise : false,
-            signX: 1,
-            signY: 1,
-            activeField: 'radius',
-            width: '',
-            height: '',
-            radius: formatLength(r, units),
-            length: '',
-            angle: '',
-          })
-        } else {
-          setDimensionEdit(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-
-      if (
-        pendingAdd.shape === 'composite'
-        && pendingAdd.start
-        && !pendingAdd.closed
-        && (
-          (pendingAdd.currentMode === 'line' && !pendingAdd.pendingArcEnd)
-          || (pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd)
-          || pendingAdd.currentMode === 'spline'
-        )
-      ) {
-        event.preventDefault()
-        const fromPoint = pendingAdd.lastPoint ?? pendingAdd.start
-        const previewPoint = pendingPreviewPointRef.current?.point ?? fromPoint
-
-        if (!currentEdit) {
-          const dx = previewPoint.x - fromPoint.x
-          const dy = previewPoint.y - fromPoint.y
-          const len = Math.hypot(dx, dy)
-          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
-          setDimensionEdit({
-            shape: 'composite',
-            anchor: fromPoint,
-            signX: 1,
-            signY: 1,
-            activeField: 'length',
-            width: '',
-            height: '',
-            radius: '',
-            length: formatLength(len, units),
-            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
-          })
-        } else if (currentEdit.activeField === 'length') {
-          setDimensionEdit({ ...currentEdit, activeField: 'angle' })
-        } else {
-          setDimensionEdit(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-    }
-
-    if (event.key === 'Tab' && pendingMove && pendingMove.fromPoint && !pendingMove.toPoint) {
-      event.preventDefault()
-      const currentEdit = operationDimEditRef.current
-      if (!currentEdit) {
-        beginMoveDistanceEntryFromPreview()
-      } else if (currentEdit.kind === 'move' || currentEdit.kind === 'copy') {
-        setOperationDimEdit(null)
-        canvasRef.current?.focus({ preventScroll: true })
-      }
-      return
-    }
-
-    if (event.key === 'Tab' && pendingTransform?.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
-      event.preventDefault()
-      const currentEdit = operationDimEditRef.current
-      if (!currentEdit) {
-        let factor = '1'
-        const previewPoint = pendingTransformPreviewPointRef.current?.point
-        if (previewPoint) {
-          factor = computeScaleFactorFromPreview(
-            pendingTransform.referenceStart,
-            pendingTransform.referenceEnd,
-            previewPoint,
-          )
-        }
-        setOperationDimEdit({ kind: 'scale', factor })
-      } else {
-        setOperationDimEdit(null)
-        canvasRef.current?.focus({ preventScroll: true })
-      }
-      return
-    }
-
-    if (event.key === 'Tab' && pendingTransform?.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
-      event.preventDefault()
-      const currentEdit = operationDimEditRef.current
-      if (!currentEdit) {
-        let angle = '0'
-        const previewPoint = pendingTransformPreviewPointRef.current?.point
-        if (previewPoint) {
-          angle = computeRotateDegreesFromPreview(
-            pendingTransform.referenceStart,
-            pendingTransform.referenceEnd,
-            previewPoint,
-          )
-        }
-        setOperationDimEdit({ kind: 'rotate', angle })
-      } else if (currentEdit.kind === 'rotate') {
-        setOperationDimEdit(null)
-        canvasRef.current?.focus({ preventScroll: true })
-      }
-      return
-    }
-
-    if (event.key === 'Tab' && pendingOffset) {
-      event.preventDefault()
-      const currentEdit = operationDimEditRef.current
-      if (!currentEdit) {
-        const units = project.meta.units
-        let distance = '0'
-        const rawOffsetPoint = pendingOffsetRawPreviewPointRef.current?.point
-        const snappedOffsetPoint = pendingOffsetPreviewPointRef.current?.point
-        if (rawOffsetPoint && snappedOffsetPoint) {
-          const canvas = canvasRef.current
-          if (canvas) {
-            const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-            const sourceFeatures = pendingOffset.entityIds
-              .map((id) => project.features.find((f) => f.id === id) ?? null)
-              .filter((f): f is SketchFeature => f !== null)
-              .filter((f) => f.sketch.profile.closed)
-            const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
-            if (previewInput) {
-              distance = formatLength(previewInput.signedDistance, units)
-            }
-          }
-        }
-        setOperationDimEdit({ kind: 'offset', distance })
-      } else {
-        setOperationDimEdit(null)
-        canvasRef.current?.focus({ preventScroll: true })
-      }
-      return
-    }
-
-    if (
-      event.key === 'Tab'
-      && selection.mode === 'sketch_edit'
-      && !pendingAdd
-      && pendingSketchFilletRef.current
-      && sketchEditPreviewRef.current
-    ) {
-      event.preventDefault()
-      const units = projectRef.current.meta.units
-      const featureId = selection.selectedFeatureId
-      const feature = featureId ? projectRef.current.features.find((f) => f.id === featureId) ?? null : null
-      if (!feature) return
-      const current = filletDimensionEditRef.current
-      if (!current) {
-        const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
-        setFilletDimensionEdit({
-          anchorIndex: pendingSketchFilletRef.current.anchorIndex,
-          corner: pendingSketchFilletRef.current.corner,
-          radius: radius ? formatLength(radius, units) : '',
-        })
-      } else {
-        setFilletDimensionEdit(null)
-        canvasRef.current?.focus({ preventScroll: true })
-      }
-      return
-    }
-
-    if (event.key === 'Tab' && selection.mode === 'sketch_edit' && !pendingAdd) {
-      event.preventDefault()
-      const currentEdit = dimensionEditRef.current
-      const units = projectRef.current.meta.units
-
-      if (currentEdit && dimensionEditControlRef.current) {
-        advanceTabInEditMode()
-        return
-      }
-
-      const featureId = selection.selectedFeatureId
-      if (!featureId) return
-      const feature = projectRef.current.features.find((f) => f.id === featureId)
-      if (!feature) return
-
-      const profile = feature.sketch.profile
-      const control = selection.activeControl ?? hoveredEditControlRef.current
-      const steps = computeEditStepsForControl(profile, control)
-
-      if (steps.length === 0) return
-
-      editDimStepsRef.current = steps
-      editDimStepIndexRef.current = 0
-      dimensionEditFeatureIdRef.current = featureId
-      beginHistoryTransaction()
-      applyEditDimStep(0, steps, featureId, units)
-      return
-    }
-
-    if (
-      event.key === 'Backspace'
-      && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
-      && !event.repeat
-    ) {
-      event.preventDefault()
-      undoPendingPolygonPoint()
-      return
-    }
-
-    if (
-      event.key === 'Enter'
-      && (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline')
-      && pendingAdd.points.length >= 2
-    ) {
-      if (creationTarget === 'region') {
-        return
-      }
-      completePendingOpenPath()
-      setPendingPreviewPointRef(null)
-      return
-    }
-
-    if (pendingAdd?.shape === 'composite') {
-      if (event.key === 'l' || event.key === 'L') {
-        setPendingCompositeMode('line')
-        return
-      }
-      if (event.key === 'a' || event.key === 'A') {
-        setPendingCompositeMode('arc')
-        return
-      }
-      if (event.key === 's' || event.key === 'S') {
-        setPendingCompositeMode('spline')
-        return
-      }
-      if (event.key === 'Backspace') {
-        if (event.repeat) {
-          return
-        }
-        event.preventDefault()
-        undoPendingCompositeStep()
-        return
-      }
-      if (event.key === 'Enter' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd) {
-        if (creationTarget === 'region') {
-          return
-        }
-        completePendingOpenComposite()
-        setPendingPreviewPointRef(null)
-        return
-      }
-    }
-
-    if (event.key === 'Escape' && pendingAdd) {
-      originPreviewPointRef.current = null
-      cancelPendingAdd()
-      setPendingPreviewPointRef(null)
-      setDimensionEdit(null)
-      return
-    }
-
-    if (event.key === 'Escape' && pendingMove) {
-      cancelPendingMove()
-      setPendingMovePreviewPointRef(null)
-      setCopyCountDraft('1')
-      setOperationDimEdit(null)
-      return
-    }
-
-    if (event.key === 'Escape' && pendingTransform) {
-      cancelPendingTransform()
-      setPendingTransformPreviewPointRef(null)
-      setPendingRotateCopyPoint(null)
-      setRotateCopyCountDraft('1')
-      setOperationDimEdit(null)
-      return
-    }
-
-    if (event.key === 'Escape' && pendingOffset) {
-      cancelPendingOffset()
-      setPendingOffsetPreviewPointRef(null)
-      setPendingOffsetRawPreviewPointRef(null)
-      setOperationDimEdit(null)
-      return
-    }
-
-    if (event.key === 'Tab' && pendingShapeAction?.kind === 'cut' && pendingShapeAction.phase === 'cutters' && pendingShapeAction.cutterIds.length > 0) {
-      event.preventDefault()
-      confirmCutCutters()
-      return
-    }
-
-    if (event.key === 'Escape' && pendingShapeAction) {
-      cancelPendingShapeAction()
-      return
-    }
-
-    if (
-      event.key === 'Enter'
-      && pendingMove?.mode === 'copy'
-      && pendingMove.fromPoint
-      && pendingMove.toPoint
-    ) {
-      const nextCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
-      completePendingMove(pendingMove.toPoint, nextCount)
-      setPendingMovePreviewPointRef(null)
-      setCopyCountDraft('1')
-      return
-    }
-
-    if (event.key === 'Enter' && pendingShapeAction) {
-      completePendingShapeAction()
-      return
-    }
-
-    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
-      const featureId = selection.selectedFeatureId
-      const typedRadius = parseLengthInput(filletDimensionEditRef.current.radius, project.meta.units)
-      if (featureId && typedRadius !== null && typedRadius > 0) {
-        filletFeaturePoint(featureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
-      }
-      pendingSketchFilletRef.current = null
-      sketchEditPreviewRef.current = null
-      setFilletDimensionEdit(null)
-      scheduleDraw()
-      return
-    }
-
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && filletDimensionEditRef.current && pendingSketchFilletRef.current) {
-      pendingSketchFilletRef.current = null
-      sketchEditPreviewRef.current = null
-      setFilletDimensionEdit(null)
-      scheduleDraw()
-      return
-    }
-
-    if (event.key === 'Enter' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
-      commitEditDimension()
-      return
-    }
-
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit' && dimensionEditRef.current && dimensionEditControlRef.current) {
-      cancelEditDimension()
-      return
-    }
-
-    if (pendingConstraintRef.current) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        cancelPendingConstraint()
-        setConstraintDistanceInput(null)
-        canvasRef.current?.focus({ preventScroll: true })
-        return
-      }
-      if (event.key === 'Enter' && pendingConstraintRef.current.reference && constraintDistanceInput != null) {
-        event.preventDefault()
-        const parsed = parseLengthInput(constraintDistanceInput, project.meta.units)
-        if (parsed != null && parsed >= 0) {
-          commitConstraintDistance(parsed)
-          setConstraintDistanceInput(null)
-          canvasRef.current?.focus({ preventScroll: true })
-        }
-        return
-      }
-      return
-    }
-
-    if (
-      event.key === 'c'
-      && !event.metaKey
-      && !event.ctrlKey
-      && !event.altKey
-      && selection.mode === 'sketch_edit'
-      && selection.selectedNode?.type === 'feature'
-      && selection.selectedFeatureId
-      && !selection.sketchEditTool
-      && !dimensionEditRef.current
-      && !filletDimensionEditRef.current
-    ) {
-      event.preventDefault()
-      beginConstraint(selection.selectedFeatureId)
-      return
-    }
-
-    if (event.key === 'Enter' && selection.mode === 'sketch_edit') {
-      stopNodeDrag()
-      resetLock()
-      applySketchEdit()
-      return
-    }
-
-    if (event.key === 'Escape' && selection.mode === 'sketch_edit') {
-      stopNodeDrag()
-      resetLock()
-      cancelSketchEdit()
-    }
-  }
+  const clickPlacement = useClickPlacement({
+    suppressClickRef,
+    didPanRef,
+    isDraggingNodeRef,
+    zoomWindowActive,
+    multiSelectMode,
+    selectionRef,
+    projectRef,
+    pendingAddRef,
+    pendingMoveRef,
+    pendingTransformRef,
+    pendingOffsetRef,
+    pendingShapeActionRef,
+    viewStateRef,
+    pendingConstraintRef,
+    pendingDimensionRef,
+    dimensionDeleteArmedRef,
+    deleteHoverDimIdRef,
+    selectedAnnotationIdRef,
+    pendingSketchExtensionRef,
+    pendingSketchFilletRef,
+    sketchEditPreviewRef,
+    originPreviewPointRef,
+    tapeMeasureRef,
+    constraintLabelRectsRef,
+    canvasRef,
+    snap,
+    dimEdit,
+    move,
+    transformExact,
+    fillet,
+    constraint,
+    canvasCoordinates: gestures.canvasCoordinates,
+    editableFeature,
+    endpointFromSketchExtension,
+    findOpenEndpointHit,
+    findSketchSegmentHit,
+    hitEditableControl,
+    scheduleDraw,
+    applyLock,
+    setPendingPreviewPointRef,
+    setPendingMovePreviewPointRef,
+    setPendingTransformPreviewPointRef,
+    setPendingOffsetPreviewPointRef,
+    setPendingOffsetRawPreviewPointRef,
+    tapeMeasureClick,
+    cancelPendingDimension,
+    addDimensionAnnotation,
+    pendingDimensionPick,
+    deleteDimensionAnnotation,
+    selectAnnotation,
+    selectFeature,
+    selectTab,
+    selectClamp,
+    selectBackdrop,
+    setConstraintAnchor,
+    setConstraintReference,
+    insertFeaturePoint,
+    joinOpenFeatureEndpoints,
+    deleteFeaturePoint,
+    deleteFeatureSegment,
+    disconnectFeaturePoint,
+    filletFeaturePoint,
+    setPendingAddAnchor,
+    placePendingAddAt,
+    placePendingTextAt,
+    placeOriginAt,
+    addPendingPolygonPoint,
+    completePendingPolygon,
+    addPendingCompositePoint,
+    completePendingComposite,
+    setPendingMoveFrom,
+    setPendingTransformReferenceStart,
+    setPendingTransformReferenceEnd,
+    completePendingTransform,
+    completePendingOffset,
+    cancelPendingOffset,
+    beginHistoryTransaction,
+  })
 
   const editingFeature =
     selection.mode === 'sketch_edit' && selection.selectedFeatureId
@@ -4919,14 +2616,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       <canvas
         ref={canvasRef}
         className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction ? 'sketch-canvas--placing' : ''}`}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        onKeyDown={handleKeyDown}
-        onContextMenu={handleContextMenu}
+        onPointerDown={gestures.handlePointerDown}
+        onPointerUp={gestures.handlePointerUp}
+        onPointerCancel={gestures.handlePointerUp}
+        onPointerLeave={gestures.handlePointerLeave}
+        onClick={clickPlacement.handleClick}
+        onDoubleClick={gestures.handleDoubleClick}
+        onKeyDown={keyboard.handleKeyDown}
+        onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
       />
       {!depthLegendCollapsed ? (
@@ -4978,199 +2675,96 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
         />
       )}
-      {dimensionEdit && selection.mode === 'sketch_edit' && !pendingAdd && (() => {
-        const canvas = canvasRef.current
-        if (!canvas) return null
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const featureId = selection.selectedFeatureId
-        if (!featureId) return null
-
-        function makeEditInputKeyDown() {
-          return (e: KeyboardEvent<HTMLInputElement>) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              commitEditDimension()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              cancelEditDimension()
-            } else if (e.key === 'Tab') {
-              e.preventDefault()
-              advanceTabInEditMode()
-            }
-          }
-        }
-
-        const handleLiveChange = handleEditDimLiveChange
-
-        // Arc radius step
-        if (dimensionEdit.shape === 'circle') {
-          const anchorC = worldToCanvas(dimensionEdit.anchor, vt)
-          return (
+      {constraint.constraintEdit && (
+        <CanvasWorkflowPanel
+          title="Edit Constraint"
+          step="Set distance"
+          position={constraint.constraintEditWorkflowPanel.position}
+          panelRef={constraint.constraintEditWorkflowPanel.panelRef}
+          handleProps={constraint.constraintEditWorkflowPanel.handleProps}
+          actionRowProps={constraint.constraintEditWorkflowPanel.actionRowProps}
+          className="canvas-workflow-panel--constraint-edit"
+          moveLabel="Move constraint edit controls"
+          actions={(
+            <>
+              <button
+                type="button"
+                className="tablet-cmd-btn tablet-cmd-btn--confirm"
+                onClick={constraint.commitConstraintEditFromPanel}
+              >Apply</button>
+              <button
+                type="button"
+                className="tablet-cmd-btn tablet-cmd-btn--cancel"
+                onClick={constraint.cancelConstraintEditFromPanel}
+              >Cancel</button>
+            </>
+          )}
+        >
+          <label className="canvas-workflow-panel__field">
+            <span>Distance</span>
             <input
-              key="edit-radius"
-              ref={radiusInputRef}
-              className="sketch-dim-input"
-              style={{ left: anchorC.cx, top: anchorC.cy, transform: 'translate(-50%, -50%)' }}
-              value={dimensionEdit.radius}
-              onChange={(e) => handleLiveChange('radius', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
+              key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
+              ref={constraint.constraintEditInputRef}
+              className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+              type="text"
+              inputMode="decimal"
+              value={constraint.constraintEdit.value}
+              onChange={(e) => constraint.setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
               onFocus={(e) => e.currentTarget.select()}
-            />
-          )
-        }
-
-        // Endpoint (length + angle) step
-        const previewPt = computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
-        const fromC = worldToCanvas(dimensionEdit.anchor, vt)
-        const toC = worldToCanvas(previewPt, vt)
-        const layout = computeLinearInputLabel(fromC, toC, 14, 40)
-        const angleLabelX = layout.midX + layout.perpX * 36
-        const angleLabelY = layout.midY + layout.perpY * 36
-        return (
-          <>
-            <input
-              key="edit-length"
-              ref={widthInputRef}
-              className="sketch-dim-input"
-              style={{ left: layout.labelX, top: layout.labelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimensionEdit.length}
-              onChange={(e) => handleLiveChange('length', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <input
-              key="edit-angle"
-              ref={heightInputRef}
-              className="sketch-dim-input"
-              style={{ left: angleLabelX, top: angleLabelY, transform: `translate(-50%, -50%) rotate(${layout.angle}rad)` }}
-              value={dimensionEdit.angle}
-              onChange={(e) => handleLiveChange('angle', e.target.value)}
-              onKeyDown={makeEditInputKeyDown()}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          </>
-        )
-      })()}
-      {filletDimensionEdit && selection.mode === 'sketch_edit' && (() => {
-        const canvas = canvasRef.current
-        if (!canvas) return null
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-        const cornerC = worldToCanvas(filletDimensionEdit.corner, vt)
-        return (
-          <input
-            key="fillet-radius"
-            ref={filletRadiusInputRef}
-            className="sketch-dim-input"
-            style={{ left: cornerC.cx, top: cornerC.cy, transform: 'translate(-50%, -50%)' }}
-            value={filletDimensionEdit.radius}
-            onChange={(e) => {
-              const value = e.target.value
-              setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: value } : null))
-              scheduleDraw()
-            }}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                const current = filletDimensionEditRef.current
-                const featureId = selectionRef.current.selectedFeatureId
-                if (!current || !featureId) return
-                const typedRadius = parseLengthInput(current.radius, projectRef.current.meta.units)
-                if (typedRadius !== null && typedRadius > 0) {
-                  filletFeaturePoint(featureId, current.anchorIndex, typedRadius)
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  constraint.commitConstraintEditFromPanel()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  constraint.cancelConstraintEditFromPanel()
                 }
-                pendingSketchFilletRef.current = null
-                sketchEditPreviewRef.current = null
-                setFilletDimensionEdit(null)
-                canvasRef.current?.focus({ preventScroll: true })
-                scheduleDraw()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                pendingSketchFilletRef.current = null
-                sketchEditPreviewRef.current = null
-                setFilletDimensionEdit(null)
-                canvasRef.current?.focus({ preventScroll: true })
-                scheduleDraw()
-              } else if (e.key === 'Tab') {
-                e.preventDefault()
-                setFilletDimensionEdit(null)
-                canvasRef.current?.focus({ preventScroll: true })
-              }
-            }}
-            onFocus={(e) => e.currentTarget.select()}
-          />
-        )
-      })()}
-      {constraintEdit && (
-        <input
-          key={`constraint-edit-${constraintEdit.constraintId}`}
-          ref={constraintEditInputRef}
-          className="sketch-dim-input"
-          style={{ left: constraintEdit.cx, top: constraintEdit.cy, transform: 'translate(-50%, -50%)' }}
-          value={constraintEdit.value}
-          onChange={(e) => setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              const edit = constraintEditRef.current
-              if (!edit) return
-              const parsed = parseLengthInput(edit.value, project.meta.units)
-              if (parsed != null && parsed >= 0) {
-                updateConstraintValue(edit.featureId, edit.constraintId, parsed)
-              }
-              setConstraintEdit(null)
-              canvasRef.current?.focus({ preventScroll: true })
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              setConstraintEdit(null)
-              canvasRef.current?.focus({ preventScroll: true })
-            }
-          }}
-          onBlur={() => setConstraintEdit(null)}
-          onFocus={(e) => e.currentTarget.select()}
-        />
+              }}
+              autoFocus
+            />
+          </label>
+        </CanvasWorkflowPanel>
       )}
       {pendingOffset && (
         <CanvasWorkflowPanel
           title="Offset"
-          step={offsetDistanceEditActive ? 'Set distance' : 'Preview distance'}
-          position={offsetWorkflowPanel.position}
-          panelRef={offsetWorkflowPanel.panelRef}
-          handleProps={offsetWorkflowPanel.handleProps}
-          actionRowProps={offsetWorkflowPanel.actionRowProps}
+          step={offset.offsetDistanceEditActive ? 'Set distance' : 'Preview distance'}
+          position={offset.offsetWorkflowPanel.position}
+          panelRef={offset.offsetWorkflowPanel.panelRef}
+          handleProps={offset.offsetWorkflowPanel.handleProps}
+          actionRowProps={offset.offsetWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--offset"
           moveLabel="Move offset controls"
           actions={(
             <>
-              {offsetDistanceEditActive ? (
+              {offset.offsetDistanceEditActive ? (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitOffsetDistanceEditFromPanel}
+                  onClick={offset.commitOffsetDistanceEditFromPanel}
                 >Confirm</button>
               ) : (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromOffsetPanel}
+                  onClick={offset.triggerDimensionFromOffsetPanel}
                 >Distance</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelOffsetFromPanel}
+                onClick={offset.cancelOffsetFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {offsetDistanceEditActive && operationDimEdit?.kind === 'offset' ? (
+          {offset.offsetDistanceEditActive && operationDimEdit?.kind === 'offset' ? (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input"
                   type="text"
                   inputMode="decimal"
@@ -5181,10 +2775,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitOffsetDistanceEditFromPanel()
+                      offset.commitOffsetDistanceEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelOffsetFromPanel()
+                      offset.cancelOffsetFromPanel()
                     }
                   }}
                   autoFocus
@@ -5303,185 +2897,185 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </div>
         </CanvasWorkflowPanel>
       )}
-      {creationPanelShape && pendingAdd && (
+      {creation.creationPanelShape && pendingAdd && (
         <CanvasWorkflowPanel
           title={
-            creationPanelShape === 'rect' ? 'Rectangle'
-            : creationPanelShape === 'circle' ? 'Circle'
-            : creationPanelShape === 'ellipse' ? 'Ellipse'
-            : creationPanelShape === 'tab' ? 'Tab'
-            : creationPanelShape === 'clamp' ? 'Clamp'
-            : creationPanelShape === 'polygon' ? 'Polygon'
-            : creationPanelShape === 'spline' ? 'Spline'
+            creation.creationPanelShape === 'rect' ? 'Rectangle'
+            : creation.creationPanelShape === 'circle' ? 'Circle'
+            : creation.creationPanelShape === 'ellipse' ? 'Ellipse'
+            : creation.creationPanelShape === 'tab' ? 'Tab'
+            : creation.creationPanelShape === 'clamp' ? 'Clamp'
+            : creation.creationPanelShape === 'polygon' ? 'Polygon'
+            : creation.creationPanelShape === 'spline' ? 'Spline'
             : 'Composite'
           }
           step={
-            creationDimEditActive ? 'Enter dimensions'
-            : creationPanelShape === 'composite'
+            creation.creationDimEditActive ? 'Enter dimensions'
+            : creation.creationPanelShape === 'composite'
               ? (pendingAdd.shape === 'composite' && pendingAdd.start
                 ? (pendingAdd.currentMode === 'arc' && pendingAdd.pendingArcEnd
                   ? 'Click arc curvature point'
                   : `Add ${pendingAdd.currentMode} points`)
                 : 'Click first point')
-            : (creationPanelShape === 'polygon' || creationPanelShape === 'spline')
-              ? (creationPanelHasPoints
+            : (creation.creationPanelShape === 'polygon' || creation.creationPanelShape === 'spline')
+              ? (creation.creationPanelHasPoints
                 ? ('points' in pendingAdd && pendingAdd.points.length < 2
                   ? 'Add one more point'
                   : 'Add points or close')
                 : 'Click first point')
-            : creationPanelHasAnchor
-              ? (creationPanelShape === 'circle'
+            : creation.creationPanelHasAnchor
+              ? (creation.creationPanelShape === 'circle'
                 ? 'Click to set radius or enter dimensions'
-                : creationPanelShape === 'ellipse'
+                : creation.creationPanelShape === 'ellipse'
                   ? 'Click to set radii or enter dimensions'
                   : 'Click opposite corner or enter dimensions')
-              : (creationPanelShape === 'circle' || creationPanelShape === 'ellipse')
+              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse')
                 ? 'Click center point'
                 : 'Click first corner'
           }
-          position={creationWorkflowPanel.position}
-          panelRef={creationWorkflowPanel.panelRef}
-          handleProps={creationWorkflowPanel.handleProps}
-          actionRowProps={creationWorkflowPanel.actionRowProps}
+          position={creation.creationWorkflowPanel.position}
+          panelRef={creation.creationWorkflowPanel.panelRef}
+          handleProps={creation.creationWorkflowPanel.handleProps}
+          actionRowProps={creation.creationWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--creation"
           moveLabel="Move creation controls"
           actions={(
             <>
-              {creationDimEditActive && (
+              {creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitCreationDimensionEdit}
+                  onClick={creation.commitCreationDimensionEdit}
                 >Confirm</button>
               )}
-              {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creationDimEditActive && (
+              {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={finishOpenPathFromPanel}
+                  onClick={creation.finishOpenPathFromPanel}
                 >Finish</button>
               )}
-              {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creationDimEditActive && (
+              {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={finishOpenCompositeFromPanel}
+                  onClick={creation.finishOpenCompositeFromPanel}
                 >Finish</button>
               )}
-              {creationCanDimEdit && !creationDimEditActive && (
+              {creation.creationCanDimEdit && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromCreationPanel}
+                  onClick={creation.triggerDimensionFromCreationPanel}
                 >Dimensions</button>
               )}
-              {(creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creationDimEditActive && (
+              {(creation.creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={undoFromCreationPanel}
+                  onClick={creation.undoFromCreationPanel}
                 >Undo</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelCreationFromPanel}
+                onClick={creation.cancelCreationFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed && !creationDimEditActive && (
+          {pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed && !creation.creationDimEditActive && (
             <div className="canvas-workflow-panel__meta canvas-workflow-panel__mode-row">
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'line' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('line')}
+                onClick={() => creation.setCompositeModeFromPanel('line')}
               >Line</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'arc' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('arc')}
+                onClick={() => creation.setCompositeModeFromPanel('arc')}
               >Arc</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'spline' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => setCompositeModeFromPanel('spline')}
+                onClick={() => creation.setCompositeModeFromPanel('spline')}
               >Spline</button>
             </div>
           )}
-          {creationDimEditActive && dimensionEdit && (
+          {creation.creationDimEditActive && dimEdit.dimensionEdit && (
             <div className="canvas-workflow-panel__meta">
-              {dimensionEdit.shape === 'circle' ? (
+              {dimEdit.dimensionEdit.shape === 'circle' ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
                   <input
-                    ref={radiusInputRef}
+                    ref={dimEdit.radiusInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.radius}
-                    onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        commitCreationDimensionEdit()
+                        creation.commitCreationDimensionEdit()
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
-                        cancelCreationDimensionEdit()
+                        creation.cancelCreationDimensionEdit()
                       }
                     }}
                     autoFocus
                   />
                 </label>
-              ) : (dimensionEdit.shape === 'composite' && dimensionEdit.arcStart && dimensionEdit.arcEnd) ? (
+              ) : (dimEdit.dimensionEdit.shape === 'composite' && dimEdit.dimensionEdit.arcStart && dimEdit.dimensionEdit.arcEnd) ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
                   <input
-                    ref={radiusInputRef}
+                    ref={dimEdit.radiusInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.radius}
-                    onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        commitCreationDimensionEdit()
+                        creation.commitCreationDimensionEdit()
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
-                        cancelCreationDimensionEdit()
+                        creation.cancelCreationDimensionEdit()
                       }
                     }}
                     autoFocus
                   />
                 </label>
-              ) : (dimensionEdit.shape === 'polygon' || dimensionEdit.shape === 'spline' || dimensionEdit.shape === 'composite') ? (
+              ) : (dimEdit.dimensionEdit.shape === 'polygon' || dimEdit.dimensionEdit.shape === 'spline' || dimEdit.dimensionEdit.shape === 'composite') ? (
                 <>
                   <label className="canvas-workflow-panel__field">
                     <span>Length</span>
                     <input
-                      ref={widthInputRef}
+                      ref={dimEdit.widthInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.length}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.length}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          heightInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       autoFocus
@@ -5490,27 +3084,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Angle</span>
                     <input
-                      ref={heightInputRef}
+                      ref={dimEdit.heightInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.angle}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.angle}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
                           if (pendingAdd?.shape === 'composite' && pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd) {
-                            radiusInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.radiusInputRef.current?.focus({ preventScroll: true })
                           } else {
-                            widthInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                           }
                         }
                       }}
@@ -5520,24 +3114,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     <label className="canvas-workflow-panel__field">
                       <span>Radius</span>
                       <input
-                        ref={radiusInputRef}
+                        ref={dimEdit.radiusInputRef}
                         className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                         type="text"
                         inputMode="decimal"
-                        value={dimensionEdit.radius}
-                        onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                        value={dimEdit.dimensionEdit.radius}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
                         onFocus={(e) => e.currentTarget.select()}
                         onKeyDown={(e) => {
                           e.stopPropagation()
                           if (e.key === 'Enter') {
                             e.preventDefault()
-                            commitCreationDimensionEdit()
+                            creation.commitCreationDimensionEdit()
                           } else if (e.key === 'Escape') {
                             e.preventDefault()
-                            cancelCreationDimensionEdit()
+                            creation.cancelCreationDimensionEdit()
                           } else if (e.key === 'Tab') {
                             e.preventDefault()
-                            widthInputRef.current?.focus({ preventScroll: true })
+                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                           }
                         }}
                       />
@@ -5549,24 +3143,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Width</span>
                     <input
-                      ref={widthInputRef}
+                      ref={dimEdit.widthInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.width}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.width}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          heightInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       autoFocus
@@ -5575,24 +3169,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   <label className="canvas-workflow-panel__field">
                     <span>Height</span>
                     <input
-                      ref={heightInputRef}
+                      ref={dimEdit.heightInputRef}
                       className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                       type="text"
                       inputMode="decimal"
-                      value={dimensionEdit.height}
-                      onChange={(e) => setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
+                      value={dimEdit.dimensionEdit.height}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
                       onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         e.stopPropagation()
                         if (e.key === 'Enter') {
                           e.preventDefault()
-                          commitCreationDimensionEdit()
+                          creation.commitCreationDimensionEdit()
                         } else if (e.key === 'Escape') {
                           e.preventDefault()
-                          cancelCreationDimensionEdit()
+                          creation.cancelCreationDimensionEdit()
                         } else if (e.key === 'Tab') {
                           e.preventDefault()
-                          widthInputRef.current?.focus({ preventScroll: true })
+                          dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                         }
                       }}
                     />
@@ -5609,7 +3203,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           ) : null}
         </CanvasWorkflowPanel>
       )}
-      {placementPanelActive && (
+      {creation.placementPanelActive && (
         <CanvasWorkflowPanel
           title={pendingAdd!.shape === 'origin' ? 'Place Origin' : 'Place Text'}
           step={
@@ -5617,9 +3211,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.'
               : 'Tap the sketch to place the text.'
           }
-          position={placementWorkflowPanel.position}
-          panelRef={placementWorkflowPanel.panelRef}
-          handleProps={placementWorkflowPanel.handleProps}
+          position={creation.placementWorkflowPanel.position}
+          panelRef={creation.placementWorkflowPanel.panelRef}
+          handleProps={creation.placementWorkflowPanel.handleProps}
           actions={
             <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelPendingAdd}>Cancel</button>
           }
@@ -5637,37 +3231,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 ? 'Pick reference point'
                 : 'Set distance'
           }
-          position={constraintWorkflowPanel.position}
-          panelRef={constraintWorkflowPanel.panelRef}
-          handleProps={constraintWorkflowPanel.handleProps}
-          actions={constraintDistanceReady ? (
+          position={constraint.constraintWorkflowPanel.position}
+          panelRef={constraint.constraintWorkflowPanel.panelRef}
+          handleProps={constraint.constraintWorkflowPanel.handleProps}
+          actions={constraint.constraintDistanceReady ? (
             <>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitConstraintFromPanel}>Confirm</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelConstraintFromPanel}>Cancel</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={constraint.commitConstraintFromPanel}>Confirm</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>Cancel</button>
             </>
           ) : (
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelConstraintFromPanel}>Cancel</button>
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>Cancel</button>
           )}
         >
-          {constraintDistanceReady && constraintDistanceInput != null && (
+          {constraint.constraintDistanceReady && constraint.constraintDistanceInput != null && (
             <label className="canvas-workflow-panel__field">
               <span>Distance</span>
               <input
-                ref={constraintDistanceInputRef}
+                ref={constraint.constraintDistanceInputRef}
                 className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                 type="text"
                 inputMode="decimal"
-                value={constraintDistanceInput}
-                onChange={(e) => setConstraintDistanceInput(e.target.value)}
+                value={constraint.constraintDistanceInput}
+                onChange={(e) => constraint.setConstraintDistanceInput(e.target.value)}
                 onFocus={(e) => e.currentTarget.select()}
                 onKeyDown={(e) => {
                   e.stopPropagation()
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    commitConstraintFromPanel()
+                    constraint.commitConstraintFromPanel()
                   } else if (e.key === 'Escape') {
                     e.preventDefault()
-                    cancelConstraintFromPanel()
+                    constraint.cancelConstraintFromPanel()
                   }
                 }}
                 autoFocus
@@ -5685,7 +3279,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingMove && (
         <CanvasWorkflowPanel
           title={pendingMove.mode === 'copy' ? 'Copy' : 'Move'}
-          step={moveDistanceEditActive
+          step={move.moveDistanceEditActive
             ? 'Set distance'
             : !pendingMove.fromPoint
               ? 'Select from point'
@@ -5694,22 +3288,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 : pendingMove.mode === 'copy'
                   ? 'Set copy count'
                   : undefined}
-          position={moveWorkflowPanel.position}
-          panelRef={moveWorkflowPanel.panelRef}
-          handleProps={moveWorkflowPanel.handleProps}
-          actionRowProps={moveWorkflowPanel.actionRowProps}
+          position={move.moveWorkflowPanel.position}
+          panelRef={move.moveWorkflowPanel.panelRef}
+          handleProps={move.moveWorkflowPanel.handleProps}
+          actionRowProps={move.moveWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--move"
           moveLabel={`Move ${pendingMove.mode} controls`}
           actions={(
             <>
-              {moveDistanceEditActive && (
+              {move.moveDistanceEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitMoveDistanceEditFromPanel}
+                  onClick={move.commitMoveDistanceEditFromPanel}
                 >Confirm</button>
               )}
-              {!moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
+              {!move.moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
@@ -5718,14 +3312,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     completePendingMove(pendingMove.toPoint!, n)
                     setPendingMovePreviewPointRef(null)
                     setCopyCountDraft('1')
-                    moveWorkflowPanel.focusCanvasAfterAction()
+                    move.moveWorkflowPanel.focusCanvasAfterAction()
                   }}
                 >Confirm</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelMoveFromPanel}
+                onClick={move.cancelMoveFromPanel}
               >Cancel</button>
             </>
           )}
@@ -5735,12 +3329,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               Select a target point to set the direction and default distance.
             </div>
           )}
-          {moveDistanceEditActive && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy') && (
+          {move.moveDistanceEditActive && (operationDimEdit?.kind === 'move' || operationDimEdit?.kind === 'copy') && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Distance</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                   type="text"
                   inputMode="decimal"
@@ -5751,10 +3345,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitMoveDistanceEditFromPanel()
+                      move.commitMoveDistanceEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelMoveFromPanel()
+                      move.cancelMoveFromPanel()
                     }
                   }}
                   autoFocus
@@ -5762,7 +3356,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               </label>
             </div>
           )}
-          {!moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
+          {!move.moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>Copies</span>
@@ -5781,10 +3375,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       completePendingMove(pendingMove.toPoint!, nextCount)
                       setPendingMovePreviewPointRef(null)
                       setCopyCountDraft('1')
-                      moveWorkflowPanel.focusCanvasAfterAction()
+                      move.moveWorkflowPanel.focusCanvasAfterAction()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelMoveFromPanel()
+                      move.cancelMoveFromPanel()
                     }
                   }}
                   autoFocus
@@ -5797,9 +3391,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       {pendingTransform && (
         <CanvasWorkflowPanel
           title={pendingTransform.mode === 'resize' ? 'Resize' : pendingTransform.mode === 'mirror' ? 'Mirror' : 'Rotate'}
-          step={transformExactEditActive
-            ? transformScaleEditActive ? 'Set scale' : 'Set angle'
-            : rotateCopyCountPromptActive
+          step={transformExact.transformExactEditActive
+            ? transformExact.transformScaleEditActive ? 'Set scale' : 'Set angle'
+            : transformExact.rotateCopyCountPromptActive
             ? 'Set copy count'
             : pendingTransform.mode === 'resize'
               ? !pendingTransform.referenceStart
@@ -5816,58 +3410,51 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   : !pendingTransform.referenceEnd
                     ? 'Select reference direction'
                     : 'Rotate to commit'}
-          position={transformWorkflowPanel.position}
-          panelRef={transformWorkflowPanel.panelRef}
-          handleProps={transformWorkflowPanel.handleProps}
-          actionRowProps={transformWorkflowPanel.actionRowProps}
+          position={transformExact.transformWorkflowPanel.position}
+          panelRef={transformExact.transformWorkflowPanel.panelRef}
+          handleProps={transformExact.transformWorkflowPanel.handleProps}
+          actionRowProps={transformExact.transformWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--transform"
           moveLabel={`Move ${pendingTransform.mode} controls`}
           actions={(
             <>
-              {transformExactEditActive && (
+              {transformExact.transformExactEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={commitTransformExactEditFromPanel}
+                  onClick={transformExact.commitTransformExactEditFromPanel}
                 >Confirm</button>
               )}
-              {!transformExactEditActive && !rotateCopyCountPromptActive
+              {!transformExact.transformExactEditActive && !transformExact.rotateCopyCountPromptActive
                 && ((pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
                   || (pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)) && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
-                  onClick={triggerDimensionFromTransformPanel}
+                  onClick={transformExact.triggerDimensionFromTransformPanel}
                 >{pendingTransform.mode === 'resize' ? 'Scale' : 'Angle'}</button>
               )}
-              {!transformExactEditActive && rotateCopyCountPromptActive && (
+              {!transformExact.transformExactEditActive && transformExact.rotateCopyCountPromptActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={() => {
-                    const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1))
-                    completePendingTransform(pendingRotateCopyPoint!, n)
-                    setPendingTransformPreviewPointRef(null)
-                    setPendingRotateCopyPoint(null)
-                    setRotateCopyCountDraft('1')
-                    transformWorkflowPanel.focusCanvasAfterAction()
-                  }}
+                  onClick={transformExact.commitRotateCopyFromPanel}
                 >Confirm</button>
               )}
               <button
                 type="button"
                 className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelTransformFromPanel}
+                onClick={transformExact.cancelTransformFromPanel}
               >Cancel</button>
             </>
           )}
         >
-          {transformExactEditActive && (operationDimEdit?.kind === 'scale' || operationDimEdit?.kind === 'rotate') ? (
+          {transformExact.transformExactEditActive && (operationDimEdit?.kind === 'scale' || operationDimEdit?.kind === 'rotate') ? (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
                 <span>{operationDimEdit.kind === 'scale' ? 'Scale' : 'Angle'}</span>
                 <input
-                  ref={widthInputRef}
+                  ref={dimEdit.widthInputRef}
                   className="canvas-workflow-panel__count-input"
                   type="text"
                   inputMode="decimal"
@@ -5884,41 +3471,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      commitTransformExactEditFromPanel()
+                      transformExact.commitTransformExactEditFromPanel()
                     } else if (event.key === 'Escape') {
                       event.preventDefault()
-                      cancelTransformFromPanel()
+                      transformExact.cancelTransformFromPanel()
                     }
                   }}
                   autoFocus
                 />
               </label>
             </div>
-          ) : rotateCopyCountPromptActive ? (
+          ) : transformExact.rotateCopyCountPromptActive ? (
             <>
               <div className="canvas-workflow-panel__meta">
                 <label className="canvas-workflow-panel__field">
                   <span>Copies</span>
                   <input
-                    ref={rotateCopyCountInputRef}
+                    ref={transformExact.rotateCopyCountInputRef}
                     className="canvas-workflow-panel__count-input"
                     type="text"
                     inputMode="numeric"
-                    value={rotateCopyCountDraft}
-                    onChange={(event) => setRotateCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
+                    value={transformExact.rotateCopyCountDraft}
+                    onChange={(event) => transformExact.setRotateCopyCountDraft(event.target.value.replace(/[^\d]/g, ''))}
                     onFocus={(event) => event.currentTarget.select()}
                     onKeyDown={(event) => {
                       event.stopPropagation()
                       if (event.key === 'Enter') {
-                        const n = Math.max(1, Math.floor(Number(rotateCopyCountDraft) || 1))
-                        completePendingTransform(pendingRotateCopyPoint!, n)
-                        setPendingTransformPreviewPointRef(null)
-                        setPendingRotateCopyPoint(null)
-                        setRotateCopyCountDraft('1')
-                        transformWorkflowPanel.focusCanvasAfterAction()
+                        transformExact.commitRotateCopyFromPanel()
                       } else if (event.key === 'Escape') {
                         event.preventDefault()
-                        cancelTransformFromPanel()
+                        transformExact.cancelTransformFromPanel()
                       }
                     }}
                     autoFocus
@@ -5950,7 +3532,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                       checked={pendingTransform.keepOriginals}
                       onChange={(event) => {
                         setPendingTransformKeepOriginals(event.target.checked)
-                        transformWorkflowPanel.focusCanvasAfterAction()
+                        transformExact.transformWorkflowPanel.focusCanvasAfterAction()
                       }}
                     />
                     <span>Keep originals</span>
@@ -6013,43 +3595,78 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         <CanvasWorkflowPanel
           title="Edit"
           step={
-            editDimEditActive ? 'Enter dimensions'
+            editFilletActive ? 'Enter radius'
+            : editDimEditActive ? 'Enter dimensions'
             : selection.sketchEditTool === 'add_point' ? 'Click to add points'
             : selection.sketchEditTool === 'delete_point' ? 'Click to delete points'
             : selection.sketchEditTool === 'delete_segment' ? 'Click to delete segments'
             : selection.sketchEditTool === 'disconnect' ? 'Click an anchor to split'
-            : selection.sketchEditTool === 'fillet' ? (pendingSketchFilletRef.current ? 'Click second point or enter radius' : 'Click a corner')
+            : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? 'Click second point or enter radius' : 'Click a corner')
             : 'Drag nodes or click segments'
           }
           position={editWorkflowPanel.position}
           panelRef={editWorkflowPanel.panelRef}
           handleProps={editWorkflowPanel.handleProps}
-          actions={editDimEditActive ? (
+          actions={editFilletActive ? (
+            <>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitFilletFromPanel}>Apply</button>
+              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelFilletFromPanel}>Cancel</button>
+            </>
+          ) : editDimEditActive ? (
             <>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitEditDimensionFromPanel}>Confirm</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditDimensionFromPanel}>Cancel</button>
             </>
           ) : (
             <>
-              {armedForDimension && (
-                <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); setArmedForDimension(false) }}>Dimension</button>
+              {dimEdit.armedForDimension && (
+                <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }}>Dimension</button>
+              )}
+              {fillet.filletCornerPicked && !editFilletActive && (
+                <button type="button" className="tablet-cmd-btn" onClick={() => fillet.enterFilletRadiusEdit()}>Radius</button>
               )}
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={applyEditFromPanel}>Apply</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditFromPanel}>Cancel</button>
             </>
           )}
         >
-          {editDimEditActive && dimensionEdit ? (
-            dimensionEdit.activeField === 'radius' ? (
+          {editFilletActive ? (
+            <label className="canvas-workflow-panel__field">
+              <span>Radius</span>
+              <input
+                ref={fillet.filletRadiusInputRef}
+                className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                type="text"
+                inputMode="decimal"
+                value={fillet.filletDimensionEdit?.radius ?? ''}
+                onChange={(e) => {
+                  fillet.setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: e.target.value } : null))
+                  scheduleDraw()
+                }}
+                onFocus={(e) => e.currentTarget.select()}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commitFilletFromPanel()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelFilletFromPanel()
+                  }
+                }}
+              />
+            </label>
+          ) : editDimEditActive && dimEdit.dimensionEdit ? (
+            dimEdit.dimensionEdit.activeField === 'radius' ? (
               <label className="canvas-workflow-panel__field">
                 <span>Radius</span>
                 <input
-                  ref={radiusInputRef}
+                  ref={dimEdit.radiusInputRef}
                   className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                   type="text"
                   inputMode="decimal"
-                  value={dimensionEdit.radius}
-                  onChange={(e) => handleEditDimLiveChange('radius', e.target.value)}
+                  value={dimEdit.dimensionEdit.radius}
+                  onChange={(e) => dimEdit.handleEditDimLiveChange('radius', e.target.value)}
                   onFocus={(e) => e.currentTarget.select()}
                   onKeyDown={(e) => {
                     e.stopPropagation()
@@ -6069,12 +3686,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 <label className="canvas-workflow-panel__field">
                   <span>Length</span>
                   <input
-                    ref={widthInputRef}
+                    ref={dimEdit.widthInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.length}
-                    onChange={(e) => handleEditDimLiveChange('length', e.target.value)}
+                    value={dimEdit.dimensionEdit.length}
+                    onChange={(e) => dimEdit.handleEditDimLiveChange('length', e.target.value)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -6086,7 +3703,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         cancelEditDimensionFromPanel()
                       } else if (e.key === 'Tab') {
                         e.preventDefault()
-                        heightInputRef.current?.focus({ preventScroll: true })
+                        dimEdit.heightInputRef.current?.focus({ preventScroll: true })
                       }
                     }}
                     autoFocus
@@ -6095,12 +3712,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 <label className="canvas-workflow-panel__field">
                   <span>Angle</span>
                   <input
-                    ref={heightInputRef}
+                    ref={dimEdit.heightInputRef}
                     className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
                     type="text"
                     inputMode="decimal"
-                    value={dimensionEdit.angle}
-                    onChange={(e) => handleEditDimLiveChange('angle', e.target.value)}
+                    value={dimEdit.dimensionEdit.angle}
+                    onChange={(e) => dimEdit.handleEditDimLiveChange('angle', e.target.value)}
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                       e.stopPropagation()
@@ -6112,7 +3729,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         cancelEditDimensionFromPanel()
                       } else if (e.key === 'Tab') {
                         e.preventDefault()
-                        widthInputRef.current?.focus({ preventScroll: true })
+                        dimEdit.widthInputRef.current?.focus({ preventScroll: true })
                       }
                     }}
                   />

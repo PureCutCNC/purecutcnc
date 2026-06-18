@@ -14,28 +14,15 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
-import { useProjectStore } from '../../store/projectStore'
-import { featureHasClosedGeometry } from '../../text'
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { TextToolDialog } from '../project/TextToolDialog'
-import type { FeatureAlignment, FeatureDistribution, SketchEditTool } from '../../store/types'
 import type { TextToolConfig } from '../../text'
-
-const CREATION_SHAPE_OPTIONS = [
-  { value: 'rect', icon: 'rect', noun: 'rectangle' },
-  { value: 'circle', icon: 'circle', noun: 'circle' },
-  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse' },
-  { value: 'polygon', icon: 'polygon', noun: 'polygon' },
-  { value: 'spline', icon: 'spline', noun: 'spline' },
-  { value: 'composite', icon: 'composite', noun: 'composite' },
-  { value: 'text', icon: 'text', noun: 'text' },
-] as const
-
-type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']
-type PlacementShape = Exclude<CreationShape, 'text'>
+import { useCreationShapeCommands, type CreationShape } from '../../commands/creationShapes'
+import { useSketchCommands } from '../../commands/sketchCommands'
 
 function RailButton({
   icon,
@@ -104,29 +91,7 @@ function RailFlyout({
     return { top, left }
   })
 
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (btnRef.current?.contains(target) || popRef.current?.contains(target)) {
-        return
-      }
-      onClose()
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open, onClose])
+  useOutsideDismiss({ open, refs: [btnRef, popRef], onDismiss: onClose })
 
   return (
     <div className="tool-rail__action">
@@ -170,185 +135,37 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   void _onZoomToModel
   void _onImportComplete
 
-  const {
-    project,
-    pendingAdd,
-    selection,
-    pendingMove,
-    pendingTransform,
-    pendingOffset,
-    pendingShapeAction,
-    pendingConstraint,
-    creationTarget,
-    setCreationTarget,
-    startAddRectPlacement,
-    startAddCirclePlacement,
-    startAddEllipsePlacement,
-    startAddPolygonPlacement,
-    startAddSplinePlacement,
-    startAddCompositePlacement,
-    startAddTextPlacement,
-    startMoveFeature,
-    startCopyFeature,
-    startResizeFeature,
-    startRotateFeature,
-    startMirrorFeature,
-    startJoinSelectedFeatures,
-    startCutSelectedFeatures,
-    startOffsetSelectedFeatures,
-    alignFeatures,
-    distributeFeatures,
-    deleteFeatures,
-    setSketchEditTool,
-    beginConstraint,
-    cancelPendingAdd,
-    cancelPendingMove,
-    cancelPendingTransform,
-    cancelPendingOffset,
-    cancelPendingShapeAction,
-    cancelPendingConstraint,
-  } = useProjectStore()
-
   const [showTextDialog, setShowTextDialog] = useState(false)
   const [showCreationPopover, setShowCreationPopover] = useState(false)
   const [showAlignPopover, setShowAlignPopover] = useState(false)
   const [showDistributePopover, setShowDistributePopover] = useState(false)
   const [lastCreationShape, setLastCreationShape] = useState<CreationShape>('rect')
-
-  const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
-  const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
-  const selectedFeatures = selectedFeatureIds
-    .map((id) => project.features.find((f) => f.id === id) ?? null)
-    .filter((f): f is NonNullable<typeof f> => f !== null)
-  const hasSelectedFeatures = selectedFeatureIds.length > 0
-  const hasLockedSelectedFeatures = selectedFeatures.some((f) => f.locked)
-  const hasClosedSelectedFeatures = selectedFeatures.length > 0 && selectedFeatures.every((f) => featureHasClosedGeometry(f))
-  const hasOffsetEligibleSelectedFeatures = hasClosedSelectedFeatures && selectedFeatures.every((f) => f.kind !== 'text')
-  const alignableCount = selectedFeatures.filter((f) => !f.locked).length
-  const canAlign = alignableCount >= 2
-  const canDistribute = alignableCount >= 3
-  const featureSketchEditActive = selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'feature' && !!selection.selectedFeatureId
-
-  const availableCreationOptions = creationTarget === 'region'
-    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
-    : CREATION_SHAPE_OPTIONS
-  const lastCreationOption = availableCreationOptions.find((option) => option.value === lastCreationShape) ?? availableCreationOptions[0]
-
-  function togglePlacement(shape: PlacementShape, start: () => void) {
-    if (pendingAdd?.shape === shape) {
-      cancelPendingAdd()
-      return
-    }
-    start()
-  }
-
-  function startCreationShape(shape: CreationShape) {
-    if (shape === 'text') {
-      handleTextTool()
-      return
-    }
-    if (shape === 'rect') {
-      togglePlacement(shape, startAddRectPlacement)
-    } else if (shape === 'circle') {
-      togglePlacement(shape, startAddCirclePlacement)
-    } else if (shape === 'ellipse') {
-      togglePlacement(shape, startAddEllipsePlacement)
-    } else if (shape === 'polygon') {
-      togglePlacement(shape, startAddPolygonPlacement)
-    } else if (shape === 'spline') {
-      togglePlacement(shape, startAddSplinePlacement)
-    } else {
-      togglePlacement(shape, startAddCompositePlacement)
-    }
-  }
+  const sketchCommands = useSketchCommands()
+  const creationCommands = useCreationShapeCommands({
+    onRequestText: () => setShowTextDialog(true),
+  })
+  const availableCreationOptions = creationCommands.availableShapeCommands
+  const lastCreationOption = availableCreationOptions.find((option) => option.id === lastCreationShape) ?? availableCreationOptions[0]
 
   function selectCreationShape(shape: CreationShape) {
     setLastCreationShape(shape)
     setShowCreationPopover(false)
-    startCreationShape(shape)
-  }
-
-  function handleTextTool() {
-    if (creationTarget === 'region') return
-    if (pendingAdd) cancelPendingAdd()
-    setShowTextDialog(true)
+    creationCommands.activateShape(shape)
   }
 
   function confirmTextTool(config: TextToolConfig) {
-    startAddTextPlacement(config)
+    creationCommands.confirmTextTool(config)
     setShowTextDialog(false)
   }
 
-  function handleMove() {
-    if (!primarySelectedFeatureId) return
-    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'move') { cancelPendingMove(); return }
-    startMoveFeature(primarySelectedFeatureId)
-  }
-
-  function handleCopy() {
-    if (!primarySelectedFeatureId) return
-    if (pendingMove?.entityType === 'feature' && pendingMove.mode === 'copy') { cancelPendingMove(); return }
-    startCopyFeature(primarySelectedFeatureId)
-  }
-
-  function handleResize() {
-    if (!primarySelectedFeatureId) return
-    if (pendingTransform?.mode === 'resize') { cancelPendingTransform(); return }
-    startResizeFeature(primarySelectedFeatureId)
-  }
-
-  function handleRotate() {
-    if (!primarySelectedFeatureId) return
-    if (pendingTransform?.mode === 'rotate') { cancelPendingTransform(); return }
-    startRotateFeature(primarySelectedFeatureId)
-  }
-
-  function handleMirror() {
-    if (!primarySelectedFeatureId) return
-    if (pendingTransform?.mode === 'mirror') { cancelPendingTransform(); return }
-    startMirrorFeature(primarySelectedFeatureId)
-  }
-
-  function handleJoin() {
-    if (pendingShapeAction?.kind === 'join') { cancelPendingShapeAction(); return }
-    startJoinSelectedFeatures()
-  }
-
-  function handleCut() {
-    if (pendingShapeAction?.kind === 'cut') { cancelPendingShapeAction(); return }
-    startCutSelectedFeatures()
-  }
-
-  function handleOffset() {
-    if (pendingOffset) { cancelPendingOffset(); return }
-    startOffsetSelectedFeatures()
-  }
-
-  function handleConstraint() {
-    if (pendingConstraint) { cancelPendingConstraint(); return }
-    const featureId = (selection.selectedNode?.type === 'feature' ? selection.selectedNode.featureId : null) ?? selection.selectedFeatureId
-    if (!featureId) return
-    if (featureSketchEditActive) setSketchEditTool(null)
-    beginConstraint(featureId)
-  }
-
-  function handleAlign(alignment: FeatureAlignment) {
-    const ids = selectedFeatures.filter((f) => !f.locked).map((f) => f.id)
-    if (ids.length < 2) return
-    alignFeatures(ids, alignment)
+  function handleAlign(alignment: Parameters<typeof sketchCommands.arrange.alignFeature>[0]) {
+    sketchCommands.arrange.alignFeature(alignment)
     setShowAlignPopover(false)
   }
 
-  function handleDistribute(distribution: FeatureDistribution) {
-    const ids = selectedFeatures.filter((f) => !f.locked).map((f) => f.id)
-    if (ids.length < 3) return
-    distributeFeatures(ids, distribution)
+  function handleDistribute(distribution: Parameters<typeof sketchCommands.arrange.distributeFeatures>[0]) {
+    sketchCommands.arrange.distributeFeatures(distribution)
     setShowDistributePopover(false)
-  }
-
-  function toggleSketchEditTool(tool: SketchEditTool) {
-    if (!featureSketchEditActive) return
-    setSketchEditTool(selection.sketchEditTool === tool ? null : tool)
   }
 
   return (
@@ -358,20 +175,20 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         <div className="tool-rail__section">
           <div className="tool-rail__target-toggle">
             <button
-              className={`tool-rail__target-btn ${creationTarget === 'feature' ? 'tool-rail__target-btn--active' : ''}`}
+              className={`tool-rail__target-btn ${creationCommands.creationTarget === 'feature' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
               aria-label="Create features"
-              aria-pressed={creationTarget === 'feature'}
-              onClick={() => setCreationTarget('feature')}
+              aria-pressed={creationCommands.creationTarget === 'feature'}
+              onClick={() => creationCommands.setCreationTarget('feature')}
             >
               <Icon id="plus" />
             </button>
             <button
-              className={`tool-rail__target-btn tool-rail__target-btn--region ${creationTarget === 'region' ? 'tool-rail__target-btn--active' : ''}`}
+              className={`tool-rail__target-btn tool-rail__target-btn--region ${creationCommands.creationTarget === 'region' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
               aria-label="Create regions"
-              aria-pressed={creationTarget === 'region'}
-              onClick={() => setCreationTarget('region')}
+              aria-pressed={creationCommands.creationTarget === 'region'}
+              onClick={() => creationCommands.setCreationTarget('region')}
             >
               <Icon id="pocket" />
             </button>
@@ -382,7 +199,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         <div className="tool-rail__section">
           <RailFlyout
             icon="feature-drawer"
-            label={`Choose ${creationTarget} shape`}
+            label={`Choose ${creationCommands.creationTarget} shape`}
             tooltip="Shapes"
             open={showCreationPopover}
             onToggle={() => {
@@ -394,11 +211,11 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
           >
             {availableCreationOptions.map((option) => (
               <button
-                key={option.value}
+                key={option.id}
                 type="button"
-                aria-label={`Add ${creationTarget} ${option.noun}`}
-                className={lastCreationOption.value === option.value ? 'tool-rail__popover-btn--active' : ''}
-                onClick={() => selectCreationShape(option.value)}
+                aria-label={`Add ${creationCommands.creationTarget} ${option.noun}`}
+                className={lastCreationOption.id === option.id ? 'tool-rail__popover-btn--active' : ''}
+                onClick={() => selectCreationShape(option.id)}
               >
                 <Icon id={option.icon} />
               </button>
@@ -406,30 +223,30 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
           </RailFlyout>
           <RailButton
             icon={lastCreationOption.icon}
-            label={pendingAdd?.shape === lastCreationOption.value ? `Cancel ${lastCreationOption.noun}` : `Add ${creationTarget} ${lastCreationOption.noun}`}
-            active={pendingAdd?.shape === lastCreationOption.value}
-            onClick={() => startCreationShape(lastCreationOption.value)}
+            label={lastCreationOption.active ? `Cancel ${lastCreationOption.noun}` : `Add ${creationCommands.creationTarget} ${lastCreationOption.noun}`}
+            active={lastCreationOption.active}
+            onClick={lastCreationOption.onActivate}
           />
         </div>
 
         {/* Edit tools (visible when features selected) */}
-        {hasSelectedFeatures && (
+        {sketchCommands.predicates.hasSelectedFeatures && (
           <div className="tool-rail__section">
-            <RailButton icon="copy" label="Copy" active={pendingMove?.entityType === 'feature' && pendingMove.mode === 'copy'} onClick={handleCopy} />
-            <RailButton icon="move" label="Move" active={pendingMove?.entityType === 'feature' && pendingMove.mode === 'move'} disabled={hasLockedSelectedFeatures} onClick={handleMove} />
-            <RailButton icon="trash" label="Delete" onClick={() => deleteFeatures(selectedFeatureIds)} />
-            <RailButton icon="resize" label="Resize" active={pendingTransform?.mode === 'resize'} disabled={hasLockedSelectedFeatures} onClick={handleResize} />
-            <RailButton icon="rotate" label="Rotate" active={pendingTransform?.mode === 'rotate'} disabled={hasLockedSelectedFeatures} onClick={handleRotate} />
-            <RailButton icon="mirror" label="Mirror" active={pendingTransform?.mode === 'mirror'} disabled={hasLockedSelectedFeatures} onClick={handleMirror} />
-            <RailButton icon="offset" label="Offset" active={!!pendingOffset} disabled={hasLockedSelectedFeatures || !hasOffsetEligibleSelectedFeatures} onClick={handleOffset} />
-            <RailButton icon="constraint" label="Constraint" active={!!pendingConstraint} disabled={hasLockedSelectedFeatures} onClick={handleConstraint} />
-            <RailButton icon="merge" label="Join" active={pendingShapeAction?.kind === 'join'} onClick={handleJoin} />
-            <RailButton icon="cut" label="Cut" active={pendingShapeAction?.kind === 'cut'} onClick={handleCut} />
+            <RailButton icon="copy" label="Copy" active={sketchCommands.transform.copy.active} onClick={sketchCommands.transform.copy.onActivate} />
+            <RailButton icon="move" label="Move" active={sketchCommands.transform.move.active} disabled={!sketchCommands.transform.move.enabled} onClick={sketchCommands.transform.move.onActivate} />
+            <RailButton icon="trash" label="Delete" onClick={sketchCommands.transform.delete.onActivate} />
+            <RailButton icon="resize" label="Resize" active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
+            <RailButton icon="rotate" label="Rotate" active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
+            <RailButton icon="mirror" label="Mirror" active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
+            <RailButton icon="offset" label="Offset" active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} onClick={sketchCommands.boolean.offset.onActivate} />
+            <RailButton icon="constraint" label="Constraint" active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} onClick={sketchCommands.constraint.onActivate} />
+            <RailButton icon="merge" label="Join" active={sketchCommands.boolean.join.active} onClick={sketchCommands.boolean.join.onActivate} />
+            <RailButton icon="cut" label="Cut" active={sketchCommands.boolean.cut.active} onClick={sketchCommands.boolean.cut.onActivate} />
           </div>
         )}
 
         {/* Alignment/distribution (multi-select) */}
-        {canAlign && (
+        {sketchCommands.predicates.canAlignSelectedFeatures && (
           <div className="tool-rail__section">
             <RailFlyout
               icon="align"
@@ -446,7 +263,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               <button type="button" aria-label="Align center vertical" onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
               <button type="button" aria-label="Align bottom" onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
             </RailFlyout>
-            {canDistribute && (
+            {sketchCommands.predicates.canDistributeSelectedFeatures && (
               <RailFlyout
                 icon="distribute"
                 label="Distribute features"
@@ -465,13 +282,13 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         )}
 
         {/* Sketch edit tools */}
-        {featureSketchEditActive && (
+        {sketchCommands.predicates.featureSketchEditActive && (
           <div className="tool-rail__section">
-            <RailButton icon="point-add" label="Add point" active={selection.sketchEditTool === 'add_point'} onClick={() => toggleSketchEditTool('add_point')} />
-            <RailButton icon="point-delete" label="Delete point" active={selection.sketchEditTool === 'delete_point'} onClick={() => toggleSketchEditTool('delete_point')} />
-            <RailButton icon="segment-delete" label="Delete segment" active={selection.sketchEditTool === 'delete_segment'} onClick={() => toggleSketchEditTool('delete_segment')} />
-            <RailButton icon="disconnect" label="Disconnect" active={selection.sketchEditTool === 'disconnect'} onClick={() => toggleSketchEditTool('disconnect')} />
-            <RailButton icon="fillet" label="Fillet" active={selection.sketchEditTool === 'fillet'} onClick={() => toggleSketchEditTool('fillet')} />
+            <RailButton icon="point-add" label="Add point" active={sketchCommands.sketchEdit.add_point.active} onClick={sketchCommands.sketchEdit.add_point.onActivate} />
+            <RailButton icon="point-delete" label="Delete point" active={sketchCommands.sketchEdit.delete_point.active} onClick={sketchCommands.sketchEdit.delete_point.onActivate} />
+            <RailButton icon="segment-delete" label="Delete segment" active={sketchCommands.sketchEdit.delete_segment.active} onClick={sketchCommands.sketchEdit.delete_segment.onActivate} />
+            <RailButton icon="disconnect" label="Disconnect" active={sketchCommands.sketchEdit.disconnect.active} onClick={sketchCommands.sketchEdit.disconnect.onActivate} />
+            <RailButton icon="fillet" label="Fillet" active={sketchCommands.sketchEdit.fillet.active} onClick={sketchCommands.sketchEdit.fillet.onActivate} />
           </div>
         )}
       </nav>

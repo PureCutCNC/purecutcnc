@@ -1,5 +1,5 @@
 ---
-status: In progress   # Draft → Approved → In progress → Done | Abandoned
+status: Done   # shipped to main (PR #133); closed in core-arch Phase 0, not re-verified
 created: 2026-06-02
 ---
 

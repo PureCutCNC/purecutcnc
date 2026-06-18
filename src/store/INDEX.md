@@ -14,17 +14,39 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
+  - `featureSlice.ts` — feature CRUD, tree/folder management, primitive constructors, arrange (align/distribute), and boolean ops (merge/cut/offset)
+  - `featureGeometrySlice.ts` — feature sketch/profile geometry edits: moving controls, inserting/deleting/disconnecting points/segments, joining open endpoints, and corner fillets
+  - `toolsSlice.ts` — tool CRUD: add/import/update/delete/duplicate tool definitions
+  - `clampsSlice.ts` — clamp CRUD: add/update/delete/duplicate clamp, set visibility, move control point
+  - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, auto-place for operation
+  - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
+  - `machineDefsSlice.ts` — machine definition CRUD: set selected, add/remove/refresh machine definitions
+  - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, and ordering
+  - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
+  - `historySlice.ts` — undo/redo and history transaction lifecycle
+  - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
+  - `importMergeSlice.ts` — shape import and `.camj` folder merge actions
+  - `constraintsSlice.ts` — persistent fixed-distance constraint placement, value updates, cancellation, and deletion
+  - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions, folders, region folders, and folder selection
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
-  - `derivedFeatures.ts` — computes derived features from the feature tree
+  - `derivedFeatures.ts` — computes derived features from the feature tree; also createDerivedFeature, previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `geometry.ts` — geometric utilities (bounds, transforms)
+  - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
+  - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
+  - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
+  - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
+  - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
+  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs
+  - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — normalizes incoming/legacy project data
+  - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `openProfileJoin.test.ts` — open-profile joining behavior
+- `profileEdit.test.ts` — profile and segment-editing helper behavior
 - `polygonSplit.test.ts` — polygon splitting
 - `projectStoreTransform.test.ts` — project transform actions
 - `second_cut_test.ts` — multi-pass cutting behavior

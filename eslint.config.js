@@ -45,4 +45,40 @@ export default defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
+  {
+    files: ['src/App.tsx', 'src/app/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 530, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/store/projectStore.ts'],
+    rules: {
+      'max-lines': ['error', { max: 600, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/store/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 1200, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // P6 anti-regrowth guard for the SketchCanvas module. The `**` block bounds
+  // each extracted interaction hook; the SketchCanvas.tsx block (listed AFTER,
+  // so it wins for that file) bounds the shell itself — the shell legitimately
+  // retains the `draw` renderer + JSX + imperative handle (not interaction
+  // machines), so its limit reflects the achieved post-extraction size rather
+  // than the aspirational <600. See CORE_STATE_CANVAS_REFACTOR_Plan.md P6 DoD.
+  {
+    files: ['src/components/canvas/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 1200, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/components/canvas/SketchCanvas.tsx'],
+    rules: {
+      'max-lines': ['error', { max: 3800, skipBlankLines: true, skipComments: true }],
+    },
+  },
 ])

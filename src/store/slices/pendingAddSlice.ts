@@ -16,22 +16,19 @@
 
 import type { StateCreator } from 'zustand'
 import { convertLength } from '../../utils/units'
-import type { Clamp, Point, Project, Segment, SketchFeature, Tab } from '../../types/project'
-import type { TextToolConfig } from '../../text'
+import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
+import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
+import { createTextFeatureAt } from '../helpers/naming'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
-import type { CompositeSegmentMode, PendingAddTool, ProjectStore } from '../types'
-
-export interface PendingAddSliceDependencies {
-  cloneProject: (project: Project) => Project
-  syncFeatureTreeProject: (project: Project) => Project
-  createTextFeatureAt: (project: Project, config: TextToolConfig, anchor: Point) => SketchFeature | null
-  appendSplineDraftSegment: (start: Point, segments: Segment[], to: Point) => Segment[]
-  buildArcSegmentFromThreePoints: (start: Point, end: Point, through: Point) => Segment | null
-  resolveCompositeDraftSegments: (draft: Extract<PendingAddTool, { shape: 'composite' }>) => Segment[] | null
-  resolveOpenCompositeDraftSegments: (draft: Extract<PendingAddTool, { shape: 'composite' }>) => Segment[] | null
-  cloneSegment: (segment: Segment) => Segment
-}
+import {
+  appendSplineDraftSegment,
+  buildArcSegmentFromThreePoints,
+  cloneSegment,
+  resolveCompositeDraftSegments,
+  resolveOpenCompositeDraftSegments,
+} from '../helpers/profileEdit'
+import type { CompositeSegmentMode, ProjectStore } from '../types'
 
 export type PendingAddSlice = Pick<
   ProjectStore,
@@ -73,7 +70,6 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
 export function createPendingAddSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
-  deps: PendingAddSliceDependencies,
 ): PendingAddSlice {
   return {
     pendingAdd: null,
@@ -246,7 +242,7 @@ export function createPendingAddSlice(
               activeControl: null,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -287,7 +283,7 @@ export function createPendingAddSlice(
               activeControl: null,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -314,13 +310,13 @@ export function createPendingAddSlice(
         return []
       }
 
-      const createdFeature = deps.createTextFeatureAt(state.project, state.pendingAdd.config, point)
+      const createdFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
       if (!createdFeature) {
         return []
       }
 
       set((s) => {
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, createdFeature],
           featureTree: [...s.project.featureTree, { type: 'feature', featureId: createdFeature.id }],
@@ -340,7 +336,7 @@ export function createPendingAddSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -404,7 +400,7 @@ export function createPendingAddSlice(
         const points = state.pendingAdd.points
         let segments: Segment[] = []
         for (let index = 1; index < points.length; index += 1) {
-          segments = deps.appendSplineDraftSegment(points[0], segments, points[index])
+          segments = appendSplineDraftSegment(points[0], segments, points[index])
         }
 
         const feature: SketchFeature = {
@@ -516,7 +512,7 @@ export function createPendingAddSlice(
             }
           }
 
-          const arcSegment = deps.buildArcSegmentFromThreePoints(
+          const arcSegment = buildArcSegmentFromThreePoints(
             s.pendingAdd.lastPoint,
             s.pendingAdd.pendingArcEnd,
             point,
@@ -545,7 +541,7 @@ export function createPendingAddSlice(
             ...s.pendingAdd,
             segments:
               s.pendingAdd.currentMode === 'spline'
-                ? deps.appendSplineDraftSegment(s.pendingAdd.start, s.pendingAdd.segments, point)
+                ? appendSplineDraftSegment(s.pendingAdd.start, s.pendingAdd.segments, point)
                 : [...s.pendingAdd.segments, { type: 'line', to: point }],
             lastPoint: point,
           },
@@ -600,7 +596,7 @@ export function createPendingAddSlice(
         if (s.pendingAdd?.shape !== 'composite' || !s.pendingAdd.start || !s.pendingAdd.lastPoint) {
           return {}
         }
-        const closedSegments = deps.resolveCompositeDraftSegments(s.pendingAdd)
+        const closedSegments = resolveCompositeDraftSegments(s.pendingAdd)
         if (!closedSegments) {
           return {}
         }
@@ -622,7 +618,7 @@ export function createPendingAddSlice(
         return
       }
 
-      const closedSegments = deps.resolveCompositeDraftSegments(state.pendingAdd)
+      const closedSegments = resolveCompositeDraftSegments(state.pendingAdd)
       if (!closedSegments) {
         return
       }
@@ -640,7 +636,7 @@ export function createPendingAddSlice(
         sketch: {
           profile: {
             start: clonePoint(state.pendingAdd.start),
-            segments: closedSegments.map(deps.cloneSegment),
+            segments: closedSegments.map(cloneSegment),
             closed: true,
           },
           origin: { x: 0, y: 0 },
@@ -666,7 +662,7 @@ export function createPendingAddSlice(
       }
       if (state.creationTarget === 'region') return
 
-      const openSegments = deps.resolveOpenCompositeDraftSegments(state.pendingAdd)
+      const openSegments = resolveOpenCompositeDraftSegments(state.pendingAdd)
       if (!openSegments) {
         return
       }
@@ -681,7 +677,7 @@ export function createPendingAddSlice(
         sketch: {
           profile: {
             start: clonePoint(state.pendingAdd.start),
-            segments: openSegments.map(deps.cloneSegment),
+            segments: openSegments.map(cloneSegment),
             closed: false,
           },
           origin: { x: 0, y: 0 },

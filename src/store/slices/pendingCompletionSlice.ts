@@ -17,90 +17,33 @@
 import type { StateCreator } from 'zustand'
 import type { Clamp, Point, Project, SketchFeature, Tab } from '../../types/project'
 import {
+  cloneProject,
+  projectsEqual,
+  syncFeatureTreeProject,
+} from '../helpers/normalize'
+import {
   cutFeaturesByCutterGrouped,
   insertDerivedFeaturesAfterSources,
   insertDerivedFeatureTreeEntries,
 } from '../helpers/derivedFeatures'
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
 import type { ProjectStore } from '../types'
+import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
+import {
+  mirrorFeatureFromReference,
+  resizeBackdropFromReference,
+  resizeFeatureFromReference,
+  rotateBackdropFromReference,
+  rotateFeatureFromReference,
+} from '../helpers/referenceTransforms'
+import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies } from '../helpers/copyFeatures'
 
 export interface PendingCompletionSliceDependencies {
-  cloneProject: (project: Project) => Project
-  projectsEqual: (a: Project, b: Project) => boolean
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
-  transformProfile: (profile: SketchFeature['sketch']['profile'], transformPoint: (p: Point) => Point) => SketchFeature['sketch']['profile']
-  translateClamp: (clamp: Clamp, dx: number, dy: number) => Clamp
-  translateTab: (tab: Tab, dx: number, dy: number) => Tab
-  buildCopiedFeatures: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => SketchFeature[]
-  buildCopiedClamps: (
-    sourceClamps: Clamp[],
-    existingClamps: Clamp[],
-    project: Project,
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => Clamp[]
-  buildCopiedTabs: (
-    sourceTabs: Tab[],
-    existingTabs: Tab[],
-    project: Project,
-    dx: number,
-    dy: number,
-    copyCount: number,
-  ) => Tab[]
-  resizeBackdropFromReference: (
-    backdrop: NonNullable<Project['backdrop']>,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => Project['backdrop']
-  rotateBackdropFromReference: (
-    backdrop: NonNullable<Project['backdrop']>,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => Project['backdrop']
-  resizeFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => SketchFeature | null
-  rotateFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-    previewPoint: Point,
-  ) => SketchFeature | null
-  mirrorFeatureFromReference: (
-    feature: SketchFeature,
-    referenceStart: Point,
-    referenceEnd: Point,
-  ) => SketchFeature | null
-  buildRotatedCopies: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    pivot: Point,
-    angle: number,
-    copyCount: number,
-  ) => SketchFeature[]
-  buildMirroredCopies: (
-    sourceFeatures: SketchFeature[],
-    existingFeatures: SketchFeature[],
-    lineStart: Point,
-    lineEnd: Point,
-  ) => SketchFeature[]
   previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
-  syncFeatureTreeProject: (project: Project) => Project
   createDerivedFeature: (
     project: Project,
     baseFeature: SketchFeature,
@@ -160,7 +103,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -168,7 +111,7 @@ export function createPendingCompletionSlice(
             project: nextProject,
             pendingMove: null,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -185,7 +128,7 @@ export function createPendingCompletionSlice(
 
           const createdFeatures =
             mode === 'copy'
-              ? deps.buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+              ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
               : []
 
           const translatedFeatures =
@@ -211,7 +154,7 @@ export function createPendingCompletionSlice(
                       origin: ['text', 'stl'].includes(feature.kind) 
                         ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy } 
                         : feature.sketch.origin,
-                      profile: deps.transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
+                      profile: transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
                   }
                 })
@@ -235,7 +178,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -254,7 +197,7 @@ export function createPendingCompletionSlice(
                   }
                 : s.selection,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -271,7 +214,7 @@ export function createPendingCompletionSlice(
 
           const createdTabs =
             mode === 'copy'
-              ? deps.buildCopiedTabs(sourceTabs, s.project.tabs, s.project, dx, dy, normalizedCopyCount)
+              ? buildCopiedTabs(sourceTabs, s.project.tabs, s.project, dx, dy, normalizedCopyCount)
               : []
 
           const nextProject = {
@@ -280,12 +223,12 @@ export function createPendingCompletionSlice(
               mode === 'copy'
                 ? [...s.project.tabs, ...createdTabs]
                 : s.project.tabs.map((tab) => (
-                    entityIds.includes(tab.id) ? deps.translateTab(tab, dx, dy) : tab
+                    entityIds.includes(tab.id) ? translateTab(tab, dx, dy) : tab
                   )),
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingMove: null }
           }
 
@@ -304,7 +247,7 @@ export function createPendingCompletionSlice(
                   }
                 : s.selection,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -320,7 +263,7 @@ export function createPendingCompletionSlice(
 
         const createdClamps =
           mode === 'copy'
-            ? deps.buildCopiedClamps(sourceClamps, s.project.clamps, s.project, dx, dy, normalizedCopyCount)
+            ? buildCopiedClamps(sourceClamps, s.project.clamps, s.project, dx, dy, normalizedCopyCount)
             : []
 
         const nextProject = {
@@ -329,12 +272,12 @@ export function createPendingCompletionSlice(
             mode === 'copy'
               ? [...s.project.clamps, ...createdClamps]
               : s.project.clamps.map((clamp) => (
-                  entityIds.includes(clamp.id) ? deps.translateClamp(clamp, dx, dy) : clamp
+                  entityIds.includes(clamp.id) ? translateClamp(clamp, dx, dy) : clamp
                 )),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 
-        if (deps.projectsEqual(nextProject, s.project)) {
+        if (projectsEqual(nextProject, s.project)) {
           return { pendingMove: null }
         }
 
@@ -353,7 +296,7 @@ export function createPendingCompletionSlice(
                 }
               : s.selection,
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -377,8 +320,8 @@ export function createPendingCompletionSlice(
 
           const nextBackdrop =
             pendingTransform.mode === 'resize'
-              ? deps.resizeBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
-              : deps.rotateBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              ? resizeBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              : rotateBackdropFromReference(s.project.backdrop, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
 
           if (!nextBackdrop) {
             return { pendingTransform: null }
@@ -390,7 +333,7 @@ export function createPendingCompletionSlice(
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
-          if (deps.projectsEqual(nextProject, s.project)) {
+          if (projectsEqual(nextProject, s.project)) {
             return { pendingTransform: null }
           }
 
@@ -398,7 +341,7 @@ export function createPendingCompletionSlice(
             project: nextProject,
             pendingTransform: null,
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -429,7 +372,7 @@ export function createPendingCompletionSlice(
             return { pendingTransform: null }
           }
           const normalizedCopyCount = Math.max(1, Math.floor(copyCount))
-          const createdFeatures = deps.buildRotatedCopies(
+          const createdFeatures = buildRotatedCopies(
             sourceFeatures,
             s.project.features,
             pendingTransform.referenceStart,
@@ -460,7 +403,7 @@ export function createPendingCompletionSlice(
                 : s.selection.selectedNode,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -469,7 +412,7 @@ export function createPendingCompletionSlice(
 
         // Mirror+copy: keep originals and add one mirrored copy of each selected feature.
         if (pendingTransform.mode === 'mirror' && pendingTransform.keepOriginals) {
-          const createdFeatures = deps.buildMirroredCopies(
+          const createdFeatures = buildMirroredCopies(
             sourceFeatures,
             s.project.features,
             pendingTransform.referenceStart,
@@ -499,7 +442,7 @@ export function createPendingCompletionSlice(
                 : s.selection.selectedNode,
             },
             history: {
-              past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
               future: [],
               transactionStart: null,
             },
@@ -510,10 +453,10 @@ export function createPendingCompletionSlice(
         for (const feature of sourceFeatures) {
           const transformed =
             pendingTransform.mode === 'resize'
-              ? deps.resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+              ? resizeFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
               : pendingTransform.mode === 'rotate'
-                ? deps.rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
-                : deps.mirrorFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd)
+                ? rotateFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+                : mirrorFeatureFromReference(feature, pendingTransform.referenceStart, pendingTransform.referenceEnd)
           if (!transformed) {
             return { pendingTransform: null }
           }
@@ -547,7 +490,7 @@ export function createPendingCompletionSlice(
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
 
-        if (deps.projectsEqual(nextProject, s.project)) {
+        if (projectsEqual(nextProject, s.project)) {
           return { pendingTransform: null }
         }
 
@@ -555,7 +498,7 @@ export function createPendingCompletionSlice(
           project: nextProject,
           pendingTransform: null,
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -575,7 +518,7 @@ export function createPendingCompletionSlice(
       }
 
       set((s) => {
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, ...createdFeatures],
           meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -594,7 +537,7 @@ export function createPendingCompletionSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
@@ -654,7 +597,7 @@ export function createPendingCompletionSlice(
             ? []
             : pendingShapeAction.targetIds,
         )
-        const nextProject = deps.syncFeatureTreeProject({
+        const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
           featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
@@ -674,7 +617,7 @@ export function createPendingCompletionSlice(
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, deps.cloneProject(s.project)].slice(-100),
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
