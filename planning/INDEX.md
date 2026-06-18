@@ -10,6 +10,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+- [CREATION_DIMENSIONS_BUTTON_BUG.md](CREATION_DIMENSIONS_BUTTON_BUG.md) — **investigation** (status: Draft). The feature-create "Dimensions" button does nothing; pre-existing (not P7/P7.4), code last touched in P6 R7. Static wiring reads correct → needs runtime instrumentation to root-cause before a fix plan.
+
 ## Backlog / tech debt
 
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
