@@ -247,6 +247,13 @@ export function transitionToCutEntry(
       return toXY
     }
 
+    const isStartingFromSafeZ = Math.abs(from.z - safeZ) <= XY_ALIGN_EPS
+    const isDescendingToCut = toXY.z < safeZ - XY_ALIGN_EPS
+    if (isStartingFromSafeZ && isDescendingToCut) {
+      // After a level retract, keep XY travel at safe Z and enter the next level vertically.
+      return pushRapidAndPlunge(moves, from, toXY, safeZ)
+    }
+
     if (distance <= maxLinkDistance) {
       // Direct cut link — works across Z levels (3D cut moves are valid
       // for ramping between layers in roughing/surface operations). When

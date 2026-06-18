@@ -662,6 +662,36 @@ function testPocketOffsetCutsInnerFirst() {
   console.log('pocket offset inner-first ordering: PASSED')
 }
 
+function testPocketLevelTransitionsPlungeVerticallyFromSafeZ() {
+  console.log('Testing pocket level transitions rapid at safe Z before plunging...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makePocketFeature('a', 0, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [feature])
+  const operation = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.5,
+  })
+
+  const result = generatePocketToolpath(project, operation)
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+
+  const firstDeepCutIndex = result.moves.findIndex((move) => move.kind === 'cut' && approx(move.to.z, -4))
+  assert(firstDeepCutIndex > 0, 'expected a cut at the second pocket level')
+
+  const plunge = result.moves[firstDeepCutIndex - 1]
+  const firstDeepCut = result.moves[firstDeepCutIndex]
+  assert(plunge.kind === 'plunge', `expected plunge before first deep-level cut, got ${plunge.kind}`)
+  assert(approx(plunge.from.x, plunge.to.x) && approx(plunge.from.y, plunge.to.y), 'deep-level entry plunge should be vertical')
+  assert(approx(plunge.to.x, firstDeepCut.from.x) && approx(plunge.to.y, firstDeepCut.from.y), 'plunge should end at the first deep-level cut start')
+  assert(approx(plunge.to.z, firstDeepCut.from.z) && approx(firstDeepCut.from.z, -4), 'first deep-level cut should start at cut depth')
+
+  console.log('pocket level transition vertical plunge: PASSED')
+}
+
 function testPocketSingleFeatureParity() {
   console.log('Testing single-feature pocket parity across modes...')
 
@@ -1366,6 +1396,7 @@ try {
   testPocketFeatureFirstOrder()
   testPocketFeatureFirstNearestBlockOrder()
   testPocketOffsetCutsInnerFirst()
+  testPocketLevelTransitionsPlungeVerticallyFromSafeZ()
   testPocketSingleFeatureParity()
   testPocketRejectsRegionOnlyTarget()
   testPocketRegionClipsMachiningArea()
