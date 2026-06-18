@@ -16,8 +16,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-- [CORE_STATE_CANVAS_REFACTOR_Plan.md](CORE_STATE_CANVAS_REFACTOR_Plan.md) — **approved umbrella plan** (status: In progress) for the core state/canvas/app architecture simplification. Runs on a cumulative `feat/core-arch-simplification` branch with each phase in its own worktree. Phase 0 has archived the stale shipped plans (measure & dimensions, feature-creation picker, both waterline plans) and the superseded REFACTORING_Plan.
-
 ### Foundational / cross-cutting
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — how regions filter rather than define machining targets. Read before touching operation/region logic.
