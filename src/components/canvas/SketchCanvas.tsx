@@ -856,7 +856,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       dimEdit.editDimStepIndexRef.current = 0
       dimEdit.setDimensionEdit(null)
     }
-  }, [selection.mode, dimEdit])
+  // The dimension workflow object is intentionally not a dependency here: the cleanup
+  // is mode-scoped, and the hook return object is recreated on each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection.mode])
 
   useEffect(() => {
     if (
