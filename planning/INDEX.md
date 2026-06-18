@@ -10,7 +10,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
-- [CREATION_DIMENSIONS_BUTTON_BUG.md](CREATION_DIMENSIONS_BUTTON_BUG.md) — **investigation** (status: Draft). The feature-create "Dimensions" button does nothing; pre-existing (not P7/P7.4), code last touched in P6 R7. Static wiring reads correct → needs runtime instrumentation to root-cause before a fix plan.
+- [CREATION_DIMENSIONS_BUTTON_BUG.md](CREATION_DIMENSIONS_BUTTON_BUG.md) — **root-caused, one-line fix ready** (status: Approved). Feature-create "Dimensions" button does nothing: a `SketchCanvas.tsx` cleanup effect (`~851`) has `[selection.mode, dimEdit]` deps where `dimEdit` is an unmemoised object → fires every render → wipes the field during creation. **P6-extraction regression** (main had `[selection.mode]`). Fix = drop `dimEdit` from the deps. Doc also flags a broader audit: other extracted-hook effects may have the same unstable-object-dep bug.
 
 ## Backlog / tech debt
 
