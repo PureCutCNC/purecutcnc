@@ -1727,13 +1727,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
       fillet.setFilletDimensionEdit(null)
     }
-  }, [selection.mode, selection.sketchEditTool, fillet])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilletDimensionEdit is a stable useState setter; the hook return object is recreated each render
+  }, [selection.mode, selection.sketchEditTool])
 
   useEffect(() => {
-    if (!pendingAdd && selectionRef.current.mode !== 'sketch_edit') {
+    if (!pendingAdd && selection.mode !== 'sketch_edit') {
       dimEdit.setDimensionEdit(null)
     }
-  }, [pendingAdd, dimEdit])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDimensionEdit is a stable useState setter; the hook return object is recreated each render
+  }, [pendingAdd, selection.mode])
 
   useEffect(() => {
     if (!pendingMove) setOperationDimEdit(null)
