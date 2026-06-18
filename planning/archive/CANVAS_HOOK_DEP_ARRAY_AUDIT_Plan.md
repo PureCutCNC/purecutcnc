@@ -1,6 +1,7 @@
 ---
-status: In progress   # Draft → Approved → In progress → Done | Abandoned
+status: Done   # Draft → Approved → In progress → Done | Abandoned
 created: 2026-06-18
+done: 2026-06-17   # merge cf2190b. Fixed 2 same-class effects in SketchCanvas.tsx (fillet + 2nd dimension cleanup); static rerun shows zero whole-object deps left.
 ---
 
 # Canvas Hook Dependency Array Audit Plan
