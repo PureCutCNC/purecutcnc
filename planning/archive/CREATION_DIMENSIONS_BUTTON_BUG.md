@@ -1,5 +1,5 @@
 ---
-status: Approved   # Draft → Approved → In progress → Done | Abandoned
+status: Done   # Draft → Approved → In progress → Done | Abandoned
 created: 2026-06-17
 root-caused: 2026-06-17   # P6-extraction regression; one-line fix — see "Root cause" below
 ---
