@@ -10,6 +10,8 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## Pending approval
 
+- [POCKET_OFFSET_ENTRY_FEED_REDUCTION_Plan.md](POCKET_OFFSET_ENTRY_FEED_REDUCTION_Plan.md) — follow-up plan for optionally cutting the first innermost offset loop at reduced feed before restoring normal pocket feed
+
 ## Backlog / tech debt
 
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
