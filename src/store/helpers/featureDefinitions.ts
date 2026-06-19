@@ -27,6 +27,7 @@ import type {
   FeatureDefinition,
   FeatureKind,
   FeatureOperation,
+  LocalDimension,
   Matrix2D,
   Point,
   Project,
@@ -80,7 +81,7 @@ export function getInstanceIdsForDefinition(
 }
 
 // ============================================================================
-// Snapshot definition creation
+// Definition creation (snapshot + live-feature minting)
 // ============================================================================
 
 export interface CreateSnapshotDefinitionParams {
@@ -111,6 +112,33 @@ export function createSnapshotDefinition(
     text: null,
     stl: null,
     operation: params.operation,
+  }
+  return { definitionId, definition }
+}
+
+/**
+ * Mint a {@link FeatureDefinition} from a fully-normalized runtime
+ * {@link SketchFeature}.  This is the shared helper used by `addFeature`
+ * (central creation chokepoint) and by import bulk paths so that every
+ * created feature gets a definition + identity-transform instance.
+ *
+ * The returned definition is NOT yet merged into
+ * `project.featureDefinitions` — callers merge it in the same store
+ * mutation that inserts the feature row.
+ */
+export function createDefinitionForFeature(
+  project: Project,
+  feature: SketchFeature,
+): { definitionId: string; definition: FeatureDefinition } {
+  const definitionId = nextUniqueGeneratedId(project, 'f-')
+  const definition: FeatureDefinition = {
+    id: definitionId,
+    kind: feature.kind,
+    profile: cloneProfile(feature.sketch.profile),
+    dimensions: cloneDimensions(feature.sketch.dimensions),
+    text: feature.text ? { ...feature.text } : null,
+    stl: feature.stl ? { ...feature.stl } : null,
+    operation: feature.operation,
   }
   return { definitionId, definition }
 }
@@ -349,4 +377,8 @@ function cloneProfile(profile: SketchProfile): SketchProfile {
     segments: profile.segments.map(cloneSegment),
     closed: profile.closed,
   }
+}
+
+function cloneDimensions(dimensions: LocalDimension[]): LocalDimension[] {
+  return dimensions.map((d) => ({ ...d }))
 }

@@ -52,7 +52,7 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
-import { gcOrphanedDefinitions } from '../helpers/featureDefinitions'
+import { createDefinitionForFeature, gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
 import {
   buildSegmentAnnotations,
@@ -377,10 +377,28 @@ export function createFeatureSlice(
           ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
           : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
         const nextModelAssets = { ...s.project.modelAssets }
-        const safeFeature: SketchFeature = {
+        let safeFeature: SketchFeature = {
           ...safeFeatureBase,
           stl: normalizeImportedModelStorage(safeFeatureBase.id, safeFeatureBase.stl, nextModelAssets),
         }
+
+        // Mint a FeatureDefinition for features that don't already have one
+        // (idempotent — snapshot results and migrated features already carry
+        // an explicit definitionId and are left untouched).
+        const featureHasExplicitDefId =
+          (feature as SketchFeature & { definitionId?: string }).definitionId !== undefined
+        let nextDefinitions = { ...s.project.featureDefinitions }
+
+        if (!featureHasExplicitDefId) {
+          const minted = createDefinitionForFeature(s.project, safeFeature)
+          safeFeature = {
+            ...safeFeature,
+            definitionId: minted.definitionId,
+            transform: IDENTITY_MATRIX,
+          } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+          nextDefinitions = { ...nextDefinitions, [minted.definitionId]: minted.definition }
+        }
+
         let nextFeatures: SketchFeature[]
         let nextTree: FeatureTreeEntry[]
         if (insertAfterFeatureId !== null) {
@@ -407,6 +425,7 @@ export function createFeatureSlice(
           modelAssets: nextModelAssets,
           features: nextFeatures,
           featureTree: nextTree,
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         return {
