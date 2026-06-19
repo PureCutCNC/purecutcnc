@@ -107,7 +107,7 @@ export function createPendingActionsSlice(
         }
       }),
 
-    startCopyFeature: (featureId) =>
+    startCopyFeature: (featureId, copyMode) =>
       set((s) => {
         const featureIds = s.selection.selectedFeatureIds.includes(featureId)
           ? s.selection.selectedFeatureIds
@@ -122,7 +122,7 @@ export function createPendingActionsSlice(
         return {
           pendingAdd: null,
           sketchEditSession: null,
-          pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession() },
+          pendingMove: { mode: 'copy', entityType: 'feature', entityIds: featureIds, fromPoint: null, toPoint: null, session: nextPlacementSession(), copyMode },
           pendingTransform: null,
           pendingOffset: null,
           pendingShapeAction: null,

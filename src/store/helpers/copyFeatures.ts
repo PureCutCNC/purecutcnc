@@ -15,12 +15,14 @@
  */
 
 import { IDENTITY_MATRIX, newProject } from '../../types/project'
-import type { Clamp, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, FeatureDefinition, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
+import { getDefinitionId } from './featureDefinitions'
 import { nextUniqueGeneratedId } from './ids'
 import { moveDelta, multiplyMatrix, rotateDelta } from './instanceTransforms'
 import { duplicateClampName, duplicateFeatureName, duplicateTabName } from './naming'
 import { inferProfileOrientationAngle, normalizeAngleDegrees } from './normalize'
 import { mirrorFeatureFromReference } from './referenceTransforms'
+import { resolveProfile } from './resolveFeatures'
 import { rotatePointAround, transformProfile, transformStlFeatureData, translatePoint, translateProfile } from './transform'
 
 export function buildRotatedCopies(
@@ -103,6 +105,8 @@ export function buildCopiedFeatures(
   dx: number,
   dy: number,
   count: number,
+  projectDefinitions?: Record<string, FeatureDefinition>,
+  copyMode?: 'reference' | 'independent',
 ): SketchFeature[] {
   const created: SketchFeature[] = []
   const projectLike: Project = {
@@ -111,6 +115,8 @@ export function buildCopiedFeatures(
     tools: [],
     operations: [],
   }
+  const effectiveCopyMode = copyMode ?? 'reference'
+  const definitions = projectDefinitions ?? {}
 
   for (let step = 1; step <= count; step += 1) {
     for (const sourceFeature of sourceFeatures) {
@@ -121,27 +127,103 @@ export function buildCopiedFeatures(
         },
         'f',
       )
-      const currentTransform = (sourceFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
-      created.push({
-        ...sourceFeature,
-        id: nextId,
-        name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
-        folderId: sourceFeature.folderId,
-        stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
-        sketch: {
-          ...sourceFeature.sketch,
-          origin: ['text', 'stl'].includes(sourceFeature.kind)
-            ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
-            : sourceFeature.sketch.origin,
-          profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
-        },
-        locked: false,
-        transform: multiplyMatrix(moveDelta(dx * step, dy * step), currentTransform),
-      } as SketchFeature & { transform: Matrix2D })
+      const currentTransform: Matrix2D =
+        (sourceFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+      const newTransform = multiplyMatrix(moveDelta(dx * step, dy * step), currentTransform)
+
+      if (effectiveCopyMode === 'reference') {
+        // Reference copy: same definitionId, no new definition, bake
+        // compatibility profile from resolveProfile to avoid double-bake.
+        const definitionId = getDefinitionId(sourceFeature)
+        const definition = definitions[definitionId]
+        const bakedProfile = definition
+          ? resolveProfile(definition, newTransform)
+          : translateProfile(sourceFeature.sketch.profile, dx * step, dy * step)
+
+        created.push({
+          ...sourceFeature,
+          id: nextId,
+          name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
+          folderId: sourceFeature.folderId,
+          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
+          sketch: {
+            ...sourceFeature.sketch,
+            origin: ['text', 'stl'].includes(sourceFeature.kind)
+              ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+              : sourceFeature.sketch.origin,
+            profile: bakedProfile,
+          },
+          locked: false,
+          transform: newTransform,
+        } as SketchFeature & { transform: Matrix2D })
+      } else {
+        // Independent copy: clone definition for each source feature.
+        // The caller is expected to merge the cloned definitions into
+        // project.featureDefinitions and update definitionId on each
+        // created feature row.
+        const definitionId = getDefinitionId(sourceFeature)
+        const definition = definitions[definitionId]
+        const clonedDefinitionId = `f-${nextId}`
+        const clonedDef: FeatureDefinition = definition
+          ? {
+              ...definition,
+              id: clonedDefinitionId,
+              profile: { ...definition.profile, segments: definition.profile.segments.map((s) => ({ ...s } as typeof s)) },
+              dimensions: definition.dimensions.map((d) => ({ ...d })),
+              text: definition.text ? { ...definition.text } : null,
+              stl: definition.stl ? { ...definition.stl } : null,
+            }
+          : {
+              id: clonedDefinitionId,
+              kind: sourceFeature.kind,
+              profile: translateProfile(sourceFeature.sketch.profile, 0, 0),
+              dimensions: sourceFeature.sketch.dimensions.map((d) => ({ ...d })),
+              text: sourceFeature.text ? { ...sourceFeature.text } : null,
+              stl: sourceFeature.stl ? { ...sourceFeature.stl } : null,
+              operation: sourceFeature.operation,
+            }
+        const bakedProfile = resolveProfile(clonedDef, newTransform)
+
+        created.push({
+          ...sourceFeature,
+          id: nextId,
+          definitionId: clonedDefinitionId,
+          name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
+          folderId: sourceFeature.folderId,
+          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
+          sketch: {
+            ...sourceFeature.sketch,
+            origin: ['text', 'stl'].includes(sourceFeature.kind)
+              ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+              : sourceFeature.sketch.origin,
+            profile: bakedProfile,
+          },
+          locked: false,
+          transform: newTransform,
+          _clonedDefinition: clonedDef,
+        } as SketchFeature & { transform: Matrix2D; _clonedDefinition?: FeatureDefinition })
+      }
     }
   }
 
   return created
+}
+
+/**
+ * Extract cloned definitions from features created by
+ * {@link buildCopiedFeatures} in independent mode.
+ */
+export function extractClonedDefinitions(
+  createdFeatures: SketchFeature[],
+): Record<string, FeatureDefinition> {
+  const defs: Record<string, FeatureDefinition> = {}
+  for (const feature of createdFeatures) {
+    const withClone = feature as SketchFeature & { _clonedDefinition?: FeatureDefinition }
+    if (withClone._clonedDefinition) {
+      defs[withClone._clonedDefinition.id] = withClone._clonedDefinition
+    }
+  }
+  return defs
 }
 
 export function buildCopiedClamps(

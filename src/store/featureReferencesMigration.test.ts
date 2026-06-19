@@ -240,6 +240,7 @@ function makeLegacyProject(features: SketchFeature[]): Project {
       units: 'mm',
       showFeatureInfo: true,
       showDimensions: true,
+      copyMode: 'reference' as const,
       maxTravelZ: 50,
       operationClearanceZ: 5,
       clampClearanceXY: 2,

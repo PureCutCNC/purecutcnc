@@ -39,7 +39,7 @@ import {
   rotateBackdropFromReference,
   rotateFeatureFromReference,
 } from '../helpers/referenceTransforms'
-import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies } from '../helpers/copyFeatures'
+import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies, extractClonedDefinitions } from '../helpers/copyFeatures'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
@@ -129,14 +129,37 @@ export function createPendingCompletionSlice(
             return { pendingMove: null }
           }
 
+          const effectiveCopyMode =
+            mode === 'copy'
+              ? s.pendingMove?.copyMode ?? s.project.meta.copyMode
+              : undefined
+
           const createdFeatures =
             mode === 'copy'
-              ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+              ? buildCopiedFeatures(
+                  sourceFeatures,
+                  s.project.features,
+                  dx,
+                  dy,
+                  normalizedCopyCount,
+                  s.project.featureDefinitions,
+                  effectiveCopyMode,
+                )
               : []
+
+          // Merge cloned definitions for independent copies.
+          const clonedDefs = mode === 'copy' ? extractClonedDefinitions(createdFeatures) : {}
+          // Strip the _clonedDefinition temporary key from created features.
+          const cleanedCreatedFeatures = mode === 'copy'
+            ? createdFeatures.map((f) => {
+                const { _clonedDefinition, ...rest } = f as SketchFeature & { _clonedDefinition?: FeatureDefinition }
+                return rest as SketchFeature
+              })
+            : []
 
           const translatedFeatures =
             mode === 'copy'
-              ? [...s.project.features, ...createdFeatures]
+              ? [...s.project.features, ...cleanedCreatedFeatures]
               : s.project.features.map((feature) => {
                   if (!entityIds.includes(feature.id) || feature.locked) {
                     return feature
@@ -155,8 +178,8 @@ export function createPendingCompletionSlice(
                       : feature.stl,
                     sketch: {
                       ...feature.sketch,
-                      origin: ['text', 'stl'].includes(feature.kind) 
-                        ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy } 
+                      origin: ['text', 'stl'].includes(feature.kind)
+                        ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy }
                         : feature.sketch.origin,
                       profile: transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
@@ -165,19 +188,24 @@ export function createPendingCompletionSlice(
                 })
           const resolvedFeatures =
             mode === 'copy'
-              ? deps.clearStaleConstraints(translatedFeatures, new Set(createdFeatures.map((f) => f.id)))
+              ? deps.clearStaleConstraints(translatedFeatures, new Set(cleanedCreatedFeatures.map((f) => f.id)))
               : deps.validateAllConstraints(deps.propagateConstraintsOnTranslate(
                   translatedFeatures,
                   new Map(entityIds.filter((id) => !s.project.features.find((f) => f.id === id)?.locked).map((id) => [id, { dx, dy }])),
                 ))
+          const nextFeatureDefinitions = {
+            ...s.project.featureDefinitions,
+            ...clonedDefs,
+          }
           const nextProject = {
             ...s.project,
             features: resolvedFeatures,
+            featureDefinitions: nextFeatureDefinitions,
             featureTree:
               mode === 'copy'
                 ? [
                     ...s.project.featureTree,
-                    ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+                    ...cleanedCreatedFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
                   ]
                 : s.project.featureTree,
             meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -194,10 +222,10 @@ export function createPendingCompletionSlice(
               mode === 'copy'
                 ? {
                     ...s.selection,
-                    selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
-                    selectedFeatureIds: createdFeatures.map((feature) => feature.id),
-                    selectedNode: createdFeatures.at(-1)
-                      ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                    selectedFeatureId: cleanedCreatedFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+                    selectedFeatureIds: cleanedCreatedFeatures.map((feature) => feature.id),
+                    selectedNode: cleanedCreatedFeatures.at(-1)
+                      ? { type: 'feature', featureId: cleanedCreatedFeatures.at(-1)!.id }
                       : s.selection.selectedNode,
                   }
                 : s.selection,

@@ -38,7 +38,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
-  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs
+  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — resolves definition and instance rows into world-space feature geometry for read paths
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
@@ -58,6 +58,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
+- `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
 - `second_cut_test.ts` — multi-pass cutting behavior
 
 ## Gotchas

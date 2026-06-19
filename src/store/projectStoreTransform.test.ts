@@ -189,6 +189,7 @@ endsolid tri
       units: 'mm',
       showFeatureInfo: true,
       showDimensions: true,
+      copyMode: 'reference' as const,
       maxTravelZ: 10,
       operationClearanceZ: 3,
       clampClearanceXY: 2,

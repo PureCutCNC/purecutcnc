@@ -18,6 +18,7 @@ import { useMemo } from 'react'
 import type { QuickOperation } from '../components/cam/operationValidity'
 import { useProjectStore } from '../store/projectStore'
 import type { ProjectStore } from '../store/types'
+import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import { loadBundledToolLibrary } from '../toolLibrary'
 
 type CenterTab = 'sketch' | 'preview3d' | 'simulation'
@@ -33,6 +34,7 @@ interface UseFeatureTreeActionsArgs {
 type FeatureTreeActionStore = Pick<
   ProjectStore,
   | 'selectFeature'
+  | 'selectFeatures'
   | 'enterSketchEdit'
   | 'enterTabEdit'
   | 'enterClampEdit'
@@ -54,6 +56,8 @@ type FeatureTreeActionStore = Pick<
   | 'startCopyClamp'
   | 'setStockSourceFeature'
   | 'addOperation'
+  | 'makeUnique'
+  | 'project'
 >
 
 interface CreateFeatureTreeActionsArgs extends UseFeatureTreeActionsArgs {
@@ -64,6 +68,10 @@ export interface FeatureTreeActions {
   editSketch: (featureId: string) => void
   constraint: (featureId: string) => void
   copyFeature: (featureId: string) => void
+  duplicateAsReference: (featureId: string) => void
+  duplicateIndependent: (featureId: string) => void
+  makeUnique: (featureId: string) => void
+  selectLinkedInstances: (featureId: string) => void
   moveFeature: (featureId: string) => void
   resizeFeature: (featureId: string) => void
   rotateFeature: (featureId: string) => void
@@ -93,6 +101,7 @@ export function createFeatureTreeActions({
 }: CreateFeatureTreeActionsArgs): FeatureTreeActions {
   const {
     selectFeature,
+    selectFeatures,
     enterSketchEdit,
     enterTabEdit,
     enterClampEdit,
@@ -114,6 +123,8 @@ export function createFeatureTreeActions({
     startCopyClamp,
     setStockSourceFeature,
     addOperation,
+    makeUnique: storeMakeUnique,
+    project,
   } = storeActions
 
   const runSketchAction = (action: () => void) => {
@@ -138,6 +149,24 @@ export function createFeatureTreeActions({
     },
     copyFeature: (featureId: string) => {
       runSketchAction(() => startCopyFeature(featureId))
+    },
+    duplicateAsReference: (featureId: string) => {
+      runSketchAction(() => startCopyFeature(featureId, 'reference'))
+    },
+    duplicateIndependent: (featureId: string) => {
+      runSketchAction(() => startCopyFeature(featureId, 'independent'))
+    },
+    makeUnique: (featureId: string) => {
+      storeMakeUnique(featureId)
+      closeTreeContextMenu()
+    },
+    selectLinkedInstances: (featureId: string) => {
+      const defId = getDefinitionId(project.features.find((f) => f.id === featureId)!)
+      if (defId) {
+        const siblingIds = getInstanceIdsForDefinition(project, defId)
+        selectFeatures(siblingIds)
+      }
+      closeTreeContextMenu()
     },
     moveFeature: (featureId: string) => {
       runSketchAction(() => startMoveFeature(featureId))
@@ -219,6 +248,7 @@ export function useFeatureTreeActions({
 }: UseFeatureTreeActionsArgs): FeatureTreeActions {
   const {
     selectFeature,
+    selectFeatures,
     enterSketchEdit,
     enterTabEdit,
     enterClampEdit,
@@ -240,6 +270,8 @@ export function useFeatureTreeActions({
     startCopyClamp,
     setStockSourceFeature,
     addOperation,
+    makeUnique: storeMakeUnique,
+    project,
   } = useProjectStore()
 
   return useMemo(() => createFeatureTreeActions({
@@ -249,6 +281,7 @@ export function useFeatureTreeActions({
     onSelectedOperationIdChange,
     storeActions: {
       selectFeature,
+      selectFeatures,
       enterSketchEdit,
       enterTabEdit,
       enterClampEdit,
@@ -270,6 +303,8 @@ export function useFeatureTreeActions({
       startCopyClamp,
       setStockSourceFeature,
       addOperation,
+      makeUnique: storeMakeUnique,
+      project,
     },
   }), [
     addOperation,
@@ -282,7 +317,9 @@ export function useFeatureTreeActions({
     enterSketchEdit,
     enterTabEdit,
     onSelectedOperationIdChange,
+    project,
     selectFeature,
+    selectFeatures,
     setCenterTab,
     setRightTab,
     setStockSourceFeature,
@@ -298,5 +335,6 @@ export function useFeatureTreeActions({
     startOffsetSelectedFeatures,
     startResizeFeature,
     startRotateFeature,
+    storeMakeUnique,
   ])
 }
