@@ -57,6 +57,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `instanceTransforms.test.ts` — instance transform matrix composition
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
+- `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `second_cut_test.ts` — multi-pass cutting behavior
 
 ## Gotchas
