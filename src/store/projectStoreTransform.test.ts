@@ -20,9 +20,10 @@
  * Run with: npx tsx src/store/projectStoreTransform.test.ts
  */
 
-import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type SketchFeature } from '../types/project'
+import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type Matrix2D, type SketchFeature } from '../types/project'
 import { normalizeProject } from './projectStore'
-import { mirrorFeatureFromReference, resizeFeatureFromReference } from './helpers/referenceTransforms'
+import { mirrorFeatureFromReference, resizeFeatureFromReference, rotateFeatureFromReference } from './helpers/referenceTransforms'
+import { applyMatrixToPoint, isIdentityMatrix } from './helpers/resolveFeatures'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -202,6 +203,7 @@ endsolid tri
     dimensions: {},
     annotations: [],
     modelAssets: {},
+    featureDefinitions: {},
     features: [makeFeature('stl')].map((feature) => ({
       ...feature,
       stl: {
@@ -227,11 +229,100 @@ endsolid tri
   assert(project.modelAssets[model.stl!.meshAssetId!] !== undefined, 'referenced model asset should exist')
 }
 
+function testResizeSetsTransform(): void {
+  console.log('Testing resize sets feature.transform...')
+  const feature = makeFeature('rect')
+  const resized = resizeFeatureFromReference(
+    feature,
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 20, y: 0 },
+  )
+  if (!resized) throw new Error('Assertion failed: expected resized feature')
+  const transform = (resized as SketchFeature & { transform?: Matrix2D }).transform
+  if (!transform) throw new Error('Assertion failed: resized feature should have transform')
+  assert(!isIdentityMatrix(transform), 'resized feature transform should not be identity')
+  const world = applyMatrixToPoint(transform, { x: 10, y: 5 })
+  assert(approx(world.x, 20), `expected world x 20, got ${world.x}`)
+  assert(approx(world.y, 5), `expected world y 5, got ${world.y}`)
+}
+
+function testRotateSetsTransform(): void {
+  console.log('Testing rotate sets feature.transform...')
+  const feature = makeFeature('rect')
+  const rotated = rotateFeatureFromReference(
+    feature,
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 0, y: 10 },
+  )
+  if (!rotated) throw new Error('Assertion failed: expected rotated feature')
+  const transform = (rotated as SketchFeature & { transform?: Matrix2D }).transform
+  if (!transform) throw new Error('Assertion failed: rotated feature should have transform')
+  assert(!isIdentityMatrix(transform), 'rotated feature transform should not be identity')
+  const world = applyMatrixToPoint(transform, { x: 10, y: 0 })
+  assert(approx(world.x, 0, 1e-5), `expected world x 0, got ${world.x}`)
+  assert(approx(world.y, 10, 1e-5), `expected world y 10, got ${world.y}`)
+}
+
+function testMirrorSetsTransform(): void {
+  console.log('Testing mirror sets feature.transform...')
+  const feature = makeFeature('rect')
+  const mirrored = mirrorFeatureFromReference(
+    feature,
+    { x: 5, y: -10 },
+    { x: 5, y: 10 },
+  )
+  if (!mirrored) throw new Error('Assertion failed: expected mirrored feature')
+  const transform = (mirrored as SketchFeature & { transform?: Matrix2D }).transform
+  if (!transform) throw new Error('Assertion failed: mirrored feature should have transform')
+  assert(!isIdentityMatrix(transform), 'mirrored feature transform should not be identity')
+}
+
+function testIdentityMigratedResizeKeepsCompatibilityProfile(): void {
+  console.log('Testing identity-migrated resize keeps compatibility profile consistent...')
+  const feature = makeFeature('rect')
+  const resized = resizeFeatureFromReference(
+    feature,
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 20, y: 0 },
+  )
+  if (!resized) throw new Error('Assertion failed: expected resized feature')
+  const bounds = getProfileBounds(resized.sketch.profile)
+  assert(approx(bounds.maxX - bounds.minX, 20), `expected width 20, got ${bounds.maxX - bounds.minX}`)
+  assert(approx(bounds.maxY - bounds.minY, 5), `expected height 5, got ${bounds.maxY - bounds.minY}`)
+}
+
+function testResizeWithExplicitDefinitionIdDoesNotMutateDefinition(): void {
+  console.log('Testing resize with explicit definitionId sets only instance transform...')
+  const feature: SketchFeature & { definitionId?: string } = {
+    ...makeFeature('rect'),
+    definitionId: 'def-1',
+  }
+  const resized = resizeFeatureFromReference(
+    feature,
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 20, y: 0 },
+  )
+  if (!resized) throw new Error('Assertion failed: expected resized feature')
+  const transform = (resized as SketchFeature & { transform?: Matrix2D }).transform
+  assert(transform !== undefined, 'resized feature with explicit definitionId should have transform')
+  const bounds = getProfileBounds(resized.sketch.profile)
+  assert(approx(bounds.maxX - bounds.minX, 20), `expected width 20, got ${bounds.maxX - bounds.minX}`)
+}
+
 testRegularFeatureCanResizeOneAxis()
 testStlFeatureResizeIsUniform()
 testFeatureMirrorsAcrossVerticalLine()
 testMirrorFlipsArcHandedness()
 testStlMirrorTransformsSilhouette()
 testLegacyModelMovesToAssetTable()
+testResizeSetsTransform()
+testRotateSetsTransform()
+testMirrorSetsTransform()
+testIdentityMigratedResizeKeepsCompatibilityProfile()
+testResizeWithExplicitDefinitionIdDoesNotMutateDefinition()
 
 console.log('projectStore transform tests passed')

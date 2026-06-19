@@ -18,6 +18,7 @@ import type { StateCreator } from 'zustand'
 import type {
   FeatureFolder,
   FeatureTreeEntry,
+  Matrix2D,
   Project,
   SketchFeature,
 } from '../../types/project'
@@ -38,6 +39,7 @@ import {
   polygonProfile,
   splineProfile,
   getProfileBounds,
+  IDENTITY_MATRIX,
 } from '../../types/project'
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
@@ -50,6 +52,8 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
+import { gcOrphanedDefinitions } from '../helpers/featureDefinitions'
+import { resolveFeatureInstances } from '../helpers/resolveFeatures'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -57,6 +61,7 @@ import {
 } from '../../engine/toolpaths/arcReconstruction'
 import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipping'
 import { transformProfile } from '../helpers/transform'
+import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { folderIdForOperation } from '../helpers/operationDefaults'
 import {
@@ -592,9 +597,8 @@ export function createFeatureSlice(
 
     mergeSelectedFeatures: (keepOriginals = false) => {
       const state = get()
-      const selectedIdSet = new Set(state.selection.selectedFeatureIds)
-      const selectedFeatures = state.project.features
-        .filter((feature) => selectedIdSet.has(feature.id))
+      const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+        .map((feature) => feature as unknown as SketchFeature)
         .filter((feature) => feature.sketch.profile.closed)
 
       if (selectedFeatures.length < 2) {
@@ -606,7 +610,7 @@ export function createFeatureSlice(
       const joinNameStem = normalizeDerivedFeatureNameStem(baseFeature.name)
       const segAnnotations = buildSegmentAnnotations(selectedFeatures)
       const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
-      const createdFeatures = unionPaths
+      const createdResults = unionPaths
         .map((path, index) => {
           const profile = clipperContourToProfilePreserving(path, selectedFeatures, segAnnotations)
             ?? clipperContourToProfile(path)
@@ -624,7 +628,9 @@ export function createFeatureSlice(
             ]),
           )
         })
-        .filter((feature): feature is SketchFeature => feature !== null)
+        .filter((result): result is NonNullable<typeof result> => result !== null)
+      const createdFeatures = createdResults.map((result) => result.feature)
+      const newDefinitions = createdResults.map((result) => result.definition)
 
       if (createdFeatures.length === 0) {
         return []
@@ -633,10 +639,20 @@ export function createFeatureSlice(
       set((s) => {
         const idsToReplace = new Set(keepOriginals ? [] : selectedFeatures.map((feature) => feature.id))
         const createdGroups: DerivedFeatureGroup[] = [{ sourceId: anchorFeature.id, features: createdFeatures }]
+        const nextFeatures = insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace)
+        const nextFeatureTree = insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace)
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of newDefinitions) {
+          nextDefinitions[definition.id] = definition
+        }
+        const finalDefinitions = keepOriginals
+          ? nextDefinitions
+          : gcOrphanedDefinitions(nextFeatures, nextDefinitions).definitions
         const nextProject = syncFeatureTreeProject({
           ...s.project,
-          features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
-          featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          featureDefinitions: finalDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)
@@ -664,9 +680,8 @@ export function createFeatureSlice(
 
     cutSelectedFeatures: (keepOriginals = false) => {
       const state = get()
-      const selectedFeatures = state.selection.selectedFeatureIds
-        .map((featureId) => state.project.features.find((feature) => feature.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
+      const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+        .map((feature) => feature as unknown as SketchFeature)
 
       if (selectedFeatures.length < 2) {
         return []
@@ -678,7 +693,8 @@ export function createFeatureSlice(
         if (feature.sketch.profile.closed) return true
         return cutter.sketch.profile.closed
       })
-      const createdGroups = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
+      const cutResult = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
+      const createdGroups = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
 
       if (createdFeatures.length === 0) {
@@ -687,10 +703,20 @@ export function createFeatureSlice(
 
       set((s) => {
         const idsToReplace = new Set(keepOriginals ? [] : targets.map((feature) => feature.id))
+        const nextFeatures = insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace)
+        const nextFeatureTree = insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace)
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of cutResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
+        const finalDefinitions = keepOriginals
+          ? nextDefinitions
+          : gcOrphanedDefinitions(nextFeatures, nextDefinitions).definitions
         const nextProject = syncFeatureTreeProject({
           ...s.project,
-          features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
-          featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          featureDefinitions: finalDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)
@@ -718,16 +744,22 @@ export function createFeatureSlice(
 
     offsetSelectedFeatures: (distance) => {
       const state = get()
-      const createdFeatures = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
+      const offsetResult = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
+      const createdFeatures = offsetResult.features
 
       if (createdFeatures.length === 0) {
         return []
       }
 
       set((s) => {
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of offsetResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, ...createdFeatures],
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)
@@ -840,13 +872,15 @@ export function createFeatureSlice(
             return feature
           }
           movedOffsets.set(feature.id, { dx, dy })
+          const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
           return {
             ...feature,
             sketch: {
               ...feature.sketch,
               profile: translateProfile(feature.sketch.profile, dx, dy),
             },
-          }
+            transform: multiplyMatrix(moveDelta(dx, dy), currentTransform),
+          } as SketchFeature & { transform: Matrix2D }
         })
 
         const cleaned = propagateConstraintsOnTranslate(nextFeatures, movedOffsets, { transformProfile })
@@ -940,13 +974,15 @@ export function createFeatureSlice(
           const dx = axis === 'x' ? delta : 0
           const dy = axis === 'y' ? delta : 0
           movedOffsetsDist.set(feature.id, { dx, dy })
+          const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
           return {
             ...feature,
             sketch: {
               ...feature.sketch,
               profile: translateProfile(feature.sketch.profile, dx, dy),
             },
-          }
+            transform: multiplyMatrix(moveDelta(dx, dy), currentTransform),
+          } as SketchFeature & { transform: Matrix2D }
         })
 
         const cleanedDist = propagateConstraintsOnTranslate(nextFeatures, movedOffsetsDist, { transformProfile })

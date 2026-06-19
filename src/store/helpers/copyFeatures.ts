@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { newProject } from '../../types/project'
-import type { Clamp, Point, Project, SketchFeature, Tab } from '../../types/project'
+import { IDENTITY_MATRIX, newProject } from '../../types/project'
+import type { Clamp, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
+import { moveDelta, multiplyMatrix, rotateDelta } from './instanceTransforms'
 import { duplicateClampName, duplicateFeatureName, duplicateTabName } from './naming'
 import { inferProfileOrientationAngle, normalizeAngleDegrees } from './normalize'
 import { mirrorFeatureFromReference } from './referenceTransforms'
@@ -41,6 +42,7 @@ export function buildRotatedCopies(
         'f',
       )
       const profile = transformProfile(sourceFeature.sketch.profile, rotatePoint)
+      const currentTransform = (sourceFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
       created.push({
         ...sourceFeature,
         id: nextId,
@@ -56,7 +58,8 @@ export function buildRotatedCopies(
           profile,
         },
         locked: false,
-      })
+        transform: multiplyMatrix(rotateDelta(pivot, stepAngle), currentTransform),
+      } as SketchFeature & { transform: Matrix2D })
     }
   }
 
@@ -118,6 +121,7 @@ export function buildCopiedFeatures(
         },
         'f',
       )
+      const currentTransform = (sourceFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
       created.push({
         ...sourceFeature,
         id: nextId,
@@ -132,7 +136,8 @@ export function buildCopiedFeatures(
           profile: translateProfile(sourceFeature.sketch.profile, dx * step, dy * step),
         },
         locked: false,
-      })
+        transform: multiplyMatrix(moveDelta(dx * step, dy * step), currentTransform),
+      } as SketchFeature & { transform: Matrix2D })
     }
   }
 

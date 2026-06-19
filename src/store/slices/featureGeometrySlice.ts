@@ -24,6 +24,7 @@ import {
 } from '../helpers/normalize'
 import {
   profileVertices,
+  type Project,
   type Point,
   type SketchFeature,
   type SketchProfile,
@@ -45,6 +46,7 @@ import {
   normalizeEditableProfileClosure,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
+import { getDefinitionId, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
 
 export interface FeatureGeometrySliceDependencies {
   joinOpenProfiles: (
@@ -70,6 +72,7 @@ export type FeatureGeometrySlice = Pick<
   | 'deleteFeatureSegment'
   | 'disconnectFeaturePoint'
   | 'filletFeaturePoint'
+  | 'makeUnique'
 >
 
 export function createFeatureGeometrySlice(
@@ -83,6 +86,36 @@ export function createFeatureGeometrySlice(
     clearStaleConstraints,
     applyProfileBreak,
   } = deps
+
+  function syncEditedFeatureDefinition(project: Project, featureId: string, editingFeatureId?: string): Project {
+    const editedFeature = project.features.find((feature) => feature.id === featureId)
+    if (!editedFeature) return project
+
+    const definitionId = getDefinitionId(editedFeature)
+    const definition = project.featureDefinitions[definitionId]
+    if (!definition) return project
+
+    const nextDefinition = {
+      ...definition,
+      kind: editedFeature.kind,
+      profile: editedFeature.sketch.profile,
+      dimensions: editedFeature.sketch.dimensions.map((dimension) => ({ ...dimension })),
+      text: editedFeature.text ? { ...editedFeature.text } : null,
+      stl: editedFeature.stl ? { ...editedFeature.stl } : null,
+      operation: editedFeature.operation,
+    }
+    const nextProject = {
+      ...project,
+      featureDefinitions: {
+        ...project.featureDefinitions,
+        [definitionId]: nextDefinition,
+      },
+    }
+    return {
+      ...nextProject,
+      features: rebakeAllInstances(nextProject, definitionId, { editingFeatureId }),
+    }
+  }
 
   return {
   moveFeatureControl: (featureId, control, point) =>
@@ -297,6 +330,11 @@ export function createFeatureGeometrySlice(
         if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
         return validateConstraintsOnFeature(f, featureByIdMap)
       })
+      nextProject = syncEditedFeatureDefinition(
+        nextProject,
+        featureId,
+        s.selection.mode === 'sketch_edit' ? featureId : undefined,
+      )
       // Sync stock if the edited feature is the stock source
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
       if (projectsEqual(nextProject, s.project)) {
@@ -347,6 +385,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
+      nextProject = syncEditedFeatureDefinition(
+        nextProject,
+        featureId,
+        s.selection.mode === 'sketch_edit' ? featureId : undefined,
+      )
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
@@ -448,6 +491,11 @@ export function createFeatureGeometrySlice(
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
 
+      nextProject = syncEditedFeatureDefinition(
+        nextProject,
+        featureId,
+        s.selection.mode === 'sketch_edit' ? featureId : undefined,
+      )
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
       if (projectsEqual(nextProject, s.project)) {
         return {}
@@ -509,6 +557,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
+      nextProject = syncEditedFeatureDefinition(
+        nextProject,
+        featureId,
+        s.selection.mode === 'sketch_edit' ? featureId : undefined,
+      )
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
@@ -563,6 +616,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
+      nextProject = syncEditedFeatureDefinition(
+        nextProject,
+        featureId,
+        s.selection.mode === 'sketch_edit' ? featureId : undefined,
+      )
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
@@ -571,6 +629,35 @@ export function createFeatureGeometrySlice(
           ...s.selection,
           activeControl: null,
         },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  makeUnique: (instanceId) =>
+    set((s) => {
+      const result = makeUniqueHelper(s.project, instanceId)
+      if (!result) return {}
+
+      const nextProject = {
+        ...s.project,
+        featureDefinitions: {
+          ...s.project.featureDefinitions,
+          [result.newDefinitionId]: result.clonedDefinition,
+        },
+        features: result.features,
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      return {
+        project: nextProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],

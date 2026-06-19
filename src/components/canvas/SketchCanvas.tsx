@@ -1604,7 +1604,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       const previewDistance = typedOffsetDistance ?? previewInput?.signedDistance ?? null
       if (previewDistance !== null) {
-        const previewFeatures = previewOffsetFeatures(project, pendingOffset.entityIds, previewDistance)
+        const { features: previewFeatures } = previewOffsetFeatures(project, pendingOffset.entityIds, previewDistance)
         for (const feature of previewFeatures) {
           drawPreviewProfile(
             ctx,

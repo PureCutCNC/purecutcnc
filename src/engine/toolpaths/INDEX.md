@@ -34,6 +34,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `toolpaths.test.ts` — broad smoke tests across strategies
+- `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
 - arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)

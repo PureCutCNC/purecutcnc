@@ -15,7 +15,8 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Clamp, Point, Project, SketchFeature, Tab } from '../../types/project'
+import { IDENTITY_MATRIX } from '../../types/project'
+import type { Clamp, FeatureDefinition, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
 import {
   cloneProject,
   projectsEqual,
@@ -27,8 +28,10 @@ import {
   insertDerivedFeatureTreeEntries,
 } from '../helpers/derivedFeatures'
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
+import { gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import type { ProjectStore } from '../types'
 import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
+import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -43,14 +46,14 @@ export interface PendingCompletionSliceDependencies {
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
-  previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
+  previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => { features: SketchFeature[]; definitions: FeatureDefinition[] }
   createDerivedFeature: (
     project: Project,
     baseFeature: SketchFeature,
     profile: SketchFeature['sketch']['profile'],
     operation: SketchFeature['operation'],
     name: string,
-  ) => SketchFeature
+  ) => { feature: SketchFeature; definition: FeatureDefinition }
 }
 
 export type PendingCompletionSlice = Pick<
@@ -138,6 +141,7 @@ export function createPendingCompletionSlice(
                   if (!entityIds.includes(feature.id) || feature.locked) {
                     return feature
                   }
+                  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
 
                   return {
                     ...feature,
@@ -156,7 +160,8 @@ export function createPendingCompletionSlice(
                         : feature.sketch.origin,
                       profile: transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
-                  }
+                    transform: multiplyMatrix(moveDelta(dx, dy), currentTransform),
+                  } as SketchFeature & { transform: Matrix2D }
                 })
           const resolvedFeatures =
             mode === 'copy'
@@ -511,16 +516,22 @@ export function createPendingCompletionSlice(
         return []
       }
 
-      const createdFeatures = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
+      const offsetResult = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
+      const createdFeatures = offsetResult.features
       if (createdFeatures.length === 0) {
         set({ pendingOffset: null })
         return []
       }
 
       set((s) => {
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of offsetResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, ...createdFeatures],
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)
@@ -579,12 +590,13 @@ export function createPendingCompletionSlice(
         return []
       }
 
-      const createdGroups: DerivedFeatureGroup[] = cutFeaturesByCutterGrouped(
+      const cutResult = cutFeaturesByCutterGrouped(
         state.project,
         cutters,
         targets,
         deps.createDerivedFeature,
       )
+      const createdGroups: DerivedFeatureGroup[] = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
       if (createdFeatures.length === 0) {
         set({ pendingShapeAction: null })
@@ -597,10 +609,20 @@ export function createPendingCompletionSlice(
             ? []
             : pendingShapeAction.targetIds,
         )
+        const nextFeatures = insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace)
+        const nextFeatureTree = insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace)
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of cutResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
+        const finalDefinitions = pendingShapeAction.keepOriginals
+          ? nextDefinitions
+          : gcOrphanedDefinitions(nextFeatures, nextDefinitions).definitions
         const nextProject = syncFeatureTreeProject({
           ...s.project,
-          features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
-          featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          featureDefinitions: finalDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)

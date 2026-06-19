@@ -401,6 +401,7 @@ export interface ProjectStore {
   deleteFeatureSegment: (featureId: string, segmentIndex: number) => void
   disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
+  makeUnique: (instanceId: string) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
   startAddRectPlacement: () => void
