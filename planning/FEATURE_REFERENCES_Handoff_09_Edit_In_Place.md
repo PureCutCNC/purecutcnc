@@ -18,6 +18,13 @@ Root cause: `enterSketchEdit` and the per-edit definition sync force the **edite
 question #5). The fix is to edit **in place** — keep the clicked instance at its own transform during
 editing, and map edits back into definition-local space when writing to the shared definition.
 
+**Same root cause covers a second user-reported symptom:** after **Make Unique** on a moved/resized
+instance, Edit Sketch still opens at the *original position and size*. That's because `makeUnique`
+(`src/store/helpers/featureDefinitions.ts`) clones the **canonical/untransformed** definition and
+**keeps the instance's transform** (including scale) — so the identity-force shows the canonical clone
+at the origin. The edit-in-place fix resolves this too; it must be verified explicitly (see criteria
+and tests).
+
 ## Branch / base / worktree
 
 - Integration branch: `feature-references-v2` (use the current tip of `origin/feature-references-v2`).
@@ -104,7 +111,8 @@ editing, and map edits back into definition-local space when writing to the shar
   transform after the edit (offsets between instances unchanged).
 - Editing the first/identity instance is unchanged.
 - `cancelSketchEdit` restores pre-edit geometry; `applySketchEdit` commits; undo works.
-- `makeUnique` then edit affects only the unique copy (no regression).
+- **Make Unique then Edit Sketch on a moved/resized instance opens at the instance's actual position
+  and size** (not the canonical origin/size), and edits affect only the unique copy (no regression).
 - `npm run build` (tsc -b + full `npm test` + vite) green.
 
 ## Required tests (focused, `npx tsx`)
@@ -117,6 +125,10 @@ Add a suite (e.g. `src/store/editInPlace.test.ts`) that, WITHOUT a browser, asse
   control you moved is at the world point you set, not at the origin); the A↔B world offset is
   preserved; resolved geometry round-trips (re-resolving is stable).
 - `invertMatrix` round-trip unit test (see step 1).
+- **Make Unique then edit-in-place:** start from a linked instance with a transform that includes
+  translation AND scale; `makeUnique` it; then `enterSketchEdit`→edit→`applySketchEdit`. Assert the
+  edit applies at the instance's actual (transformed/scaled) location, the unique copy's resolved
+  geometry reflects it, and the original/other instances are unaffected.
 Run and confirm no regressions in the existing FR suites:
 ```
 npx tsx src/store/definitionEditing.test.ts
