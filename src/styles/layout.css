@@ -3145,24 +3145,20 @@
   cursor: default;
 }
 
+/* Linked-instance marker: a quiet inline glyph, not a button. No box/border/fill
+   so it reads as a status hint rather than another row action. */
 .tree-linked-badge {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  margin-left: 6px;
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
-  border: 1px solid rgba(122, 162, 247, 0.6);
-  background: rgba(122, 162, 247, 0.14);
-  color: #7aa2f7;
+  margin-left: 5px;
+  color: rgba(122, 162, 247, 0.7);
   cursor: default;
 }
 
 .tree-icon--link {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 /* ── Operation popup menu in feature tree ─────────────────── */
