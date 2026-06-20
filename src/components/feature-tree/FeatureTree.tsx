@@ -786,23 +786,25 @@ function TreeRow({
           </svg>
         </button>
       ) : null}
-      <span className="tree-label" title={label}>{label}</span>
-      {kind === 'feature' && operation === 'region' ? (
-        <span
-          className="tree-region-badge"
-          title="Region — limits where operations may cut. Not a shape to machine."
-        >
-          mask
-        </span>
-      ) : null}
-      {kind === 'feature' && linkedCount && linkedCount > 1 ? (
-        <span
-          className="tree-linked-badge"
-          title={`Linked — ${linkedCount} instances share this definition`}
-        >
-          <Icon id="link" className="tree-icon--link" />
-        </span>
-      ) : null}
+      <div className="tree-label-wrap">
+        <span className="tree-label" title={label}>{label}</span>
+        {kind === 'feature' && operation === 'region' ? (
+          <span
+            className="tree-region-badge"
+            title="Region — limits where operations may cut. Not a shape to machine."
+          >
+            mask
+          </span>
+        ) : null}
+        {kind === 'feature' && linkedCount && linkedCount > 1 ? (
+          <span
+            className="tree-linked-badge"
+            title={`Linked — ${linkedCount} instances share this definition`}
+          >
+            <Icon id="link" className="tree-icon--link" />
+          </span>
+        ) : null}
+      </div>
       <div className="tree-row-actions">
         {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
           <button

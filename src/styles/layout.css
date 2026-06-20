@@ -1540,6 +1540,15 @@
   color: rgba(214, 226, 236, 0.78);
 }
 
+/* Holds the label plus any inline badges (region/linked) in a single grid
+   column so badges never push the row actions onto a second line. */
+.tree-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .tree-label {
   min-width: 0;
   color: var(--text);
