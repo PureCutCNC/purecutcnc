@@ -56,6 +56,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
 - `instanceTransforms.test.ts` — instance transform matrix composition
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
+- `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query

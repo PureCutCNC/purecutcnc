@@ -319,7 +319,6 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
         features: baseFeaturesBeforeRebake,
       },
       definitionId,
-      { editingFeatureId: s.selection.mode === 'sketch_edit' ? featureId : undefined },
     )
     const createdGroups: DerivedFeatureGroup[] = splitFeature ? [{ sourceId: featureId, features: [splitFeature] }] : []
     let nextProject = syncFeatureTreeProject({

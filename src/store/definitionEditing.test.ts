@@ -201,69 +201,7 @@ test('rebakeAllInstances propagates definition profile edit to all instances', (
 })
 
 // ────────────────────────────────────────────────────────────────────
-// 4. Editing with editingFeatureId uses identity transform
-// ────────────────────────────────────────────────────────────────────
-
-test('rebakeAllInstances with editingFeatureId uses identity for the editor', () => {
-  const project = makeSimpleProject()
-  addLinkedInstance(project, 'f-0002', 'Linked', 'f-0001', {
-    a: 1, b: 0, c: 0, d: 1, e: 50, f: 0,
-  })
-
-  // Simulate a definition edit during sketch_edit on the linked (transformed) instance
-  const def = project.featureDefinitions['f-0001']!
-  const newProfile = rectProfile(20, 30, 40, 25)
-  project.featureDefinitions['f-0001'] = { ...def, profile: newProfile, kind: inferFeatureKind(newProfile) }
-
-  // Re-bake with editingFeatureId = the linked instance
-  const nextFeatures = rebakeAllInstances(project, 'f-0001', { editingFeatureId: 'f-0002' })
-
-  // Editing feature (f-0002) should get definition-local profile (identity transform)
-  const editing = nextFeatures.find((f) => f.id === 'f-0002')!
-  assert(editing.sketch.profile.start.x === 20, `editing start.x: expected 20, got ${editing.sketch.profile.start.x}`)
-  assert(editing.sketch.profile.start.y === 30, `editing start.y: expected 30, got ${editing.sketch.profile.start.y}`)
-
-  // Non-editing feature (f-0001) should get definition-local (identity transform too — it IS identity)
-  const orig = nextFeatures.find((f) => f.id === 'f-0001')!
-  assert(orig.sketch.profile.start.x === 20, `orig start.x: expected 20, got ${orig.sketch.profile.start.x}`)
-})
-
-// ────────────────────────────────────────────────────────────────────
-// 5. Profile edit through transformed instance writes definition-local geometry
-// ────────────────────────────────────────────────────────────────────
-
-test('profile edit through transformed instance writes definition-local', () => {
-  const project = makeSimpleProject(10, 20, 30, 15)
-  // Add a linked instance that is translated
-  addLinkedInstance(project, 'f-0002', 'Translated', 'f-0001', {
-    a: 1, b: 0, c: 0, d: 1, e: 100, f: 0,
-  })
-
-  // Simulate editing the definition-local profile directly, as a store action would
-  const def = project.featureDefinitions['f-0001']!
-  const newProfile = rectProfile(5, 10, 60, 30) // definition-local edit
-  const nextDef = { ...def, profile: newProfile, kind: inferFeatureKind(newProfile) }
-  const intermediateProject = {
-    ...project,
-    featureDefinitions: { ...project.featureDefinitions, 'f-0001': nextDef },
-  }
-
-  // When editing the transformed instance, it sees definition-local
-  const nextFeatures = rebakeAllInstances(intermediateProject, 'f-0001', { editingFeatureId: 'f-0002' })
-
-  // Editing feature should see definition-local (identity applied)
-  const editing = nextFeatures.find((f) => f.id === 'f-0002')!
-  assert(editing.sketch.profile.start.x === 5, 'editing should see def-local x')
-  assert(editing.sketch.profile.start.y === 10, 'editing should see def-local y')
-
-  // Now verify that resolveProfile(definition, transform) gives the correct world-space result
-  const resolved = resolveProfile(nextDef, { a: 1, b: 0, c: 0, d: 1, e: 100, f: 0 })
-  assert(resolved.start.x === 105, `resolved world x: expected 105, got ${resolved.start.x}`)
-  assert(resolved.start.y === 10, `resolved world y: expected 10, got ${resolved.start.y}`)
-})
-
-// ────────────────────────────────────────────────────────────────────
-// 6. Circle radius edit propagates and keeps circles
+// 4. Circle radius edit propagates and keeps circles (formerly 6)
 // ────────────────────────────────────────────────────────────────────
 
 function makeCircleProject(cx = 50, cy = 50, r = 25): Project {
