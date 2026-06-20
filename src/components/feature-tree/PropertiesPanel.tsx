@@ -23,6 +23,7 @@ import { ZRangeSlider } from './ZRangeSlider'
 import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { platform } from '../../platform'
@@ -194,6 +195,7 @@ export function PropertiesPanel() {
     enterTabEdit,
     enterClampEdit,
     deleteConstraint,
+    makeUnique,
   } = useProjectStore()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -1222,167 +1224,189 @@ export function PropertiesPanel() {
   const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
   const operationLockedToAdd = isFirstFeature && !isImportedModelFeature
 
+  const selectedDefId = getDefinitionId(selectedFeature)
+  const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
+  const hasLinkedInstances = linkedInstanceCount > 1
+
   return (
     <div className="properties-panel">
       <div className="properties-group">
-        <label className="properties-field">
-          <span>Name</span>
-          <DraftTextInput
-            key={`feature-name-${selectedFeature.id}-${selectedFeature.name}`}
-            value={selectedFeature.name}
-            onCommit={(next) => updateFeature(selectedFeature.id, { name: next })}
-          />
-        </label>
-        <label className="properties-field">
-          <span>Operation</span>
-          {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
-            <div className="properties-locked-field" title="Line features are open profiles and cannot change operation type">
-              <span>Line</span>
-              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
-            </div>
-          ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
-            <div className="properties-locked-field" title={
-              selectedFeature.operation === 'model'
-                ? 'Model features are imported 3D objects and cannot change operation type'
-                : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
-            }>
-              <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
-              <span className="properties-locked-hint" aria-hidden="true">🔒</span>
-            </div>
-          ) : (
-            <Select
-              value={selectedFeature.operation}
-              options={[
-                { value: 'subtract', label: 'Subtract' },
-                { value: 'add', label: 'Add' },
-                { value: 'region', label: 'Region' },
-              ]}
-              onChange={(value) => updateFeature(selectedFeature.id, {
-                operation: value as import('../../types/project').FeatureOperation,
-              })}
-            />
-          )}
-        </label>
-        {textFeature ? (
-          <>
-            <label className="properties-field">
-              <span>Text</span>
-              <DraftTextInput
-                key={`text-feature-text-${selectedFeature.id}-${textFeature.text}`}
-                value={textFeature.text}
-                onCommit={(next) =>
-                  updateFeature(selectedFeature.id, {
-                    text: {
-                      ...textFeature,
-                      text: next.replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
-                    },
-                  })}
-              />
-            </label>
-            <label className="properties-field">
-              <span>Style</span>
-              <Select
-                value={textFeature.style}
-                options={[
-                  { value: 'skeleton', label: 'Skeleton' },
-                  { value: 'outline', label: 'Outline' },
-                ]}
-                onChange={(style) => updateFeature(selectedFeature.id, {
-                  text: {
-                    ...textFeature,
-                    style,
-                    fontId: defaultFontIdForStyle(style),
-                  },
-                })}
-              />
-            </label>
-            <label className="properties-field">
-              <span>Font</span>
-              <Select
-                value={textFeature.fontId}
-                options={textFontOptions.map((font) => ({ value: font.id, label: font.label }))}
-                onChange={(fontId) => updateFeature(selectedFeature.id, {
-                  text: { ...textFeature, fontId },
-                })}
-              />
-            </label>
-          </>
-        ) : null}
-        {selectedFeature.operation === 'region' ? (
-          <>
-            <label className="properties-field">
-              <span>Z Range</span>
-              <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
-                <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+        <DisclosureSection
+          title={hasLinkedInstances ? `Shape (shared with ${linkedInstanceCount} instances)` : 'Shape'}
+          storageKey="feature-shape"
+        >
+          <label className="properties-field">
+            <span>Operation</span>
+            {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+              <div className="properties-locked-field" title="Line features are open profiles and cannot change operation type">
+                <span>Line</span>
                 <span className="properties-locked-hint" aria-hidden="true">🔒</span>
               </div>
-            </label>
+            ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
+              <div className="properties-locked-field" title={
+                selectedFeature.operation === 'model'
+                  ? 'Model features are imported 3D objects and cannot change operation type'
+                  : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
+              }>
+                <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
+                <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+              </div>
+            ) : (
+              <Select
+                value={selectedFeature.operation}
+                options={[
+                  { value: 'subtract', label: 'Subtract' },
+                  { value: 'add', label: 'Add' },
+                  { value: 'region', label: 'Region' },
+                ]}
+                onChange={(value) => updateFeature(selectedFeature.id, {
+                  operation: value as import('../../types/project').FeatureOperation,
+                })}
+              />
+            )}
+          </label>
+          {textFeature ? (
+            <>
+              <label className="properties-field">
+                <span>Text</span>
+                <DraftTextInput
+                  key={`text-feature-text-${selectedFeature.id}-${textFeature.text}`}
+                  value={textFeature.text}
+                  onCommit={(next) =>
+                    updateFeature(selectedFeature.id, {
+                      text: {
+                        ...textFeature,
+                        text: next.replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
+                      },
+                    })}
+                />
+              </label>
+              <label className="properties-field">
+                <span>Style</span>
+                <Select
+                  value={textFeature.style}
+                  options={[
+                    { value: 'skeleton', label: 'Skeleton' },
+                    { value: 'outline', label: 'Outline' },
+                  ]}
+                  onChange={(style) => updateFeature(selectedFeature.id, {
+                    text: {
+                      ...textFeature,
+                      style,
+                      fontId: defaultFontIdForStyle(style),
+                    },
+                  })}
+                />
+              </label>
+              <label className="properties-field">
+                <span>Font</span>
+                <Select
+                  value={textFeature.fontId}
+                  options={textFontOptions.map((font) => ({ value: font.id, label: font.label }))}
+                  onChange={(fontId) => updateFeature(selectedFeature.id, {
+                    text: { ...textFeature, fontId },
+                  })}
+                />
+              </label>
+            </>
+          ) : null}
+          {selectedFeature.operation === 'region' ? (
             <div className="properties-region-note">
               <span className="properties-region-note__badge">mask</span>
               <span>A region is a filter: it limits where operations may cut, not a shape to machine.</span>
             </div>
-          </>
-        ) : !selectedFeature.sketch.profile.closed ? (
-          <>
-            <label className="properties-field">
-              <span>Z Top</span>
-              <DraftNumberInput
-                key={`feature-ztop-${selectedFeature.id}-${zTop}`}
-                  value={zTop}
-                  units={units}
-                  min={0}
-                  onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-              />
-            </label>
-            <label className="properties-field">
-              <span>Z Bottom</span>
-              <DraftNumberInput
-                key={`feature-zbottom-open-${selectedFeature.id}`}
-                  value={0}
-                  units={units}
-                  min={0}
-                  max={0}
-                  onCommit={() => {}}
-              />
-            </label>
-          </>
-        ) : project.stock.thickness > 0 ? (
-          <ZRangeSlider
-            featureId={selectedFeature.id}
-            zTop={zTop}
-            zBottom={zBottom}
-            stockThickness={project.stock.thickness}
-            units={units}
-            onCommitZTop={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-            onCommitZBottom={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
-          />
-        ) : (
-          <>
-            <label className="properties-field">
-              <span>Z Top</span>
-              <DraftNumberInput
-                key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
-                  value={zTop}
-                  units={units}
-                  min={0}
-                  validate={(next) => next >= zBottom}
-                  onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-              />
-            </label>
-            <label className="properties-field">
-              <span>Z Bottom</span>
-              <DraftNumberInput
-                key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
-                  value={zBottom}
-                  units={units}
-                  min={0}
-                  validate={(next) => next <= zTop}
-                  onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
-              />
-            </label>
-          </>
-        )}
-        <DisclosureSection title="Advanced" storageKey="feature-advanced">
+          ) : null}
+          {hasLinkedInstances ? (
+            <div className="properties-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => makeUnique(selectedFeature.id)}
+              >
+                Make Unique
+              </button>
+            </div>
+          ) : null}
+        </DisclosureSection>
+        <DisclosureSection title="Instance" storageKey="feature-instance">
+          <label className="properties-field">
+            <span>Name</span>
+            <DraftTextInput
+              key={`feature-name-${selectedFeature.id}-${selectedFeature.name}`}
+              value={selectedFeature.name}
+              onCommit={(next) => updateFeature(selectedFeature.id, { name: next })}
+            />
+          </label>
+          {selectedFeature.operation === 'region' ? (
+            <>
+              <label className="properties-field">
+                <span>Z Range</span>
+                <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
+                  <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+                  <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+                </div>
+              </label>
+            </>
+          ) : !selectedFeature.sketch.profile.closed ? (
+            <>
+              <label className="properties-field">
+                <span>Z Top</span>
+                <DraftNumberInput
+                  key={`feature-ztop-${selectedFeature.id}-${zTop}`}
+                    value={zTop}
+                    units={units}
+                    min={0}
+                    onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+                />
+              </label>
+              <label className="properties-field">
+                <span>Z Bottom</span>
+                <DraftNumberInput
+                  key={`feature-zbottom-open-${selectedFeature.id}`}
+                    value={0}
+                    units={units}
+                    min={0}
+                    max={0}
+                    onCommit={() => {}}
+                />
+              </label>
+            </>
+          ) : project.stock.thickness > 0 ? (
+            <ZRangeSlider
+              featureId={selectedFeature.id}
+              zTop={zTop}
+              zBottom={zBottom}
+              stockThickness={project.stock.thickness}
+              units={units}
+              onCommitZTop={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+              onCommitZBottom={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+            />
+          ) : (
+            <>
+              <label className="properties-field">
+                <span>Z Top</span>
+                <DraftNumberInput
+                  key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
+                    value={zTop}
+                    units={units}
+                    min={0}
+                    validate={(next) => next >= zBottom}
+                    onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
+                />
+              </label>
+              <label className="properties-field">
+                <span>Z Bottom</span>
+                <DraftNumberInput
+                  key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
+                    value={zBottom}
+                    units={units}
+                    min={0}
+                    validate={(next) => next <= zTop}
+                    onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+                />
+              </label>
+            </>
+          )}
           <label className="properties-field">
             <span>Folder</span>
             {renderFolderSelect(selectedFeature.folderId, (folderId) =>

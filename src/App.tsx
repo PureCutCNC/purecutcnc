@@ -116,6 +116,7 @@ function App() {
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
+    menuFeatureHasLinkedInstances,
     openFeatureContextMenu,
     openClampContextMenu,
     openTabContextMenu,
@@ -490,6 +491,7 @@ function App() {
         menuHasMultipleSelection={menuHasMultipleSelection}
         menuCanUseAsStock={menuCanUseAsStock}
         menuHasLockedSelection={menuHasLockedSelection}
+        menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
         quickOpsSubmenu={quickOpsSubmenu}
         tabletShell={tabletShell}

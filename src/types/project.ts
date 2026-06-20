@@ -545,6 +545,8 @@ export interface ProjectMeta {
   units: 'mm' | 'inch'
   showFeatureInfo: boolean
   showDimensions: boolean
+  /** Default copy mode for Duplicate gesture and Copy/Paste. */
+  copyMode: 'reference' | 'independent'
   maxTravelZ: number
   operationClearanceZ: number
   clampClearanceXY: number
@@ -1219,6 +1221,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
       units,
       showFeatureInfo: true,
       showDimensions: true,
+      copyMode: 'reference' as const,
       maxTravelZ: defaultMaxTravelZ(units),
       operationClearanceZ: defaultOperationClearanceZ(units),
       clampClearanceXY: defaultClampClearanceXY(units),

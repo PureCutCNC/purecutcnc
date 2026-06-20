@@ -29,6 +29,7 @@ interface FeatureContextMenuProps {
   menuHasMultipleSelection: boolean
   menuCanUseAsStock: boolean
   menuHasLockedSelection: boolean
+  menuFeatureHasLinkedInstances: boolean
   menuQuickOperations: QuickOperation[]
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   tabletShell: boolean
@@ -48,6 +49,7 @@ export function FeatureContextMenu({
   menuHasMultipleSelection,
   menuCanUseAsStock,
   menuHasLockedSelection,
+  menuFeatureHasLinkedInstances,
   menuQuickOperations,
   quickOpsSubmenu,
   tabletShell,
@@ -171,6 +173,40 @@ export function FeatureContextMenu({
           >
             Mirror
           </button>
+          <div className="feature-context-menu__separator" />
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.duplicateAsReference(menuFeature.id)}
+          >
+            {menuHasMultipleSelection ? 'Duplicate Selected as Reference' : 'Duplicate as Reference'}
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.duplicateIndependent(menuFeature.id)}
+          >
+            {menuHasMultipleSelection ? 'Duplicate Selected Independent' : 'Duplicate Independent'}
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.makeUnique(menuFeature.id)}
+            disabled={!menuFeatureHasLinkedInstances}
+            title={!menuFeatureHasLinkedInstances ? 'Feature is already unique' : undefined}
+          >
+            Make Unique
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.selectLinkedInstances(menuFeature.id)}
+            disabled={!menuFeatureHasLinkedInstances}
+            title={!menuFeatureHasLinkedInstances ? 'No linked instances' : undefined}
+          >
+            Select Linked Instances
+          </button>
+          <div className="feature-context-menu__separator" />
           <button
             className="feature-context-menu__item"
             type="button"

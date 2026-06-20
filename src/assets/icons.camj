@@ -23857,13 +23857,30 @@
       "folderId": "folder_tape-measure",
       "sketch": {
         "profile": {
-          "start": { "x": 13, "y": 12 },
+          "start": {
+            "x": 13,
+            "y": 12
+          },
           "segments": [
-            { "type": "circle", "center": { "x": 7, "y": 12 }, "to": { "x": 13, "y": 12 }, "clockwise": true }
+            {
+              "type": "circle",
+              "center": {
+                "x": 7,
+                "y": 12
+              },
+              "to": {
+                "x": 13,
+                "y": 12
+              },
+              "clockwise": true
+            }
           ],
           "closed": true
         },
-        "origin": { "x": 0, "y": 0 },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
         "orientationAngle": 0,
         "dimensions": [],
         "constraints": []
@@ -23882,13 +23899,30 @@
       "folderId": "folder_tape-measure",
       "sketch": {
         "profile": {
-          "start": { "x": 9, "y": 12 },
+          "start": {
+            "x": 9,
+            "y": 12
+          },
           "segments": [
-            { "type": "circle", "center": { "x": 7, "y": 12 }, "to": { "x": 9, "y": 12 }, "clockwise": true }
+            {
+              "type": "circle",
+              "center": {
+                "x": 7,
+                "y": 12
+              },
+              "to": {
+                "x": 9,
+                "y": 12
+              },
+              "clockwise": true
+            }
           ],
           "closed": true
         },
-        "origin": { "x": 0, "y": 0 },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
         "orientationAngle": 0,
         "dimensions": [],
         "constraints": []
@@ -23907,16 +23941,46 @@
       "folderId": "folder_tape-measure",
       "sketch": {
         "profile": {
-          "start": { "x": 13, "y": 10 },
+          "start": {
+            "x": 13,
+            "y": 10
+          },
           "segments": [
-            { "type": "line", "to": { "x": 22, "y": 10 } },
-            { "type": "line", "to": { "x": 22, "y": 14 } },
-            { "type": "line", "to": { "x": 13, "y": 14 } },
-            { "type": "line", "to": { "x": 13, "y": 10 } }
+            {
+              "type": "line",
+              "to": {
+                "x": 22,
+                "y": 10
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 22,
+                "y": 14
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 14
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 13,
+                "y": 10
+              }
+            }
           ],
           "closed": true
         },
-        "origin": { "x": 0, "y": 0 },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
         "orientationAngle": 0,
         "dimensions": [],
         "constraints": []
@@ -23935,13 +23999,25 @@
       "folderId": "folder_tape-measure",
       "sketch": {
         "profile": {
-          "start": { "x": 22, "y": 8 },
+          "start": {
+            "x": 22,
+            "y": 8
+          },
           "segments": [
-            { "type": "line", "to": { "x": 22, "y": 16 } }
+            {
+              "type": "line",
+              "to": {
+                "x": 22,
+                "y": 16
+              }
+            }
           ],
           "closed": false
         },
-        "origin": { "x": 0, "y": 0 },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
         "orientationAngle": 0,
         "dimensions": [],
         "constraints": []
@@ -24365,6 +24441,215 @@
             }
           ],
           "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_link",
+      "name": "icon_link",
+      "kind": "composite",
+      "folderId": "folder_link",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_link_1",
+      "name": "icon_link_1",
+      "kind": "composite",
+      "folderId": "folder_link",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 14.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 14.5,
+                "y": 15.037566124069365
+              },
+              "control2": {
+                "x": 12.037566124069365,
+                "y": 17.5
+              },
+              "to": {
+                "x": 9,
+                "y": 17.5
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 5.9624338759306355,
+                "y": 17.5
+              },
+              "control2": {
+                "x": 3.5,
+                "y": 15.037566124069365
+              },
+              "to": {
+                "x": 3.5,
+                "y": 12
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 3.5,
+                "y": 8.962433875930635
+              },
+              "control2": {
+                "x": 5.9624338759306355,
+                "y": 6.5
+              },
+              "to": {
+                "x": 9,
+                "y": 6.5
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 12.037566124069365,
+                "y": 6.5
+              },
+              "control2": {
+                "x": 14.5,
+                "y": 8.962433875930635
+              },
+              "to": {
+                "x": 14.5,
+                "y": 12
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_link_2",
+      "name": "icon_link_2",
+      "kind": "composite",
+      "folderId": "folder_link",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 20.5,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 20.5,
+                "y": 15.037566124069365
+              },
+              "control2": {
+                "x": 18.037566124069365,
+                "y": 17.5
+              },
+              "to": {
+                "x": 15,
+                "y": 17.5
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 11.962433875930635,
+                "y": 17.5
+              },
+              "control2": {
+                "x": 9.5,
+                "y": 15.037566124069365
+              },
+              "to": {
+                "x": 9.5,
+                "y": 12
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 9.5,
+                "y": 8.962433875930635
+              },
+              "control2": {
+                "x": 11.962433875930635,
+                "y": 6.5
+              },
+              "to": {
+                "x": 15,
+                "y": 6.5
+              }
+            },
+            {
+              "type": "bezier",
+              "control1": {
+                "x": 18.037566124069365,
+                "y": 6.5
+              },
+              "control2": {
+                "x": 20.5,
+                "y": 8.962433875930635
+              },
+              "to": {
+                "x": 20.5,
+                "y": 12
+              }
+            }
+          ],
+          "closed": true
         },
         "origin": {
           "x": 0,
@@ -24847,6 +25132,11 @@
       "id": "folder_feature-drawer",
       "name": "feature-drawer",
       "collapsed": true
+    },
+    {
+      "id": "folder_link",
+      "name": "link",
+      "collapsed": true
     }
   ],
   "featureTree": [
@@ -25221,6 +25511,10 @@
     {
       "type": "folder",
       "folderId": "folder_feature-drawer"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_link"
     }
   ],
   "global_constraints": [],

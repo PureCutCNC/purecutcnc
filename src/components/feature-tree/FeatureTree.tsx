@@ -18,6 +18,7 @@ import { useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
+import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 
@@ -252,6 +253,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     }
 
     const index = project.features.findIndex((entry) => entry.id === feature.id)
+    const defId = getDefinitionId(feature)
+    const linkedCount = getInstanceIdsForDefinition(project, defId).length
     const canMoveUp = tabletShell && siblingIndex !== undefined && siblingIndex > 0
     const canMoveDown = tabletShell && siblingIndex !== undefined && siblingCount !== undefined && siblingIndex < siblingCount - 1
     return (
@@ -265,6 +268,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         visible={feature.visible}
         operation={feature.operation}
         isFirstFeature={index === 0}
+        linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
@@ -613,6 +617,7 @@ interface TreeRowProps {
   visible?: boolean
   operation?: FeatureOperation
   isFirstFeature?: boolean
+  linkedCount?: number
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -645,6 +650,7 @@ function TreeRow({
   visible,
   operation,
   isFirstFeature = false,
+  linkedCount,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -787,6 +793,14 @@ function TreeRow({
           title="Region — limits where operations may cut. Not a shape to machine."
         >
           mask
+        </span>
+      ) : null}
+      {kind === 'feature' && linkedCount && linkedCount > 1 ? (
+        <span
+          className="tree-linked-badge"
+          title={`Linked — ${linkedCount} instances share this definition`}
+        >
+          <Icon id="link" className="tree-icon--link" />
         </span>
       ) : null}
       <div className="tree-row-actions">

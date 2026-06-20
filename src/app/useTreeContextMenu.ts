@@ -19,6 +19,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { validQuickOperationsForFeature, type QuickOperation } from '../components/cam/operationValidity'
 import { useOutsideDismiss } from '../hooks/useOutsideDismiss'
 import { useProjectStore } from '../store/projectStore'
+import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import type { Clamp, Project, SketchFeature, Tab } from '../types/project'
 
 export interface TreeContextMenuState {
@@ -80,6 +81,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   menuHasMultipleSelection: boolean
   menuCanUseAsStock: boolean
   menuHasLockedSelection: boolean
+  menuFeatureHasLinkedInstances: boolean
   openFeatureContextMenu: (featureId: string, x: number, y: number) => void
   openClampContextMenu: (clampId: string, x: number, y: number) => void
   openTabContextMenu: (tabId: string, x: number, y: number) => void
@@ -179,6 +181,12 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
       project.features.some((feature) => feature.id === featureId && feature.locked)
     ) ?? false)
 
+  const menuFeatureHasLinkedInstances = useMemo(() => {
+    if (treeContextMenu?.entityType !== 'feature' || !menuFeature) return false
+    const defId = getDefinitionId(menuFeature)
+    return getInstanceIdsForDefinition(project, defId).length > 1
+  }, [treeContextMenu, menuFeature, project])
+
   const fallbackMenuPosition = treeContextMenu && typeof window !== 'undefined'
     ? clampMenuPosition(
         treeContextMenu.x,
@@ -246,6 +254,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
+    menuFeatureHasLinkedInstances,
     openFeatureContextMenu,
     openClampContextMenu,
     openTabContextMenu,

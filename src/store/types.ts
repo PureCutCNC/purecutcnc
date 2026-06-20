@@ -151,6 +151,8 @@ export interface PendingMoveTool {
   fromPoint: Point | null
   toPoint: Point | null
   session: number
+  /** Override project copyMode for this placement gesture. */
+  copyMode?: 'reference' | 'independent'
 }
 
 export interface PendingTransformTool {
@@ -251,6 +253,7 @@ export interface ProjectStore {
   setProjectName: (name: string) => void
   setShowFeatureInfo: (visible: boolean) => void
   setShowDimensions: (visible: boolean) => void
+  setCopyMode: (mode: 'reference' | 'independent') => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
@@ -426,7 +429,7 @@ export interface ProjectStore {
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
   startMoveFeature: (featureId: string) => void
-  startCopyFeature: (featureId: string) => void
+  startCopyFeature: (featureId: string, copyMode?: 'reference' | 'independent') => void
   startResizeFeature: (featureId: string) => void
   startRotateFeature: (featureId: string) => void
   startMirrorFeature: (featureId: string) => void

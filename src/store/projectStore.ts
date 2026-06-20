@@ -140,6 +140,7 @@ export function normalizeProject(project: Project): Project {
     ...project.meta,
     showFeatureInfo: project.meta.showFeatureInfo ?? true,
     showDimensions: project.meta.showDimensions ?? true,
+    copyMode: project.meta.copyMode ?? 'reference',
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),

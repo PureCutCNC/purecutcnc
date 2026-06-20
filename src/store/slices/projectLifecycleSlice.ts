@@ -43,6 +43,7 @@ export type ProjectLifecycleSlice = Pick<
   | 'setProjectClearances'
   | 'setShowDimensions'
   | 'setShowFeatureInfo'
+  | 'setCopyMode'
   | 'loadProject'
   | 'saveProject'
   | 'openProjectFromText'
@@ -164,6 +165,32 @@ export function createProjectLifecycleSlice(
           meta: {
             ...s.project.meta,
             showFeatureInfo: visible,
+            modified: new Date().toISOString(),
+          },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        if (s.history.transactionStart) {
+          return { project: nextProject }
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    setCopyMode: (mode) =>
+      set((s) => {
+        const nextProject = {
+          ...s.project,
+          meta: {
+            ...s.project.meta,
+            copyMode: mode,
             modified: new Date().toISOString(),
           },
         }
