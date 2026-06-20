@@ -571,7 +571,7 @@ export function createSelectionSlice(
         const project = definitionId && s.project.featureDefinitions[definitionId]
           ? {
               ...s.project,
-              features: rebakeAllInstances(s.project, definitionId, { editingFeatureId: id }),
+              features: rebakeAllInstances(s.project, definitionId),
             }
           : s.project
 

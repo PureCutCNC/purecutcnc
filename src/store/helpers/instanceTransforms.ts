@@ -67,6 +67,33 @@ export function multiplyMatrix(a: Matrix2D, b: Matrix2D): Matrix2D {
   }
 }
 
+/**
+ * Invert a 2×3 affine matrix.
+ *
+ * For the standard column-vector form
+ *   x' = a·x + c·y + e
+ *   y' = b·x + d·y + f
+ * the inverse maps world-space back to local-space.
+ *
+ * Returns the identity matrix when the determinant is near zero
+ * (degenerate / non-invertible transform).
+ */
+export function invertMatrix(m: Matrix2D): Matrix2D {
+  const det = m.a * m.d - m.b * m.c
+  if (Math.abs(det) < 1e-12) {
+    return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+  }
+  const invDet = 1 / det
+  return {
+    a: m.d * invDet,
+    b: -m.b * invDet,
+    c: -m.c * invDet,
+    d: m.a * invDet,
+    e: (m.c * m.f - m.d * m.e) * invDet,
+    f: (m.b * m.e - m.a * m.f) * invDet,
+  }
+}
+
 // ============================================================================
 // Pivoted transforms
 // ============================================================================

@@ -182,16 +182,6 @@ export function gcOrphanedDefinitions(
 // Re-bake
 // ============================================================================
 
-export interface RebakeOptions {
-  /**
-   * When set, this feature's compatibility profile is baked with the
-   * **identity** transform so the canvas shows definition-local geometry
-   * during sketch edit.  All other instances still bake through their own
-   * transform.
-   */
-  editingFeatureId?: string
-}
-
 /**
  * Re-bake the compatibility `sketch.profile` (and `kind` / `origin` /
  * `orientationAngle`) of every feature row that references `definitionId`.
@@ -199,20 +189,13 @@ export interface RebakeOptions {
  * Each instance's profile is recomputed via
  * {@link resolveProfile}(definition, instance.transform) so linked instances
  * and un-migrated direct readers all stay correct after a definition edit.
- *
- * When `options.editingFeatureId` is provided that feature gets the raw
- * definition-local profile (identity transform) so the sketch editor can
- * operate in canonical definition space.
  */
 export function rebakeAllInstances(
   project: Project,
   definitionId: string,
-  options?: RebakeOptions,
 ): SketchFeature[] {
   const definition = project.featureDefinitions[definitionId]
   if (!definition) return project.features
-
-  const editingId = options?.editingFeatureId
 
   return project.features.map((feature) => {
     if (getDefinitionId(feature) !== definitionId) return feature
@@ -221,10 +204,7 @@ export function rebakeAllInstances(
       definitionId?: string
       transform?: Matrix2D
     }
-    const transform: Matrix2D =
-      editingId && feature.id === editingId
-        ? IDENTITY_MATRIX
-        : withRefs.transform ?? IDENTITY_MATRIX
+    const transform: Matrix2D = withRefs.transform ?? IDENTITY_MATRIX
 
     const profile = resolveProfile(definition, transform)
 

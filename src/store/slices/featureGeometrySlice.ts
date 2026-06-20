@@ -24,15 +24,17 @@ import {
 } from '../helpers/normalize'
 import {
   profileVertices,
+  type Matrix2D,
   type Project,
   type Point,
   type SketchFeature,
   type SketchProfile,
+  IDENTITY_MATRIX,
 } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
 import { clonePoint, lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
-import { translatePoint, transformProfile } from '../helpers/transform'
+import { translatePoint, transformProfile, transformProfileAffine } from '../helpers/transform'
 import {
   anchorPointForIndex,
   applyLineCornerFillet,
@@ -47,6 +49,8 @@ import {
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
 import { getDefinitionId, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
+import { invertMatrix } from '../helpers/instanceTransforms'
+import { applyMatrixToPoint } from '../helpers/resolveFeatures'
 
 export interface FeatureGeometrySliceDependencies {
   joinOpenProfiles: (
@@ -87,7 +91,7 @@ export function createFeatureGeometrySlice(
     applyProfileBreak,
   } = deps
 
-  function syncEditedFeatureDefinition(project: Project, featureId: string, editingFeatureId?: string): Project {
+  function syncEditedFeatureDefinition(project: Project, featureId: string): Project {
     const editedFeature = project.features.find((feature) => feature.id === featureId)
     if (!editedFeature) return project
 
@@ -95,10 +99,20 @@ export function createFeatureGeometrySlice(
     const definition = project.featureDefinitions[definitionId]
     if (!definition) return project
 
+    // Convert the edited feature's world-space profile back to definition-local
+    // using the inverse of its transform so linked instances each re-resolve at
+    // their own transform and the edited instance round-trips to the same geometry.
+    const transform: Matrix2D =
+      (editedFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+    const inv = invertMatrix(transform)
+    const localProfile = transformProfileAffine(editedFeature.sketch.profile, (p) =>
+      applyMatrixToPoint(inv, p),
+    )
+
     const nextDefinition = {
       ...definition,
       kind: editedFeature.kind,
-      profile: editedFeature.sketch.profile,
+      profile: localProfile,
       dimensions: editedFeature.sketch.dimensions.map((dimension) => ({ ...dimension })),
       text: editedFeature.text ? { ...editedFeature.text } : null,
       stl: editedFeature.stl ? { ...editedFeature.stl } : null,
@@ -113,7 +127,7 @@ export function createFeatureGeometrySlice(
     }
     return {
       ...nextProject,
-      features: rebakeAllInstances(nextProject, definitionId, { editingFeatureId }),
+      features: rebakeAllInstances(nextProject, definitionId),
     }
   }
 
@@ -330,11 +344,7 @@ export function createFeatureGeometrySlice(
         if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
         return validateConstraintsOnFeature(f, featureByIdMap)
       })
-      nextProject = syncEditedFeatureDefinition(
-        nextProject,
-        featureId,
-        s.selection.mode === 'sketch_edit' ? featureId : undefined,
-      )
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
       // Sync stock if the edited feature is the stock source
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
       if (projectsEqual(nextProject, s.project)) {
@@ -385,11 +395,7 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(
-        nextProject,
-        featureId,
-        s.selection.mode === 'sketch_edit' ? featureId : undefined,
-      )
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
@@ -491,11 +497,7 @@ export function createFeatureGeometrySlice(
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       })
 
-      nextProject = syncEditedFeatureDefinition(
-        nextProject,
-        featureId,
-        s.selection.mode === 'sketch_edit' ? featureId : undefined,
-      )
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
       if (projectsEqual(nextProject, s.project)) {
         return {}
@@ -557,11 +559,7 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(
-        nextProject,
-        featureId,
-        s.selection.mode === 'sketch_edit' ? featureId : undefined,
-      )
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
@@ -616,11 +614,7 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(
-        nextProject,
-        featureId,
-        s.selection.mode === 'sketch_edit' ? featureId : undefined,
-      )
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
       nextProject = syncStockFromSourceFeature(nextProject, featureId)
 
       return {
