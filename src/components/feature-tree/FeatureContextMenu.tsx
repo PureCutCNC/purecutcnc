@@ -72,6 +72,25 @@ export function FeatureContextMenu({
     >
       {menuFeature ? (
         <>
+          {menuFeatureHasLinkedInstances ? (
+            <>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.makeUnique(menuFeature.id)}
+              >
+                Make Unique
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.selectLinkedInstances(menuFeature.id)}
+              >
+                Select Linked Instances
+              </button>
+              <div className="feature-context-menu__separator" />
+            </>
+          ) : null}
           {menuQuickOperations.length > 0 ? (
             <>
               <div
@@ -172,39 +191,6 @@ export function FeatureContextMenu({
             disabled={menuHasLockedSelection}
           >
             Mirror
-          </button>
-          <div className="feature-context-menu__separator" />
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.duplicateAsReference(menuFeature.id)}
-          >
-            {menuHasMultipleSelection ? 'Duplicate Selected as Reference' : 'Duplicate as Reference'}
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.duplicateIndependent(menuFeature.id)}
-          >
-            {menuHasMultipleSelection ? 'Duplicate Selected Independent' : 'Duplicate Independent'}
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.makeUnique(menuFeature.id)}
-            disabled={!menuFeatureHasLinkedInstances}
-            title={!menuFeatureHasLinkedInstances ? 'Feature is already unique' : undefined}
-          >
-            Make Unique
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.selectLinkedInstances(menuFeature.id)}
-            disabled={!menuFeatureHasLinkedInstances}
-            title={!menuFeatureHasLinkedInstances ? 'No linked instances' : undefined}
-          >
-            Select Linked Instances
           </button>
           <div className="feature-context-menu__separator" />
           <button
