@@ -1209,6 +1209,25 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
   )
 }
 
+/** The newest project schema version this build understands. */
+export const LATEST_PROJECT_VERSION = '2.0'
+
+/**
+ * True when a loaded project's `version` is newer than this build supports
+ * (the file was saved by a future version). Such files still open best-effort,
+ * but newer data may be missing or fail to round-trip. Compares major.minor.
+ */
+export function isProjectVersionNewerThanSupported(version: string | null | undefined): boolean {
+  if (!version) return false
+  const parse = (v: string): [number, number] => {
+    const [maj, min] = v.split('.')
+    return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
+  }
+  const [fileMaj, fileMin] = parse(version)
+  const [curMaj, curMin] = parse(LATEST_PROJECT_VERSION)
+  return fileMaj > curMaj || (fileMaj === curMaj && fileMin > curMin)
+}
+
 export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inch'): Project {
   const now = new Date().toISOString()
   const stock = defaultStock(undefined, undefined, undefined, units)

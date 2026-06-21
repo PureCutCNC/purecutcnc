@@ -366,6 +366,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   lastModelExportPath: null,
   dirty: false,
   projectLoading: false,
+  loadWarning: null,
   projectKey: 0,
   pendingConstraint: null,
   history: {

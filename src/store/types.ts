@@ -238,6 +238,10 @@ export interface ProjectStore {
   // ---- Session state (not persisted in .camj) ----
   /** True while a project file is being parsed and loaded. */
   projectLoading: boolean
+  /** Set when a loaded file's schema version is newer than this build supports; surfaced once to the user. */
+  loadWarning: string | null
+  /** Clear the pending {@link loadWarning} after it has been shown. */
+  clearLoadWarning: () => void
   /** Incremented each time a new project is created or loaded. Used by viewports to reset their view state. */
   projectKey: number
   /** Filesystem path of the currently open file. Null in the browser or when no file is open. */
