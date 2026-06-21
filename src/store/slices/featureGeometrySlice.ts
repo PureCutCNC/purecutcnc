@@ -48,7 +48,7 @@ import {
   normalizeEditableProfileClosure,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
-import { getDefinitionId, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
+import { getDefinitionId, getInstanceIdsForDefinition, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
 import { invertMatrix } from '../helpers/instanceTransforms'
 import { applyMatrixToPoint } from '../helpers/resolveFeatures'
 
@@ -125,9 +125,32 @@ export function createFeatureGeometrySlice(
         [definitionId]: nextDefinition,
       },
     }
+
+    // Collect all instance IDs before rebaking so we know which features
+    // will have updated reference geometry afterwards.
+    const allInstanceIds = getInstanceIdsForDefinition(project, definitionId)
+
+    let nextFeatures = rebakeAllInstances(nextProject, definitionId)
+
+    // Re-solve constraints for every feature whose fixed_distance constraint
+    // references any rebaked instance.  A sibling's shape change from the rebake
+    // invalidates the constraint cache of dependents that reference that sibling,
+    // just as a direct edit does — so we propagate with zero offsets to trigger
+    // the same dependent re-solve that completePendingMove / moveFeatureControl
+    // use for the directly-edited feature.
+    const offsets = new Map(allInstanceIds.map((id) => [id, { dx: 0, dy: 0 }] as const))
+    nextFeatures = propagateConstraintsOnTranslate(nextFeatures, offsets, { transformProfile })
+
+    // Validate all constraints after linked propagation
+    const featureByIdMap = new Map(nextFeatures.map((f) => [f.id, f]))
+    nextFeatures = nextFeatures.map((f) => {
+      if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
+      return validateConstraintsOnFeature(f, featureByIdMap)
+    })
+
     return {
       ...nextProject,
-      features: rebakeAllInstances(nextProject, definitionId),
+      features: nextFeatures,
     }
   }
 
