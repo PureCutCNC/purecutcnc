@@ -60,6 +60,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
+- `linkedConstraintResolve.test.ts` — linked constraint re-solve after definition edit propagates to sibling instances; direct-edit regression; no-drift idempotency
 - `second_cut_test.ts` — multi-pass cutting behavior
 
 ## Gotchas
