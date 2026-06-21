@@ -68,8 +68,6 @@ export interface FeatureTreeActions {
   editSketch: (featureId: string) => void
   constraint: (featureId: string) => void
   copyFeature: (featureId: string) => void
-  duplicateAsReference: (featureId: string) => void
-  duplicateIndependent: (featureId: string) => void
   makeUnique: (featureId: string) => void
   selectLinkedInstances: (featureId: string) => void
   moveFeature: (featureId: string) => void
@@ -149,12 +147,6 @@ export function createFeatureTreeActions({
     },
     copyFeature: (featureId: string) => {
       runSketchAction(() => startCopyFeature(featureId))
-    },
-    duplicateAsReference: (featureId: string) => {
-      runSketchAction(() => startCopyFeature(featureId, 'reference'))
-    },
-    duplicateIndependent: (featureId: string) => {
-      runSketchAction(() => startCopyFeature(featureId, 'independent'))
     },
     makeUnique: (featureId: string) => {
       storeMakeUnique(featureId)
