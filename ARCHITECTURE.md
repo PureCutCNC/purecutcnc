@@ -21,13 +21,31 @@ PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enth
 ## 3. Key Data Models (.camj)
 Defined in `src/types/project.ts`:
 - **Project:** The root object containing metadata, stock definition, features, tools, and operations.
-- **SketchFeature:** The atomic unit of design. Contains:
-    - `sketch`: A `SketchProfile` made of `segments` (line, arc, bezier).
+- **SketchFeature:** A feature-tree row. Since `version` `2.0` it is an **instance** that references a shared `FeatureDefinition` via `definitionId` + `transform`, while still carrying a baked, world-space copy for compatibility. Contains:
+    - `sketch`: A `SketchProfile` made of `segments` (line, arc, bezier) — the **baked** world-space geometry, kept in sync with the definition (see §4).
+    - `definitionId` + `transform`: the link to the shared shape and its affine placement.
     - `operation`: `'add'` (raised) or `'subtract'` (pocket/cut).
-    - `z_top` & `z_bottom`: Vertical bounds of the feature.
+    - `z_top` & `z_bottom`: Vertical bounds of the feature (per-instance).
+- **FeatureDefinition:** Shared, canonical, *untransformed* shape data (`profile`, `dimensions`, `text`, `stl`, `kind`, `operation`) referenced by one or more instances. See §4.
 - **Machine Origin:** Defines the translation between internal project coordinates and machine G-code coordinates.
 
-## 4. Directory Map
+## 4. Feature References (Definitions & Instances)
+
+PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape updates every copy, while placement (move/rotate/resize/mirror), name, visibility, lock, and Z stay per-copy. The former monolithic feature is split into a **definition** (the shared shape) and **instances** (placed copies). Full design, the operation-semantics matrix, and slice-by-slice history live in [`planning/FEATURE_REFERENCES_Plan.md`](planning/FEATURE_REFERENCES_Plan.md); live status is in [`planning/FEATURE_REFERENCES_Ledger.md`](planning/FEATURE_REFERENCES_Ledger.md).
+
+- **`FeatureDefinition`** (`project.featureDefinitions: Record<id, def>`): the shared, canonical, *untransformed* shape — `kind`, `profile`, `dimensions`, `text`, `stl`, `operation`.
+- **`SketchFeature`** = an **instance** (every feature-tree row): `definitionId` + `transform` (a `Matrix2D` mapping definition-local geometry into world space), plus per-instance `name`, `folderId`, `visible`, `locked`, `z_top`/`z_bottom`, and `constraints`.
+- A **linked copy** is another instance with the **same `definitionId`**. **Make Unique** clones the definition and repoints one instance. **Copy** makes a linked (reference) copy by default — governed by project `meta.copyMode` (default `'reference'`).
+
+**Resolver boundary.** Consumers (canvas, hit-testing, toolpaths, export) must read geometry through the resolver — `resolveFeatureInstance(project, id)` / `resolveProfile(definition, transform)` in `src/store/helpers/resolveFeatures.ts` — which composes definition + transform into world-space geometry. Do not read `feature.sketch.profile` directly in new code.
+
+**Dual storage / backward compatibility (important).** Every instance *also* stores a **baked** compatibility `sketch` (a world-space `profile`), kept in sync with its definition by `rebakeAllInstances` (`src/store/helpers/featureDefinitions.ts`) on creation, transforms, definition edits, snapshot ops, and linked-constraint re-solve. A saved `.camj` therefore contains **both** `featureDefinitions` and fully-baked `features[]`. A pre-references build opens the file by reading `features[].sketch` and ignoring the definition/instance fields it does not understand — geometry renders and machines correctly. ⚠️ But if an **older build re-saves** a `2.0` file it drops `featureDefinitions` and the link fields, flattening linked instances into independent shapes (geometry preserved, linking lost).
+
+**Versioning.** `Project.version`: `'1.0'` = legacy flat features; `'2.0'` = definitions + instances (current — `LATEST_PROJECT_VERSION` in `src/types/project.ts`). Legacy `1.0` files migrate on load (one definition + one identity-transform instance per old feature; resolved geometry byte-equivalent). Loading a file newer than `LATEST_PROJECT_VERSION` shows a one-time warning (`openProjectFromText` → `loadWarning` → App) and opens best-effort. When bumping the schema, update `LATEST_PROJECT_VERSION` and the `version` union.
+
+**Key files.** `src/store/helpers/resolveFeatures.ts` (resolver), `featureDefinitions.ts` (mint / clone / rebake / make-unique / GC), `instanceTransforms.ts` (matrix helpers incl. `invertMatrix`); the split types in `src/types/project.ts`; creation/transform/edit/snapshot/constraint wiring across `src/store/slices/*` and `src/store/helpers/*`.
+
+## 5. Directory Map
 - `src/store/`: Zustand state logic, split into functional slices (selection, pending actions, etc.).
 - `src/engine/toolpaths/`: The heart of CAM logic (pocketing, profiling, v-carve, etc.).
 - `src/engine/gcode/`: Post-processors and G-code generation logic.
@@ -36,7 +54,7 @@ Defined in `src/types/project.ts`:
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
 - `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md) for the full tablet UX design).
 
-## 5. Icon System
+## 6. Icon System
 
 Icons are managed as a custom build pipeline using the `.camj` project format.
 
@@ -48,13 +66,13 @@ Icons are managed as a custom build pipeline using the `.camj` project format.
 - **Usage in components:** Import `Icon` from `src/components/Icon.tsx` and pass the folder name as the `id` prop: `<Icon id="view-top" size={18} />`. The component renders a `<use href="icons.svg#id" />` reference, so the icon inherits `stroke="currentColor"` and `fill="none"` from the SVG wrapper.
 - **Adding new icons:** Add feature folders and features to `icons.camj`, then run `npm run sync-icons`. Each icon group needs a `featureFolders` entry and a `featureTree` entry in addition to the `features` entries.
 
-## 6. Coding Standards & Conventions
+## 7. Coding Standards & Conventions
 - **Strict TypeScript:** No `any`. Use interfaces and types defined in `src/types/project.ts`.
 - **State Mutation:** All modifications to the project must go through the `projectStore` actions to ensure consistency and history tracking.
 - **UI:** React for component structure + Vanilla CSS for styling. Avoid heavy UI libraries.
 - **Testing:** New features or bug fixes in the `engine/` must include corresponding unit tests.
 
-## 6. Operational Gotchas
+## 8. Operational Gotchas
 - **Clipper Scaling:** `clipper-lib` uses integer math. Always use the internal scaling factor when performing clipping operations.
 - **Coordinate Systems:** 
     - **Internal:** Uses a screen-coordinate system where (0,0) is top-left, and **positive Y increases downwards**.
@@ -63,7 +81,7 @@ Icons are managed as a custom build pipeline using the `.camj` project format.
 - **Unit Handling:** Use helpers in `src/utils/units.ts`. The project can be in `mm` or `inch`; always check `project.meta.units`.
 - **CSG Debouncing:** 3D model generation is expensive. The `Viewport3D` updates are typically debounced (150ms-300ms).
 
-## 7. AI & MCP Integration (not yet implemented)
+## 9. AI & MCP Integration (not yet implemented)
 There is **no MCP server or agent-facing tool surface in the app today**. Earlier drafts of this document described an aspirational design; treat it as a future direction, not current behavior. When that work begins, the guiding principles will be:
 - All mutations should flow through `projectStore` actions (same rule as the UI).
 - An agent will need a project-state inspection call before making changes.

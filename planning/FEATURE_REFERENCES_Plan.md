@@ -5,6 +5,23 @@ created: 2026-06-08
 
 # Feature References (Linked Copies) Plan
 
+> **Status (updated 2026-06-21).** All implementation slices are merged on the integration branch
+> **`feature-references-v2`** and have passed management browser validation; the final PR to `main` is
+> pending user sign-off (plan stays *In progress* until the user confirms). **Live, authoritative
+> status is [`FEATURE_REFERENCES_Ledger.md`](FEATURE_REFERENCES_Ledger.md).** The *implemented*
+> architecture (definition/instance model, dual-storage compatibility, versioning) is documented in
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md) §4 — read that for "how it works"; this file is the design
+> rationale and history.
+>
+> Delivered scope extends the original 8-slice sequence below with: **06.5** Creation definitions
+> (all creation/import paths mint a definition), **09** Edit Sketch in place (transformed/unique
+> instances edit at their real location), **10** Linked constraint re-solve (dependents of a sibling
+> re-solve after a linked edit); plus UI refinements (linked badge, context-menu placement, desktop
+> kebab hidden) and a forward-compat warning when loading a `.camj` newer than `LATEST_PROJECT_VERSION`.
+> **Decisions:** *Copy = linked by default* via project `meta.copyMode` (no UI toggle; Make Unique
+> unlinks). Copying a feature's *constrained child* alongside it is **out of scope** here — deferred to
+> a future "constraints + references" effort.
+
 ## Goal
 
 Let users create linked copies of features: editing the shared sketch definition updates every instance, while moving, rotating, resizing, mirroring, naming, visibility, and Z placement remain per-instance. The user-visible result is SketchUp-style components for 2.5D CAD/CAM: "Duplicate as Reference", "Duplicate Independent", "Make Unique", linked-instance badges in the feature tree, and predictable propagation of source-shape edits across repeated parts.
@@ -222,7 +239,11 @@ main
        -> feature-references-07-ui-workflow
 ```
 
-- The current `feature-references` branch is the integration branch off `main`.
+- **Update:** the integration branch is now **`feature-references-v2`** (off current `main`). The
+  original `feature-references` branch was built on a pre-core-arch-refactor base and was *ported*
+  onto `main`'s decomposed store; see `FEATURE_REFERENCES_PORT_Plan.md` and the ledger. The slice tree
+  below also gained `06.5`, `09`, and `10` (see the status note at the top).
+- The original `feature-references` branch was the integration branch off `main`.
 - Slice branches are created from the current integration branch.
 - Slice branches use hyphenated names because `feature-references/...` cannot coexist with the integration branch ref named `feature-references`.
 - Slice worktrees live under `/Users/frankp/Projects/worktrees/purecutcnc/`.
