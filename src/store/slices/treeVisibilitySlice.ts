@@ -24,6 +24,7 @@ export type TreeVisibilitySlice = Pick<
   | 'toggleFolderVisible'
   | 'toggleRegionFolderVisible'
   | 'selectFolderFeatures'
+  | 'toggleFolderGrouped'
 >
 
 export function createTreeVisibilitySlice(
@@ -124,6 +125,30 @@ export function createTreeVisibilitySlice(
           activeControl: null,
         },
         sketchEditSession: null,
+      }
+    }),
+
+  toggleFolderGrouped: (folderId) =>
+    set((s) => {
+      const folder = s.project.featureFolders.find((f) => f.id === folderId)
+      if (!folder) {
+        return {}
+      }
+      const nextGrouped = !(folder.grouped ?? false)
+      const nextProject = {
+        ...s.project,
+        featureFolders: s.project.featureFolders.map((f) =>
+          f.id === folderId ? { ...f, grouped: nextGrouped } : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
       }
     }),
 
