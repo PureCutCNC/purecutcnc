@@ -256,15 +256,26 @@ export function resolveProfile(
         to: transformPoint(segment.to),
       })
     } else if (segment.type === 'arc') {
-      // Arcs → beziers; affine transforms don't preserve arc shape.
-      const beziers = arcToBezierSegments(current, segment)
-      for (const bezier of beziers) {
+      if (preserveCircle) {
+        // Arc-preserving (similarity) transform — incl. identity: an arc stays an
+        // arc with transformed center/endpoint (mirror flips winding).
         nextSegments.push({
-          ...bezier,
-          control1: transformPoint(bezier.control1),
-          control2: transformPoint(bezier.control2),
-          to: transformPoint(bezier.to),
+          type: 'arc',
+          to: transformPoint(segment.to),
+          center: transformPoint(segment.center),
+          clockwise: mirror ? !segment.clockwise : segment.clockwise,
         })
+      } else {
+        // Non-similarity (shear / non-uniform): arc can't stay an arc → beziers.
+        const beziers = arcToBezierSegments(current, segment)
+        for (const bezier of beziers) {
+          nextSegments.push({
+            ...bezier,
+            control1: transformPoint(bezier.control1),
+            control2: transformPoint(bezier.control2),
+            to: transformPoint(bezier.to),
+          })
+        }
       }
     } else if (segment.type === 'circle') {
       if (preserveCircle) {

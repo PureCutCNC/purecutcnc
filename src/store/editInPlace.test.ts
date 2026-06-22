@@ -586,6 +586,44 @@ test('transformProfileAffine transforms circle center (radius preserved under tr
   assert(approx(radius, 10), `radius preserved at 10, got ${radius}`)
 })
 
+// Regression: arc segments (e.g. in composites) must survive rebake instead of
+// being flattened to splines. resolveProfile keeps arcs under similarity
+// transforms; transformProfileAffine (inverse-bake) keeps them as arcs.
+test('resolveProfile preserves arc segments under identity + translate', () => {
+  const profile = {
+    start: { x: 10, y: 0 },
+    segments: [
+      { type: 'arc' as const, to: { x: 0, y: 10 }, center: { x: 0, y: 0 }, clockwise: false },
+      { type: 'line' as const, to: { x: 0, y: 0 } },
+      { type: 'line' as const, to: { x: 10, y: 0 } },
+    ],
+    closed: true,
+  }
+  const def: FeatureDefinition = {
+    id: 'd-arc', kind: 'composite', profile,
+    dimensions: [], text: null, stl: null, operation: 'add',
+  }
+  const ident = resolveProfile(def, IDENTITY_MATRIX)
+  assert(ident.segments[0].type === 'arc', `identity should keep arc, got ${ident.segments[0].type}`)
+
+  const moved = resolveProfile(def, translateMatrix(100, 50))
+  const a = moved.segments[0]
+  assert(a.type === 'arc', `translate should keep arc, got ${a.type}`)
+  assert(a.type === 'arc' && pointEq(a.center, { x: 100, y: 50 }), 'arc center should translate')
+})
+
+test('transformProfileAffine keeps arc segments (center transformed)', () => {
+  const profile = {
+    start: { x: 10, y: 0 },
+    segments: [{ type: 'arc' as const, to: { x: 0, y: 10 }, center: { x: 0, y: 0 }, clockwise: false }],
+    closed: false,
+  }
+  const out = transformProfileAffine(profile, (p: Point) => ({ x: p.x + 5, y: p.y + 5 }))
+  const a = out.segments[0]
+  assert(a.type === 'arc', `should keep arc, got ${a.type}`)
+  assert(a.type === 'arc' && pointEq(a.center, { x: 5, y: 5 }), 'arc center should move')
+})
+
 // ============================================================================
 // Summary
 // ============================================================================
