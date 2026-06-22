@@ -1441,6 +1441,11 @@
   color: #fff;
 }
 
+.tree-row--group-selected {
+  background: rgba(220, 165, 106, 0.18);
+  box-shadow: inset 3px 0 0 rgba(234, 170, 97, 0.55);
+}
+
 .tree-row--dragging {
   opacity: 0.35;
 }

@@ -265,6 +265,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         kind="feature"
         depth={depth}
         isSelected={selection.selectedFeatureIds.includes(feature.id)}
+        isGroupSelected={selection.groupFolderId !== null && selection.selectedFeatureIds.includes(feature.id)}
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
         visible={feature.visible}
         operation={feature.operation}
@@ -627,6 +628,7 @@ interface TreeRowProps {
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
+  isGroupSelected?: boolean
   grouped?: boolean
   onToggleGrouped?: () => void
   onSelectAllFeatures?: () => void
@@ -661,6 +663,7 @@ function TreeRow({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  isGroupSelected,
   grouped,
   onToggleGrouped,
   onToggleVisible,
@@ -700,6 +703,7 @@ function TreeRow({
         depth > 0 ? 'tree-row--nested' : '',
         depth > 1 ? 'tree-row--deep' : '',
         isSelected ? 'tree-row--selected' : '',
+        isGroupSelected ? 'tree-row--group-selected' : '',
         isDragging ? 'tree-row--dragging' : '',
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
       ].join(' ')}
