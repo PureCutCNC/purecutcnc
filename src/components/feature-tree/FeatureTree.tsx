@@ -46,6 +46,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     setAllRegionsVisible,
     toggleFolderVisible,
     toggleRegionFolderVisible,
+    toggleFolderGrouped,
     selectFolderFeatures,
     selectFeatures,
     setAllTabsVisible,
@@ -422,6 +423,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
@@ -491,6 +494,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleRegionFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
@@ -622,6 +627,8 @@ interface TreeRowProps {
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
+  grouped?: boolean
+  onToggleGrouped?: () => void
   onSelectAllFeatures?: () => void
   onToggleOperation?: (operation: FeatureOperation) => void
   onAddFolder?: () => void
@@ -654,6 +661,8 @@ function TreeRow({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  grouped,
+  onToggleGrouped,
   onToggleVisible,
   onSelectAllFeatures,
   onToggleOperation,
@@ -1001,6 +1010,23 @@ function TreeRow({
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
             </svg>
+          </button>
+        ) : null}
+        {onToggleGrouped ? (
+          <button
+            type="button"
+            className={[
+              'tree-action-btn',
+              grouped ? 'tree-action-btn--grouped' : '',
+            ].join(' ')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleGrouped()
+            }}
+            title={grouped ? 'Ungroup features' : 'Group features'}
+            aria-label={grouped ? 'Ungroup features' : 'Group features'}
+          >
+            <Icon id="link" />
           </button>
         ) : null}
         {onEditEntry && kind !== 'feature' ? (

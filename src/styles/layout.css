@@ -1618,6 +1618,11 @@
   border-color: rgba(78, 141, 193, 0.45);
 }
 
+.tree-action-btn--grouped {
+  color: #7eb3de;
+  border-color: rgba(78, 141, 193, 0.55);
+}
+
 .tree-action-btn--muted {
   opacity: 0.58;
 }
