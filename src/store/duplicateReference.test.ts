@@ -227,6 +227,161 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
   assert(instanceIds.includes(copy.id), 'copy is an instance')
 }
 
+// ── Reference copy of legacy/migrated feature (no explicit definitionId on source) ──
+
+{
+  // Simulate a legacy-project feature after normalizeProject migration:
+  // definitionId is UNSET on the feature row, but featureDefinitions[feature.id] exists.
+  // getDefinitionId(source) falls back to source.id, so the copy MUST bake
+  // that value as its own explicit definitionId to remain linked.
+  const base = newProject()
+  const profile = rectProfile(0, 0, 80, 40)
+  const featureId = 'f-legacy'
+  const definition: FeatureDefinition = {
+    id: featureId,
+    kind: 'rect',
+    profile,
+    dimensions: [],
+    text: null,
+    stl: null,
+    operation: 'add',
+  }
+  // Legacy feature: has NO definitionId, has NO transform
+  const legacyFeature: SketchFeature = {
+    id: featureId,
+    name: 'LegacyRect',
+    kind: 'rect',
+    operation: 'add',
+    visible: true,
+    locked: false,
+    z_top: 3,
+    z_bottom: 0,
+    folderId: null,
+    sketch: {
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+      profile,
+    },
+    text: null,
+    stl: null,
+    // definitionId intentionally absent
+    // transform intentionally absent
+  }
+
+  const definitions: Record<string, FeatureDefinition> = { [featureId]: definition }
+  const sourceDefId = getDefinitionId(legacyFeature)
+  assert(sourceDefId === featureId, 'getDefinitionId falls back to feature.id for legacy source')
+
+  // Copy as reference
+  const copies = buildCopiedFeatures(
+    [legacyFeature],
+    [legacyFeature],
+    150,
+    0,
+    1,
+    definitions,
+    'reference',
+  )
+  assert(copies.length === 1, 'one reference copy of legacy feature created')
+  const copy = copies[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+
+  // Copy MUST have an explicit definitionId matching the source's effective definitionId
+  assert(
+    copy.definitionId !== undefined,
+    'legacy copy has explicit definitionId',
+  )
+  assert(
+    copy.definitionId === featureId,
+    `legacy copy definitionId equals source's effective definitionId (got "${copy.definitionId}")`,
+  )
+  assert(
+    getDefinitionId(copy) === featureId,
+    'getDefinitionId(copy) returns source definition',
+  )
+
+  // No new definition created
+  const clonedDefs = extractClonedDefinitions(copies)
+  assert(Object.keys(clonedDefs).length === 0, 'reference mode creates no cloned definitions')
+
+  // Both rows are linked under the same definition
+  const fullProject: Project = {
+    ...base,
+    features: [legacyFeature, copy as SketchFeature],
+    featureDefinitions: definitions,
+  }
+  const siblingIds = getInstanceIdsForDefinition(fullProject, featureId)
+  assert(siblingIds.length === 2, 'legacy source + copy are 2 linked instances')
+  assert(siblingIds.includes(featureId), 'source is an instance')
+  assert(siblingIds.includes(copy.id), 'copy is an instance')
+
+  // Both resolve (source at origin, copy at offset)
+  const sourceResolved = resolveFeatureInstance(fullProject, featureId)
+  assert(sourceResolved !== null, 'legacy source resolves')
+  const copyResolved = resolveFeatureInstance(fullProject, copy.id)
+  assert(copyResolved !== null, 'legacy copy resolves')
+  const sourceVerts = sourceResolved!.sketch.profile.segments.map(
+    (s: { to?: Point }) => s.to ?? sourceResolved!.sketch.profile.start,
+  )
+  const copyVerts = copyResolved!.sketch.profile.segments.map(
+    (s: { to?: Point }) => s.to ?? copyResolved!.sketch.profile.start,
+  )
+  for (let i = 0; i < sourceVerts.length; i++) {
+    const sv = sourceVerts[i]
+    const cv = copyVerts[i]
+    if (sv) {
+      assert(
+        Math.abs(cv.x - (sv.x + 150)) < 0.01 && Math.abs(cv.y - sv.y) < 0.01,
+        `legacy copy vertex ${i} shifted by (150,0), delta=(${(cv.x - sv.x - 150).toFixed(3)}, ${(cv.y - sv.y).toFixed(3)})`,
+      )
+    }
+  }
+}
+
+// ── Reference copy of created/normal feature still links (no regression) ──
+
+{
+  // Same shape as the existing "Duplicate as Reference" test but with explicit
+  // assertions that the copy carries an explicit definitionId — guards against
+  // regression where we might drop definitionId from the reference-copy branch.
+  const { project, rect } = makeSingleRectProject()
+  const copies = buildCopiedFeatures(
+    [rect],
+    project.features,
+    200,
+    0,
+    1,
+    project.featureDefinitions,
+    'reference',
+  )
+  assert(copies.length === 1, 'reference copy created')
+  const copy = copies[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+
+  // Copy must have an explicit definitionId (not just picked up from spread)
+  assert(
+    copy.definitionId !== undefined,
+    'reference copy of normal feature has explicit definitionId',
+  )
+  assert(
+    copy.definitionId === 'f-rect',
+    `reference copy definitionId is "f-rect" (got "${copy.definitionId}")`,
+  )
+  assert(
+    getDefinitionId(copy) === 'f-rect',
+    'getDefinitionId(copy) returns f-rect',
+  )
+
+  const fullProject: Project = {
+    ...project,
+    features: [...project.features, copy as SketchFeature],
+  }
+  const instanceIds = getInstanceIdsForDefinition(fullProject, 'f-rect')
+  assert(instanceIds.length === 2, 'definition has 2 instances (normal feature copy still links)')
+  assert(instanceIds.includes('f0001'), 'source is an instance')
+  assert(instanceIds.includes(copy.id), 'copy is an instance')
+}
+
 // ── Duplicate Independent (buildCopiedFeatures, independent mode) ──
 
 {
