@@ -16,7 +16,9 @@
 
 import type { StateCreator } from 'zustand'
 import type {
+  FeatureDefinition,
   FeatureFolder,
+  FeatureOperation,
   FeatureTreeEntry,
   Matrix2D,
   Project,
@@ -52,7 +54,7 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
-import { createDefinitionForFeature, gcOrphanedDefinitions } from '../helpers/featureDefinitions'
+import { createDefinitionForFeature, gcOrphanedDefinitions, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
 import {
   buildSegmentAnnotations,
@@ -462,17 +464,61 @@ export function createFeatureSlice(
             ? { ...zSafePatch, operation: 'add' }
             : zSafePatch
         const safeOperation = safePatch.operation ?? existingFeature?.operation
+
+        // P1b: when operation changes on a linked instance, propagate to the
+        // definition and all siblings so the raw rows agree with the
+        // definition-owned operation (resolveFeatures.ts:436).
+        const defId = (existingFeature as SketchFeature & { definitionId?: string })?.definitionId
+        const opExplicitlyChanged =
+          safePatch.operation !== undefined && safePatch.operation !== existingFeature?.operation
+        const shouldPropagateOp = opExplicitlyChanged && defId !== undefined
+
+        const nextDefinitions = shouldPropagateOp
+          ? {
+              ...s.project.featureDefinitions,
+              [defId!]: {
+                ...s.project.featureDefinitions[defId!],
+                operation: safeOperation as FeatureOperation,
+              },
+            } as Record<string, FeatureDefinition>
+          : s.project.featureDefinitions
+
+        const linkedSiblingIds: Set<string> | null = shouldPropagateOp
+          ? new Set(getInstanceIdsForDefinition(s.project, defId!))
+          : null
+
         let nextProject: Project = {
           ...s.project,
-          features: features.map((f) =>
-            f.id === id
-              ? normalizeFeatureZRange({
+          featureDefinitions: nextDefinitions,
+          features: features.map((f, fi) => {
+            const isEdited = f.id === id
+            const isLinkedSibling =
+              shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id) && f.id !== id
+
+            if (isEdited) {
+              return normalizeFeatureZRange({
                 ...f,
                 ...safePatch,
                 folderId: folderIdForOperation(s.project, safePatch.folderId ?? f.folderId, safeOperation),
               })
-              : f
-          ),
+            }
+
+            if (isLinkedSibling) {
+              // Apply the same operation to the sibling, with its own isFirst
+              // guard (first feature in the tree can't be subtract).
+              const siblingIsFirst = fi === 0
+              const op = safeOperation as FeatureOperation
+              const siblingOp =
+                siblingIsFirst && op !== 'add' ? ('add' as const) : op
+              return normalizeFeatureZRange({
+                ...f,
+                operation: siblingOp,
+                folderId: folderIdForOperation(s.project, f.folderId, siblingOp),
+              })
+            }
+
+            return f
+          }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncStockFromSourceFeature(nextProject, id)

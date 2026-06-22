@@ -114,6 +114,20 @@ test.describe('Feature references browser smoke', () => {
 
     // Other row sharing the same def now has only 1 instance → badge gone
     await expect(ui.badge.linkedInRow(rowByName(app.page, 'Linked B'))).toHaveCount(0)
+
+    // P2: verify made-unique geometry is finite and valid (not NaN from broken matrix)
+    const project = await getProject(app.page)
+    const features = project.features as Array<Record<string, unknown>>
+    const linkedA = features.find((f) => f.name === 'Linked A') as Record<string, unknown>
+    expect(linkedA, 'Linked A should still exist after Make Unique').toBeDefined()
+    const sketch = linkedA.sketch as Record<string, unknown>
+    const profile = sketch.profile as Record<string, unknown>
+    const start = profile.start as Record<string, number>
+    expect(Number.isFinite(start.x), `Linked A start.x should be finite, got ${start.x}`).toBe(true)
+    expect(Number.isFinite(start.y), `Linked A start.y should be finite, got ${start.y}`).toBe(true)
+    // Linked A is at (0,0) in the original fixture — should stay near origin
+    expect(Math.abs(start.x), `Linked A start.x expected near 0, got ${start.x}`).toBeLessThan(10)
+    expect(Math.abs(start.y), `Linked A start.y expected near 0, got ${start.y}`).toBeLessThan(10)
   })
 
   // ── 5. Select Linked Instances ──────────────────────────────────
@@ -155,6 +169,22 @@ test.describe('Feature references browser smoke', () => {
 
     // Before copy: 2 badges (def-linked). After: independent pair → +2 = 4.
     await expect(ui.badge.linked(app.page)).toHaveCount(4)
+
+    // P2: verify copied feature geometry is finite and correctly placed
+    const project = await getProject(app.page)
+    const features = project.features as Array<Record<string, unknown>>
+    // Find the copy — it should have a different id from the originals
+    const originalIds = new Set(['f-linked-a', 'f-linked-b', 'f-independent', 'f-unique'])
+    const copied = features.find((f) => !originalIds.has(f.id as string)) as Record<string, unknown>
+    expect(copied, 'copied feature should exist with a new id').toBeDefined()
+    const copiedSketch = copied.sketch as Record<string, unknown>
+    const copiedProfile = copiedSketch.profile as Record<string, unknown>
+    const copiedStart = copiedProfile.start as Record<string, number>
+    expect(Number.isFinite(copiedStart.x), `copied start.x should be finite, got ${copiedStart.x}`).toBe(true)
+    expect(Number.isFinite(copiedStart.y), `copied start.y should be finite, got ${copiedStart.y}`).toBe(true)
+    // The copy was placed near (30, 110) via completePendingMove
+    expect(copiedStart.x, `copied start.x should be near 30, got ${copiedStart.x}`).toBeGreaterThan(0)
+    expect(copiedStart.y, `copied start.y should be near 110, got ${copiedStart.y}`).toBeGreaterThan(50)
   })
 
   // ── 7. Edit Sketch enters/exits ─────────────────────────────────

@@ -83,7 +83,7 @@ function linkedFeature(
     visible: true,
     locked: false,
     definitionId,
-    transform: [1, 0, 0, 1, tx, ty] as [number, number, number, number, number, number],
+    transform: { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty },
   }
 }
 
