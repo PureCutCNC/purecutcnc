@@ -565,6 +565,294 @@ test('completePendingMove with copy on grouped members creates copies for all me
 })
 
 // ============================================================================
+// 4b. Group copy creates a new grouped folder (Slice 4 fix)
+// ============================================================================
+
+console.log('\n4b. Group copy creates a new grouped folder')
+
+test('group copy creates a new grouped folder containing all copies', () => {
+  const { folderId: sourceFolderId, featureIds } = setupGroupedFolderWithRects([
+    { name: 'F1', x: 0, y: 0, w: 100, h: 100, depth: 5 },
+    { name: 'F2', x: 200, y: 0, w: 100, h: 100, depth: 5 },
+  ])
+  const [f1, f2] = featureIds
+
+  const foldersBefore = useProjectStore.getState().project.featureFolders.length
+  const featuresBefore = useProjectStore.getState().project.features.length
+  assert(foldersBefore === 1, `expected 1 folder before copy, got ${foldersBefore}`)
+  assert(featuresBefore === 2, `expected 2 features before copy, got ${featuresBefore}`)
+
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+
+  // Start copy and complete it
+  useProjectStore.getState().startCopyFeature(f1)
+  useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+  useProjectStore.getState().completePendingMove({ x: 50, y: 30 })
+
+  const state = useProjectStore.getState()
+  const project = state.project
+
+  // One new folder should be created
+  assert(
+    project.featureFolders.length === 2,
+    `expected 2 folders (1 original + 1 new), got ${project.featureFolders.length}`,
+  )
+
+  // The new folder should be grouped
+  const newFolder = project.featureFolders.find((f) => f.id !== sourceFolderId)
+  assert(newFolder !== undefined, 'new folder should exist')
+  assert(newFolder.grouped === true, 'new folder should be grouped')
+  assert(newFolder.collapsed === false, 'new folder should not be collapsed')
+  assert(
+    newFolder.name.includes('Copy'),
+    `new folder name should include "Copy", got "${newFolder.name}"`,
+  )
+
+  // Source folder should still exist and be grouped
+  const sourceFolder = project.featureFolders.find((f) => f.id === sourceFolderId)
+  assert(sourceFolder !== undefined, 'source folder should still exist')
+  assert(sourceFolder.grouped === true, 'source folder should still be grouped')
+
+  // All features should exist (2 original + 2 copies = 4)
+  assert(project.features.length === 4,
+    `expected 4 features, got ${project.features.length}`)
+
+  // Original features should still belong to the source folder
+  const origF1 = project.features.find((f) => f.id === f1)
+  const origF2 = project.features.find((f) => f.id === f2)
+  assert(origF1 !== undefined, 'original f1 should exist')
+  assert(origF2 !== undefined, 'original f2 should exist')
+  assert(origF1.folderId === sourceFolderId,
+    `original f1 should belong to source folder, got ${origF1.folderId}`)
+  assert(origF2.folderId === sourceFolderId,
+    `original f2 should belong to source folder, got ${origF2.folderId}`)
+
+  // Copy features should belong to the NEW folder (not the source folder)
+  const copyFeatures = project.features.filter((f) => f.id !== f1 && f.id !== f2)
+  assert(copyFeatures.length === 2,
+    `expected 2 copy features, got ${copyFeatures.length}`)
+  for (const cf of copyFeatures) {
+    assert(cf.folderId === newFolder.id,
+      `copy feature ${cf.id} should belong to new folder ${newFolder.id}, got ${cf.folderId}`)
+  }
+
+  // Selection should point to the copies with groupFolderId set to the new folder
+  const sel = state.selection
+  assert(sel.selectedFeatureIds.length === 2,
+    `expected 2 selected features, got ${sel.selectedFeatureIds.length}`)
+  assert(
+    sel.selectedFeatureIds.every((id) => id !== f1 && id !== f2),
+    'selected IDs should be the copy IDs',
+  )
+  assert(sel.groupFolderId === newFolder.id,
+    `groupFolderId should be ${newFolder.id}, got ${sel.groupFolderId}`)
+})
+
+test('group copy featureTree has one new folder entry and no root feature entries for copies', () => {
+  const { folderId: sourceFolderId, featureIds } = setupGroupedFolderWithRects([
+    { name: 'F1', x: 0, y: 0, w: 100, h: 100, depth: 5 },
+    { name: 'F2', x: 200, y: 0, w: 100, h: 100, depth: 5 },
+  ])
+  const [f1] = featureIds
+
+  const treeEntryCountBefore = useProjectStore.getState().project.featureTree.length
+  assert(treeEntryCountBefore === 1,
+    `expected 1 featureTree entry before copy, got ${treeEntryCountBefore}`)
+
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+
+  useProjectStore.getState().startCopyFeature(f1)
+  useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+  useProjectStore.getState().completePendingMove({ x: 50, y: 30 })
+
+  const project = useProjectStore.getState().project
+  const newFolder = project.featureFolders.find((f) => f.id !== sourceFolderId)
+  assert(newFolder !== undefined, 'new folder should exist')
+
+  // featureTree should have the original folder entry + one new folder entry
+  assert(
+    project.featureTree.length === 2,
+    `expected 2 featureTree entries (1 original folder + 1 new folder), got ${project.featureTree.length}`,
+  )
+
+  // The new entry should be a folder entry pointing to the new folder
+  const folderEntries = project.featureTree.filter((e) => e.type === 'folder')
+  assert(folderEntries.length === 2,
+    `expected 2 folder entries, got ${folderEntries.length}`)
+  assert(
+    folderEntries.some((e) => e.folderId === sourceFolderId),
+    'source folder entry should still exist',
+  )
+  assert(
+    folderEntries.some((e) => e.folderId === newFolder.id),
+    'new folder entry should exist',
+  )
+
+  // No root feature entries for the copies (their membership comes from folderId)
+  const copyFeatureIds = project.features
+    .filter((f) => f.folderId === newFolder.id)
+    .map((f) => f.id)
+  assert(copyFeatureIds.length === 2,
+    `expected 2 features in new folder, got ${copyFeatureIds.length}`)
+
+  const rootFeatureEntries = project.featureTree.filter((e) => e.type === 'feature')
+  for (const entry of rootFeatureEntries) {
+    if (entry.type === 'feature') {
+      assert(
+        !copyFeatureIds.includes(entry.featureId),
+        `copy feature ${entry.featureId} should NOT have a root featureTree entry`,
+      )
+    }
+  }
+
+  // No feature id appears both in a folder and at root (sync consistency)
+  const folderMemberIds = new Set(
+    project.features.filter((f) => f.folderId !== null).map((f) => f.id),
+  )
+  for (const entry of rootFeatureEntries) {
+    if (entry.type === 'feature') {
+      assert(
+        !folderMemberIds.has(entry.featureId),
+        `feature ${entry.featureId} is both a folder member and a root entry`,
+      )
+    }
+  }
+})
+
+test('group copy selection has groupFolderId set to the new folder', () => {
+  const { folderId: sourceFolderId, featureIds } = setupGroupedFolderWithRects([
+    { name: 'F1', x: 0, y: 0, w: 100, h: 100, depth: 5 },
+  ])
+  const [f1] = featureIds
+
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+
+  useProjectStore.getState().startCopyFeature(f1)
+  useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+  useProjectStore.getState().completePendingMove({ x: 50, y: 30 })
+
+  const state = useProjectStore.getState()
+  const sel = state.selection
+  const newFolder = state.project.featureFolders.find((f) => f.id !== sourceFolderId)
+  assert(newFolder !== undefined, 'new folder should exist')
+
+  assert(sel.groupFolderId === newFolder.id,
+    `groupFolderId should be ${newFolder.id}, got ${sel.groupFolderId}`)
+  assert(sel.selectedFeatureIds.length === 1,
+    'should have 1 selected feature (the copy)')
+  assert(sel.selectedFeatureIds[0] !== f1,
+    'selected feature should be the copy, not the original')
+  assert(sel.selectedNode?.type === 'folder',
+    `selectedNode should be folder, got ${sel.selectedNode?.type}`)
+})
+
+// ============================================================================
+// 4c. Non-group copy regression guard
+// ============================================================================
+
+console.log('\n4c. Non-group copy regression guard')
+
+test('non-group copy (feature not in any folder) still creates root featureTree entries', () => {
+  resetStore()
+
+  // Add a feature NOT in any folder
+  useProjectStore.getState().addRectFeature('Solo', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  const featuresBefore = useProjectStore.getState().project.features.length
+
+  // Copy it
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+  useProjectStore.getState().startCopyFeature(f1)
+  useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+  useProjectStore.getState().completePendingMove({ x: 50, y: 30 })
+
+  const project = useProjectStore.getState().project
+  assert(project.features.length === featuresBefore + 1,
+    `expected ${featuresBefore + 1} features after solo copy, got ${project.features.length}`)
+
+  // The original feature should still have no folderId
+  const orig = project.features.find((f) => f.id === f1)
+  assert(orig !== undefined, 'original feature should still exist')
+  assert(orig.folderId === null, 'original feature should have no folderId')
+
+  // The copy should also have no folderId (non-group copy preserves folderId)
+  const copy = project.features.find((f) => f.id !== f1)
+  assert(copy !== undefined, 'copy feature should exist')
+  assert(copy.folderId === null,
+    `copy feature should have null folderId (non-group), got ${copy.folderId}`)
+
+  // featureTree should have a root entry for the copy
+  const rootFeatureIds = project.featureTree
+    .filter((e) => e.type === 'feature')
+    .map((e) => e.type === 'feature' ? e.featureId : '')
+    .filter(Boolean)
+  assert(rootFeatureIds.includes(copy.id),
+    'copy feature should have a root featureTree entry')
+
+  // Selection should NOT have groupFolderId set (not a group copy)
+  const sel = useProjectStore.getState().selection
+  assert(
+    sel.groupFolderId === undefined || sel.groupFolderId === null,
+    `groupFolderId should be null/undefined for non-group copy, got ${sel.groupFolderId}`,
+  )
+  assert(sel.selectedFeatureIds.length === 1,
+    'should have 1 selected feature')
+})
+
+test('copy feature in non-grouped folder preserves existing behavior (root entry + same folderId)', () => {
+  resetStore()
+
+  // Create a non-grouped folder
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  // grouped defaults to false — do NOT toggle it
+
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // f1 should be in the non-grouped folder
+  const f1Feature = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  assert(f1Feature?.folderId === folderId,
+    `f1 should be in the non-grouped folder, got folderId=${f1Feature?.folderId}`)
+
+  // Copy it
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+  useProjectStore.getState().startCopyFeature(f1)
+  useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+  useProjectStore.getState().completePendingMove({ x: 50, y: 30 })
+
+  const project = useProjectStore.getState().project
+  const folders = project.featureFolders
+  assert(folders.length === 1,
+    `expected 1 folder (no new folder for non-group copy), got ${folders.length}`)
+
+  // Copy should have the same folderId as original (not a new folder)
+  const copyFeature = project.features.find((f) => f.id !== f1)
+  assert(copyFeature !== undefined, 'copy feature should exist')
+  assert(copyFeature.folderId === folderId,
+    `copy should belong to same folder, got folderId=${copyFeature.folderId}`)
+
+  // featureTree should have a root entry for the copy (existing behavior)
+  const rootEntries = project.featureTree.filter((e) => e.type === 'feature')
+  const rootCopyEntry = rootEntries.find(
+    (e) => e.type === 'feature' && e.featureId === copyFeature.id,
+  )
+  assert(rootCopyEntry !== undefined,
+    'copy feature should have a root featureTree entry (existing non-group behavior)')
+
+  // Selection should NOT have groupFolderId
+  const sel = useProjectStore.getState().selection
+  assert(
+    sel.groupFolderId === undefined || sel.groupFolderId === null,
+    `groupFolderId should be null/undefined for non-group copy, got ${sel.groupFolderId}`,
+  )
+})
+
+// ============================================================================
 // 5. Edge cases
 // ============================================================================
 
