@@ -165,6 +165,141 @@ test('toggleFolderGrouped on unknown folder is a no-op', () => {
 })
 
 // ============================================================================
+// 3. Slice 2a — group selection (store only)
+// ============================================================================
+
+console.log('\nSlice 2a — group selection')
+
+test('selectFeature on a grouped folder member expands to all members and sets groupFolderId', () => {
+  resetStore()
+
+  // Create a folder (this selects the folder so new features auto-assign)
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  // Toggle to grouped
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+
+  // Add features — they auto-assign to the selected folder
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Deselect by clicking project, so we can test single-feature select
+  useProjectStore.getState().selectProject()
+
+  // Select f1 non-additively
+  useProjectStore.getState().selectFeature(f1, false)
+  const sel = useProjectStore.getState().selection
+
+  assert(
+    sel.selectedFeatureIds.length === 2,
+    `expected 2 selected features, got ${sel.selectedFeatureIds.length}`,
+  )
+  assert(sel.selectedFeatureIds.includes(f1), 'f1 should be selected')
+  assert(sel.selectedFeatureIds.includes(f2), 'f2 should be selected')
+  assert(sel.groupFolderId === folderId, `expected groupFolderId === ${folderId}, got ${sel.groupFolderId}`)
+})
+
+test('selectFeature on a non-grouped folder member selects only that feature and leaves groupFolderId null', () => {
+  resetStore()
+
+  // Create a folder (not grouped)
+  useProjectStore.getState().addFeatureFolder('features')
+  // Keep grouped === false (default)
+
+  // Add features
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+
+  // Deselect
+  useProjectStore.getState().selectProject()
+
+  // Select f1 non-additively
+  useProjectStore.getState().selectFeature(f1, false)
+  const sel = useProjectStore.getState().selection
+
+  assert(
+    sel.selectedFeatureIds.length === 1,
+    `expected 1 selected feature, got ${sel.selectedFeatureIds.length}`,
+  )
+  assert(sel.selectedFeatureIds[0] === f1, `expected f1 selected, got ${sel.selectedFeatureIds[0]}`)
+  assert(sel.groupFolderId === null, `expected groupFolderId === null, got ${sel.groupFolderId}`)
+})
+
+test('selectFolderFeatures on a grouped folder sets groupFolderId, on a non-grouped folder it is null', () => {
+  resetStore()
+
+  // Create a grouped folder
+  const groupedFolderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(groupedFolderId)
+  useProjectStore.getState().addRectFeature('GF1', 0, 0, 100, 100, 5)
+  useProjectStore.getState().addRectFeature('GF2', 200, 0, 100, 100, 5)
+
+  // Create a non-grouped folder (select project first so next folder doesn't inherit selection context)
+  useProjectStore.getState().selectProject()
+  const normalFolderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('NF1', 0, 200, 100, 100, 5)
+
+  // Test grouped folder
+  useProjectStore.getState().selectFolderFeatures(groupedFolderId)
+  const selGrouped = useProjectStore.getState().selection
+  assert(
+    selGrouped.groupFolderId === groupedFolderId,
+    `expected groupFolderId === ${groupedFolderId}, got ${selGrouped.groupFolderId}`,
+  )
+
+  // Test non-grouped folder
+  useProjectStore.getState().selectFolderFeatures(normalFolderId)
+  const selNormal = useProjectStore.getState().selection
+  assert(
+    selNormal.groupFolderId === null,
+    `expected groupFolderId === null for non-grouped folder, got ${selNormal.groupFolderId}`,
+  )
+})
+
+test('after a group selection, a subsequent ungrouped single-feature select resets groupFolderId to null', () => {
+  resetStore()
+
+  // Create a grouped folder with features
+  const groupedFolderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(groupedFolderId)
+  useProjectStore.getState().addRectFeature('GF1', 0, 0, 100, 100, 5)
+
+  // Create a non-grouped folder with a feature
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('NF1', 0, 200, 100, 100, 5)
+  const nf1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Deselect
+  useProjectStore.getState().selectProject()
+
+  // First, select a feature in the grouped folder to establish groupFolderId
+  const state = useProjectStore.getState()
+  const gf1 = state.project.features.find((f) => f.folderId === groupedFolderId)!.id
+  useProjectStore.getState().selectFeature(gf1, false)
+  const selGrouped = useProjectStore.getState().selection
+  assert(
+    selGrouped.groupFolderId === groupedFolderId,
+    `expected groupFolderId === ${groupedFolderId} after group select, got ${selGrouped.groupFolderId}`,
+  )
+
+  // Now select a feature in the non-grouped folder
+  useProjectStore.getState().selectFeature(nf1, false)
+  const selNormal = useProjectStore.getState().selection
+  assert(
+    selNormal.groupFolderId === null,
+    `expected groupFolderId === null after ungrouped select, got ${selNormal.groupFolderId}`,
+  )
+  assert(
+    selNormal.selectedFeatureIds.length === 1,
+    `expected 1 selected feature after ungrouped select, got ${selNormal.selectedFeatureIds.length}`,
+  )
+  assert(selNormal.selectedFeatureIds[0] === nf1, 'expected nf1 to be selected')
+})
+
+// ============================================================================
 // Summary
 // ============================================================================
 

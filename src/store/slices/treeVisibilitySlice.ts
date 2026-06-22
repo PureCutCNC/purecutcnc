@@ -113,6 +113,8 @@ export function createTreeVisibilitySlice(
         return {}
       }
       const primaryId = ids.at(-1) ?? null
+      const folder = s.project.featureFolders.find((f) => f.id === folderId)
+      const isGrouped = folder?.grouped ?? false
       return {
         pendingOffset: null,
         pendingShapeAction: null,
@@ -123,6 +125,7 @@ export function createTreeVisibilitySlice(
           selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
           mode: 'feature',
           activeControl: null,
+          groupFolderId: isGrouped ? folderId : null,
         },
         sketchEditSession: null,
       }
