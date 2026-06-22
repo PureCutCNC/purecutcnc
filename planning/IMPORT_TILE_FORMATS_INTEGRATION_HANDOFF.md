@@ -69,7 +69,7 @@ npm run build
 
 - Accepted commits and merge order: `S1 b8ca98292089d08f746766d77faf123280a2b173 → merge 67f781d06b16f709a0c861af31008d1b3dac2da0`
 - Repository checks: `npm run build — passed independently by the manager (TypeScript, license headers, 47 test files, and Vite build)`
-- Browser/tablet checks: `No interaction regression expected; final user review confirms shared empty-state copy on desktop.`
+- Browser/tablet checks: `Chrome desktop verification passed on 2026-06-22 from this integration worktree: the empty-project tile visibly rendered “SVG, DXF, OBJ, STL, or CAMJ files” without clipping. No tablet interaction regression is expected for static shared-overlay copy; final user review remains the acceptance gate.`
 - Known limitations or deferred work: `none`
 
 ## User-review handoff
