@@ -71,6 +71,7 @@ export function drawFeature(
   selected: boolean,
   hovered: boolean,
   editing: boolean,
+  groupSelected: boolean,
 ): void {
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
@@ -92,6 +93,11 @@ export function drawFeature(
   if (feature.operation === 'region') {
     fill = 'rgba(153, 102, 204, 0.30)'
     stroke = '#9966cc'
+  }
+
+  if (groupSelected) {
+    fill = 'rgba(94, 196, 196, 0.30)'
+    stroke = '#5ec4c4'
   }
 
   if (hovered) {

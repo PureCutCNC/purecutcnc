@@ -1624,8 +1624,10 @@
 }
 
 .tree-action-btn--grouped {
-  color: #7eb3de;
-  border-color: rgba(78, 141, 193, 0.55);
+  color: #fff;
+  border-color: rgba(220, 165, 106, 0.65);
+  background: rgba(220, 165, 106, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(220, 165, 106, 0.25);
 }
 
 .tree-action-btn--muted {

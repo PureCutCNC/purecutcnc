@@ -92,7 +92,7 @@ import {
   drawStockOutline,
   drawTabFootprint,
 } from './scenePrimitives'
-import { generateTextShapes, getFeatureGeometryBounds } from '../../text'
+import { generateTextShapes } from '../../text'
 import {
   getProfileBounds,
   polygonProfile,
@@ -954,8 +954,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
+      const groupSelected = selection.groupFolderId !== null && selected
 
-      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
+      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
@@ -1013,39 +1014,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
-        ctx.restore()
-      }
-    }
-
-    // Group selection bounding box: when a grouped folder is selected, draw a
-    // single dashed outline around all member features.
-    if (selection.groupFolderId !== null && selection.selectedFeatureIds.length > 0) {
-      let gMinX = Infinity, gMaxX = -Infinity, gMinY = Infinity, gMaxY = -Infinity
-      for (const featureId of selection.selectedFeatureIds) {
-        const feature = project.features.find((f) => f.id === featureId)
-        if (!feature || !feature.visible) continue
-        const b = getFeatureGeometryBounds(feature)
-        if (isFinite(b.minX) && isFinite(b.maxX) && isFinite(b.minY) && isFinite(b.maxY)) {
-          gMinX = Math.min(gMinX, b.minX)
-          gMaxX = Math.max(gMaxX, b.maxX)
-          gMinY = Math.min(gMinY, b.minY)
-          gMaxY = Math.max(gMaxY, b.maxY)
-        }
-      }
-      if (isFinite(gMinX)) {
-        const PAD = 8
-        const tl = worldToCanvas({ x: gMinX, y: gMinY }, vt)
-        const br = worldToCanvas({ x: gMaxX, y: gMaxY }, vt)
-        ctx.save()
-        ctx.strokeStyle = 'rgba(220, 165, 106, 0.55)'
-        ctx.lineWidth = 1.5
-        ctx.setLineDash([8, 4])
-        ctx.strokeRect(
-          tl.cx - PAD,
-          tl.cy - PAD,
-          br.cx - tl.cx + PAD * 2,
-          br.cy - tl.cy + PAD * 2,
-        )
         ctx.restore()
       }
     }
