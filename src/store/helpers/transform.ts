@@ -158,6 +158,15 @@ export function transformProfileAffine(
         control2: transformPoint(segment.control2),
         to: transformPoint(segment.to),
       })
+    } else if (segment.type === 'circle') {
+      // A circle's center must move with the transform too — not just its edge
+      // point. Omitting the center corrupts the radius under any non-identity
+      // transform (e.g. inverse-baking the edit of a moved/copied circle).
+      nextSegments.push({
+        ...segment,
+        center: transformPoint(segment.center),
+        to: transformPoint(segment.to),
+      })
     } else {
       nextSegments.push({
         ...segment,

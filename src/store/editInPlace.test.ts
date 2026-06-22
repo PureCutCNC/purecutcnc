@@ -40,6 +40,7 @@ import {
   rotateMatrix,
   scaleMatrix,
 } from './helpers/instanceTransforms'
+import { transformProfileAffine } from './helpers/transform'
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
@@ -563,6 +564,26 @@ test('makeUnique then edit-in-place: only unique copy changes, other instances u
   const postLinked2 = getFeatures().find((f) => f.id === 'f-0003')!
   assert(pointEq(postLinked2.sketch.profile.start, { x: 10, y: 70 }),
     `post-edit linked-2 should be (10,70), got (${postLinked2.sketch.profile.start.x}, ${postLinked2.sketch.profile.start.y})`)
+})
+
+// Regression: transformProfileAffine must transform a circle's center, not just
+// its edge point. Omitting it corrupted the radius when inverse-baking the edit
+// of a moved/copied circle (huge-circle bug).
+test('transformProfileAffine transforms circle center (radius preserved under translate)', () => {
+  const profile = {
+    start: { x: 60, y: 50 },
+    segments: [
+      { type: 'circle' as const, center: { x: 50, y: 50 }, to: { x: 60, y: 50 }, clockwise: false },
+    ],
+    closed: true,
+  }
+  const moved = transformProfileAffine(profile, (p: Point) => ({ x: p.x + 100, y: p.y + 100 }))
+  const seg = moved.segments[0] as { type: 'circle'; center: Point; to: Point }
+  assert(seg.type === 'circle', 'segment should remain a circle')
+  assert(pointEq(seg.center, { x: 150, y: 150 }), `center should move to (150,150), got (${seg.center.x},${seg.center.y})`)
+  assert(pointEq(moved.start, { x: 160, y: 150 }), `start should move to (160,150), got (${moved.start.x},${moved.start.y})`)
+  const radius = Math.hypot(moved.start.x - seg.center.x, moved.start.y - seg.center.y)
+  assert(approx(radius, 10), `radius preserved at 10, got ${radius}`)
 })
 
 // ============================================================================
