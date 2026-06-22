@@ -37,12 +37,33 @@ Always run `npm run build` from the project root to verify changes compile befor
 
 ## DeepSeek implementation workers
 
-The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs Claude Code against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded implementation slice**; it is not a general-purpose autonomous command.
+The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs one non-interactive Claude Code session against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded slice** — it is not a general-purpose autonomous command. The management session dispatches it directly (filling the prompt template, piping it in, reading the worker's completion block back) so the user is not a copy/paste middleman.
 
-- Keep exactly one canonical, untracked credential file in the primary checkout: `<primary-worktree>/.env.agent`. It is ignored by Git and must have owner-only permissions (`chmod 600`). Never add it, print it, copy it into a task worktree, or read a fallback credential from `~/Documents`.
-- The integration manager resolves the primary worktree before dispatch and invokes the task-local launcher with `DEEPSEEK_AGENT_ENV_FILE=<primary-worktree>/.env.agent`. The launcher then reads that one canonical file while running in the isolated task worktree.
+### How to run it (integration manager workflow)
+
+1. **Create the task worktree first.** Each slice runs in its own git worktree under `/Users/frankp/Projects/worktrees/purecutcnc/`, never in the primary checkout or on `main`:
+   ```
+   git worktree add /Users/frankp/Projects/worktrees/purecutcnc/<slice> -b <slice-branch>
+   ```
+2. **Fill the prompt template.** Copy `scripts/claude-deepseek-agent-prompt.md`, replace the bracketed fields for this slice, and save it to a temp file (e.g. `work/slice-prompt.md`).
+3. **Dispatch.** Point `DEEPSEEK_AGENT_ENV_FILE` at the one canonical credential file in the primary checkout and pass the worktree explicitly:
+   ```
+   DEEPSEEK_AGENT_ENV_FILE=/Users/frankp/Projects/purecutcnc/.env.agent \
+     scripts/run-claude-deepseek-agent.sh \
+     --mode implement --allow-bypass \
+     --worktree /Users/frankp/Projects/worktrees/purecutcnc/<slice> \
+     --output-format json < work/slice-prompt.md
+   ```
+   - `--worktree DIR` is **required for `--mode implement`**: the launcher `cd`s into it so the worker operates there by default. This sets the working directory only — it is **not** a sandbox; a `bypassPermissions` worker can still reach any absolute path, so staying in the worktree is a prompt-and-review convention, not a technical boundary. Bound the real risk with a capped, rotatable key and the post-hoc review in step 4. `--worktree` is optional for `--mode review` (read-only, `--permission-mode plan`), which is the safer default — prefer it whenever the slice doesn't need to write.
+   - For slices that run for minutes, dispatch in the background and read the result when it exits, rather than blocking on a foreground call.
+4. **Review the real artifacts, not the report.** The worker ends with a `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` completion block — that is a *report, not acceptance*. Inspect the actual worktree diff, the commit, and the test output before accepting or merging.
+
+### Credential & token handling
+
+- Keep exactly one canonical, untracked credential file in the primary checkout: `<primary-worktree>/.env.agent`. It is gitignored and must be `chmod 600` (owner-only). The launcher **refuses to run** if it is group/other-readable. Never add it, print it, copy it into a task worktree, or read a fallback credential from `~/Documents`.
+- The launcher passes the DeepSeek key to the worker via the environment (`ANTHROPIC_AUTH_TOKEN`), never on the command line. A `--mode implement` worker is an autonomous agent that necessarily has that key in its env; the prompt's "do not echo the credential" rule is a guardrail, not enforcement. Bound the residual risk by using a capped, easily-rotatable DeepSeek key, preferring `--mode review`, and confining writes to the worktree.
 - A task worker must not inspect, edit, echo, log, or commit the credential file. It only receives the authenticated Claude process needed for its assigned slice.
-- Require the user's explicit approval before any credential-backed dispatch. Use `--mode implement --allow-bypass` only for an isolated task worktree; do not run it from the integration checkout or `main`.
+- Require the user's explicit approval before any credential-backed dispatch.
 - The integration manager owns task-worktree creation, review, verification, merge, cleanup, and PR decisions. Worker-reported completion is not acceptance.
 
 ## Key Architecture
