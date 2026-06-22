@@ -110,15 +110,37 @@ wiring via real clicks. Fail the whole run on **any** `console.error` or uncaugh
     `LATEST_PROJECT_VERSION` (`2.0`) → assert the forward-compat warning fires (Playwright
     `page.on('dialog')` for the `window.alert`) and the app still loads.
 
+## Build it to extend (REQUIRED — this is a foundation, not a one-off)
+
+The FR smoke is the **first** consumer of this harness; coverage will grow as features are added, so the
+scaffolding must make a new test a few composed lines, not a fresh derivation. Adding a smoke for a
+future feature area (e.g. a new CAM operation, a new tool) must NOT require touching harness internals.
+Deliver these reusable pieces and build the FR spec **on top of them** (proving the pattern):
+
+- **A Playwright fixture** (`e2e/fixtures.ts`) extending `test` so every spec gets a booted `app` page
+  with: the **console-error guard installed automatically** (fail on any `console.error`/page error),
+  the `__pcTest` seam ready, and the helpers injected. A new spec is then just
+  `test('...', async ({ app, ui }) => { ... })` — no per-spec boot/guard boilerplate.
+- **A single selectors module** (`e2e/selectors.ts`) — logical name → selector/role, the **one place**
+  UI churn is absorbed. Specs never inline raw selectors.
+- **A generic helpers module** (`e2e/helpers.ts`, NOT FR-specific): `seedProject(json)` /
+  `getProject()` (via `__pcTest`), `treeRows()`, `openRowContextMenu(row)`, `clickMenuItem(label)`,
+  `expectNoConsoleErrors()`, etc. FR-specific assertions (e.g. `expectLinkedBadge`) may live in the FR
+  spec or a thin `e2e/featureReferences.helpers.ts`, but the primitives stay generic and reusable.
+- **`e2e/README.md` with an "Adding a test" recipe**: the canonical shape — seed state via `__pcTest`,
+  drive wiring via real clicks through the selectors module, assert via the DOM helpers, console-error
+  guard is automatic; one spec file per feature area (auto-discovered). Plus: how to run
+  (`npm run test:e2e`), the Tauri-boot caveat from STEP 0, and the explicit non-goals (no geometry, no
+  pixels). Include a 5-line worked example of slotting in a hypothetical future smoke using only the
+  fixture + helpers.
+
 ## Wiring it up
 
 - `package.json`: add `@playwright/test` (dev), and a script `"test:e2e": "playwright test"`. Do **not**
   add e2e to the `test` or `build` scripts — the headless `npm test` gate must stay browser-free.
-- `playwright.config.ts`: chromium only; `webServer` launching `npm run preview` (or `dev`) with
-  `reuseExistingServer: true`; a sensible timeout; `forbidOnly` off.
+- `playwright.config.ts`: chromium only; `testDir: 'e2e'`; `webServer` launching `npm run preview` (or
+  `dev`) with `reuseExistingServer: true`; a sensible timeout; `forbidOnly` off.
 - `.gitignore`: add `test-results/`, `playwright-report/`, `/playwright/.cache/` if not already ignored.
-- A short `e2e/README.md`: how to run (`npm run test:e2e`), the Tauri-boot caveat from STEP 0, and the
-  explicit non-goals (no geometry, no pixels).
 
 ## Out of scope
 - No geometry/coordinate/segment-kind assertions (store suites own that).
@@ -130,6 +152,10 @@ wiring via real clicks. Fail the whole run on **any** `console.error` or uncaugh
 ## Acceptance criteria
 - `npm run test:e2e` runs the smoke green locally against the built app; the run fails loudly on any
   console error.
+- **Extensible by construction:** the FR spec is built on the shared fixture + selectors + helpers, and
+  a new feature-area smoke can be added as a single spec file using only those (no harness-internal or
+  selector-module changes beyond adding the new area's logical selectors). The README's "Adding a test"
+  recipe + worked example demonstrate it.
 - The `__pcTest` hook is present only under the dev/test guard and a `npm run build` prod bundle does
   not expose it; `npm run build` (tsc -b + `npm test` + vite) stays green.
 - The smoke asserts through the **real DOM + real menu/action wiring** (seed via the hook is fine;
