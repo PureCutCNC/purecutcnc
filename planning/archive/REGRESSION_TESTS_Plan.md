@@ -1,5 +1,5 @@
 ---
-status: In progress
+status: Complete — Phases 1–4 shipped in PR #156 (archived 2026-06-22)
 created: 2026-06-21
 ---
 

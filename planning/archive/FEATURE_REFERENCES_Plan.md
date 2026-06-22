@@ -1,14 +1,14 @@
 ---
-status: In progress
+status: Complete — shipped in PR #156 (archived 2026-06-22)
 created: 2026-06-08
 ---
 
 # Feature References (Linked Copies) Plan
 
-> **Status (updated 2026-06-21).** All implementation slices are merged on the integration branch
-> **`feature-references-v2`** and have passed management browser validation; the final PR to `main` is
-> pending user sign-off (plan stays *In progress* until the user confirms). **Live, authoritative
-> status is [`FEATURE_REFERENCES_Ledger.md`](FEATURE_REFERENCES_Ledger.md).** The *implemented*
+> **Status (2026-06-22): COMPLETE.** All implementation slices + the regression suite + four rounds of
+> user-testing fixes are merged on **`feature-references-v2`** and opened as
+> [PR #156](https://github.com/PureCutCNC/purecutcnc/pull/156) to `main`; user confirmed done. Archived.
+> **Full slice-by-slice history is in [`FEATURE_REFERENCES_Ledger.md`](FEATURE_REFERENCES_Ledger.md).** The *implemented*
 > architecture (definition/instance model, dual-storage compatibility, versioning) is documented in
 > [`../ARCHITECTURE.md`](../ARCHITECTURE.md) §4 — read that for "how it works"; this file is the design
 > rationale and history.
