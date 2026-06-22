@@ -143,6 +143,7 @@ export function buildCopiedFeatures(
         created.push({
           ...sourceFeature,
           id: nextId,
+          definitionId,
           name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
           folderId: sourceFeature.folderId,
           stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
