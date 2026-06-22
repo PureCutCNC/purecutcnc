@@ -45,7 +45,7 @@ export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened }: EmptySt
           </button>
           <button className="empty-state-action" type="button" onClick={onImport}>
             <span className="empty-state-action__title">Import a file</span>
-            <span className="empty-state-action__meta">SVG, DXF, or STL geometry</span>
+            <span className="empty-state-action__meta">SVG, DXF, OBJ, STL, or CAMJ files</span>
           </button>
         </div>
 
