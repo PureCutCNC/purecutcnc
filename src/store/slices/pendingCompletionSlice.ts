@@ -15,7 +15,8 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Clamp, Point, Project, SketchFeature, Tab } from '../../types/project'
+import { IDENTITY_MATRIX } from '../../types/project'
+import type { Clamp, FeatureDefinition, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
 import {
   cloneProject,
   projectsEqual,
@@ -27,8 +28,10 @@ import {
   insertDerivedFeatureTreeEntries,
 } from '../helpers/derivedFeatures'
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
+import { gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import type { ProjectStore } from '../types'
 import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
+import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -36,21 +39,21 @@ import {
   rotateBackdropFromReference,
   rotateFeatureFromReference,
 } from '../helpers/referenceTransforms'
-import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies } from '../helpers/copyFeatures'
+import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies, extractClonedDefinitions } from '../helpers/copyFeatures'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
   propagateConstraintsOnTranslate: (features: SketchFeature[], movedOffsets: Map<string, { dx: number; dy: number }>) => SketchFeature[]
   propagateConstraintsOnRotate: (features: SketchFeature[], movedRotations: Map<string, { pivot: Point, angle: number }>) => SketchFeature[]
   validateAllConstraints: (features: SketchFeature[]) => SketchFeature[]
-  previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => SketchFeature[]
+  previewOffsetFeatures: (project: Project, featureIds: string[], distance: number) => { features: SketchFeature[]; definitions: FeatureDefinition[] }
   createDerivedFeature: (
     project: Project,
     baseFeature: SketchFeature,
     profile: SketchFeature['sketch']['profile'],
     operation: SketchFeature['operation'],
     name: string,
-  ) => SketchFeature
+  ) => { feature: SketchFeature; definition: FeatureDefinition }
 }
 
 export type PendingCompletionSlice = Pick<
@@ -126,18 +129,42 @@ export function createPendingCompletionSlice(
             return { pendingMove: null }
           }
 
+          const effectiveCopyMode =
+            mode === 'copy'
+              ? s.pendingMove?.copyMode ?? s.project.meta.copyMode
+              : undefined
+
           const createdFeatures =
             mode === 'copy'
-              ? buildCopiedFeatures(sourceFeatures, s.project.features, dx, dy, normalizedCopyCount)
+              ? buildCopiedFeatures(
+                  sourceFeatures,
+                  s.project.features,
+                  dx,
+                  dy,
+                  normalizedCopyCount,
+                  s.project.featureDefinitions,
+                  effectiveCopyMode,
+                )
               : []
+
+          // Merge cloned definitions for independent copies.
+          const clonedDefs = mode === 'copy' ? extractClonedDefinitions(createdFeatures) : {}
+          // Strip the _clonedDefinition temporary key from created features.
+          const cleanedCreatedFeatures = mode === 'copy'
+            ? createdFeatures.map((f) => {
+                const { _clonedDefinition, ...rest } = f as SketchFeature & { _clonedDefinition?: FeatureDefinition }
+                return rest as SketchFeature
+              })
+            : []
 
           const translatedFeatures =
             mode === 'copy'
-              ? [...s.project.features, ...createdFeatures]
+              ? [...s.project.features, ...cleanedCreatedFeatures]
               : s.project.features.map((feature) => {
                   if (!entityIds.includes(feature.id) || feature.locked) {
                     return feature
                   }
+                  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
 
                   return {
                     ...feature,
@@ -151,28 +178,34 @@ export function createPendingCompletionSlice(
                       : feature.stl,
                     sketch: {
                       ...feature.sketch,
-                      origin: ['text', 'stl'].includes(feature.kind) 
-                        ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy } 
+                      origin: ['text', 'stl'].includes(feature.kind)
+                        ? { x: feature.sketch.origin.x + dx, y: feature.sketch.origin.y + dy }
                         : feature.sketch.origin,
                       profile: transformProfile(feature.sketch.profile, (p) => ({ x: p.x + dx, y: p.y + dy })),
                     },
-                  }
+                    transform: multiplyMatrix(moveDelta(dx, dy), currentTransform),
+                  } as SketchFeature & { transform: Matrix2D }
                 })
           const resolvedFeatures =
             mode === 'copy'
-              ? deps.clearStaleConstraints(translatedFeatures, new Set(createdFeatures.map((f) => f.id)))
+              ? deps.clearStaleConstraints(translatedFeatures, new Set(cleanedCreatedFeatures.map((f) => f.id)))
               : deps.validateAllConstraints(deps.propagateConstraintsOnTranslate(
                   translatedFeatures,
                   new Map(entityIds.filter((id) => !s.project.features.find((f) => f.id === id)?.locked).map((id) => [id, { dx, dy }])),
                 ))
+          const nextFeatureDefinitions = {
+            ...s.project.featureDefinitions,
+            ...clonedDefs,
+          }
           const nextProject = {
             ...s.project,
             features: resolvedFeatures,
+            featureDefinitions: nextFeatureDefinitions,
             featureTree:
               mode === 'copy'
                 ? [
                     ...s.project.featureTree,
-                    ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+                    ...cleanedCreatedFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
                   ]
                 : s.project.featureTree,
             meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -189,10 +222,10 @@ export function createPendingCompletionSlice(
               mode === 'copy'
                 ? {
                     ...s.selection,
-                    selectedFeatureId: createdFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
-                    selectedFeatureIds: createdFeatures.map((feature) => feature.id),
-                    selectedNode: createdFeatures.at(-1)
-                      ? { type: 'feature', featureId: createdFeatures.at(-1)!.id }
+                    selectedFeatureId: cleanedCreatedFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+                    selectedFeatureIds: cleanedCreatedFeatures.map((feature) => feature.id),
+                    selectedNode: cleanedCreatedFeatures.at(-1)
+                      ? { type: 'feature', featureId: cleanedCreatedFeatures.at(-1)!.id }
                       : s.selection.selectedNode,
                   }
                 : s.selection,
@@ -511,16 +544,22 @@ export function createPendingCompletionSlice(
         return []
       }
 
-      const createdFeatures = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
+      const offsetResult = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
+      const createdFeatures = offsetResult.features
       if (createdFeatures.length === 0) {
         set({ pendingOffset: null })
         return []
       }
 
       set((s) => {
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of offsetResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, ...createdFeatures],
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)
@@ -579,12 +618,13 @@ export function createPendingCompletionSlice(
         return []
       }
 
-      const createdGroups: DerivedFeatureGroup[] = cutFeaturesByCutterGrouped(
+      const cutResult = cutFeaturesByCutterGrouped(
         state.project,
         cutters,
         targets,
         deps.createDerivedFeature,
       )
+      const createdGroups: DerivedFeatureGroup[] = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
       if (createdFeatures.length === 0) {
         set({ pendingShapeAction: null })
@@ -597,10 +637,20 @@ export function createPendingCompletionSlice(
             ? []
             : pendingShapeAction.targetIds,
         )
+        const nextFeatures = insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace)
+        const nextFeatureTree = insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace)
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        for (const definition of cutResult.definitions) {
+          nextDefinitions[definition.id] = definition
+        }
+        const finalDefinitions = pendingShapeAction.keepOriginals
+          ? nextDefinitions
+          : gcOrphanedDefinitions(nextFeatures, nextDefinitions).definitions
         const nextProject = syncFeatureTreeProject({
           ...s.project,
-          features: insertDerivedFeaturesAfterSources(s.project.features, createdGroups, idsToReplace),
-          featureTree: insertDerivedFeatureTreeEntries(s.project.featureTree, s.project.features, createdGroups, idsToReplace),
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          featureDefinitions: finalDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((feature) => feature.id)

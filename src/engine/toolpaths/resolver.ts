@@ -18,6 +18,7 @@ import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { rectProfile } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import type {
   ClipperPath,
   ResolvedFeatureZSpan,
@@ -60,7 +61,19 @@ function getChildren(node: PolyTreeNode): PolyTreeNode[] {
   return node.Childs ? node.Childs() : (node.m_Childs ?? [])
 }
 
-function flattenFeatureToClipperPath(feature: SketchFeature, scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
+function flattenFeatureToClipperPath(feature: SketchFeature, project: Project, scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
+  const withRefs = feature as SketchFeature & { definitionId?: string }
+  const resolved = resolveFeatureInstance(project, feature.id)
+
+  if (resolved) {
+    const flattened = flattenProfile(resolved.sketch.profile)
+    return toClipperPath(normalizeWinding(flattened.points, false), scale)
+  }
+
+  if (withRefs.definitionId) {
+    return []
+  }
+
   const flattened = flattenProfile(feature.sketch.profile)
   return toClipperPath(normalizeWinding(flattened.points, false), scale)
 }
@@ -263,12 +276,12 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     }
   }
 
-  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature, project)))
 
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
-    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
+    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature, project)]))
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
@@ -318,7 +331,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
         continue
       }
 
-      const featurePath = flattenFeatureToClipperPath(feature)
+      const featurePath = flattenFeatureToClipperPath(feature, project)
       if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue
@@ -441,14 +454,14 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
     }
   }
 
-  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature, project)))
 
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
     .map((feature) => ({
       feature,
-      path: flattenFeatureToClipperPath(feature),
+      path: flattenFeatureToClipperPath(feature, project),
     }))
     .filter(({ path }) => pathsIntersect(targetUnionPaths, [path]))
     .filter(({ path }) => differencePaths([path], targetUnionPaths).length > 0)
@@ -489,7 +502,7 @@ export function resolveInsideEdgeRegions(project: Project, operation: Operation)
         continue
       }
 
-      const featurePath = flattenFeatureToClipperPath(feature)
+      const featurePath = flattenFeatureToClipperPath(feature, project)
       if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
         continue

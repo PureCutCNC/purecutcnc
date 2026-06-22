@@ -151,6 +151,8 @@ export interface PendingMoveTool {
   fromPoint: Point | null
   toPoint: Point | null
   session: number
+  /** Override project copyMode for this placement gesture. */
+  copyMode?: 'reference' | 'independent'
 }
 
 export interface PendingTransformTool {
@@ -236,6 +238,10 @@ export interface ProjectStore {
   // ---- Session state (not persisted in .camj) ----
   /** True while a project file is being parsed and loaded. */
   projectLoading: boolean
+  /** Set when a loaded file's schema version is newer than this build supports; surfaced once to the user. */
+  loadWarning: string | null
+  /** Clear the pending {@link loadWarning} after it has been shown. */
+  clearLoadWarning: () => void
   /** Incremented each time a new project is created or loaded. Used by viewports to reset their view state. */
   projectKey: number
   /** Filesystem path of the currently open file. Null in the browser or when no file is open. */
@@ -251,6 +257,7 @@ export interface ProjectStore {
   setProjectName: (name: string) => void
   setShowFeatureInfo: (visible: boolean) => void
   setShowDimensions: (visible: boolean) => void
+  setCopyMode: (mode: 'reference' | 'independent') => void
   setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
@@ -401,6 +408,7 @@ export interface ProjectStore {
   deleteFeatureSegment: (featureId: string, segmentIndex: number) => void
   disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
+  makeUnique: (instanceId: string) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
   startAddRectPlacement: () => void
@@ -425,7 +433,7 @@ export interface ProjectStore {
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
   startMoveFeature: (featureId: string) => void
-  startCopyFeature: (featureId: string) => void
+  startCopyFeature: (featureId: string, copyMode?: 'reference' | 'independent') => void
   startResizeFeature: (featureId: string) => void
   startRotateFeature: (featureId: string) => void
   startMirrorFeature: (featureId: string) => void

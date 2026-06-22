@@ -19,6 +19,7 @@ import type { Project, SketchFeature } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { cloneProject } from '../helpers/normalize'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
+import { getDefinitionId, rebakeAllInstances } from '../helpers/featureDefinitions'
 
 export interface SelectionSliceDependencies {
   normalizeProject: (project: Project) => Project
@@ -564,25 +565,37 @@ export function createSelectionSlice(
       }),
 
     enterSketchEdit: (id) =>
-      set((s) => ({
-        pendingTransform: null,
-        pendingOffset: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: id,
-          selectedFeatureIds: [id],
-          selectedNode: { type: 'feature', featureId: id },
-          mode: 'sketch_edit',
-          sketchEditTool: null,
-          activeControl: null,
-        },
-        sketchEditSession: {
-          entityType: 'feature',
-          entityId: id,
-          snapshot: cloneProject(s.project),
-          pastLength: s.history.past.length,
-        },
-      })),
+      set((s) => {
+        const feature = s.project.features.find((entry) => entry.id === id) ?? null
+        const definitionId = feature ? getDefinitionId(feature) : null
+        const project = definitionId && s.project.featureDefinitions[definitionId]
+          ? {
+              ...s.project,
+              features: rebakeAllInstances(s.project, definitionId),
+            }
+          : s.project
+
+        return {
+          project,
+          pendingTransform: null,
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: id,
+            selectedFeatureIds: [id],
+            selectedNode: { type: 'feature', featureId: id },
+            mode: 'sketch_edit',
+            sketchEditTool: null,
+            activeControl: null,
+          },
+          sketchEditSession: {
+            entityType: 'feature',
+            entityId: id,
+            snapshot: cloneProject(s.project),
+            pastLength: s.history.past.length,
+          },
+        }
+      }),
 
     enterClampEdit: (id) =>
       set((s) => ({
@@ -660,6 +673,25 @@ export function createSelectionSlice(
               future: [],
               transactionStart: null,
             },
+          }
+        }
+
+        if (s.sketchEditSession?.entityType === 'feature') {
+          const feature = s.project.features.find((entry) => entry.id === s.sketchEditSession?.entityId) ?? null
+          const definitionId = feature ? getDefinitionId(feature) : null
+          const project = definitionId && s.project.featureDefinitions[definitionId]
+            ? {
+                ...s.project,
+                features: rebakeAllInstances(s.project, definitionId),
+                meta: { ...s.project.meta, modified: new Date().toISOString() },
+              }
+            : s.project
+
+          return {
+            project,
+            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+            sketchEditSession: null,
+            pendingConstraint: null,
           }
         }
 

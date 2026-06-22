@@ -28,6 +28,7 @@ import {
   circleProfile,
 } from '../types/project'
 import type {
+  FeatureDefinition,
   Project,
   SketchProfile,
   PersistedImportedMesh,
@@ -43,6 +44,7 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from './helpers/derivedFeatures'
+import { getDefinitionId, rebakeAllInstances } from './helpers/featureDefinitions'
 import { syncIdCounter } from './helpers/ids'
 import {
   cloneProject,
@@ -90,6 +92,9 @@ import type { ProjectStore } from './types'
 
 export function normalizeProject(project: Project): Project {
   const modelAssets: Record<string, PersistedImportedMesh> = { ...(project.modelAssets ?? {}) }
+
+  // Legacy feature normalization runs before Feature References migration so
+  // definitions are built from fully-normalized feature data.
   // Migration: convert 4-arc circles to native circle segments
   const upgradedFeatures = project.features.map((feature) => {
     let upgradedFeature = feature
@@ -123,11 +128,19 @@ export function normalizeProject(project: Project): Project {
     }
   })
 
+  const rawDefs = (project as unknown as Record<string, unknown>).featureDefinitions as
+    | Record<string, FeatureDefinition>
+    | undefined
+  const existingFeatureDefinitions: Record<string, FeatureDefinition> = rawDefs ?? {}
+  const needsFeatureReferenceMigration = Object.keys(existingFeatureDefinitions).length === 0
+  const projectVersion: Project['version'] = needsFeatureReferenceMigration ? '2.0' : project.version
+
   const normalizedMachines = normalizeMachineDefinitions(project)
   const meta = {
     ...project.meta,
     showFeatureInfo: project.meta.showFeatureInfo ?? true,
     showDimensions: project.meta.showDimensions ?? true,
+    copyMode: project.meta.copyMode ?? 'reference',
     maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
     operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
     clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
@@ -144,10 +157,12 @@ export function normalizeProject(project: Project): Project {
     && project.origin.y === stockBounds.minY
     && project.origin.z === project.stock.thickness
 
-  const normalizedBase = syncFeatureTreeProject(dedupeProjectIds({
+  const dedupedBase = dedupeProjectIds({
     ...project,
+    version: projectVersion,
     meta,
     modelAssets,
+    featureDefinitions: existingFeatureDefinitions,
     annotations: project.annotations ?? [],
     stock: {
       ...project.stock,
@@ -165,10 +180,31 @@ export function normalizeProject(project: Project): Project {
     origin: project.origin
       ? (legacyDefaultOrigin ? defaultOrigin(project.stock) : project.origin)
       : defaultOrigin(project.stock),
-  }))
+  })
+
+  const normalizedBase = syncFeatureTreeProject(dedupedBase)
+
+  let featureDefinitions: Record<string, FeatureDefinition>
+  if (needsFeatureReferenceMigration) {
+    featureDefinitions = {}
+    for (const feature of normalizedBase.features) {
+      featureDefinitions[feature.id] = {
+        id: feature.id,
+        kind: feature.kind,
+        profile: feature.sketch.profile,
+        dimensions: feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
+        text: feature.text ? { ...feature.text } : null,
+        stl: feature.stl ? { ...feature.stl } : null,
+        operation: feature.operation,
+      }
+    }
+  } else {
+    featureDefinitions = { ...existingFeatureDefinitions }
+  }
 
   const normalizedProject = pruneUnusedModelAssets({
     ...normalizedBase,
+    featureDefinitions,
     backdrop: normalizeBackdrop(project.backdrop, normalizedBase),
     operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
   })
@@ -222,12 +258,18 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       return {}
     }
 
-    const result = resolveBreak(feature.sketch.profile)
+    const definitionId = getDefinitionId(feature)
+    const definition = s.project.featureDefinitions[definitionId]
+    if (!definition) {
+      return {}
+    }
+
+    const result = resolveBreak(definition.profile)
     if (!result) {
       return {}
     }
 
-    const splitFeature = result.splitProfile
+    const splitResult = result.splitProfile
       ? createDerivedFeature(
           s.project,
           feature,
@@ -236,24 +278,52 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
           uniqueName(`${normalizeDerivedFeatureNameStem(feature.name)} Split`, s.project.features.map((entry) => entry.name)),
         )
       : null
+    const splitFeature = splitResult?.feature ?? null
+    const splitDefinition = splitResult?.definition ?? null
 
-    const baseFeatures = s.project.features.map((entry) => {
+    const editedFeatureKind = ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(result.profile)
+    const baseFeaturesBeforeRebake = s.project.features.map((entry) => {
       if (entry.id !== featureId) {
         return entry
       }
 
       return {
         ...entry,
-        kind: ['text', 'stl'].includes(entry.kind) ? entry.kind : inferFeatureKind(result.profile),
+        kind: editedFeatureKind,
         sketch: {
           ...entry.sketch,
           profile: result.profile,
         },
       }
     })
+    const nextDefinition = {
+      ...definition,
+      kind: editedFeatureKind,
+      profile: result.profile,
+      dimensions: feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
+      text: feature.text ? { ...feature.text } : null,
+      stl: feature.stl ? { ...feature.stl } : null,
+      operation: feature.operation,
+    }
+    const nextDefinitions = {
+      ...s.project.featureDefinitions,
+      [definitionId]: nextDefinition,
+    }
+    if (splitDefinition) {
+      nextDefinitions[splitDefinition.id] = splitDefinition
+    }
+    const baseFeatures = rebakeAllInstances(
+      {
+        ...s.project,
+        featureDefinitions: nextDefinitions,
+        features: baseFeaturesBeforeRebake,
+      },
+      definitionId,
+    )
     const createdGroups: DerivedFeatureGroup[] = splitFeature ? [{ sourceId: featureId, features: [splitFeature] }] : []
     let nextProject = syncFeatureTreeProject({
       ...s.project,
+      featureDefinitions: nextDefinitions,
       features: splitFeature
         ? insertDerivedFeaturesAfterSources(baseFeatures, createdGroups, new Set())
         : baseFeatures,
@@ -296,6 +366,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   lastModelExportPath: null,
   dirty: false,
   projectLoading: false,
+  loadWarning: null,
   projectKey: 0,
   pendingConstraint: null,
   history: {

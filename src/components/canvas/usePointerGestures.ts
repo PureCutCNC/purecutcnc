@@ -31,6 +31,7 @@ import type {
 } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
   computeBaseViewTransform,
@@ -404,7 +405,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const control = hitEditableControl(point)
     const hitClampId = findHitClampId(world, project.clamps)
     const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, project.features, vt)
+    const hitFeatureId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -823,7 +824,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features, vt)
+    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
     hoverFeature(hitId)
   }
 
@@ -939,7 +940,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         const minY = Math.min(startWorld.y, endWorld.y)
         const maxX = Math.max(startWorld.x, endWorld.x)
         const maxY = Math.max(startWorld.y, endWorld.y)
-        const enclosedIds = project.features
+        const enclosedIds = resolvedProjectFeatures(project)
           .filter((feature) => feature.visible)
           .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
           .map((feature) => feature.id)
@@ -1094,7 +1095,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, project.features, vt)
+    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
     if (hitId) enterSketchEdit(hitId)
   }
 

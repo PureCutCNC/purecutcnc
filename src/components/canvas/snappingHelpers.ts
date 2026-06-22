@@ -17,6 +17,7 @@
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { profileVertices, rectProfile } from '../../types/project'
 import type { AnchorTarget, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { distance2 } from './hitTest'
 import {
   nearestPointOnPolyline,
@@ -280,7 +281,7 @@ export function resolveSketchSnap(input: {
 
   addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (!feature.visible || feature.id === excludeFeatureId) {
       continue
     }

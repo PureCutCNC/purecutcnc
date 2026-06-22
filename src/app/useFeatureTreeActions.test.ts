@@ -34,8 +34,10 @@ function makeActions(
   storeOverrides: Partial<FeatureTreeActionStore>,
 ): FeatureTreeActions {
   const noop = () => undefined
+  const noopVoid = () => {}
   const storeActions: FeatureTreeActionStore = {
     selectFeature: noop,
+    selectFeatures: noopVoid,
     enterSketchEdit: noop,
     enterTabEdit: noop,
     enterClampEdit: noop,
@@ -57,6 +59,8 @@ function makeActions(
     startCopyClamp: noop,
     setStockSourceFeature: noop,
     addOperation: (() => null) satisfies ProjectStore['addOperation'],
+    makeUnique: noopVoid,
+    project: undefined as unknown as ProjectStore['project'],
     ...storeOverrides,
   }
 

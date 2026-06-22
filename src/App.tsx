@@ -98,6 +98,8 @@ function App() {
     project,
     projectKey,
     projectLoading,
+    loadWarning,
+    clearLoadWarning,
     selection,
     startAddRectPlacement,
     pendingAdd,
@@ -116,6 +118,7 @@ function App() {
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
+    menuFeatureHasLinkedInstances,
     openFeatureContextMenu,
     openClampContextMenu,
     openTabContextMenu,
@@ -211,6 +214,14 @@ function App() {
     selectedToolpath,
     generateToolpathForOperation,
   })
+
+  // Surface a one-time warning when a loaded file is newer than this build supports.
+  useEffect(() => {
+    if (loadWarning) {
+      window.alert(loadWarning)
+      clearLoadWarning()
+    }
+  }, [loadWarning, clearLoadWarning])
 
   useEffect(() => {
     if (centerTab !== 'preview3d' || hasAutoFramed3DRef.current) {
@@ -490,6 +501,7 @@ function App() {
         menuHasMultipleSelection={menuHasMultipleSelection}
         menuCanUseAsStock={menuCanUseAsStock}
         menuHasLockedSelection={menuHasLockedSelection}
+        menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
         quickOpsSubmenu={quickOpsSubmenu}
         tabletShell={tabletShell}

@@ -12,6 +12,7 @@
     "sync-icons": "node scripts/convert-camj-to-icons.js",
     "test": "npx tsx scripts/check-license-headers.ts && npx tsx scripts/run-tests.ts",
     "test:agent": "bash scripts/test-claude-deepseek-agent.sh",
+    "test:e2e": "playwright test",
     "check:headers": "npx tsx scripts/check-license-headers.ts",
     "tauri": "tauri",
     "tauri:icon": "npx tauri icon ./app-icon.png",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.61.0",
     "@tauri-apps/cli": "^2.10.1",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",

@@ -15,14 +15,13 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 ## Backlog / tech debt
 
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — ⚠️ the current always-left toolbar (scroll + portaled popovers) is a **temporary stabilisation**, not the final design; needs a proper UX pass + the `Toolbar.tsx` structural split
+- **Stock-target operations not implemented** — the `Operation` model accepts `target.source === 'stock'`, but no toolpath resolver supports it (`resolvePocketRegions` and the edge/drilling/surface resolvers require `source === 'features'` and skip stock targets). Model-vs-implementation gap; pre-existing (unrelated to feature-references). Surfaced + documented by the Phase-3 regression audit — see the NOTE in `src/engine/toolpaths/camOperationSmoke.test.ts` (~line 553).
+- **Canned drilling cycles (G81/G82/G83/G73) not emitted** — `MachineDefinition.cannedCycles` schema exists but `runPostProcessor` never emits canned cycles; all drill moves post as expanded G0/G1 (drill-type differentiation lives only at toolpath generation). Drilling works, just without canned-cycle G-code. Pre-existing; documented by the Phase-3 audit — see the NOTE in `src/engine/toolpaths/camOperationSmoke.test.ts` (~line 454).
 
 ## In progress
 
 - [DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md](DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md) — project-local Claude Code/DeepSeek worker launcher and Codex-led sequential integration-manager workflow
 - [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
-
-### Active integration handoffs
-
 
 ### Foundational / cross-cutting
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — detailed branch-owned handoff and slice-ledger template for sequential external implementation workers
