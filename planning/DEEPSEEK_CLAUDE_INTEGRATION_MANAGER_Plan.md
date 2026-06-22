@@ -12,7 +12,7 @@ Make the existing Claude Code CLI + DeepSeek provider setup a project-owned, rep
 ## Decisions
 
 - Move the launcher into this repository so the exact invocation, provider settings, and safety checks are versioned with the workflow. The existing home-directory wrapper remains untouched as a personal compatibility fallback.
-- Store the DeepSeek token only in an untracked project-local `.env.agent` file. Do not use the generic `.env`, which is also a conventional Vite configuration input. Commit a redacted `agent.env.example` containing variable names and setup instructions; `.env.agent` is already ignored by the existing `.env.*` rule.
+- Store the DeepSeek token only in one untracked `.env.agent` file in the primary checkout. Do not use the generic `.env`, which is also a conventional Vite configuration input. The manager passes this canonical path through `DEEPSEEK_AGENT_ENV_FILE` when it invokes a task-local launcher; it never copies the token into task worktrees or reads a fallback from `~/Documents`. Commit a redacted `agent.env.example` containing variable names and setup instructions; `.env.agent` is already ignored by the existing `.env.*` rule.
 - Keep the wrapper deliberately narrow: it configures Claude Code to call DeepSeek and executes one prompt from standard input. It does not select branches, create worktrees, merge code, run the app, or open a PR. Those decisions remain with the integration manager.
 - Use one implementation slice at a time. Each implementation call runs only inside a task worktree created from the current integration-branch tip, never in the integration checkout itself.
 - The detailed, branch-specific handoff is the source of truth. It is committed to the integration branch before the first task worktree is created. A short per-slice prompt tells the implementation worker to read that handoff and states the immediate slice, worktree boundary, completion contract, and non-negotiable rules.
@@ -22,7 +22,7 @@ Make the existing Claude Code CLI + DeepSeek provider setup a project-owned, rep
 ### 1. Project-local DeepSeek launcher
 
 - Add `scripts/run-claude-deepseek-agent.sh` with a Bash shebang and strict shell options.
-- Resolve the repository root from the script location, then load only that root's `.env.agent` when `DEEPSEEK_API_KEY` is not already supplied by the caller. Fail before invoking Claude if the key, `claude` executable, or required provider variables are missing. Never print the key or the loaded environment.
+- Resolve the repository root from the script location, then load `DEEPSEEK_AGENT_ENV_FILE` when supplied by the integration manager or that root's `.env.agent` when `DEEPSEEK_API_KEY` is not already supplied by the caller. Fail before invoking Claude if the key, `claude` executable, or required provider variables are missing. Never print the key or the loaded environment. Task worktrees must use the manager-supplied canonical primary-worktree path rather than a copied credential file.
 - Configure the Anthropic-compatible DeepSeek endpoint and model variables immediately before `exec`-ing `claude`. Replace the current malformed-looking `deepseek-v4-pro[1m]` defaults with named configuration variables, and perform a minimal non-writing provider preflight during implementation to confirm the exact supported DeepSeek model identifiers.
 - Require prompt input on standard input. Preserve multiline prompts and do not flatten them through `"$*"`.
 - Require an explicit execution mode. `implement` is the only mode that uses `--permission-mode bypassPermissions`; its caller must provide a deliberate opt-in flag. Add a non-writing `review`/`plan` mode for bounded analysis and provider smoke tests. The implementation mode uses `--no-session-persistence`, a configurable `--max-budget-usd`, and a configured effort level.
@@ -60,6 +60,7 @@ Make the existing Claude Code CLI + DeepSeek provider setup a project-owned, rep
 - *(new)* `agent.env.example` — redacted setup example for the untracked `.env.agent` token/configuration file.
 - `.gitignore` — document the `.env.agent` convention if the existing ignore pattern needs a clarifying comment; do not weaken environment-file protection.
 - `INDEX.md` — describe the project-owned agent launcher and handoff convention.
+- `AGENTS.md` — document canonical credential handling and the manager/worker authorization boundary.
 - `planning/INDEX.md` — register this plan while awaiting approval; after approval, add the handoff template to the reusable planning references.
 - *(new)* `scripts/run-claude-deepseek-agent.test.ts` or a focused shell-compatible verification — validate argument/input handling and configuration failures without calling the provider or reading a real token.
 

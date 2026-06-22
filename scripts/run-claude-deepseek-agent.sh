@@ -19,9 +19,10 @@ Options:
   --output-format FORMAT Claude print output: text or json (default: text).
   --help                 Show this help.
 
-Credentials are loaded from the project-local .env.agent unless DEEPSEEK_API_KEY
-is already present in the environment. Copy agent.env.example to .env.agent and
-set the token locally; never commit .env.agent.
+Credentials are loaded from DEEPSEEK_AGENT_ENV_FILE when set, otherwise the
+project-local .env.agent, unless DEEPSEEK_API_KEY is already present in the
+environment. The integration manager should point DEEPSEEK_AGENT_ENV_FILE at
+the canonical ignored file in the primary worktree; never commit .env.agent.
 EOF
 }
 

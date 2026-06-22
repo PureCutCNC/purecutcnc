@@ -35,6 +35,16 @@ npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons.camj
 
 Always run `npm run build` from the project root to verify changes compile before committing. `npm test` runs automatically as part of the build, so a failing structural test will fail the build. Do not start the dev/preview server.
 
+## DeepSeek implementation workers
+
+The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs Claude Code against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded implementation slice**; it is not a general-purpose autonomous command.
+
+- Keep exactly one canonical, untracked credential file in the primary checkout: `<primary-worktree>/.env.agent`. It is ignored by Git and must have owner-only permissions (`chmod 600`). Never add it, print it, copy it into a task worktree, or read a fallback credential from `~/Documents`.
+- The integration manager resolves the primary worktree before dispatch and invokes the task-local launcher with `DEEPSEEK_AGENT_ENV_FILE=<primary-worktree>/.env.agent`. The launcher then reads that one canonical file while running in the isolated task worktree.
+- A task worker must not inspect, edit, echo, log, or commit the credential file. It only receives the authenticated Claude process needed for its assigned slice.
+- Require the user's explicit approval before any credential-backed dispatch. Use `--mode implement --allow-bypass` only for an isolated task worktree; do not run it from the integration checkout or `main`.
+- The integration manager owns task-worktree creation, review, verification, merge, cleanup, and PR decisions. Worker-reported completion is not acceptance.
+
 ## Key Architecture
 
 Read `ARCHITECTURE.md` for the full picture. The critical points:
