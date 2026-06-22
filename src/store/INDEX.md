@@ -66,6 +66,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `projectStoreTransform.test.ts` — project transform actions
 - `second_cut_test.ts` — multi-pass cutting behavior
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
+- `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

@@ -399,7 +399,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     if (sourceDefId && definitionIdMap.has(sourceDefId)) {
       // Remap the feature's definitionId to the collision-safe ID.
       feature.definitionId = definitionIdMap.get(sourceDefId)
-      feature.transform = IDENTITY_MATRIX
+      feature.transform = feature.transform ?? IDENTITY_MATRIX
     } else if (!sourceDefId) {
       // Mint a new definition for this feature.
       const newDefId = nextId('f-')
