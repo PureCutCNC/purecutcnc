@@ -90,10 +90,17 @@ checklist and add tests ONLY for identified holes. Candidates likely thin today:
   toolpath tests; add the missing ones.
 - Stock / tabs / clamps basic create+edit; align/distribute on ≥3 features.
 
-### Phase 4 — Browser smoke (optional, management/separate harness)
-Not part of `npm test`. Either management manual validation (documented checklist) or a future
-Playwright harness: app loads with no console errors; draw each shape renders; feature tree + linked
-badge + properties render; save→reload via the real file path preserves the project. Decide later.
+### Phase 4 — Browser smoke (Playwright) (handoff: Phase 4)
+**Decided (2026-06-21, user): build a thin Playwright smoke.** Not part of `npm test` — a separate
+`npm run test:e2e` the user runs before each manual session. Covers the one layer the store suites
+can't reach: DOM render + menu→action wiring (the class that produced the blank-badge and row-overflow
+bugs). Seeds project state through a minimal dev/test-guarded `window.__pcTest` seam, asserts through
+the **real DOM** (badge visibility/placement, context-menu items, Make Unique / Select Linked,
+duplicate, Edit Sketch enter/exit, Properties grouping, save→load, version warning), fails on any
+console error. Explicit non-goals: **no** geometry/coordinate assertions (store suites own that), **no**
+pixel/screenshot diffing, **no** WebGL canvas-content checks. Gated by STEP 0 feasibility — if the app
+can't boot in plain Chromium without heavy Tauri mocking, the harness is dropped for a manual checklist.
+See `REGRESSION_TESTS_Handoff_Phase4_Browser_Smoke.md`.
 
 ## Files
 
@@ -110,4 +117,7 @@ badge + properties render; save→reload via the real file path preserves the pr
 
 - **Handoff 1 — Geometry-fidelity + lifecycle** (Phases 1–2): `REGRESSION_TESTS_Handoff_1.md`.
 - **Handoff 2 — Audit-and-fill** (Phase 3): authored after Handoff 1 lands (needs the audit).
-- Phase 4 (browser) decided separately.
+- **Handoff Phase 4 — Browser smoke (Playwright)**: `REGRESSION_TESTS_Handoff_Phase4_Browser_Smoke.md`
+  (authored 2026-06-21). Independent of H1/H2; may run in parallel (disjoint files — `e2e/` +
+  `playwright.config.ts` + a package.json devDep vs H1's `src/store/*.test.ts`) or after H1 to keep the
+  package.json edit conflict-free.
