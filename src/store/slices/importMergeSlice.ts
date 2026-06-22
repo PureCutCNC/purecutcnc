@@ -16,8 +16,10 @@
 
 import type { StateCreator } from 'zustand'
 import { createImportedFeature, isProfileDegenerate, mergeCamjFolders, uniqueName } from '../../import'
-import type { FeatureFolder, FeatureOperation, Project, SketchFeature } from '../../types/project'
+import type { FeatureFolder, FeatureOperation, Matrix2D, Project, SketchFeature } from '../../types/project'
+import { IDENTITY_MATRIX } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
+import { createDefinitionForFeature } from '../helpers/featureDefinitions'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
 import type { ProjectStore } from '../types'
@@ -95,6 +97,22 @@ export function createImportMergeSlice(
       }
 
       set((s) => {
+        // Mint a definition per imported feature (identity transform).
+        const nextDefinitions = { ...s.project.featureDefinitions }
+        const featuresWithDefs = createdFeatures.map((f) => {
+          const featureWithDef = f as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+          if (featureWithDef.definitionId !== undefined) {
+            return f
+          }
+          const minted = createDefinitionForFeature(s.project, f)
+          nextDefinitions[minted.definitionId] = minted.definition
+          return {
+            ...f,
+            definitionId: minted.definitionId,
+            transform: IDENTITY_MATRIX,
+          }
+        })
+
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           featureFolders: [...s.project.featureFolders, ...newFolders],
@@ -102,7 +120,8 @@ export function createImportMergeSlice(
             ...s.project.featureTree,
             ...newFolders.map((f) => ({ type: 'folder' as const, folderId: f.id })),
           ],
-          features: [...s.project.features, ...createdFeatures],
+          features: [...s.project.features, ...featuresWithDefs],
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
         const createdIds = createdFeatures.map((f) => f.id)

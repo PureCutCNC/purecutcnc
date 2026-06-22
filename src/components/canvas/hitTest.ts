@@ -15,8 +15,14 @@
  */
 
 import { rectProfile, sampleProfilePoints } from '../../types/project'
-import type { Clamp, Point, SketchFeature, SketchProfile, Tab } from '../../types/project'
+import type { Clamp, Point, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
+
+export interface FeatureLike {
+  id: string
+  visible: boolean
+  sketch: { profile: SketchProfile }
+}
 
 export function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
   if (!profile.closed) {
@@ -74,7 +80,7 @@ export function pointNearProfile(worldPoint: Point, profile: SketchProfile, vt: 
   return false
 }
 
-export function findHitFeatureId(worldPoint: Point, features: SketchFeature[], vt: ViewTransform): string | null {
+export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
@@ -92,7 +98,7 @@ function pointInRect(point: Point, minX: number, minY: number, maxX: number, max
   return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
 }
 
-export function featureFullyInsideRect(feature: SketchFeature, minX: number, minY: number, maxX: number, maxY: number): boolean {
+export function featureFullyInsideRect(feature: FeatureLike, minX: number, minY: number, maxX: number, maxY: number): boolean {
   const points = sampleProfilePoints(feature.sketch.profile)
   if (points.length === 0) {
     return false

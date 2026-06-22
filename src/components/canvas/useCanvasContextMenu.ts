@@ -24,6 +24,7 @@ import type {
   SelectionState,
 } from '../../store/types'
 import type { Project } from '../../types/project'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   findHitClampId,
   findHitFeatureId,
@@ -116,7 +117,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features, vt)
+    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
     if (!hitId) return
 
     if (!selection.selectedFeatureIds.includes(hitId)) {

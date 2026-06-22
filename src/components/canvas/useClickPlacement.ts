@@ -32,6 +32,7 @@ import type {
 import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeature } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
   computeViewTransform,
@@ -447,7 +448,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         return
       }
       const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
-      const targetFeatureId = findHitFeatureId(lockedPickedPoint, project.features, vt)
+      const targetFeatureId = findHitFeatureId(lockedPickedPoint, resolvedProjectFeatures(project), vt)
       const targetId =
         targetFeatureId && targetFeatureId !== pendingConstraint.featureId
           ? targetFeatureId
@@ -774,7 +775,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    const hitId = findHitFeatureId(world, project.features, vt)
+    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
     if (hitId) {
       selectFeature(hitId, additive)

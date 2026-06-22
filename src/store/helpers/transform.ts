@@ -138,24 +138,32 @@ export function transformProfileAffine(
   transformPoint: (point: Point) => Point,
 ): SketchFeature['sketch']['profile'] {
   const nextSegments: Segment[] = []
-  let current = profile.start
 
   for (const segment of profile.segments) {
     if (segment.type === 'arc') {
-      const beziers = arcToBezierSegments(current, segment)
-      for (const bezier of beziers) {
-        nextSegments.push({
-          type: 'bezier',
-          control1: transformPoint(bezier.control1),
-          control2: transformPoint(bezier.control2),
-          to: transformPoint(bezier.to),
-        })
-      }
+      // Keep arcs as arcs (transform center + endpoint) so the canonical
+      // definition isn't flattened to splines on inverse-bake / rigid moves.
+      // resolveProfile decides per-instance whether an arc can survive its
+      // transform (similarity) or must become beziers (shear/non-uniform).
+      nextSegments.push({
+        ...segment,
+        center: transformPoint(segment.center),
+        to: transformPoint(segment.to),
+      })
     } else if (segment.type === 'bezier') {
       nextSegments.push({
         ...segment,
         control1: transformPoint(segment.control1),
         control2: transformPoint(segment.control2),
+        to: transformPoint(segment.to),
+      })
+    } else if (segment.type === 'circle') {
+      // A circle's center must move with the transform too — not just its edge
+      // point. Omitting the center corrupts the radius under any non-identity
+      // transform (e.g. inverse-baking the edit of a moved/copied circle).
+      nextSegments.push({
+        ...segment,
+        center: transformPoint(segment.center),
         to: transformPoint(segment.to),
       })
     } else {
@@ -164,8 +172,6 @@ export function transformProfileAffine(
         to: transformPoint(segment.to),
       })
     }
-
-    current = segment.to
   }
 
   return {

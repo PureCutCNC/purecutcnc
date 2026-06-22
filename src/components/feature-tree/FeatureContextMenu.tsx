@@ -29,6 +29,7 @@ interface FeatureContextMenuProps {
   menuHasMultipleSelection: boolean
   menuCanUseAsStock: boolean
   menuHasLockedSelection: boolean
+  menuFeatureHasLinkedInstances: boolean
   menuQuickOperations: QuickOperation[]
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   tabletShell: boolean
@@ -48,6 +49,7 @@ export function FeatureContextMenu({
   menuHasMultipleSelection,
   menuCanUseAsStock,
   menuHasLockedSelection,
+  menuFeatureHasLinkedInstances,
   menuQuickOperations,
   quickOpsSubmenu,
   tabletShell,
@@ -70,6 +72,25 @@ export function FeatureContextMenu({
     >
       {menuFeature ? (
         <>
+          {menuFeatureHasLinkedInstances ? (
+            <>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.makeUnique(menuFeature.id)}
+              >
+                Make Unique
+              </button>
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.selectLinkedInstances(menuFeature.id)}
+              >
+                Select Linked Instances
+              </button>
+              <div className="feature-context-menu__separator" />
+            </>
+          ) : null}
           {menuQuickOperations.length > 0 ? (
             <>
               <div
@@ -171,6 +192,7 @@ export function FeatureContextMenu({
           >
             Mirror
           </button>
+          <div className="feature-context-menu__separator" />
           <button
             className="feature-context-menu__item"
             type="button"

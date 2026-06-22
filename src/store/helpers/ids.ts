@@ -30,6 +30,7 @@ export function idNumericSuffix(id: string): number {
 export function syncIdCounter(project: Project): void {
   const usedIds = [
     ...project.features.map((feature) => feature.id),
+    ...Object.keys(project.featureDefinitions ?? {}),
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),
@@ -43,6 +44,7 @@ export function syncIdCounter(project: Project): void {
 export function nextUniqueGeneratedId(project: Project, prefix: string): string {
   const usedIds = new Set([
     ...project.features.map((feature) => feature.id),
+    ...Object.keys(project.featureDefinitions ?? {}),
     ...project.featureFolders.map((folder) => folder.id),
     ...project.tools.map((tool) => tool.id),
     ...project.operations.map((operation) => operation.id),

@@ -302,6 +302,60 @@ export interface SketchFeature {
   locked: boolean
 }
 
+// ============================================================
+// Feature References — definition / instance split
+// ============================================================
+
+/** 2D affine matrix (a,b,c,d,e,f) representing the instance transform. */
+export interface Matrix2D {
+  a: number
+  b: number
+  c: number
+  d: number
+  e: number
+  f: number
+}
+
+/** Identity matrix — definition-local geometry maps 1:1 into world space. */
+export const IDENTITY_MATRIX: Matrix2D = {
+  a: 1,
+  b: 0,
+  c: 0,
+  d: 1,
+  e: 0,
+  f: 0,
+}
+
+/**
+ * Shared, canonical feature definition.
+ * One definition may be referenced by many FeatureInstances.
+ */
+export interface FeatureDefinition {
+  id: string
+  kind: FeatureKind
+  profile: SketchProfile
+  dimensions: LocalDimension[]
+  text?: TextFeatureData | null
+  stl?: STLFeatureData | null
+  operation: FeatureOperation
+}
+
+/**
+ * A placed copy of a {@link FeatureDefinition}. Every feature tree row is an instance.
+ */
+export interface FeatureInstance {
+  id: string
+  name: string
+  definitionId: string
+  transform: Matrix2D
+  constraints: LocalConstraint[]
+  z_top: DimensionRef
+  z_bottom: DimensionRef
+  folderId: string | null
+  visible: boolean
+  locked: boolean
+}
+
 export interface FeatureFolder {
   id: string
   name: string
@@ -491,6 +545,8 @@ export interface ProjectMeta {
   units: 'mm' | 'inch'
   showFeatureInfo: boolean
   showDimensions: boolean
+  /** Default copy mode for Duplicate gesture and Copy/Paste. */
+  copyMode: 'reference' | 'independent'
   maxTravelZ: number
   operationClearanceZ: number
   clampClearanceXY: number
@@ -508,7 +564,8 @@ export interface MachineOrigin {
 }
 
 export interface Project {
-  version: '1.0'
+  /** Schema version. '1.0' = legacy (flat features). '2.0' = split definitions + instances. */
+  version: '1.0' | '2.0'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -517,6 +574,9 @@ export interface Project {
   dimensions: Record<string, NamedDimension>
   annotations: DimensionAnnotation[]
   modelAssets: Record<string, PersistedImportedMesh>
+  /** Feature definitions — shared canonical shape data. Populated during migration from legacy projects. */
+  featureDefinitions: Record<string, FeatureDefinition>
+  /** Feature instances. In '2.0' projects every tree row is an instance pointing at a definition. */
   features: SketchFeature[]
   featureFolders: FeatureFolder[]
   featureTree: FeatureTreeEntry[]
@@ -1149,11 +1209,30 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
   )
 }
 
+/** The newest project schema version this build understands. */
+export const LATEST_PROJECT_VERSION = '2.0'
+
+/**
+ * True when a loaded project's `version` is newer than this build supports
+ * (the file was saved by a future version). Such files still open best-effort,
+ * but newer data may be missing or fail to round-trip. Compares major.minor.
+ */
+export function isProjectVersionNewerThanSupported(version: string | null | undefined): boolean {
+  if (!version) return false
+  const parse = (v: string): [number, number] => {
+    const [maj, min] = v.split('.')
+    return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
+  }
+  const [fileMaj, fileMin] = parse(version)
+  const [curMaj, curMin] = parse(LATEST_PROJECT_VERSION)
+  return fileMaj > curMaj || (fileMaj === curMaj && fileMin > curMin)
+}
+
 export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inch'): Project {
   const now = new Date().toISOString()
   const stock = defaultStock(undefined, undefined, undefined, units)
   return {
-    version: '1.0',
+    version: '2.0',
     meta: {
       name,
       created: now,
@@ -1161,6 +1240,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
       units,
       showFeatureInfo: true,
       showDimensions: true,
+      copyMode: 'reference' as const,
       maxTravelZ: defaultMaxTravelZ(units),
       operationClearanceZ: defaultOperationClearanceZ(units),
       clampClearanceXY: defaultClampClearanceXY(units),
@@ -1175,6 +1255,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
     dimensions: {},
     annotations: [],
     modelAssets: {},
+    featureDefinitions: {},
     features: [],
     featureFolders: [],
     featureTree: [],

@@ -19,18 +19,22 @@ import { addOpenSubject, openPathsFromPolyTree } from '../../engine/clipperOpenP
 import { DEFAULT_CLIPPER_SCALE, fromClipperPath } from '../../engine/toolpaths/geometry'
 import { uniqueName } from '../../import'
 import type {
+  FeatureDefinition,
   FeatureOperation,
   FeatureTreeEntry,
+  Matrix2D,
   Point,
   Project,
   SketchFeature,
   SketchProfile,
 } from '../../types/project'
-import { inferFeatureKind, polygonProfile } from '../../types/project'
+import { IDENTITY_MATRIX, inferFeatureKind, polygonProfile } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import { clonePoint, pointsEqual } from './geometry'
 import { nextUniqueGeneratedId } from './ids'
 import { normalizeFeatureZRange } from './normalize'
+import { createSnapshotDefinition } from './featureDefinitions'
+import { resolvedFeatureMap } from './resolveFeatures'
 import {
   cloneSegment,
   endPointForOpenProfile,
@@ -70,7 +74,7 @@ export type DerivedFeatureFactory = (
   profile: SketchProfile,
   operation: FeatureOperation,
   name: string,
-) => SketchFeature
+) => { feature: SketchFeature; definition: FeatureDefinition }
 
 export function normalizeDerivedFeatureNameStem(name: string) {
   return name
@@ -90,8 +94,9 @@ function collectDerivedFeaturesFromPolyTree(
   sourceFeatures: SketchFeature[],
   segAnnotations: Map<string, SegmentAnnotation>,
   contourDepth = 0,
-): SketchFeature[] {
-  const created: SketchFeature[] = []
+): { features: SketchFeature[]; definitions: FeatureDefinition[] } {
+  const features: SketchFeature[] = []
+  const definitions: FeatureDefinition[] = []
   const contour = node.Contour()
   const nextContourDepth = contour.length > 0 ? contourDepth + 1 : contourDepth
 
@@ -103,16 +108,18 @@ function collectDerivedFeaturesFromPolyTree(
       const operation = logicalDepth % 2 === 0 ? baseOperation : (baseOperation === 'add' ? 'subtract' : 'add')
       const name = uniqueName(
         logicalDepth === 0 ? baseName : `${baseName} Hole`,
-        [...project.features.map((feature) => feature.name), ...created.map((feature) => feature.name)],
+        [...project.features.map((feature) => feature.name), ...features.map((feature) => feature.name)],
       )
-      const nextProject = { ...project, features: [...project.features, ...created] }
-      created.push(createDerivedFeature(nextProject, baseFeature, profile, operation, name))
+      const nextProject = { ...project, features: [...project.features, ...features] }
+      const result = createDerivedFeature(nextProject, baseFeature, profile, operation, name)
+      features.push(result.feature)
+      definitions.push(result.definition)
     }
   }
 
   for (const child of getClipperChildren(node)) {
-    created.push(...collectDerivedFeaturesFromPolyTree(
-      { ...project, features: [...project.features, ...created] },
+    const childResult = collectDerivedFeaturesFromPolyTree(
+      { ...project, features: [...project.features, ...features] },
       child,
       baseFeature,
       baseOperation,
@@ -121,10 +128,12 @@ function collectDerivedFeaturesFromPolyTree(
       sourceFeatures,
       segAnnotations,
       nextContourDepth,
-    ))
+    )
+    features.push(...childResult.features)
+    definitions.push(...childResult.definitions)
   }
 
-  return created
+  return { features, definitions }
 }
 
 // Split a single closed feature with an open cutter. Returns the resulting
@@ -136,29 +145,32 @@ function splitClosedFeatureByOpenCutter(
   openCutter: SketchFeature,
   baseName: string,
   createDerivedFeature: DerivedFeatureFactory,
-): SketchFeature[] {
+): { features: SketchFeature[]; definitions: FeatureDefinition[] } {
   const result = splitClosedByOpen(target.sketch.profile, openCutter.sketch.profile)
-  if (!result || result.pieces.length < 2) return []
+  if (!result || result.pieces.length < 2) return { features: [], definitions: [] }
 
   const knownCircles = collectKnownCircles([target, openCutter])
-  const created: SketchFeature[] = []
+  const features: SketchFeature[] = []
+  const definitions: FeatureDefinition[] = []
   for (const piece of result.pieces) {
     const profile = knownCircles.length > 0
       ? reconstructArcsInProfile(piece, knownCircles, Math.PI / 4)
       : polygonProfile(piece)
     const name = uniqueName(baseName, [
       ...project.features.map((f) => f.name),
-      ...created.map((f) => f.name),
+      ...features.map((f) => f.name),
     ])
-    created.push(createDerivedFeature(
-      { ...project, features: [...project.features, ...created] },
+    const factoryResult = createDerivedFeature(
+      { ...project, features: [...project.features, ...features] },
       target,
       profile,
       target.operation,
       name,
-    ))
+    )
+    features.push(factoryResult.feature)
+    definitions.push(factoryResult.definition)
   }
-  return created
+  return { features, definitions }
 }
 
 // Trim an open target by closed cutters. Uses Clipper's native open-path
@@ -172,8 +184,8 @@ function trimOpenTargetByClosedCutters(
   closedClipPaths: ReturnType<typeof flattenFeatureToClipperPath>[],
   baseName: string,
   createDerivedFeature: DerivedFeatureFactory,
-): SketchFeature[] {
-  if (closedClipPaths.length === 0) return []
+): { features: SketchFeature[]; definitions: FeatureDefinition[] } {
+  if (closedClipPaths.length === 0) return { features: [], definitions: [] }
   const targetPath = flattenOpenFeatureToClipperPath(target, DEFAULT_CLIPPER_SCALE)
   const clipper = new ClipperLib.Clipper()
   // Open subject path.
@@ -195,9 +207,10 @@ function trimOpenTargetByClosedCutters(
     openPaths.push(fromClipperPath(path, DEFAULT_CLIPPER_SCALE))
   }
 
-  if (openPaths.length === 0) return []
+  if (openPaths.length === 0) return { features: [], definitions: [] }
 
-  const created: SketchFeature[] = []
+  const features: SketchFeature[] = []
+  const definitions: FeatureDefinition[] = []
   for (const points of openPaths) {
     if (points.length < 2) continue
     const profile: SketchProfile = {
@@ -207,17 +220,19 @@ function trimOpenTargetByClosedCutters(
     }
     const name = uniqueName(baseName, [
       ...project.features.map((f) => f.name),
-      ...created.map((f) => f.name),
+      ...features.map((f) => f.name),
     ])
-    created.push(createDerivedFeature(
-      { ...project, features: [...project.features, ...created] },
+    const factoryResult = createDerivedFeature(
+      { ...project, features: [...project.features, ...features] },
       target,
       profile,
       target.operation,
       name,
-    ))
+    )
+    features.push(factoryResult.feature)
+    definitions.push(factoryResult.definition)
   }
-  return created
+  return { features, definitions }
 }
 
 export function cutFeaturesByCutterGrouped(
@@ -225,12 +240,13 @@ export function cutFeaturesByCutterGrouped(
   cutters: SketchFeature[],
   targets: SketchFeature[],
   createDerivedFeature: DerivedFeatureFactory,
-): DerivedFeatureGroup[] {
+): { groups: DerivedFeatureGroup[]; definitions: FeatureDefinition[] } {
   const closedCutters = cutters.filter((c) => c.sketch.profile.closed)
   const openCutters = cutters.filter((c) => !c.sketch.profile.closed)
   const closedClipPaths = closedCutters.map((cutter) => flattenFeatureToClipperPath(cutter))
   const existingNames = [...project.features.map((feature) => feature.name)]
   const groups: DerivedFeatureGroup[] = []
+  const allDefinitions: FeatureDefinition[] = []
 
   for (const target of targets) {
     const isOpenTarget = !target.sketch.profile.closed
@@ -244,22 +260,24 @@ export function cutFeaturesByCutterGrouped(
       // Open targets can only be trimmed by closed cutters (Clipper requirement
       // and geometrically meaningful only this way).
       if (closedCutters.length > 0) {
-        nextFeatures = trimOpenTargetByClosedCutters(
+        const result = trimOpenTargetByClosedCutters(
           project,
           target,
           closedClipPaths,
           baseName,
           createDerivedFeature,
         )
+        nextFeatures = result.features
+        allDefinitions.push(...result.definitions)
       }
     } else {
       // Closed target. Start with the standard boolean difference for closed cutters,
       // then iteratively split the resulting pieces with each open cutter.
-      let workingPieces: SketchFeature[]
+      let workingPieces: SketchFeature[] = []
       if (closedClipPaths.length > 0) {
         const subjectPaths = [flattenFeatureToClipperPath(target)]
         const polyTree = executeClipTree(subjectPaths, closedClipPaths, 2)
-        workingPieces = collectDerivedFeaturesFromPolyTree(
+        const polyResult = collectDerivedFeaturesFromPolyTree(
           project,
           polyTree,
           target,
@@ -269,6 +287,8 @@ export function cutFeaturesByCutterGrouped(
           sourceFeatures,
           segAnnotations,
         )
+        workingPieces = polyResult.features
+        allDefinitions.push(...polyResult.definitions)
       } else {
         workingPieces = [target]
       }
@@ -277,15 +297,16 @@ export function cutFeaturesByCutterGrouped(
         const splitPieces: SketchFeature[] = []
         const pieceProject = { ...project, features: [...project.features, ...splitPieces] }
         for (const piece of workingPieces) {
-          const result = splitClosedFeatureByOpenCutter(
+          const splitResult = splitClosedFeatureByOpenCutter(
             pieceProject,
             piece,
             openCutter,
             baseName,
             createDerivedFeature,
           )
-          if (result.length > 0) {
-            splitPieces.push(...result)
+          if (splitResult.features.length > 0) {
+            splitPieces.push(...splitResult.features)
+            allDefinitions.push(...splitResult.definitions)
           } else {
             // No valid split (open cutter doesn't fully cross this piece). Keep piece.
             splitPieces.push(piece)
@@ -315,7 +336,7 @@ export function cutFeaturesByCutterGrouped(
     groups.push({ sourceId: target.id, features: groupedFeatures })
   }
 
-  return groups
+  return { groups, definitions: allDefinitions }
 }
 
 export function insertDerivedFeaturesAfterSources(
@@ -375,9 +396,11 @@ export function insertDerivedFeatureTreeEntries(
 }
 
 export function selectedClosedFeaturesFromIds(project: Project, featureIds: string[]): SketchFeature[] {
+  const resolved = resolvedFeatureMap(project)
   return featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+    .map((featureId) => resolved.get(featureId))
+    .filter((feature): feature is NonNullable<typeof feature> => feature !== undefined)
+    .map((feature) => feature as unknown as SketchFeature)
     .filter((feature) => feature.sketch.profile.closed)
 }
 
@@ -386,16 +409,17 @@ export function previewOffsetFeaturesInternal(
   featureIds: string[],
   distance: number,
   createDerivedFeature: DerivedFeatureFactory,
-): SketchFeature[] {
+): { features: SketchFeature[]; definitions: FeatureDefinition[] } {
   const selectedFeatures = selectedClosedFeaturesFromIds(project, featureIds)
   if (selectedFeatures.length === 0 || Math.abs(distance) <= 1e-9) {
-    return []
+    return { features: [], definitions: [] }
   }
 
   const baseFeature = selectedFeatures[selectedFeatures.length - 1]
   const unionPaths = unionClipperPaths(selectedFeatures.map((feature) => flattenFeatureToClipperPath(feature)))
   const offsetPaths = offsetClipperPaths(unionPaths, distance * DEFAULT_CLIPPER_SCALE)
-  const createdFeatures: SketchFeature[] = []
+  const features: SketchFeature[] = []
+  const definitions: FeatureDefinition[] = []
 
   for (const [index, path] of offsetPaths.entries()) {
     const profile = simplifyOffsetContour(path, selectedFeatures, distance)
@@ -404,20 +428,22 @@ export function previewOffsetFeaturesInternal(
     }
 
     const operation: FeatureOperation = baseFeature.operation === 'model' ? 'add' : baseFeature.operation
-    const nextProject = { ...project, features: [...project.features, ...createdFeatures] }
-    createdFeatures.push(createDerivedFeature(
+    const nextProject = { ...project, features: [...project.features, ...features] }
+    const result = createDerivedFeature(
       nextProject,
       baseFeature,
       profile,
       operation,
       uniqueName(index === 0 ? `${baseFeature.name} Offset` : `${baseFeature.name} Offset ${index + 1}`, [
         ...project.features.map((feature) => feature.name),
-        ...createdFeatures.map((feature) => feature.name),
+        ...features.map((feature) => feature.name),
       ]),
-    ))
+    )
+    features.push(result.feature)
+    definitions.push(result.definition)
   }
 
-  return createdFeatures
+  return { features, definitions }
 }
 
 export function createDerivedFeature(
@@ -426,16 +452,22 @@ export function createDerivedFeature(
   profile: SketchProfile,
   operation: FeatureOperation,
   name: string,
-): SketchFeature {
-  return normalizeFeatureZRange({
-    id: nextUniqueGeneratedId(project, 'f'),
+): { feature: SketchFeature; definition: FeatureDefinition } {
+  const id = nextUniqueGeneratedId(project, 'f')
+  const { definitionId, definition } = createSnapshotDefinition(project, {
+    profile,
+    kind: inferFeatureKind(profile),
+    operation,
+  })
+  const feature = normalizeFeatureZRange({
+    id,
     name,
     kind: inferFeatureKind(profile),
     folderId: baseFeature.folderId,
     sketch: {
       profile,
-      origin: clonePoint(baseFeature.sketch.origin),
-      orientationAngle: baseFeature.sketch.orientationAngle,
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
       dimensions: [],
       constraints: [],
     },
@@ -444,10 +476,13 @@ export function createDerivedFeature(
     z_bottom: baseFeature.z_bottom,
     visible: true,
     locked: false,
-  })
+    definitionId,
+    transform: IDENTITY_MATRIX,
+  } as SketchFeature & { definitionId?: string; transform?: Matrix2D })
+  return { feature, definition }
 }
 
-export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): SketchFeature[] {
+export function previewOffsetFeatures(project: Project, featureIds: string[], distance: number): { features: SketchFeature[]; definitions: FeatureDefinition[] } {
   return previewOffsetFeaturesInternal(project, featureIds, distance, createDerivedFeature)
 }
 

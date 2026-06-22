@@ -1,0 +1,109 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Single source of truth for DOM selectors used in browser smoke tests.
+ *
+ * WHEN THE UI CHANGES: update the selector here — every spec picks it up
+ * automatically. Specs MUST NOT inline raw selectors.
+ *
+ * New feature areas add their own logical groups; nothing else in the
+ * harness needs to change.
+ */
+
+import type { Locator, Page } from '@playwright/test'
+
+// ── Feature tree ────────────────────────────────────────────────────
+
+export const tree = {
+  /** All tree rows (any kind). */
+  rows: (page: Page) => page.locator('.tree-row'),
+
+  /** Feature rows only (excludes folders, section headers, etc.). */
+  featureRows: (page: Page) => page.locator('.tree-row.tree-row--feature'),
+
+  /** A specific feature row by its label text. */
+  rowByName: (page: Page, name: string) =>
+    page.locator('.tree-row--feature').filter({ hasText: name }),
+
+  /** Rows that are currently selected. */
+  selectedRows: (page: Page) => page.locator('.tree-row--selected'),
+
+  /** The label + badge wrapper inside a row. */
+  labelWrap: (row: Locator) => row.locator('.tree-label-wrap'),
+
+  /** The action buttons wrapper inside a row. */
+  actions: (row: Locator) => row.locator('.tree-row-actions'),
+}
+
+// ── Linked badge ────────────────────────────────────────────────────
+
+export const badge = {
+  /** All linked badges on the page. */
+  linked: (page: Page) => page.locator('.tree-linked-badge'),
+
+  /** Linked badge within a specific row. */
+  linkedInRow: (row: Locator) => row.locator('.tree-linked-badge'),
+
+  /** The SVG <use> element inside a badge (resolves to #link icon). */
+  icon: (badgeEl: Locator) => badgeEl.locator('svg use'),
+}
+
+// ── Context menu ────────────────────────────────────────────────────
+
+export const contextMenu = {
+  /** The open context menu container. */
+  container: (page: Page) => page.locator('.feature-context-menu'),
+
+  /** A menu item by its label text. */
+  item: (menu: Locator, label: string) =>
+    menu.locator('.feature-context-menu__item', { hasText: label }),
+}
+
+// ── Properties panel ────────────────────────────────────────────────
+
+export const properties = {
+  /** The properties panel container. */
+  panel: (page: Page) => page.locator('.properties-panel'),
+
+  /** Any element containing the given text within the panel. */
+  text: (page: Page, text: string | RegExp) =>
+    page.locator('.properties-panel').getByText(text),
+
+  /** Exact text match within the panel. */
+  exactText: (page: Page, text: string) =>
+    page.locator('.properties-panel').getByText(text, { exact: true }),
+}
+
+// ── Canvas ──────────────────────────────────────────────────────────
+
+export const canvas = {
+  /** The sketch (2D) canvas. */
+  sketch: (page: Page) => page.locator('canvas.sketch-canvas'),
+
+  /** The first <canvas> on the page (sketch in default tab layout). */
+  any: (page: Page) => page.locator('canvas').first(),
+}
+
+// ── Toolbar ─────────────────────────────────────────────────────────
+
+export const toolbar = {
+  /** All toolbar groups. */
+  groups: (page: Page) => page.locator('.toolbar-group'),
+
+  /** Add-point button (visible during sketch edit). */
+  addPointButton: (page: Page) => page.locator('button[aria-label="Add point"]'),
+}

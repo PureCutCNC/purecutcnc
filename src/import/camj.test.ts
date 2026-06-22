@@ -21,7 +21,9 @@
  */
 
 import {
+  IDENTITY_MATRIX,
   type FeatureFolder,
+  type Matrix2D,
   type NamedDimension,
   type Operation,
   type PersistedImportedMesh,
@@ -32,6 +34,7 @@ import {
   rectProfile,
   stockFromFeature,
 } from '../types/project'
+import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -523,6 +526,106 @@ function testMergeStockImportNoOpWhenSourceNotFeatureBased(): void {
   assert(result.warnings.some((w) => w.toLowerCase().includes('stock')), 'expected stock-related warning')
 }
 
+// ---------------- P1a regression: linked-instance transform preserved on import ----------------
+
+function makeV20ProjectWithLinkedPair(): Project {
+  const source = newProject('Source', 'mm')
+  const defId = 'def-shared'
+  const definition = {
+    id: defId,
+    kind: 'rect' as const,
+    profile: rectProfile(0, 0, 60, 40),
+    dimensions: [] as import('../types/project').LocalDimension[],
+    text: null,
+    stl: null,
+    operation: 'add' as const,
+  }
+  return {
+    ...source,
+    version: '2.0',
+    featureDefinitions: { [defId]: definition },
+    features: [
+      {
+        id: 'f-linked-origin',
+        name: 'Linked Origin',
+        kind: 'rect' as const,
+        folderId: 'fd-src',
+        sketch: {
+          profile: rectProfile(0, 0, 60, 40),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 0,
+          dimensions: [],
+          constraints: [],
+        },
+        operation: 'add' as const,
+        z_top: 5,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+        definitionId: defId,
+        transform: IDENTITY_MATRIX,
+      } as SketchFeature & { definitionId?: string; transform?: Matrix2D },
+      {
+        id: 'f-linked-offset',
+        name: 'Linked Offset',
+        kind: 'rect' as const,
+        folderId: 'fd-src',
+        sketch: {
+          profile: rectProfile(50, 0, 60, 40),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 0,
+          dimensions: [],
+          constraints: [],
+        },
+        operation: 'add' as const,
+        z_top: 5,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+        definitionId: defId,
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 50, f: 0 } as Matrix2D,
+      } as SketchFeature & { definitionId?: string; transform?: Matrix2D },
+    ],
+    featureFolders: [makeFolder('fd-src', 'LinkedParts')],
+    featureTree: [{ type: 'folder', folderId: 'fd-src' }],
+  }
+}
+
+function testMergePreservesLinkedInstanceTransform(): void {
+  const source = makeV20ProjectWithLinkedPair()
+  const offsetFeature = source.features.find((f) => f.id === 'f-linked-offset') as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  assert(offsetFeature.definitionId === 'def-shared', 'fixture: offset feature should share definitionId')
+  assert(offsetFeature.transform !== undefined && offsetFeature.transform.e === 50, 'fixture: offset feature should have translate-x=50 transform')
+
+  const current = newProject('Target', 'mm')
+  const result = mergeCamjFolders({
+    currentProject: current,
+    sourceProject: source,
+    selectedFolderIds: ['fd-src'],
+  })
+
+  assert(result.createdFeatureIds.length === 2, 'both linked features should be imported')
+
+  const importedFeatures = result.project.features.filter((f) => result.createdFeatureIds.includes(f.id))
+  const importedOffset = importedFeatures.find((f) => f.sketch.profile.start.x > 10) as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  assert(importedOffset !== undefined, 'offset instance should be imported')
+  assert(importedOffset.transform !== undefined, 'imported offset instance should have a transform')
+  assert(importedOffset.transform!.e === 50, `imported transform.e should be 50, got ${importedOffset.transform!.e}`)
+  assert(importedOffset.transform!.a === 1 && importedOffset.transform!.d === 1, 'imported transform should be a pure translate (a=1,d=1)')
+
+  const resolved = resolveFeatureInstance(result.project, importedOffset.id)
+  assert(resolved !== null, 'resolved offset should not be null')
+  assert(Math.abs(resolved!.sketch.profile.start.x - 50) < 1e-6,
+    `resolved start.x should be ~50 (offset), got ${resolved!.sketch.profile.start.x}`)
+
+  const importedOrigin = importedFeatures.find((f) => f.sketch.profile.start.x < 10) as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  assert(importedOrigin !== undefined, 'origin instance should be imported')
+  const resolvedOrigin = resolveFeatureInstance(result.project, importedOrigin.id)
+  assert(resolvedOrigin !== null, 'resolved origin should not be null')
+  assert(Math.abs(resolvedOrigin!.sketch.profile.start.x) < 1e-6,
+    `resolved origin start.x should be ~0, got ${resolvedOrigin!.sketch.profile.start.x}`)
+}
+
 testInspectListsFoldersWithFeatures()
 testInspectHidesEmptyFolders()
 testInspectRejectsBadJson()
@@ -544,4 +647,5 @@ testMergeImportsStockReplacesCurrent()
 testMergeImportsStockWithoutFolders()
 testMergeImportsStockMmToInchScales()
 testMergeStockImportNoOpWhenSourceNotFeatureBased()
+testMergePreservesLinkedInstanceTransform()
 console.log('camj import tests passed')

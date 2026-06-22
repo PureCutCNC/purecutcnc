@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import { inferFeatureKind, profileVertices } from '../../types/project'
-import type { BackdropImage, Point, SketchFeature } from '../../types/project'
+import { IDENTITY_MATRIX, inferFeatureKind, profileVertices } from '../../types/project'
+import type { BackdropImage, Matrix2D, Point, SketchFeature } from '../../types/project'
 import {
   addPoint,
   clampNumber,
@@ -28,6 +28,7 @@ import {
 } from './geometry'
 import { angleToPoint, inferProfileOrientationAngle, normalizeAngleDegrees } from './normalize'
 import { applyLineCornerFillet } from './profileEdit'
+import { mirrorDelta, multiplyMatrix, rotateDelta, translateMatrix } from './instanceTransforms'
 import {
   mirrorAngleAcrossLine,
   mirrorProfile,
@@ -145,6 +146,20 @@ export function resizeFeatureFromReference(
   const resizedZ = feature.kind === 'stl'
     ? scaleNumericZSpan(feature.z_top, feature.z_bottom, scaleU)
     : { z_top: feature.z_top, z_bottom: feature.z_bottom }
+  const linearPart: Matrix2D = {
+    a: u.x * u.x * scaleU + v.x * v.x * scaleV,
+    b: u.y * u.x * scaleU + v.y * v.x * scaleV,
+    c: u.x * u.y * scaleU + v.x * v.y * scaleV,
+    d: u.y * u.y * scaleU + v.y * v.y * scaleV,
+    e: 0,
+    f: 0,
+  }
+  const scaleTransform = multiplyMatrix(
+    translateMatrix(referenceStart.x, referenceStart.y),
+    multiplyMatrix(linearPart, translateMatrix(-referenceStart.x, -referenceStart.y)),
+  )
+  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+  const nextTransform = multiplyMatrix(scaleTransform, currentTransform)
 
   return {
     ...feature,
@@ -165,7 +180,8 @@ export function resizeFeatureFromReference(
       ),
       profile,
     },
-  }
+    transform: nextTransform,
+  } as SketchFeature & { transform: Matrix2D }
 }
 
 export function rotateFeatureFromReference(
@@ -189,6 +205,8 @@ export function rotateFeatureFromReference(
 
   const rotatePoint = (point: Point) => rotatePointAround(point, referenceStart, angle)
   const profile = transformProfile(feature.sketch.profile, rotatePoint)
+  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+  const nextTransform = multiplyMatrix(rotateDelta(referenceStart, angle), currentTransform)
   return {
     ...feature,
     kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
@@ -201,7 +219,8 @@ export function rotateFeatureFromReference(
       ),
       profile,
     },
-  }
+    transform: nextTransform,
+  } as SketchFeature & { transform: Matrix2D }
 }
 
 export function mirrorFeatureFromReference(
@@ -228,6 +247,8 @@ export function mirrorFeatureFromReference(
   if (orientationAngle === null) {
     return null
   }
+  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+  const nextTransform = multiplyMatrix(mirrorDelta(referenceStart, referenceEnd), currentTransform)
 
   return {
     ...feature,
@@ -239,7 +260,8 @@ export function mirrorFeatureFromReference(
       orientationAngle,
       profile,
     },
-  }
+    transform: nextTransform,
+  } as SketchFeature & { transform: Matrix2D }
 }
 
 function backdropResizeBasis(backdrop: BackdropImage): { u: Point; v: Point } {

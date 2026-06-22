@@ -78,16 +78,65 @@ function rootElement() {
   )
 }
 
+// Dev/test seam: exposes the live store for Playwright smoke tests.
+// This is a NO-OP in production builds — import.meta.env.DEV is a compile-time
+// constant and the entire block is dead-code-eliminated by Vite.
+if (import.meta.env.DEV) {
+  let _pcTestReady: Promise<typeof import('./store/projectStore')> | null = null
+  function _pcTestStore() {
+    if (!_pcTestReady) {
+      _pcTestReady = import('./store/projectStore')
+    }
+    return _pcTestReady
+  }
+
+  window.__pcTest = {
+    getProject: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      return JSON.parse(useProjectStore.getState().saveProject())
+    },
+    loadProject: async (json: string) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().openProjectFromText(json, null)
+    },
+    /** Returns the current pendingMove state (null if idle). */
+    getPendingMove: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      const pm = useProjectStore.getState().pendingMove
+      if (!pm) return null
+      return { mode: pm.mode, entityType: pm.entityType, entityIds: [...pm.entityIds] }
+    },
+    /** Completes a pending copy/move starting from origin and ending at (x,y). */
+    completePendingMove: async (x: number, y: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      // Set fromPoint to origin and toPoint to the target so the displacement
+      // is non-zero (completePendingMove requires dx/dy > 1e-9).
+      useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+      useProjectStore.getState().setPendingMoveTo({ x, y })
+      useProjectStore.getState().completePendingMove({ x, y }, 1)
+    },
+  }
+}
+
 createRoot(document.getElementById('root')!).render(rootElement())
 reactMounted = true
 
 // Clear the index.html boot watchdog: React is alive, no fallback needed.
-declare global {
-  interface Window {
-    __pcBootWatchdog?: number
-  }
-}
 if (typeof window !== 'undefined' && window.__pcBootWatchdog !== undefined) {
   window.clearTimeout(window.__pcBootWatchdog)
   window.__pcBootWatchdog = undefined
+}
+
+// Ambient type declarations for globals added by index.html (boot watchdog)
+// and the dev/test seam above.
+declare global {
+  interface Window {
+    __pcBootWatchdog?: number
+    __pcTest?: {
+      getProject: () => Promise<Record<string, unknown>>
+      loadProject: (json: string) => Promise<void>
+      getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null>
+      completePendingMove: (x: number, y: number) => Promise<void>
+    }
+  }
 }

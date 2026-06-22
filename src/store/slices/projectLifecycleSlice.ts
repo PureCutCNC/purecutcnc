@@ -19,6 +19,8 @@ import {
   defaultGrid,
   defaultOrigin,
   defaultStock,
+  isProjectVersionNewerThanSupported,
+  LATEST_PROJECT_VERSION,
   type Project,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -43,6 +45,8 @@ export type ProjectLifecycleSlice = Pick<
   | 'setProjectClearances'
   | 'setShowDimensions'
   | 'setShowFeatureInfo'
+  | 'setCopyMode'
+  | 'clearLoadWarning'
   | 'loadProject'
   | 'saveProject'
   | 'openProjectFromText'
@@ -183,6 +187,32 @@ export function createProjectLifecycleSlice(
         }
       }),
 
+    setCopyMode: (mode) =>
+      set((s) => {
+        const nextProject = {
+          ...s.project,
+          meta: {
+            ...s.project.meta,
+            copyMode: mode,
+            modified: new Date().toISOString(),
+          },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        if (s.history.transactionStart) {
+          return { project: nextProject }
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
     loadProject: (p) =>
       set((state) => {
         clearProjectMemoryCaches()
@@ -236,6 +266,10 @@ export function createProjectLifecycleSlice(
       } catch {
         throw new Error('Failed to parse project file.')
       }
+      const rawVersion = (parsed as { version?: string } | null)?.version
+      const versionWarning = isProjectVersionNewerThanSupported(rawVersion)
+        ? `This project was created with a newer version of PureCutCNC (file format ${rawVersion}; this build supports up to ${LATEST_PROJECT_VERSION}). It will still open, but newer features may be missing or display incorrectly.`
+        : null
       const normalized = normalizeProject(parsed as ReturnType<typeof normalizeProject>)
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
@@ -254,6 +288,7 @@ export function createProjectLifecycleSlice(
         },
         filePath: path,
         dirty: false,
+        loadWarning: versionWarning,
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,
@@ -267,6 +302,8 @@ export function createProjectLifecycleSlice(
         },
       }))
     },
+
+    clearLoadWarning: () => set({ loadWarning: null }),
 
     markSaved: (path) =>
       deps.rawSet({ filePath: path, dirty: false }),
