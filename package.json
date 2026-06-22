@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "sync-icons": "node scripts/convert-camj-to-icons.js",
     "test": "npx tsx scripts/check-license-headers.ts && npx tsx scripts/run-tests.ts",
+    "test:agent": "bash scripts/test-claude-deepseek-agent.sh",
     "check:headers": "npx tsx scripts/check-license-headers.ts",
     "tauri": "tauri",
     "tauri:icon": "npx tauri icon ./app-icon.png",

@@ -10,7 +10,7 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 ## Top-level
 - [src/](src/INDEX.md) — application source (React + TS). **See its INDEX for the breakdown.**
 - [src-tauri/](src-tauri/) — Tauri (Rust) wrapper for desktop builds
-- [scripts/](scripts/) — build/codegen scripts (icon sync, release helpers) plus one-off diagnostic scripts; diagnostics are outside the default `npm run lint` gate (use `npm run lint:scripts`)
+- [scripts/](scripts/) — build/codegen scripts, the project-local Claude Code/DeepSeek worker launcher, and one-off diagnostics; diagnostics are outside the default `npm run lint` gate (use `npm run lint:scripts`)
 - [public/](public/) — static assets served as-is (incl. generated `icons.svg`)
 - [.github/](.github/) — workflows and PR templates
 
