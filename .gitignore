@@ -36,4 +36,10 @@ temp/
 *.sw?
 .claude/worktrees/
 
+# Playwright e2e test artifacts
+test-results/
+playwright-report/
+/playwright/.cache/
+/e2e/test-results/
+
 
