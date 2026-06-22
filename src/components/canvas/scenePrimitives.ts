@@ -200,7 +200,7 @@ export function drawSketchControls(
 
 export function drawSketchEditPreviewPoint(
   ctx: CanvasRenderingContext2D,
-  preview: { point: Point; mode: 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' },
+  preview: { point: Point; mode: 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer' },
   vt: ViewTransform,
 ): void {
   const { cx, cy } = worldToCanvas(preview.point, vt)

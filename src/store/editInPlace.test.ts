@@ -409,6 +409,44 @@ test('moveFeatureControl on transformed instance round-trips through definition'
     `round-trip transformed: expected (${transformed.sketch.profile.start.x}, ${transformed.sketch.profile.start.y}), got (${rerunTransformed.start.x}, ${rerunTransformed.start.y})`)
 })
 
+test('chamfer edit on transformed instance propagates to all instances via definition', () => {
+  resetStore()
+
+  const { definition } = addRectFeature('f-0001', 'Original', 10, 20, 30, 15)
+  const t = translateMatrix(80, 40)
+  addLinkedInstance('f-0002', 'Translated', definition.id, t)
+
+  useProjectStore.getState().enterSketchEdit('f-0002')
+  useProjectStore.getState().chamferFeaturePoint('f-0002', 0, 3)
+  useProjectStore.getState().applySketchEdit()
+
+  const features = getFeatures()
+  const original = features.find((feature) => feature.id === 'f-0001')!
+  const transformed = features.find((feature) => feature.id === 'f-0002')!
+  assert(original.sketch.profile.segments.length === 5, 'chamfer adds one line segment to the original instance')
+  assert(transformed.sketch.profile.segments.length === 5, 'chamfer rebakes the linked instance')
+  assert(transformed.sketch.profile.segments.every((segment) => segment.type === 'line'), 'chamfer remains line geometry')
+  assert(pointEq(
+    transformed.sketch.profile.start,
+    { x: original.sketch.profile.start.x + 80, y: original.sketch.profile.start.y + 40 },
+  ), 'chamfer preserves the linked instance transform')
+})
+
+test('cancelSketchEdit restores a pending chamfer edit', () => {
+  resetStore()
+
+  const { definition } = addRectFeature('f-0001', 'Original', 10, 20, 30, 15)
+  addLinkedInstance('f-0002', 'Linked', definition.id, translateMatrix(80, 40))
+  const before = JSON.stringify(getProject().featureDefinitions[definition.id].profile)
+
+  useProjectStore.getState().enterSketchEdit('f-0002')
+  useProjectStore.getState().chamferFeaturePoint('f-0002', 0, 3)
+  useProjectStore.getState().cancelSketchEdit()
+
+  assert(JSON.stringify(getProject().featureDefinitions[definition.id].profile) === before, 'cancel restores the shared definition after chamfer')
+  assert(getFeatures().every((feature) => feature.sketch.profile.segments.length === 4), 'cancel restores every linked instance profile')
+})
+
 test('cancelSketchEdit restores pre-edit geometry', () => {
   resetStore()
 

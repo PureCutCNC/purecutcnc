@@ -391,6 +391,73 @@ export function applyLineCornerFillet(profile: SketchProfile, anchorIndex: numbe
   })
 }
 
+export function applyLineCornerChamfer(profile: SketchProfile, anchorIndex: number, distance: number): SketchProfile | null {
+  const anchors = profileVertices(profile)
+  const anchorCount = anchors.length
+  if (distance <= 1e-9 || anchorIndex < 0 || anchorIndex >= anchorCount) {
+    return null
+  }
+
+  const hasIncoming = profile.closed || anchorIndex > 0
+  const hasOutgoing = profile.closed || anchorIndex < anchorCount - 1
+  if (!hasIncoming || !hasOutgoing) {
+    return null
+  }
+
+  const incomingIndex = profile.closed ? (anchorIndex - 1 + profile.segments.length) % profile.segments.length : anchorIndex - 1
+  const outgoingIndex = anchorIndex
+  const incomingSegment = profile.segments[incomingIndex]
+  const outgoingSegment = profile.segments[outgoingIndex]
+  if (!incomingSegment || !outgoingSegment || incomingSegment.type !== 'line' || outgoingSegment.type !== 'line') {
+    return null
+  }
+
+  const previousAnchor = anchors[(anchorIndex - 1 + anchorCount) % anchorCount]
+  const corner = anchors[anchorIndex]
+  const nextAnchor = anchors[(anchorIndex + 1) % anchorCount]
+  const incomingDirection = normalizePoint(subtractPoint(previousAnchor, corner))
+  const outgoingDirection = normalizePoint(subtractPoint(nextAnchor, corner))
+  if (!incomingDirection || !outgoingDirection) {
+    return null
+  }
+
+  const turnDot = clampNumber(dotPoint(incomingDirection, outgoingDirection), -1, 1)
+  const interiorAngle = Math.acos(turnDot)
+  if (!Number.isFinite(interiorAngle) || interiorAngle <= 1e-3 || Math.abs(Math.PI - interiorAngle) <= 1e-3) {
+    return null
+  }
+
+  const incomingLength = pointLength(subtractPoint(previousAnchor, corner))
+  const outgoingLength = pointLength(subtractPoint(nextAnchor, corner))
+  if (distance >= incomingLength || distance >= outgoingLength) {
+    return null
+  }
+
+  const trimStart = addPoint(corner, scalePoint(incomingDirection, distance))
+  const trimEnd = addPoint(corner, scalePoint(outgoingDirection, distance))
+  const nextSegments = profile.segments.map(cloneSegment)
+  nextSegments[incomingIndex] = { type: 'line', to: clonePoint(trimStart) }
+  nextSegments.splice(
+    outgoingIndex,
+    1,
+    { type: 'line', to: clonePoint(trimEnd) },
+    { type: 'line', to: clonePoint(nextAnchor) },
+  )
+
+  if (profile.closed && anchorIndex === 0) {
+    return normalizeEditableProfileClosure({
+      ...profile,
+      start: clonePoint(trimStart),
+      segments: nextSegments,
+    })
+  }
+
+  return normalizeEditableProfileClosure({
+    ...profile,
+    segments: nextSegments,
+  })
+}
+
 export function insertPointIntoProfile(profile: SketchProfile, target: SketchInsertTarget): SketchProfile {
   if (!profile.closed && target.kind === 'extend_start') {
     return extendOpenProfileAtStart(profile, target.point)

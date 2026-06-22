@@ -16,6 +16,7 @@
 
 import type { Point, SketchProfile } from '../../types/project'
 import {
+  applyLineCornerChamfer,
   applyLineCornerFillet,
   buildArcSegmentFromThreePoints,
   closeOpenProfile,
@@ -169,6 +170,80 @@ function testApplyLineCornerFillet(): void {
   assertDeepEqual(result!.segments[2], { type: 'line', to: { x: 10, y: 10 } }, 'fillet keeps outgoing line')
 }
 
+function testApplyLineCornerChamfer(): void {
+  const result = applyLineCornerChamfer(
+    {
+      start: { x: 0, y: 0 },
+      segments: [
+        { type: 'line', to: { x: 10, y: 0 } },
+        { type: 'line', to: { x: 10, y: 10 } },
+      ],
+      closed: false,
+    },
+    1,
+    2,
+  )
+
+  assert(result !== null, 'applyLineCornerChamfer returns a profile')
+  assertDeepEqual(result!.start, { x: 0, y: 0 }, 'chamfer preserves open profile start')
+  assert(result!.segments.length === 3, `chamfer should create 3 segments, got ${result!.segments.length}`)
+  assertDeepEqual(result!.segments[0], { type: 'line', to: { x: 8, y: 0 } }, 'chamfer trims the incoming line')
+  assertDeepEqual(result!.segments[1], { type: 'line', to: { x: 10, y: 2 } }, 'chamfer inserts bevel line')
+  assertDeepEqual(result!.segments[2], { type: 'line', to: { x: 10, y: 10 } }, 'chamfer keeps outgoing line')
+
+  const closedAtStart = applyLineCornerChamfer(
+    {
+      start: { x: 0, y: 0 },
+      segments: [
+        { type: 'line', to: { x: 10, y: 0 } },
+        { type: 'line', to: { x: 10, y: 10 } },
+        { type: 'line', to: { x: 0, y: 10 } },
+        { type: 'line', to: { x: 0, y: 0 } },
+      ],
+      closed: true,
+    },
+    0,
+    2,
+  )
+  assert(closedAtStart !== null, 'chamfer supports the closing anchor')
+  assertDeepEqual(closedAtStart!.start, { x: 0, y: 2 }, 'chamfer moves closed profile start to the incoming trim point')
+  assertDeepEqual(closedAtStart!.segments[0], { type: 'line', to: { x: 2, y: 0 } }, 'chamfer inserts the closing-anchor bevel')
+
+  const angled = applyLineCornerChamfer(
+    {
+      start: { x: 0, y: 0 },
+      segments: [
+        { type: 'line', to: { x: 10, y: 0 } },
+        { type: 'line', to: { x: 15, y: 10 } },
+      ],
+      closed: false,
+    },
+    1,
+    2,
+  )
+  assert(angled !== null, 'chamfer supports non-orthogonal line corners')
+  assertPointClose(angled!.segments[0].to, { x: 8, y: 0 }, 'angled chamfer trims the incoming line')
+  assertPointClose(angled!.segments[1].to, { x: 10 + (2 / Math.sqrt(5)), y: 4 / Math.sqrt(5) }, 'angled chamfer trims the outgoing line by the same distance')
+
+  const arcNeighbor = applyLineCornerChamfer(
+    {
+      start: { x: 0, y: 0 },
+      segments: [
+        { type: 'line', to: { x: 10, y: 0 } },
+        { type: 'arc', center: { x: 10, y: 5 }, to: { x: 10, y: 10 }, clockwise: false },
+      ],
+      closed: false,
+    },
+    1,
+    2,
+  )
+  assert(arcNeighbor === null, 'chamfer rejects non-line corner geometry')
+
+  assert(applyLineCornerChamfer(result!, 0, 1) === null, 'chamfer rejects open-profile terminal anchors')
+  assert(applyLineCornerChamfer(result!, 1, 0) === null, 'chamfer rejects zero distance')
+  assert(applyLineCornerChamfer(result!, 1, 8) === null, 'chamfer rejects a distance that consumes an adjacent segment')
+}
+
 function testDeleteAnchorFromProfile(): void {
   const result = deleteAnchorFromProfile(squareProfile(), 1)
   assertDeepEqual(
@@ -246,6 +321,7 @@ const tests: Array<() => void> = [
   testSplitBezierSegment,
   testCloseOpenProfile,
   testApplyLineCornerFillet,
+  testApplyLineCornerChamfer,
   testDeleteAnchorFromProfile,
   testDeleteSegmentFromProfile,
   testDisconnectProfileAtAnchor,

@@ -37,6 +37,7 @@ import { clonePoint, lerpPoint, normalizePoint, pointLength, scalePoint, subtrac
 import { translatePoint, transformProfile, transformProfileAffine } from '../helpers/transform'
 import {
   anchorPointForIndex,
+  applyLineCornerChamfer,
   applyLineCornerFillet,
   arcControlPoint,
   buildArcSegmentFromThreePoints,
@@ -76,6 +77,7 @@ export type FeatureGeometrySlice = Pick<
   | 'deleteFeatureSegment'
   | 'disconnectFeaturePoint'
   | 'filletFeaturePoint'
+  | 'chamferFeaturePoint'
   | 'makeUnique'
 >
 
@@ -616,6 +618,55 @@ export function createFeatureGeometrySlice(
           }
 
           const nextProfile = applyLineCornerFillet(feature.sketch.profile, anchorIndex, radius)
+          if (!nextProfile || JSON.stringify(nextProfile) === JSON.stringify(feature.sketch.profile)) {
+            return feature
+          }
+
+          changed = true
+          return {
+            ...feature,
+            kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(nextProfile),
+            sketch: {
+              ...feature.sketch,
+              profile: nextProfile,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+
+      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
+      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+
+      return {
+        project: nextProject,
+        selection: {
+          ...s.selection,
+          activeControl: null,
+        },
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  chamferFeaturePoint: (featureId, anchorIndex, distance) =>
+    set((s) => {
+      let changed = false
+      let nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== featureId || feature.locked) {
+            return feature
+          }
+
+          const nextProfile = applyLineCornerChamfer(feature.sketch.profile, anchorIndex, distance)
           if (!nextProfile || JSON.stringify(nextProfile) === JSON.stringify(feature.sketch.profile)) {
             return feature
           }

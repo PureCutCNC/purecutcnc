@@ -31,7 +31,7 @@ import type {
 } from '../../store/types'
 import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeature } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
-import { filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
+import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
@@ -185,6 +185,7 @@ export interface ClickPlacementCtx {
   deleteFeatureSegment: (featureId: string, segmentIndex: number) => void
   disconnectFeaturePoint: (featureId: string, index: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
+  chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
   placePendingTextAt: (point: Point) => void
@@ -270,6 +271,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     deleteFeatureSegment,
     disconnectFeaturePoint,
     filletFeaturePoint,
+    chamferFeaturePoint,
     setPendingAddAnchor,
     placePendingAddAt,
     placePendingTextAt,
@@ -555,20 +557,30 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           return
         }
 
-        if (feature && selection.sketchEditTool === 'fillet') {
+        if (feature && (selection.sketchEditTool === 'fillet' || selection.sketchEditTool === 'chamfer')) {
           if (pendingSketchFilletRef.current) {
             const typedRadius = fillet.filletDimensionEditRef.current
               ? parseLengthInput(fillet.filletDimensionEditRef.current.radius, project.meta.units)
               : null
             if (typedRadius !== null && typedRadius > 0) {
-              filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+              if (selection.sketchEditTool === 'chamfer') {
+                chamferFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+              } else {
+                filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+              }
             } else {
               if (!pickedPoint) {
                 return
               }
-              const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
+              const radius = selection.sketchEditTool === 'chamfer'
+                ? chamferDistanceFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
+                : filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, pickedPoint)
               if (radius) {
-                filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+                if (selection.sketchEditTool === 'chamfer') {
+                  chamferFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+                } else {
+                  filletFeaturePoint(selection.selectedFeatureId, pendingSketchFilletRef.current.anchorIndex, radius)
+                }
               }
             }
             pendingSketchFilletRef.current = null

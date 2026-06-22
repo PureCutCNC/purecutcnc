@@ -197,8 +197,13 @@ function testSketchEditActive() {
 
   assert(result.predicates.featureSketchEditActive, 'feature sketch edit is active')
   assert(result.sketchEdit.add_point.enabled, 'sketch edit tools are enabled')
+  assert(result.sketchEdit.chamfer.enabled, 'chamfer is enabled during sketch edit')
   assert(result.sketchEdit.fillet.active, 'active sketch edit tool is reflected')
   assert(!result.sketchEdit.add_point.active, 'inactive sketch edit tools are not active')
+
+  const chamferResult = makeCommandState(project, { ...selection, sketchEditTool: 'chamfer' })
+  assert(chamferResult.sketchEdit.chamfer.active, 'chamfer active state is reflected')
+  assert(!chamferResult.sketchEdit.fillet.active, 'fillet is inactive while chamfer is active')
 
   console.log('sketch-edit active predicate: PASSED')
 }

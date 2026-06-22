@@ -22,7 +22,7 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { OpenProfileEndpoint, SketchControlRef, SketchEditTool } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
-import { filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference } from '../../store/helpers/referenceTransforms'
+import { chamferDistanceFromPoint, chamferFeatureFromDistance, chamferFeatureFromPoint, filletFeatureFromPoint, filletFeatureFromRadius, filletRadiusFromPoint, mirrorFeatureFromReference, resizeBackdropFromReference, resizeFeatureFromReference, rotateBackdropFromReference, rotateFeatureFromReference } from '../../store/helpers/referenceTransforms'
 import {
   buildPendingDraftProfile,
   buildPendingProfile,
@@ -362,6 +362,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     deleteFeatureSegment,
     disconnectFeaturePoint,
     filletFeaturePoint,
+    chamferFeaturePoint,
     moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
@@ -475,6 +476,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingSketchFilletRef,
     sketchEditPreviewRef,
     filletFeaturePoint,
+    chamferFeaturePoint,
     scheduleDraw,
   })
 
@@ -1630,14 +1632,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (!useTyped) {
           drawMoveGuide(ctx, pendingSketchFilletRef.current.corner, sketchEditPreviewRef.current.point, vt)
         }
+        const isChamfer = selection.sketchEditTool === 'chamfer'
         const previewFeature = useTyped
-          ? filletFeatureFromRadius(editingFeature, pendingSketchFilletRef.current.anchorIndex, typedRadius)
-          : filletFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+          ? isChamfer
+            ? chamferFeatureFromDistance(editingFeature, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+            : filletFeatureFromRadius(editingFeature, pendingSketchFilletRef.current.anchorIndex, typedRadius)
+          : isChamfer
+            ? chamferFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+            : filletFeatureFromPoint(editingFeature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
         if (previewFeature) {
-          drawPreviewProfile(ctx, previewFeature.sketch.profile, vt, 'Fillet preview')
+          drawPreviewProfile(ctx, previewFeature.sketch.profile, vt, isChamfer ? 'Chamfer preview' : 'Fillet preview')
           const arcIndex = pendingSketchFilletRef.current.anchorIndex
           const arcSegment = previewFeature.sketch.profile.segments[arcIndex]
-          if (arcSegment?.type === 'arc') {
+          if (!isChamfer && arcSegment?.type === 'arc') {
             const arcStart = anchorPointForIndex(previewFeature.sketch.profile, arcIndex)
             drawArcRadiusMeasurement(ctx, arcStart, arcSegment, vt, project.meta.units)
           }
@@ -1724,7 +1731,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }, [pendingConstraint])
 
   useEffect(() => {
-    if (selection.mode !== 'sketch_edit' || selection.sketchEditTool !== 'fillet') {
+    if (selection.mode !== 'sketch_edit' || (selection.sketchEditTool !== 'fillet' && selection.sketchEditTool !== 'chamfer')) {
       fillet.setFilletDimensionEdit(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilletDimensionEdit is a stable useState setter; the hook return object is recreated each render
@@ -2097,7 +2104,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || !!pendingMove
       || !!pendingTransform
       || !!pendingOffset
-      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
       || isDraggingNodeRef.current
       || constraintPicking
 
@@ -2197,7 +2204,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         return
       }
 
-      if (feature && sketchEditTool === 'fillet') {
+      if (feature && (sketchEditTool === 'fillet' || sketchEditTool === 'chamfer')) {
         pendingSketchExtensionRef.current = null
         if (pendingSketchFilletRef.current) {
           sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }
@@ -2339,7 +2346,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const featureId = selection.selectedFeatureId
       const feature = featureId ? project.features.find((f) => f.id === featureId) ?? null : null
       if (!feature) return
-      const radius = filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+      const radius = selection.sketchEditTool === 'chamfer'
+        ? chamferDistanceFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
+        : filletRadiusFromPoint(feature, pendingSketchFilletRef.current.anchorIndex, sketchEditPreviewRef.current.point)
       fillet.setFilletDimensionEdit({ anchorIndex: pendingSketchFilletRef.current.anchorIndex, corner: pendingSketchFilletRef.current.corner, radius: radius ? formatLength(radius, units) : '' })
       return
     }
@@ -2552,6 +2561,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     deleteFeatureSegment,
     disconnectFeaturePoint,
     filletFeaturePoint,
+    chamferFeaturePoint,
     setPendingAddAnchor,
     placePendingAddAt,
     placePendingTextAt,
@@ -3595,13 +3605,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         <CanvasWorkflowPanel
           title="Edit"
           step={
-            editFilletActive ? 'Enter radius'
+            editFilletActive ? selection.sketchEditTool === 'chamfer' ? 'Enter distance' : 'Enter radius'
             : editDimEditActive ? 'Enter dimensions'
             : selection.sketchEditTool === 'add_point' ? 'Click to add points'
             : selection.sketchEditTool === 'delete_point' ? 'Click to delete points'
             : selection.sketchEditTool === 'delete_segment' ? 'Click to delete segments'
             : selection.sketchEditTool === 'disconnect' ? 'Click an anchor to split'
             : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? 'Click second point or enter radius' : 'Click a corner')
+            : selection.sketchEditTool === 'chamfer' ? (fillet.filletCornerPicked ? 'Click second point or enter distance' : 'Click a corner')
             : 'Drag nodes or click segments'
           }
           position={editWorkflowPanel.position}
@@ -3623,7 +3634,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }}>Dimension</button>
               )}
               {fillet.filletCornerPicked && !editFilletActive && (
-                <button type="button" className="tablet-cmd-btn" onClick={() => fillet.enterFilletRadiusEdit()}>Radius</button>
+                <button type="button" className="tablet-cmd-btn" onClick={() => fillet.enterFilletRadiusEdit()}>{selection.sketchEditTool === 'chamfer' ? 'Distance' : 'Radius'}</button>
               )}
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={applyEditFromPanel}>Apply</button>
               <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditFromPanel}>Cancel</button>
@@ -3632,7 +3643,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         >
           {editFilletActive ? (
             <label className="canvas-workflow-panel__field">
-              <span>Radius</span>
+              <span>{selection.sketchEditTool === 'chamfer' ? 'Distance' : 'Radius'}</span>
               <input
                 ref={fillet.filletRadiusInputRef}
                 className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
