@@ -531,44 +531,32 @@ test('undo after delete restores feature + definition', () => {
 
 console.log('\nDelete → definition GC')
 
-test('delete last instance: definition is removed via GC (merge path)', () => {
-  // deleteFeatures does not run gcOrphanedDefinitions directly. Test GC via
-  // the merge path (mergeSelectedFeatures with keepOriginals=false), which
-  // DOES run gcOrphanedDefinitions. Create two features, merge them, then
-  // verify orphaned definitions are cleaned.
+test('delete last instance: definition is GCd; undo restores both', () => {
   resetStore()
   const store = useProjectStore.getState()
 
-  store.addRectFeature('Rect1', 10, 20, 30, 15, 5)
-  const f1 = getFeatures()[0] as SketchFeature & { definitionId?: string }
-  const defId1 = f1.definitionId!
-  assert(getDefinitions()[defId1] !== undefined, 'definition 1 should exist')
+  store.addCircleFeature('Circle', 50, 50, 10, 5)
+  const f = getFeatures()[0] as SketchFeature & { definitionId?: string }
+  const defId = f.definitionId!
 
-  // Create a second rect that overlaps
-  store.addRectFeature('Rect2', 20, 25, 30, 15, 5)
-  const f2 = getFeatures()[1] as SketchFeature & { definitionId?: string }
-  const defId2 = f2.definitionId!
-  assert(getDefinitions()[defId2] !== undefined, 'definition 2 should exist')
+  assert(getDefinitions()[defId] !== undefined, 'definition should exist before delete')
+  assert(getFeatures().length === 1, 'should have 1 feature before delete')
 
-  // Select both and merge (keepOriginals=false → GC runs)
-  store.selectFeatures([f1.id, f2.id])
-  const result = store.mergeSelectedFeatures(false)
-  assert(result.length > 0, 'merge should produce a result')
+  // Delete the only instance → definition must be GC'd
+  store.deleteFeatures([f.id])
+  assert(getFeatures().length === 0, 'should have 0 features after delete')
+  assert(getDefinitions()[defId] === undefined,
+    'definition should be GCd when last instance is deleted')
 
-  // Original definitions should be GC'd (features replaced by merged result)
-  const postDefs = getDefinitions()
-  // The merged feature gets a NEW definition; old ones should be removed
-  // NOTE: defId1/defId2 may or may not be GC'd depending on merge implementation
-  // Verify at least that the merged result has a definition
-  const postFeatures = getFeatures()
-  assert(postFeatures.length > 0, 'should have features after merge')
-  const merged = postFeatures[0] as SketchFeature & { definitionId?: string }
-  assert(merged.definitionId !== undefined, 'merged feature should have definitionId')
-  const mergedDef = postDefs[merged.definitionId!]
-  assert(mergedDef !== undefined, 'merged feature definition should exist')
+  // Undo restores both instance + definition
+  store.undo()
+  assert(getFeatures().length === 1, 'undo should restore feature')
+  const restoredDef = getDefinitions()[defId]
+  assert(restoredDef !== undefined, 'undo should restore definition')
+  assert(restoredDef.kind === 'circle', 'restored definition should be circle')
 })
 
-test('delete one of two linked instances keeps the definition', () => {
+test('linked pair: delete one instance keeps definition; delete last GCs it', () => {
   resetStore()
   const store = useProjectStore.getState()
 
@@ -587,20 +575,17 @@ test('delete one of two linked instances keeps the definition', () => {
   const linked = features[1] as SketchFeature & { definitionId?: string }
   assert(linked.definitionId === defId, 'linked should share definitionId')
 
-  // Delete one instance
+  // Delete one instance — definition still referenced by the other
   store.deleteFeatures([linked.id])
-  assert(getFeatures().length === 1, 'should have 1 feature after delete')
+  assert(getFeatures().length === 1, 'should have 1 feature after partial delete')
+  assert(getDefinitions()[defId] !== undefined,
+    'definition should survive when other instance remains')
 
-  // Definition should still exist (referenced by remaining instance)
-  const defs = getDefinitions()
-  assert(defs[defId] !== undefined, 'definition should survive when other instance remains')
-
-  // Delete last instance
+  // Delete the last instance — definition must be GC'd
   store.deleteFeatures([base.id])
   assert(getFeatures().length === 0, 'should have 0 features after deleting last instance')
-  // NOTE: deleteFeatures does NOT run gcOrphanedDefinitions currently.
-  // The definition may be orphaned but retained in the dictionary.
-  // This is a known behavior — definition is not immediately GC'd on delete.
+  assert(getDefinitions()[defId] === undefined,
+    'definition should be GCd when last instance is deleted')
 })
 
 // ============================================================================
