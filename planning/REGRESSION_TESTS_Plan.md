@@ -116,7 +116,11 @@ See `REGRESSION_TESTS_Handoff_Phase4_Browser_Smoke.md`.
 ## Handoffs
 
 - **Handoff 1 — Geometry-fidelity + lifecycle** (Phases 1–2): `REGRESSION_TESTS_Handoff_1.md`.
-- **Handoff 2 — Audit-and-fill** (Phase 3): authored after Handoff 1 lands (needs the audit).
+- **Handoff 2 — Audit-and-fill** (Phase 3): `REGRESSION_TESTS_Handoff_2.md` (authored 2026-06-22 after
+  H1 landed). Areas A (per-operation CAM smoke — confirmed holes: pocket `parallel`/`waterline`, drill
+  cycle types, thin `v_carve`/`surface_clean`/`follow_line`), B (sketch-edit op segment-kind + linked
+  propagation for insert/delete/disconnect/arc-handle/profile-break/open-join), C (stock/tabs/
+  align-distribute lifecycle — no existing coverage). Audit-first, tests-only, STOP+report on bugs.
 - **Handoff Phase 4 — Browser smoke (Playwright)**: `REGRESSION_TESTS_Handoff_Phase4_Browser_Smoke.md`
   (authored 2026-06-21). Independent of H1/H2; may run in parallel (disjoint files — `e2e/` +
   `playwright.config.ts` + a package.json devDep vs H1's `src/store/*.test.ts`) or after H1 to keep the
