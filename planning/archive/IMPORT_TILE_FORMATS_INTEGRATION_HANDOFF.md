@@ -11,7 +11,7 @@ The integration manager delegates the one approved copy slice, independently rev
 - Integration branch: `codex/deepseek-claude-integration-manager`
 - Integration worktree: `/Users/frankp/Projects/worktrees/purecutcnc/deepseek-claude-integration-manager`
 - Base commit: `ffd120c841ac0510a8679a3476ddf7adc527296e`
-- Approved plan: `planning/IMPORT_TILE_FORMATS_Plan.md`
+- Approved plan: `planning/archive/IMPORT_TILE_FORMATS_Plan.md`
 - Manager session: `2026-06-22`
 - Status: `ready for user review`
 - User authorization for credential-backed worker dispatch: `approved in this session on 2026-06-22`
@@ -43,7 +43,7 @@ The integration manager delegates the one approved copy slice, independently rev
 **Forbidden files:**
 
 - All other source, style, import-parser, file-filter, platform, and project-format files.
-- `planning/IMPORT_TILE_FORMATS_Plan.md` and this handoff.
+- `planning/archive/IMPORT_TILE_FORMATS_Plan.md` and this archived handoff.
 
 **Invariants:**
 
@@ -76,7 +76,7 @@ npm run build
 
 ```text
 Integration branch: codex/deepseek-claude-integration-manager
-Detailed handoff: planning/IMPORT_TILE_FORMATS_INTEGRATION_HANDOFF.md
+Detailed handoff: planning/archive/IMPORT_TILE_FORMATS_INTEGRATION_HANDOFF.md
 Accepted slices: S1
 Verification: npm run build
 Manual test requested: confirm the empty-project import tile lists SVG, DXF, OBJ, STL, and CAMJ.
