@@ -25,7 +25,7 @@ import {
   useState,
 } from 'react'
 import type { SelectionState, SketchEditTool } from '../../store/types'
-import { filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
+import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import type { Point, Project } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 
@@ -35,6 +35,7 @@ export interface FilletWorkflowCtx {
   pendingSketchFilletRef: MutableRefObject<{ anchorIndex: number; corner: Point } | null>
   sketchEditPreviewRef: MutableRefObject<{ point: Point; mode: SketchEditTool } | null>
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
+  chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
   scheduleDraw: () => void
 }
 
@@ -58,6 +59,7 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     pendingSketchFilletRef,
     sketchEditPreviewRef,
     filletFeaturePoint,
+    chamferFeaturePoint,
     scheduleDraw,
   } = ctx
 
@@ -116,7 +118,9 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     const feature = projectRef.current.features.find((f) => f.id === featureId) ?? null
     if (!feature) return
     const units = projectRef.current.meta.units
-    const radius = filletRadiusFromPoint(feature, pending.anchorIndex, preview.point)
+    const radius = selectionRef.current.sketchEditTool === 'chamfer'
+      ? chamferDistanceFromPoint(feature, pending.anchorIndex, preview.point)
+      : filletRadiusFromPoint(feature, pending.anchorIndex, preview.point)
     setFilletDimensionEdit({
       anchorIndex: pending.anchorIndex,
       corner: pending.corner,
@@ -130,7 +134,11 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     if (current && featureId) {
       const typedRadius = parseLengthInput(current.radius, projectRef.current.meta.units)
       if (typedRadius !== null && typedRadius > 0) {
-        filletFeaturePoint(featureId, current.anchorIndex, typedRadius)
+        if (selectionRef.current.sketchEditTool === 'chamfer') {
+          chamferFeaturePoint(featureId, current.anchorIndex, typedRadius)
+        } else {
+          filletFeaturePoint(featureId, current.anchorIndex, typedRadius)
+        }
       }
     }
     pendingSketchFilletRef.current = null

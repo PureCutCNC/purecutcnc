@@ -224,6 +224,10 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         enabled: predicates.featureSketchEditActive,
         active: input.selection.sketchEditTool === 'fillet',
       },
+      chamfer: {
+        enabled: predicates.featureSketchEditActive,
+        active: input.selection.sketchEditTool === 'chamfer',
+      },
     },
     constraint: {
       enabled: predicates.hasSelectedFeatures && !predicates.hasLockedSelectedFeatures,
@@ -444,6 +448,7 @@ export function useSketchCommands(): SketchCommandState & {
       delete_segment: command('delete_segment', 'segment-delete', state.sketchEdit.delete_segment.active ? 'Cancel delete segment' : 'Delete segment', state.sketchEdit.delete_segment, () => toggleSketchEditTool('delete_segment')),
       disconnect: command('disconnect', 'disconnect', state.sketchEdit.disconnect.active ? 'Cancel disconnect' : 'Disconnect point', state.sketchEdit.disconnect, () => toggleSketchEditTool('disconnect')),
       fillet: command('fillet', 'fillet', state.sketchEdit.fillet.active ? 'Cancel fillet' : 'Round corner / fillet', state.sketchEdit.fillet, () => toggleSketchEditTool('fillet')),
+      chamfer: command('chamfer', 'chamfer', state.sketchEdit.chamfer.active ? 'Cancel chamfer' : 'Chamfer corner', state.sketchEdit.chamfer, () => toggleSketchEditTool('chamfer')),
     },
     constraint: command('constraint', 'constraint', state.constraint.active ? 'Cancel constraint' : 'Add constraint', state.constraint, toggleConstraint),
     dimension: {

@@ -26,6 +26,7 @@ function SketchEditActions({
   onDeleteSegment,
   onDisconnect,
   onFillet,
+  onChamfer,
 }: {
   enabled: boolean
   activeTool: SketchEditTool | null
@@ -35,6 +36,7 @@ function SketchEditActions({
   onDeleteSegment: () => void
   onDisconnect: () => void
   onFillet: () => void
+  onChamfer: () => void
 }) {
   if (!enabled) return null
 
@@ -74,6 +76,13 @@ function SketchEditActions({
         active={activeTool === 'fillet'}
         tooltipSide={tooltipSide}
         onClick={onFillet}
+      />
+      <ToolbarActionButton
+        icon="chamfer"
+        label={activeTool === 'chamfer' ? 'Cancel chamfer' : 'Chamfer corner'}
+        active={activeTool === 'chamfer'}
+        tooltipSide={tooltipSide}
+        onClick={onChamfer}
       />
     </div>
   )

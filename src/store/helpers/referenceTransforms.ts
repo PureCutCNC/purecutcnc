@@ -27,7 +27,7 @@ import {
   subtractPoint,
 } from './geometry'
 import { angleToPoint, inferProfileOrientationAngle, normalizeAngleDegrees } from './normalize'
-import { applyLineCornerFillet } from './profileEdit'
+import { applyLineCornerChamfer, applyLineCornerFillet } from './profileEdit'
 import { mirrorDelta, multiplyMatrix, rotateDelta, translateMatrix } from './instanceTransforms'
 import {
   mirrorAngleAcrossLine,
@@ -410,6 +410,71 @@ export function filletFeatureFromRadius(
   radius: number,
 ): SketchFeature | null {
   const profile = applyLineCornerFillet(feature.sketch.profile, anchorIndex, radius)
+  if (!profile) {
+    return null
+  }
+
+  return {
+    ...feature,
+    kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
+    sketch: {
+      ...feature.sketch,
+      profile,
+    },
+  }
+}
+
+export function chamferDistanceFromPoint(
+  feature: SketchFeature,
+  anchorIndex: number,
+  previewPoint: Point,
+): number | null {
+  const profile = feature.sketch.profile
+  const anchors = profileVertices(profile)
+  const anchorCount = anchors.length
+  const hasIncoming = profile.closed || anchorIndex > 0
+  const hasOutgoing = profile.closed || anchorIndex < anchorCount - 1
+  if (!hasIncoming || !hasOutgoing || anchorIndex < 0 || anchorIndex >= anchorCount) {
+    return null
+  }
+
+  const corner = anchors[anchorIndex]
+  const previousAnchor = anchors[(anchorIndex - 1 + anchorCount) % anchorCount]
+  const nextAnchor = anchors[(anchorIndex + 1) % anchorCount]
+  const incomingDirection = normalizePoint(subtractPoint(previousAnchor, corner))
+  const outgoingDirection = normalizePoint(subtractPoint(nextAnchor, corner))
+  if (!incomingDirection || !outgoingDirection) {
+    return null
+  }
+
+  const incomingIndex = profile.closed ? (anchorIndex - 1 + profile.segments.length) % profile.segments.length : anchorIndex - 1
+  const outgoingIndex = anchorIndex
+  const incomingSegment = profile.segments[incomingIndex]
+  const outgoingSegment = profile.segments[outgoingIndex]
+  if (!incomingSegment || !outgoingSegment || incomingSegment.type !== 'line' || outgoingSegment.type !== 'line') {
+    return null
+  }
+
+  const previewVector = subtractPoint(previewPoint, corner)
+  const distance = Math.max(0, dotPoint(previewVector, incomingDirection), dotPoint(previewVector, outgoingDirection))
+  return distance > 1e-9 ? distance : null
+}
+
+export function chamferFeatureFromPoint(
+  feature: SketchFeature,
+  anchorIndex: number,
+  previewPoint: Point,
+): SketchFeature | null {
+  const distance = chamferDistanceFromPoint(feature, anchorIndex, previewPoint)
+  return distance ? chamferFeatureFromDistance(feature, anchorIndex, distance) : null
+}
+
+export function chamferFeatureFromDistance(
+  feature: SketchFeature,
+  anchorIndex: number,
+  distance: number,
+): SketchFeature | null {
+  const profile = applyLineCornerChamfer(feature.sketch.profile, anchorIndex, distance)
   if (!profile) {
     return null
   }

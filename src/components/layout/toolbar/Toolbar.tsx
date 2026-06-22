@@ -130,12 +130,13 @@ export function Toolbar({
         />
         <SketchEditActions
           enabled={toolbar.sketchCommands.predicates.featureSketchEditActive}
-          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : null}
+          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : toolbar.sketchCommands.sketchEdit.chamfer.active ? 'chamfer' : null}
           onAddPoint={toolbar.sketchCommands.sketchEdit.add_point.onActivate}
           onDeletePoint={toolbar.sketchCommands.sketchEdit.delete_point.onActivate}
           onDeleteSegment={toolbar.sketchCommands.sketchEdit.delete_segment.onActivate}
           onDisconnect={toolbar.sketchCommands.sketchEdit.disconnect.onActivate}
           onFillet={toolbar.sketchCommands.sketchEdit.fillet.onActivate}
+          onChamfer={toolbar.sketchCommands.sketchEdit.chamfer.onActivate}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

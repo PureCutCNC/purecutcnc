@@ -579,7 +579,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || !!pendingOffset
         || !!tapeMeasureRef.current
         || !!pendingDimensionRef.current
-        || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet'))
+        || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
         || isDraggingNodeRef.current
         || constraintPicking
       )
@@ -784,7 +784,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         return
       }
 
-      if (feature && sketchEditTool === 'fillet') {
+      if (feature && (sketchEditTool === 'fillet' || sketchEditTool === 'chamfer')) {
         pendingSketchExtensionRef.current = null
         if (pendingSketchFilletRef.current) {
           sketchEditPreviewRef.current = { point: snapped, mode: 'add_point' }

@@ -15980,6 +15980,204 @@
       "text": null
     },
     {
+      "id": "icon_chamfer",
+      "name": "chamfer_shape_0",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_chamfer_1",
+      "name": "chamfer_shape_0_1",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 20,
+            "y": 5
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 11,
+                "y": 5
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "f0102",
+      "name": "chamfer_shape_1",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_chamfer_1_1",
+      "name": "chamfer_shape_1_1",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 11,
+            "y": 5
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 5,
+                "y": 11
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_chamfer_2",
+      "name": "chamfer_shape_2",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_chamfer_2_1",
+      "name": "chamfer_shape_2_1",
+      "kind": "composite",
+      "folderId": "folder_chamfer",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5,
+            "y": 11
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 5,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
       "id": "icon_chevron-down",
       "name": "chevron-down_shape_0",
       "kind": "composite",
@@ -25137,6 +25335,11 @@
       "id": "folder_link",
       "name": "link",
       "collapsed": true
+    },
+    {
+      "id": "folder_chamfer",
+      "name": "chamfer",
+      "collapsed": true
     }
   ],
   "featureTree": [
@@ -25367,6 +25570,10 @@
     {
       "type": "folder",
       "folderId": "folder_fillet"
+    },
+    {
+      "type": "folder",
+      "folderId": "folder_chamfer"
     },
     {
       "type": "folder",

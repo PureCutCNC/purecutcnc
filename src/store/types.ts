@@ -59,7 +59,7 @@ export interface SketchControlRef {
   t?: number
 }
 
-export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet'
+export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer'
 export type OpenProfileEndpoint = 'start' | 'end'
 
 export type FeatureAlignment =
@@ -408,6 +408,7 @@ export interface ProjectStore {
   deleteFeatureSegment: (featureId: string, segmentIndex: number) => void
   disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
+  chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
   makeUnique: (instanceId: string) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
