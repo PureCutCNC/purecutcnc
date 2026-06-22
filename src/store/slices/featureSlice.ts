@@ -583,6 +583,10 @@ export function createFeatureSlice(
           ...s.project,
           stock,
           features: featuresWithInvalidatedConstraints,
+          featureDefinitions: gcOrphanedDefinitions(
+            featuresWithInvalidatedConstraints,
+            s.project.featureDefinitions,
+          ).definitions,
           featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idsToDelete.has(entry.featureId))),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }))

@@ -48,20 +48,22 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 
 ## Tests
 - `createRestOperation.test.ts` — rest-machining operation creation
-- `openProfileJoin.test.ts` — open-profile joining behavior
-- `profileEdit.test.ts` — profile and segment-editing helper behavior
-- `polygonSplit.test.ts` — polygon splitting
-- `projectStoreTransform.test.ts` — project transform actions
+- `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
+- `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
+- `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
+- `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
+- `featureLifecycle.test.ts` — create→definition, save/load round-trip, undo/redo, delete→GC per FeatureKind
 - `featureReferencesMigration.test.ts` — legacy project migration into definitions and instances
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
+- `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
 - `instanceTransforms.test.ts` — instance transform matrix composition
-- `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
-- `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
-- `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
-- `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
-- `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
 - `linkedConstraintResolve.test.ts` — linked constraint re-solve after definition edit propagates to sibling instances; direct-edit regression; no-drift idempotency
+- `openProfileJoin.test.ts` — open-profile joining behavior
+- `polygonSplit.test.ts` — polygon splitting
+- `profileEdit.test.ts` — profile and segment-editing helper behavior
+- `projectStoreTransform.test.ts` — project transform actions
 - `second_cut_test.ts` — multi-pass cutting behavior
+- `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.
