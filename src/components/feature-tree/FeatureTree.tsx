@@ -104,6 +104,31 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
     const target = dragOverTarget.current
 
+    // P2-1: skip move when dragging a feature out of its grouped folder (store would reject it).
+    // Reordering within the same grouped folder stays allowed.
+    if (dragItem.kind === 'feature') {
+      const sourceFeature = project.features.find((f) => f.id === dragItem.id)
+      const sourceFolder = sourceFeature?.folderId
+        ? project.featureFolders.find((f) => f.id === sourceFeature.folderId)
+        : null
+      if (sourceFeature && sourceFolder?.grouped) {
+        let targetFolder: string | null = null
+        if (target.kind === 'features') {
+          targetFolder = null
+        } else if (target.kind === 'folder') {
+          targetFolder = target.id ?? null
+        } else if (target.kind === 'feature' && target.id) {
+          const targetFeature = project.features.find((f) => f.id === target.id)
+          targetFolder = targetFeature?.folderId ?? null
+        }
+        if (targetFolder !== sourceFeature.folderId) {
+          setDragItem(null)
+          dragOverTarget.current = null
+          return
+        }
+      }
+    }
+
     if (dragItem.kind === 'feature') {
       if (target.kind === 'features') {
         moveFeatureTreeFeature(dragItem.id, null)

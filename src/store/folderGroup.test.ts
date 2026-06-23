@@ -21,7 +21,7 @@
  */
 
 import { newProject, type FeatureFolder, type Project } from '../types/project'
-import { syncFeatureTreeProject } from './helpers/normalize'
+import { projectsEqual, syncFeatureTreeProject } from './helpers/normalize'
 import { useProjectStore } from './projectStore'
 
 // ── Assertion helpers ──────────────────────────────────────────────
@@ -297,6 +297,172 @@ test('after a group selection, a subsequent ungrouped single-feature select rese
     `expected 1 selected feature after ungrouped select, got ${selNormal.selectedFeatureIds.length}`,
   )
   assert(selNormal.selectedFeatureIds[0] === nf1, 'expected nf1 to be selected')
+})
+
+// ============================================================================
+// 4. P2-1 — lock members into a grouped folder
+// ============================================================================
+
+console.log('\nP2-1 — lock members into a grouped folder')
+
+function setupGroupedFolder(): { folderId: string; f1: string; f2: string } {
+  resetStore()
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+  return { folderId, f1, f2 }
+}
+
+test('moveFeatureTreeFeature cannot move feature out of grouped folder to root', () => {
+  const { f1 } = setupGroupedFolder()
+  const before = useProjectStore.getState().project
+
+  useProjectStore.getState().moveFeatureTreeFeature(f1, null) // move to root
+
+  const after = useProjectStore.getState().project
+  const feature = after.features.find((f) => f.id === f1)
+  assert(feature !== undefined, 'feature should still exist')
+  assert(
+    feature.folderId !== null,
+    `expected feature to still be in its folder (folderId !== null), got folderId=${feature.folderId}`,
+  )
+  assert(
+    projectsEqual(before, after),
+    'project state should be unchanged when move is rejected',
+  )
+})
+
+test('moveFeatureTreeFeature cannot move feature from one grouped folder to another folder', () => {
+  const { f1 } = setupGroupedFolder()
+  // Create a second folder
+  useProjectStore.getState().selectProject()
+  const otherFolderId = useProjectStore.getState().addFeatureFolder('features')
+  const before = useProjectStore.getState().project
+
+  useProjectStore.getState().moveFeatureTreeFeature(f1, otherFolderId)
+
+  const after = useProjectStore.getState().project
+  const feature = after.features.find((f) => f.id === f1)
+  assert(feature !== undefined, 'feature should still exist')
+  assert(
+    feature.folderId !== otherFolderId,
+    `expected feature to NOT be in otherFolderId, got folderId=${feature.folderId}`,
+  )
+  assert(
+    projectsEqual(before, after),
+    'project state should be unchanged when move is rejected',
+  )
+})
+
+test('moveFeatureTreeFeature can reorder within the same grouped folder', () => {
+  const { folderId, f1, f2 } = setupGroupedFolder()
+  const state = useProjectStore.getState()
+  // f2 is the second feature; reorder f1 before f2
+  state.moveFeatureTreeFeature(f1, folderId, f2)
+
+  const features = useProjectStore.getState().project.features
+  const f1Index = features.findIndex((f) => f.id === f1)
+  const f2Index = features.findIndex((f) => f.id === f2)
+
+  assert(f1Index !== -1, 'f1 should exist')
+  assert(f2Index !== -1, 'f2 should exist')
+  assert(f1Index < f2Index, `f1 should be before f2 after reorder, got f1=${f1Index}, f2=${f2Index}`)
+})
+
+test('feature in non-grouped folder can still be moved freely (regression)', () => {
+  resetStore()
+  // Create a non-grouped folder (feature goes into it, then we move it out)
+  useProjectStore.getState().addFeatureFolder('features')
+  // grouped stays false (default)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Move to root
+  useProjectStore.getState().moveFeatureTreeFeature(f1, null)
+  const after = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  assert(after !== undefined, 'feature should still exist')
+  assert(after.folderId === null, `expected feature at root, got folderId=${after.folderId}`)
+})
+
+test('moving a feature into a grouped folder succeeds', () => {
+  const { folderId } = setupGroupedFolder()
+  // Create a feature in root
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addRectFeature('RootF', 0, 200, 100, 100, 5)
+  const rootF = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Move rootF into the grouped folder
+  useProjectStore.getState().moveFeatureTreeFeature(rootF, folderId)
+  const after = useProjectStore.getState().project.features.find((f) => f.id === rootF)
+  assert(after !== undefined, 'feature should still exist')
+  assert(after.folderId === folderId, `expected feature in grouped folder, got folderId=${after.folderId}`)
+})
+
+test('assignFeaturesToFolder does not relocate a feature in a grouped folder to a different folder', () => {
+  const { folderId, f1 } = setupGroupedFolder()
+  // Create another folder
+  useProjectStore.getState().selectProject()
+  const otherFolderId = useProjectStore.getState().addFeatureFolder('features')
+
+  // Try to assign f1 (in grouped folder) to otherFolderId
+  useProjectStore.getState().assignFeaturesToFolder([f1], otherFolderId)
+  const after = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  assert(after !== undefined, 'feature should still exist')
+  assert(
+    after.folderId === folderId,
+    `expected feature to still be in original grouped folder, got folderId=${after.folderId}`,
+  )
+})
+
+test('assignFeaturesToFolder still works for non-grouped features (regression)', () => {
+  resetStore()
+  useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  useProjectStore.getState().selectProject()
+  const otherFolderId = useProjectStore.getState().addFeatureFolder('features')
+
+  // Move f1 (non-grouped) to otherFolderId
+  useProjectStore.getState().assignFeaturesToFolder([f1], otherFolderId)
+  const after = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  assert(after !== undefined, 'feature should still exist')
+  assert(after.folderId === otherFolderId, `expected feature in otherFolderId, got folderId=${after.folderId}`)
+})
+
+test('assignFeaturesToFolder moves non-grouped features while skipping grouped ones in mixed batch', () => {
+  const { folderId: groupedFolderId, f1: groupedF1 } = setupGroupedFolder()
+
+  // Create a non-grouped folder with a feature
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('NF1', 0, 200, 100, 100, 5)
+  const normalF = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Create target folder
+  useProjectStore.getState().selectProject()
+  const targetFolderId = useProjectStore.getState().addFeatureFolder('features')
+
+  // Try to move both the grouped feature and the normal feature to targetFolderId
+  useProjectStore.getState().assignFeaturesToFolder([groupedF1, normalF], targetFolderId)
+
+  const after = useProjectStore.getState().project
+  const groupedAfter = after.features.find((f) => f.id === groupedF1)
+  const normalAfter = after.features.find((f) => f.id === normalF)
+
+  assert(groupedAfter !== undefined, 'grouped feature should still exist')
+  assert(
+    groupedAfter.folderId === groupedFolderId,
+    `grouped feature should stay in original folder, got folderId=${groupedAfter.folderId}`,
+  )
+  assert(normalAfter !== undefined, 'normal feature should still exist')
+  assert(
+    normalAfter.folderId === targetFolderId,
+    `normal feature should move to target folder, got folderId=${normalAfter.folderId}`,
+  )
 })
 
 // ============================================================================
