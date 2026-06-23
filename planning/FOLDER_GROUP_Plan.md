@@ -57,6 +57,15 @@ Dispatched one at a time; each is reviewed before the next starts.
 - **Slice 3 — group transforms (shared pivot).** Fan move/resize/rotate/mirror across members with a single shared-pivot `M_group`, composed onto each member's per-instance `transform` only (never the `FeatureDefinition`). Helper in `src/store/helpers/instanceTransforms.ts`. Unit tests for relative-layout preservation + the feature-reference invariant.
 - **Slice 4 — group copy + folder-row toggle UI.** Fan instance-aware copy into a new `grouped: true` folder; add the "Group" toggle affordance to the folder row.
 
+## Phase 2 — container behaviors (post-initial-testing)
+
+A grouped folder should behave like a real CAD group container. Added after user testing of the initial feature.
+
+- **P2-1 — lock members into a grouped folder.** A feature in a grouped folder cannot be moved *out* (to another folder or root); only reordering *within* the folder is allowed. Enforce at the store level in `moveFeatureTreeFeature` and `assignFeaturesToFolder` (reject cross-folder moves out of a grouped folder), have feature-tree drag-drop (`handleDrop`) respect it, and disable the folder dropdown in `PropertiesPanel` (`renderFolderSelect`) when the selection is in a grouped folder. Dragging a feature *into* a grouped folder (already works) makes it part of the group — keep that.
+- **P2-2 — context-menu "Group" and "Add to folder".**
+  - **Group** (shown only when >1 feature is selected): create a new folder, move the selected features into it, toggle `grouped` on, and select the new group. New composite store action.
+  - **Add to folder**: a submenu (mirroring the existing Quick-Ops submenu pattern in `FeatureContextMenu.tsx`) listing existing folders + a "Create new…" entry; moves the selected feature(s) into the chosen/new folder. Disabled for features already in a grouped folder (consistent with P2-1).
+
 ## Open questions / risks
 
 - **Distinct-highlight visual** — exact treatment (single group bbox vs accent per-feature) to be decided during implementation; data marker is in scope regardless.
