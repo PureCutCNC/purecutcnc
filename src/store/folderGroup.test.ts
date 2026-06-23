@@ -466,6 +466,184 @@ test('assignFeaturesToFolder moves non-grouped features while skipping grouped o
 })
 
 // ============================================================================
+// 5. P2-2 — groupSelectedFeaturesIntoNewFolder
+// ============================================================================
+
+console.log('\nP2-2 — groupSelectedFeaturesIntoNewFolder')
+
+test('groupSelectedFeaturesIntoNewFolder creates a new grouped folder with selected features', () => {
+  resetStore()
+  // Create features at root
+  useProjectStore.getState().addRectFeature('A', 0, 0, 100, 100, 5)
+  const fA = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('B', 200, 0, 100, 100, 5)
+  const fB = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Select both features
+  useProjectStore.getState().selectFeatures([fA, fB])
+
+  const state = useProjectStore.getState()
+  const historyLengthBefore = state.history.past.length
+  const folderId = state.groupSelectedFeaturesIntoNewFolder()
+
+  assert(folderId !== '', 'should return a non-empty folder id')
+  const after = useProjectStore.getState()
+
+  // Folder created
+  const folder = after.project.featureFolders.find((f) => f.id === folderId)
+  assert(folder !== undefined, 'folder should exist')
+  assert(folder.grouped === true, `expected grouped === true, got ${folder.grouped}`)
+  assert(folder.section === 'features', `expected section features, got ${folder.section}`)
+
+  // Features in folder
+  const fA2 = after.project.features.find((f) => f.id === fA)
+  const fB2 = after.project.features.find((f) => f.id === fB)
+  assert(fA2?.folderId === folderId, `fA should be in folder, got folderId=${fA2?.folderId}`)
+  assert(fB2?.folderId === folderId, `fB should be in folder, got folderId=${fB2?.folderId}`)
+
+  // Selection
+  assert(
+    after.selection.selectedFeatureIds.length === 2,
+    `expected 2 selected features, got ${after.selection.selectedFeatureIds.length}`,
+  )
+  assert(after.selection.selectedFeatureIds.includes(fA), 'fA should be selected')
+  assert(after.selection.selectedFeatureIds.includes(fB), 'fB should be selected')
+  assert(
+    after.selection.groupFolderId === folderId,
+    `expected groupFolderId === ${folderId}, got ${after.selection.groupFolderId}`,
+  )
+  assert(
+    after.selection.selectedNode?.type === 'folder' && after.selection.selectedNode.folderId === folderId,
+    `expected selectedNode to be folder ${folderId}, got ${JSON.stringify(after.selection.selectedNode)}`,
+  )
+
+  // Single history entry
+  assert(
+    after.history.past.length === historyLengthBefore + 1,
+    `expected ${historyLengthBefore + 1} history entries, got ${after.history.past.length}`,
+  )
+})
+
+test('groupSelectedFeaturesIntoNewFolder returns empty string when < 2 features selected', () => {
+  resetStore()
+  useProjectStore.getState().addRectFeature('A', 0, 0, 100, 100, 5)
+
+  const state = useProjectStore.getState()
+  const historyBefore = state.history.past.length
+  const result = state.groupSelectedFeaturesIntoNewFolder()
+
+  assert(result === '', `expected empty string, got "${result}"`)
+  assert(
+    useProjectStore.getState().history.past.length === historyBefore,
+    'history should not change',
+  )
+})
+
+test('groupSelectedFeaturesIntoNewFolder produces a unique folder name', () => {
+  resetStore()
+  useProjectStore.getState().addFeatureFolder('features') // Folder 1
+  useProjectStore.getState().addRectFeature('A', 0, 0, 100, 100, 5)
+  const fA = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addRectFeature('B', 200, 0, 100, 100, 5)
+  const fB = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Select both features
+  useProjectStore.getState().selectFeatures([fA, fB])
+
+  const folderId = useProjectStore.getState().groupSelectedFeaturesIntoNewFolder()
+  const folder = useProjectStore.getState().project.featureFolders.find((f) => f.id === folderId)
+  assert(folder !== undefined, 'folder should exist')
+  assert(folder.name.startsWith('Group '), `expected name to start with "Group ", got "${folder.name}"`)
+})
+
+// ============================================================================
+// 6. P2-2 — Add to folder path
+// ============================================================================
+
+console.log('\nP2-2 — Add to folder path')
+
+test('assignFeaturesToFolder moves non-grouped features to an existing folder', () => {
+  resetStore()
+  useProjectStore.getState().addFeatureFolder('features')
+  const folderId = useProjectStore.getState().selection.selectedNode?.type === 'folder'
+    ? (useProjectStore.getState().selection.selectedNode as { folderId: string }).folderId
+    : ''
+  assert(folderId !== '', 'should have selected the new folder')
+
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  useProjectStore.getState().assignFeaturesToFolder([f1, f2], folderId)
+
+  const f1After = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  const f2After = useProjectStore.getState().project.features.find((f) => f.id === f2)
+  assert(f1After?.folderId === folderId, `f1 should be in folder, got ${f1After?.folderId}`)
+  assert(f2After?.folderId === folderId, `f2 should be in folder, got ${f2After?.folderId}`)
+})
+
+test('assignFeaturesToFolder into a grouped folder succeeds (joins the group)', () => {
+  resetStore()
+  // Create a grouped folder
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('GF1', 0, 0, 100, 100, 5)
+
+  // Create a root feature
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addRectFeature('RF1', 200, 0, 100, 100, 5)
+  const rf1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Move root feature into the grouped folder
+  useProjectStore.getState().assignFeaturesToFolder([rf1], folderId)
+
+  const rf1After = useProjectStore.getState().project.features.find((f) => f.id === rf1)
+  assert(rf1After?.folderId === folderId, `rf1 should be in grouped folder, got folderId=${rf1After?.folderId}`)
+})
+
+test('assignFeaturesToFolder refuses to move features out of a grouped folder (P2-1 regression)', () => {
+  // Setup from existing P2-1 test
+  resetStore()
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('GF1', 0, 0, 100, 100, 5)
+  const gf1 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Create another folder
+  useProjectStore.getState().selectProject()
+  const otherFolderId = useProjectStore.getState().addFeatureFolder('features')
+
+  // Try to move gf1 (in grouped folder) to otherFolderId
+  useProjectStore.getState().assignFeaturesToFolder([gf1], otherFolderId)
+
+  const gf1After = useProjectStore.getState().project.features.find((f) => f.id === gf1)
+  assert(gf1After !== undefined, 'feature should still exist')
+  assert(
+    gf1After.folderId === folderId,
+    `feature should still be in original grouped folder, got folderId=${gf1After.folderId}`,
+  )
+})
+
+test('creating a new folder and assigning features via addFeatureFolder + assignFeaturesToFolder works', () => {
+  resetStore()
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  const newFolderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().assignFeaturesToFolder([f1, f2], newFolderId)
+
+  const f1After = useProjectStore.getState().project.features.find((f) => f.id === f1)
+  const f2After = useProjectStore.getState().project.features.find((f) => f.id === f2)
+  assert(f1After?.folderId === newFolderId, `f1 should be in new folder, got folderId=${f1After?.folderId}`)
+  assert(f2After?.folderId === newFolderId, `f2 should be in new folder, got folderId=${f2After?.folderId}`)
+})
+
+// ============================================================================
 // Summary
 // ============================================================================
 

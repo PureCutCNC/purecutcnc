@@ -326,6 +326,7 @@ export interface ProjectStore {
   toggleRegionFolderVisible: (folderId: string) => void
   selectFolderFeatures: (folderId: string) => void
   toggleFolderGrouped: (folderId: string) => void
+  groupSelectedFeaturesIntoNewFolder: () => string
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
   importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]

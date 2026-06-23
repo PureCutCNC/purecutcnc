@@ -87,6 +87,7 @@ export type FeatureSlice = Pick<
   | 'moveFeatureTreeFeature'
   | 'reorderFeatureTreeEntries'
   | 'setAllFeaturesVisible'
+  | 'groupSelectedFeaturesIntoNewFolder'
   | 'addRectFeature'
   | 'addCircleFeature'
   | 'addEllipseFeature'
@@ -344,6 +345,61 @@ export function createFeatureSlice(
           },
         }
       }),
+
+    groupSelectedFeaturesIntoNewFolder: () => {
+      const state = get()
+      const selectedIds = state.selection.selectedFeatureIds
+      if (selectedIds.length < 2) {
+        return ''
+      }
+      const nextId = nextUniqueGeneratedId(state.project, 'fd')
+      const existingSectionFolders = state.project.featureFolders.filter(
+        (folder) => (folder.section ?? 'features') === 'features',
+      )
+      const folder: FeatureFolder = {
+        id: nextId,
+        name: `Group ${existingSectionFolders.length + 1}`,
+        collapsed: false,
+        section: 'features',
+        grouped: true,
+      }
+
+      set((s) => {
+        const idSet = new Set(selectedIds)
+        const nextProject = syncFeatureTreeProject({
+          ...s.project,
+          featureFolders: [...s.project.featureFolders, folder],
+          features: s.project.features.map((feature) => (
+            idSet.has(feature.id) ? { ...feature, folderId: nextId } : feature
+          )),
+          featureTree: [
+            ...s.project.featureTree.filter((entry) => !(entry.type === 'feature' && idSet.has(entry.featureId))),
+            { type: 'folder' as const, folderId: nextId },
+          ],
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        })
+        return {
+          project: nextProject,
+          pendingShapeAction: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: selectedIds[selectedIds.length - 1],
+            selectedFeatureIds: [...selectedIds],
+            selectedNode: { type: 'folder', folderId: nextId },
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: nextId,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      })
+
+      return nextId
+    },
 
     setAllFeaturesVisible: (visible) =>
       set((s) => {

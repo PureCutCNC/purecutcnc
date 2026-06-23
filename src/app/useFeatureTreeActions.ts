@@ -57,6 +57,9 @@ type FeatureTreeActionStore = Pick<
   | 'setStockSourceFeature'
   | 'addOperation'
   | 'makeUnique'
+  | 'groupSelectedFeaturesIntoNewFolder'
+  | 'assignFeaturesToFolder'
+  | 'addFeatureFolder'
   | 'project'
 >
 
@@ -80,6 +83,9 @@ export interface FeatureTreeActions {
   useAsStock: (featureId: string) => void
   deleteFeatures: (featureIds: string[]) => void
   createQuickOperation: (featureId: string, quickOp: QuickOperation) => Promise<void>
+  groupFeatures: () => void
+  assignToFolder: (featureIds: string[], folderId: string) => void
+  createNewFolderAndAssign: (featureIds: string[]) => void
   editTab: (tabId: string) => void
   copyTab: (tabId: string) => void
   moveTab: (tabId: string) => void
@@ -122,6 +128,9 @@ export function createFeatureTreeActions({
     setStockSourceFeature,
     addOperation,
     makeUnique: storeMakeUnique,
+    groupSelectedFeaturesIntoNewFolder,
+    assignFeaturesToFolder,
+    addFeatureFolder,
     project,
   } = storeActions
 
@@ -199,6 +208,21 @@ export function createFeatureTreeActions({
       setRightTab('operations')
       onSelectedOperationIdChange(operationId)
     },
+    groupFeatures: () => {
+      groupSelectedFeaturesIntoNewFolder()
+      closeTreeContextMenu()
+    },
+    assignToFolder: (featureIds: string[], folderId: string) => {
+      assignFeaturesToFolder(featureIds, folderId)
+      closeTreeContextMenu()
+    },
+    createNewFolderAndAssign: (featureIds: string[]) => {
+      const folderId = addFeatureFolder('features')
+      if (folderId) {
+        assignFeaturesToFolder(featureIds, folderId)
+      }
+      closeTreeContextMenu()
+    },
     editTab: (tabId: string) => {
       enterTabEdit(tabId)
       setCenterTab('sketch')
@@ -263,6 +287,9 @@ export function useFeatureTreeActions({
     setStockSourceFeature,
     addOperation,
     makeUnique: storeMakeUnique,
+    groupSelectedFeaturesIntoNewFolder,
+    assignFeaturesToFolder,
+    addFeatureFolder,
     project,
   } = useProjectStore()
 
@@ -296,10 +323,15 @@ export function useFeatureTreeActions({
       setStockSourceFeature,
       addOperation,
       makeUnique: storeMakeUnique,
+      groupSelectedFeaturesIntoNewFolder,
+      assignFeaturesToFolder,
+      addFeatureFolder,
       project,
     },
   }), [
+    addFeatureFolder,
     addOperation,
+    assignFeaturesToFolder,
     beginConstraint,
     closeTreeContextMenu,
     deleteClamp,
@@ -308,6 +340,7 @@ export function useFeatureTreeActions({
     enterClampEdit,
     enterSketchEdit,
     enterTabEdit,
+    groupSelectedFeaturesIntoNewFolder,
     onSelectedOperationIdChange,
     project,
     selectFeature,

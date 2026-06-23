@@ -41,6 +41,17 @@ export interface QuickOpsSubmenuPosition {
   side: 'right' | 'left'
 }
 
+export interface FolderSubmenuPosition {
+  top: number
+  left: number
+  side: 'right' | 'left'
+}
+
+export interface MenuFolderEntry {
+  id: string
+  name: string
+}
+
 const CONTEXT_MENU_VIEWPORT_PADDING = 8
 const CONTEXT_MENU_INITIAL_WIDTH = 188
 const CONTEXT_MENU_INITIAL_HEIGHT = 300
@@ -78,6 +89,10 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   menuQuickOperations: QuickOperation[]
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   setQuickOpsSubmenu: Dispatch<SetStateAction<QuickOpsSubmenuPosition | null>>
+  addToFolderSubmenu: FolderSubmenuPosition | null
+  setAddToFolderSubmenu: Dispatch<SetStateAction<FolderSubmenuPosition | null>>
+  menuFeatureFolders: MenuFolderEntry[]
+  menuSelectionInGroupedFolder: boolean
   menuHasMultipleSelection: boolean
   menuCanUseAsStock: boolean
   menuHasLockedSelection: boolean
@@ -87,10 +102,12 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   openTabContextMenu: (tabId: string, x: number, y: number) => void
   closeTreeContextMenu: () => void
   openQuickOpsSubmenu: (trigger: HTMLElement) => void
+  openAddToFolderSubmenu: (trigger: HTMLElement) => void
 } {
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [quickOpsSubmenu, setQuickOpsSubmenu] = useState<QuickOpsSubmenuPosition | null>(null)
+  const [addToFolderSubmenu, setAddToFolderSubmenu] = useState<FolderSubmenuPosition | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const menuFeature = useMemo(
@@ -160,6 +177,16 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     })
   }, [])
 
+  const openAddToFolderSubmenu = useCallback((trigger: HTMLElement) => {
+    const rect = trigger.getBoundingClientRect()
+    const openLeft = rect.right + 200 > window.innerWidth
+    setAddToFolderSubmenu({
+      top: rect.top,
+      left: openLeft ? rect.left : rect.right,
+      side: openLeft ? 'left' : 'right',
+    })
+  }, [])
+
   useOutsideDismiss({
     open: treeContextMenu !== null,
     refs: menuRef,
@@ -186,6 +213,27 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     const defId = getDefinitionId(menuFeature)
     return getInstanceIdsForDefinition(project, defId).length > 1
   }, [treeContextMenu, menuFeature, project])
+
+  const menuFeatureFolders = useMemo<MenuFolderEntry[]>(
+    () =>
+      treeContextMenu?.entityType === 'feature'
+        ? project.featureFolders
+            .filter((folder) => (folder.section ?? 'features') === 'features')
+            .map((folder) => ({ id: folder.id, name: folder.name }))
+        : [],
+    [treeContextMenu, project.featureFolders],
+  )
+
+  const menuSelectionInGroupedFolder = useMemo(
+    () =>
+      (treeContextMenu?.entityType === 'feature' && treeContextMenu.ids.some((id) => {
+        const feature = project.features.find((f) => f.id === id)
+        if (!feature || !feature.folderId) return false
+        const folder = project.featureFolders.find((f) => f.id === feature.folderId)
+        return folder?.grouped === true
+      })) ?? false,
+    [treeContextMenu, project.features, project.featureFolders],
+  )
 
   const fallbackMenuPosition = treeContextMenu && typeof window !== 'undefined'
     ? clampMenuPosition(
@@ -251,6 +299,10 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     menuQuickOperations,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
+    addToFolderSubmenu,
+    setAddToFolderSubmenu,
+    menuFeatureFolders,
+    menuSelectionInGroupedFolder,
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
@@ -260,5 +312,6 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     openTabContextMenu,
     closeTreeContextMenu,
     openQuickOpsSubmenu,
+    openAddToFolderSubmenu,
   }
 }

@@ -17,7 +17,7 @@
 import type { RefObject } from 'react'
 import type { QuickOperation } from '../cam/operationValidity'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
-import type { MenuPosition, QuickOpsSubmenuPosition } from '../../app/useTreeContextMenu'
+import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
 import type { Clamp, SketchFeature, Tab } from '../../types/project'
 
 interface FeatureContextMenuProps {
@@ -32,12 +32,17 @@ interface FeatureContextMenuProps {
   menuFeatureHasLinkedInstances: boolean
   menuQuickOperations: QuickOperation[]
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
+  menuFeatureFolders: MenuFolderEntry[]
+  addToFolderSubmenu: FolderSubmenuPosition | null
+  menuSelectionInGroupedFolder: boolean
   tabletShell: boolean
   primaryId: string | null
   ids: readonly string[]
   actions: FeatureTreeActions
   onOpenQuickOpsSubmenu: (trigger: HTMLElement) => void
   onCloseQuickOpsSubmenu: () => void
+  onOpenAddToFolderSubmenu: (trigger: HTMLElement) => void
+  onCloseAddToFolderSubmenu: () => void
 }
 
 export function FeatureContextMenu({
@@ -52,12 +57,17 @@ export function FeatureContextMenu({
   menuFeatureHasLinkedInstances,
   menuQuickOperations,
   quickOpsSubmenu,
+  menuFeatureFolders,
+  addToFolderSubmenu,
+  menuSelectionInGroupedFolder,
   tabletShell,
   primaryId,
   ids,
   actions,
   onOpenQuickOpsSubmenu,
   onCloseQuickOpsSubmenu,
+  onOpenAddToFolderSubmenu,
+  onCloseAddToFolderSubmenu,
 }: FeatureContextMenuProps) {
   if (!position || !primaryId || (!menuFeature && !menuTab && !menuClamp)) {
     return null
@@ -138,6 +148,59 @@ export function FeatureContextMenu({
               <div className="feature-context-menu__separator" />
             </>
           ) : null}
+          {!menuSelectionInGroupedFolder ? (
+            <>
+              <div
+                className="feature-context-menu__submenu-host"
+                onMouseEnter={tabletShell ? undefined : (event) => onOpenAddToFolderSubmenu(event.currentTarget)}
+                onMouseLeave={tabletShell ? undefined : onCloseAddToFolderSubmenu}
+              >
+                <button
+                  className="feature-context-menu__item feature-context-menu__item--submenu"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={addToFolderSubmenu !== null}
+                  onClick={(event) => {
+                    if (tabletShell && addToFolderSubmenu) {
+                      onCloseAddToFolderSubmenu()
+                    } else {
+                      onOpenAddToFolderSubmenu(event.currentTarget)
+                    }
+                  }}
+                >
+                  <span>Add to folder</span>
+                  <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
+                </button>
+                {addToFolderSubmenu ? (
+                  <div
+                    className={`feature-context-menu feature-context-menu__submenu feature-context-menu__submenu--${addToFolderSubmenu.side}`}
+                    style={{ top: addToFolderSubmenu.top, left: addToFolderSubmenu.left }}
+                    onContextMenu={(event) => event.preventDefault()}
+                  >
+                    {menuFeatureFolders.map((folder) => (
+                      <button
+                        key={folder.id}
+                        className="feature-context-menu__item"
+                        type="button"
+                        onClick={() => actions.assignToFolder([...ids], folder.id)}
+                      >
+                        {folder.name}
+                      </button>
+                    ))}
+                    <div className="feature-context-menu__separator" />
+                    <button
+                      className="feature-context-menu__item"
+                      type="button"
+                      onClick={() => actions.createNewFolderAndAssign([...ids])}
+                    >
+                      Create new…
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="feature-context-menu__separator" />
+            </>
+          ) : null}
           <button
             className="feature-context-menu__item"
             type="button"
@@ -200,6 +263,16 @@ export function FeatureContextMenu({
             disabled={menuHasLockedSelection}
           >
             Offset
+          </button>
+          <div className="feature-context-menu__separator" />
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.groupFeatures()}
+            disabled={!menuHasMultipleSelection}
+            title={!menuHasMultipleSelection ? 'Select two or more features to group' : undefined}
+          >
+            Group
           </button>
           <div className="feature-context-menu__separator" />
           <button
