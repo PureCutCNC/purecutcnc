@@ -755,6 +755,65 @@ test('creating a new folder and assigning features via addFeatureFolder + assign
 })
 
 // ============================================================================
+// 6. selectFeature expandGroup parameter
+// ============================================================================
+
+console.log('\nselectFeature expandGroup parameter')
+
+test('selectFeature with expandGroup=false on a grouped-folder member selects only that feature', () => {
+  resetStore()
+
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+
+  // Deselect so we can test single-feature select
+  useProjectStore.getState().selectProject()
+
+  // Select f1 with expandGroup=false — should select only f1, no groupFolderId
+  useProjectStore.getState().selectFeature(f1, false, false)
+  const sel = useProjectStore.getState().selection
+
+  assert(
+    sel.selectedFeatureIds.length === 1,
+    `expected 1 selected feature, got ${sel.selectedFeatureIds.length}`,
+  )
+  assert(sel.selectedFeatureIds[0] === f1, `expected f1 selected, got ${sel.selectedFeatureIds[0]}`)
+  assert(sel.groupFolderId === null, `expected groupFolderId === null, got ${sel.groupFolderId}`)
+})
+
+test('selectFeature with default expandGroup on a grouped-folder member still expands to whole group (canvas regression guard)', () => {
+  resetStore()
+
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Deselect so we can test single-feature select
+  useProjectStore.getState().selectProject()
+
+  // Select f1 with default expandGroup=true (omitted) — must still expand to entire group
+  useProjectStore.getState().selectFeature(f1, false)
+  const sel = useProjectStore.getState().selection
+
+  assert(
+    sel.selectedFeatureIds.length === 2,
+    `expected 2 selected features, got ${sel.selectedFeatureIds.length}`,
+  )
+  assert(sel.selectedFeatureIds.includes(f1), 'f1 should be selected')
+  assert(sel.selectedFeatureIds.includes(f2), 'f2 should be selected')
+  assert(
+    sel.groupFolderId === folderId,
+    `expected groupFolderId === ${folderId}, got ${sel.groupFolderId}`,
+  )
+})
+
+// ============================================================================
 // Summary
 // ============================================================================
 

@@ -159,7 +159,7 @@ export function createSelectionSlice(
     selection: emptySelection(),
     sketchEditSession: null,
 
-    selectFeature: (id, additive = false) =>
+    selectFeature: (id, additive = false, expandGroup = true) =>
       set((s) => {
         const joinMode = s.pendingShapeAction?.kind === 'join'
         const cutMode = s.pendingShapeAction?.kind === 'cut'
@@ -341,7 +341,7 @@ export function createSelectionSlice(
                     const feature = featureById(s.project, id)
                     const folderId = feature?.folderId
                     const folder = folderId ? s.project.featureFolders.find((f) => f.id === folderId) : undefined
-                    if (folder && (folder.grouped ?? false)) {
+                    if (expandGroup && folder && (folder.grouped ?? false)) {
                       const ids = s.project.features
                         .filter((f) => f.folderId === folderId)
                         .map((f) => f.id)

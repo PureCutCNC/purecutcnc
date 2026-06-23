@@ -379,7 +379,7 @@ export interface ProjectStore {
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void
 
-  selectFeature: (id: string | null, additive?: boolean) => void
+  selectFeature: (id: string | null, additive?: boolean, expandGroup?: boolean) => void
   selectFeatures: (ids: string[]) => void
   selectProject: () => void
   selectGrid: () => void

@@ -296,7 +296,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         operation={feature.operation}
         isFirstFeature={index === 0}
         linkedCount={linkedCount}
-        onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
+        onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
         onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
@@ -308,13 +308,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onContextMenu={(event) => {
           event.preventDefault()
           if (!selection.selectedFeatureIds.includes(feature.id)) {
-            selectFeature(feature.id)
+            selectFeature(feature.id, false, false)
           }
           onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
         }}
         onMoreMenu={tabletShell && onFeatureContextMenu ? (x, y) => {
           if (!selection.selectedFeatureIds.includes(feature.id)) {
-            selectFeature(feature.id)
+            selectFeature(feature.id, false, false)
           }
           onFeatureContextMenu(feature.id, x, y)
         } : undefined}
@@ -444,7 +444,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
+                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
@@ -515,7 +517,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
+                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
@@ -668,6 +672,8 @@ interface TreeRowProps {
   onMoreMenu?: (x: number, y: number) => void
   onMoveUp?: () => void
   onMoveDown?: () => void
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
@@ -704,6 +710,8 @@ function TreeRow({
   onMoreMenu,
   onMoveUp,
   onMoveDown,
+  collapsed,
+  onToggleCollapsed,
   draggable,
   onDragStart,
   onDragEnd,
@@ -748,9 +756,22 @@ function TreeRow({
       onContextMenu={onContextMenu}
       style={{ paddingLeft: `${depth * 8}px` }}
     >
-      <span className={`tree-branch tree-branch--${kind}`} aria-hidden="true">
+      <span className={`tree-branch tree-branch--${kind}`}>
         {kind === 'folder' ? (
-          <Icon id="folder" className="tree-icon--folder" />
+          <>
+            {onToggleCollapsed ? (
+              <button
+                type="button"
+                className="tree-folder-chevron"
+                onClick={(e) => { e.stopPropagation(); onToggleCollapsed() }}
+                aria-label={collapsed ? 'Expand folder' : 'Collapse folder'}
+                tabIndex={0}
+              >
+                <Icon id="chevron-down" className={`tree-chevron-icon${collapsed ? ' tree-chevron-icon--collapsed' : ''}`} size={14} />
+              </button>
+            ) : null}
+            <Icon id="folder" className="tree-icon--folder" />
+          </>
         ) : (
           kind === 'project'
             ? 'proj'
