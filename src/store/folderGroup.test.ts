@@ -165,6 +165,117 @@ test('toggleFolderGrouped on unknown folder is a no-op', () => {
 })
 
 // ============================================================================
+// 2b. toggleFolderGrouped — groupFolderId reconciliation
+// ============================================================================
+
+console.log('\ntoggleFolderGrouped — groupFolderId reconciliation')
+
+test('toggling a grouped folder OFF while it is the active group selection clears groupFolderId to null', () => {
+  resetStore()
+
+  // Create a grouped folder with features
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Deselect, then select one feature to trigger group expansion
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().selectFeature(f1, false)
+
+  // Verify groupFolderId is set
+  const selBefore = useProjectStore.getState().selection
+  assert(
+    selBefore.groupFolderId === folderId,
+    `expected groupFolderId === ${folderId}, got ${selBefore.groupFolderId}`,
+  )
+
+  // Toggle grouping OFF
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+
+  const selAfter = useProjectStore.getState().selection
+  assert(
+    selAfter.groupFolderId === null,
+    `expected groupFolderId === null after turning grouping off, got ${selAfter.groupFolderId}`,
+  )
+  // grouped flag is flipped
+  const folder = useProjectStore.getState().project.featureFolders.find((f) => f.id === folderId)
+  assert(folder?.grouped === false, `expected folder grouped === false, got ${folder?.grouped}`)
+  // selection is otherwise unchanged
+  assert(selAfter.selectedFeatureIds.includes(f1), 'f1 should still be selected')
+  assert(selAfter.selectedFeatureIds.includes(f2), 'f2 should still be selected')
+})
+
+test('toggling a folder ON while its members are the current selection sets groupFolderId to that folder', () => {
+  resetStore()
+
+  // Create a non-grouped folder with features
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  // grouped stays false (default)
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  const f1 = useProjectStore.getState().selection.selectedFeatureId!
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+  const f2 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Select both features in the folder
+  useProjectStore.getState().selectFeatures([f1, f2])
+  const selBefore = useProjectStore.getState().selection
+  assert(
+    selBefore.groupFolderId === (undefined as unknown) || selBefore.groupFolderId === null,
+    `expected groupFolderId to be undefined/null before toggle, got ${selBefore.groupFolderId}`,
+  )
+
+  // Toggle grouping ON
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+
+  const selAfter = useProjectStore.getState().selection
+  assert(
+    selAfter.groupFolderId === folderId,
+    `expected groupFolderId === ${folderId} after turning grouping on, got ${selAfter.groupFolderId}`,
+  )
+  // grouped flag is flipped
+  const folder = useProjectStore.getState().project.featureFolders.find((f) => f.id === folderId)
+  assert(folder?.grouped === true, `expected folder grouped === true, got ${folder?.grouped}`)
+  // selection is otherwise unchanged
+  assert(selAfter.selectedFeatureIds.includes(f1), 'f1 should still be selected')
+  assert(selAfter.selectedFeatureIds.includes(f2), 'f2 should still be selected')
+})
+
+test('toggling a folder whose members are NOT the current selection does not change groupFolderId', () => {
+  resetStore()
+
+  // Create a folder with features
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('F1', 0, 0, 100, 100, 5)
+  useProjectStore.getState().addRectFeature('F2', 200, 0, 100, 100, 5)
+
+  // Create a second folder with a feature (not selected)
+  useProjectStore.getState().selectProject()
+  useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().addRectFeature('F3', 0, 200, 100, 100, 5)
+  const f3 = useProjectStore.getState().selection.selectedFeatureId!
+
+  // Select only the feature in the other folder
+  useProjectStore.getState().selectFeature(f3, false)
+  const selBefore = useProjectStore.getState().selection
+  const initialGroupFolderId = selBefore.groupFolderId
+
+  // Toggle grouping ON for the folder whose members are NOT selected
+  useProjectStore.getState().toggleFolderGrouped(folderId)
+
+  const selAfter = useProjectStore.getState().selection
+  assert(
+    selAfter.groupFolderId === (initialGroupFolderId ?? null),
+    `expected groupFolderId to remain ${initialGroupFolderId}, got ${selAfter.groupFolderId}`,
+  )
+  // grouped flag is still flipped
+  const folder = useProjectStore.getState().project.featureFolders.find((f) => f.id === folderId)
+  assert(folder?.grouped === true, `expected folder grouped === true, got ${folder?.grouped}`)
+})
+
+// ============================================================================
 // 3. Slice 2a — group selection (store only)
 // ============================================================================
 

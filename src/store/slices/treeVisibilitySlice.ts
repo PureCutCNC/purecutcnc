@@ -145,7 +145,27 @@ export function createTreeVisibilitySlice(
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
-      return {
+      // Reconcile selection.groupFolderId with the new grouped state.
+      let nextGroupFolderId = s.selection.groupFolderId
+      if (!nextGrouped && s.selection.groupFolderId === folderId) {
+        // Folder is being turned OFF while it was the active group selection.
+        nextGroupFolderId = null
+      } else if (nextGrouped) {
+        // Folder is being turned ON; if every currently selected feature belongs
+        // to this folder, set the group highlight.
+        const selectedIds = s.selection.selectedFeatureIds
+        if (selectedIds.length > 0) {
+          const allInFolder = selectedIds.every((id) => {
+            const feat = s.project.features.find((f) => f.id === id)
+            return feat !== undefined && feat.folderId === folderId
+          })
+          if (allInFolder) {
+            nextGroupFolderId = folderId
+          }
+        }
+      }
+      const selectionChanged = nextGroupFolderId !== s.selection.groupFolderId
+      const base = {
         project: nextProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
@@ -153,6 +173,9 @@ export function createTreeVisibilitySlice(
           transactionStart: null,
         },
       }
+      return selectionChanged
+        ? { ...base, selection: { ...s.selection, groupFolderId: nextGroupFolderId } }
+        : base
     }),
 
   }
