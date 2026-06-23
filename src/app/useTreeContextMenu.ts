@@ -93,6 +93,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   setAddToFolderSubmenu: Dispatch<SetStateAction<FolderSubmenuPosition | null>>
   menuFeatureFolders: MenuFolderEntry[]
   menuSelectionInGroupedFolder: boolean
+  menuSelectionIsGroup: boolean
   menuHasMultipleSelection: boolean
   menuCanUseAsStock: boolean
   menuHasLockedSelection: boolean
@@ -235,6 +236,10 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     [treeContextMenu, project.features, project.featureFolders],
   )
 
+  const selection = useProjectStore((s) => s.selection)
+  const menuSelectionIsGroup =
+    treeContextMenu?.entityType === 'feature' && selection.groupFolderId != null
+
   const fallbackMenuPosition = treeContextMenu && typeof window !== 'undefined'
     ? clampMenuPosition(
         treeContextMenu.x,
@@ -303,6 +308,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     setAddToFolderSubmenu,
     menuFeatureFolders,
     menuSelectionInGroupedFolder,
+    menuSelectionIsGroup,
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,

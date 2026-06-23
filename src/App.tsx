@@ -119,6 +119,7 @@ function App() {
     setAddToFolderSubmenu,
     menuFeatureFolders,
     menuSelectionInGroupedFolder,
+    menuSelectionIsGroup,
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
@@ -512,6 +513,7 @@ function App() {
         menuFeatureFolders={menuFeatureFolders}
         addToFolderSubmenu={addToFolderSubmenu}
         menuSelectionInGroupedFolder={menuSelectionInGroupedFolder}
+        menuSelectionIsGroup={menuSelectionIsGroup}
         tabletShell={tabletShell}
         primaryId={treeContextMenu?.primaryId ?? null}
         ids={treeContextMenu?.ids ?? []}

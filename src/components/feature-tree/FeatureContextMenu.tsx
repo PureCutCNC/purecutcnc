@@ -35,6 +35,7 @@ interface FeatureContextMenuProps {
   menuFeatureFolders: MenuFolderEntry[]
   addToFolderSubmenu: FolderSubmenuPosition | null
   menuSelectionInGroupedFolder: boolean
+  menuSelectionIsGroup: boolean
   tabletShell: boolean
   primaryId: string | null
   ids: readonly string[]
@@ -60,6 +61,7 @@ export function FeatureContextMenu({
   menuFeatureFolders,
   addToFolderSubmenu,
   menuSelectionInGroupedFolder,
+  menuSelectionIsGroup,
   tabletShell,
   primaryId,
   ids,
@@ -148,6 +150,68 @@ export function FeatureContextMenu({
               <div className="feature-context-menu__separator" />
             </>
           ) : null}
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.editSketch(menuFeature.id)}
+          >
+            Edit Sketch
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.constraint(menuFeature.id)}
+            disabled={menuHasMultipleSelection || menuHasLockedSelection}
+          >
+            Add Constraint
+          </button>
+          <div className="feature-context-menu__separator" />
+          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyFeature(menuFeature.id)}>
+            {menuSelectionIsGroup ? 'Copy Group' : menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.moveFeature(menuFeature.id)}
+            disabled={menuHasLockedSelection}
+            title={menuHasLockedSelection ? 'Locked features cannot be moved' : undefined}
+          >
+            {menuSelectionIsGroup ? 'Move Group' : menuHasMultipleSelection ? 'Move Selected' : 'Move'}
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.resizeFeature(menuFeature.id)}
+            disabled={menuHasLockedSelection}
+          >
+            Resize
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.rotateFeature(menuFeature.id)}
+            disabled={menuHasLockedSelection}
+          >
+            Rotate
+          </button>
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.mirrorFeature(menuFeature.id)}
+            disabled={menuHasLockedSelection}
+          >
+            Mirror
+          </button>
+          <div className="feature-context-menu__separator" />
+          <button
+            className="feature-context-menu__item"
+            type="button"
+            onClick={() => actions.offsetFeatures()}
+            disabled={menuHasLockedSelection}
+          >
+            Offset
+          </button>
+          <div className="feature-context-menu__separator" />
           {!menuSelectionInGroupedFolder ? (
             <>
               <div
@@ -204,70 +268,6 @@ export function FeatureContextMenu({
           <button
             className="feature-context-menu__item"
             type="button"
-            onClick={() => actions.editSketch(menuFeature.id)}
-            disabled={menuHasMultipleSelection}
-            title={menuHasMultipleSelection ? 'Edit Sketch is only available for a single selected feature' : undefined}
-          >
-            Edit Sketch
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.constraint(menuFeature.id)}
-            disabled={menuHasMultipleSelection || menuHasLockedSelection}
-          >
-            Add Constraint
-          </button>
-          <div className="feature-context-menu__separator" />
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyFeature(menuFeature.id)}>
-            {menuHasMultipleSelection ? 'Copy Selected' : 'Copy'}
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.moveFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
-            title={menuHasLockedSelection ? 'Locked features cannot be moved' : undefined}
-          >
-            {menuHasMultipleSelection ? 'Move Selected' : 'Move'}
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.resizeFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
-          >
-            Resize
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.rotateFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
-          >
-            Rotate
-          </button>
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.mirrorFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection}
-          >
-            Mirror
-          </button>
-          <div className="feature-context-menu__separator" />
-          <button
-            className="feature-context-menu__item"
-            type="button"
-            onClick={() => actions.offsetFeatures()}
-            disabled={menuHasLockedSelection}
-          >
-            Offset
-          </button>
-          <div className="feature-context-menu__separator" />
-          <button
-            className="feature-context-menu__item"
-            type="button"
             onClick={() => actions.groupFeatures()}
             disabled={!menuHasMultipleSelection}
             title={!menuHasMultipleSelection ? 'Select two or more features to group' : undefined}
@@ -308,7 +308,7 @@ export function FeatureContextMenu({
             type="button"
             onClick={() => actions.deleteFeatures([...ids])}
           >
-            {menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
+            {menuSelectionIsGroup ? 'Delete Group' : menuHasMultipleSelection ? 'Delete Selected' : 'Delete'}
           </button>
         </>
       ) : menuTab ? (
