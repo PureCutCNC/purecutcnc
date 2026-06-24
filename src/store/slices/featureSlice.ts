@@ -39,7 +39,9 @@ import {
   circleProfile,
   ellipseProfile,
   polygonProfile,
+  slotProfile,
   splineProfile,
+  ngonProfile,
   getProfileBounds,
   IDENTITY_MATRIX,
 } from '../../types/project'
@@ -93,6 +95,8 @@ export type FeatureSlice = Pick<
   | 'addEllipseFeature'
   | 'addPolygonFeature'
   | 'addSplineFeature'
+  | 'addSlotFeature'
+  | 'addNgonFeature'
   | 'alignFeatures'
   | 'distributeFeatures'
   | 'mergeSelectedFeatures'
@@ -1269,6 +1273,56 @@ export function createFeatureSlice(
         folderId: null,
         sketch: {
           profile: splineProfile(points),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 90,
+          dimensions: [],
+          constraints: [],
+        },
+        operation,
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      get().addFeature(feature)
+    },
+
+    addSlotFeature: (name, p1, p2, width, depth) => {
+      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
+      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
+      const id = nextUniqueGeneratedId(get().project, 'f')
+      const feature: SketchFeature = {
+        id,
+        name: baseName,
+        kind: 'composite',
+        folderId: null,
+        sketch: {
+          profile: slotProfile(p1, p2, width),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 90,
+          dimensions: [],
+          constraints: [],
+        },
+        operation,
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      get().addFeature(feature)
+    },
+
+    addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) => {
+      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
+      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
+      const id = nextUniqueGeneratedId(get().project, 'f')
+      const feature: SketchFeature = {
+        id,
+        name: baseName,
+        kind: 'polygon',
+        folderId: null,
+        sketch: {
+          profile: ngonProfile(cx, cy, sides, circumradius, firstVertexAngle),
           origin: { x: 0, y: 0 },
           orientationAngle: 90,
           dimensions: [],
