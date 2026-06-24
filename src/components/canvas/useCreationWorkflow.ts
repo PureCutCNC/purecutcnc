@@ -108,9 +108,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
   const creationPanelHasPoints = creationPanelShape != null && pendingAdd != null && 'points' in pendingAdd && pendingAdd.points.length > 0
   const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
-  const slotHasBothPoints = pendingAdd?.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2
   const creationCanDimEdit = creationPanelHasAnchor
-    || (pendingAdd?.shape === 'slot' ? slotHasBothPoints : creationPanelHasPoints)
+    || creationPanelHasPoints
     || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
   const creationDimEditActive = !!creationCanDimEdit && !!dimensionEdit
 
@@ -188,6 +187,27 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
       } else {
         addPendingCompositePoint(pt)
         setPendingPreviewPointRef({ point: pt, session: curr.session })
+        setDimensionEdit(null)
+        creationWorkflowPanel.focusCanvasAfterAction()
+      }
+    } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length === 1 && edit.arcStart && !edit.arcEnd) {
+      const units = projectRef.current.meta.units
+      const len = parseLengthInput(edit.length, units)
+      const angleDeg = parseFloat(edit.angle)
+      const slotWidth = parseLengthInput(edit.radius, units)
+      if (len != null && len > 0 && !Number.isNaN(angleDeg) && slotWidth != null && slotWidth > 0) {
+        const angleRad = angleDeg * Math.PI / 180
+        const p1 = curr.points[0]
+        const p2 = { x: p1.x + len * Math.cos(angleRad), y: p1.y + len * Math.sin(angleRad) }
+        const axisX = p2.x - p1.x
+        const axisY = p2.y - p1.y
+        const axisLen = Math.hypot(axisX, axisY)
+        const perpX = -axisY / axisLen
+        const perpY = axisX / axisLen
+        const perpPoint = { x: p1.x + (slotWidth / 2) * perpX, y: p1.y + (slotWidth / 2) * perpY }
+        addPendingPolygonPoint(p2)
+        placePendingSlotAt(perpPoint)
+        setPendingPreviewPointRef(null)
         setDimensionEdit(null)
         creationWorkflowPanel.focusCanvasAfterAction()
       }

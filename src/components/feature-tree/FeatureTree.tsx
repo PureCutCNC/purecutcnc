@@ -1106,7 +1106,7 @@ function TreeRow({
             title={grouped ? 'Ungroup features' : 'Group features'}
             aria-label={grouped ? 'Ungroup features' : 'Group features'}
           >
-            <Icon id="composite" />
+            <Icon id="group" />
           </button>
         ) : null}
         {onEditEntry && kind !== 'feature' ? (

@@ -392,6 +392,28 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         return
       }
 
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length === 1) {
+        event.preventDefault()
+        const p1 = pendingAdd.points[0]
+        if (!currentEdit) {
+          const previewPoint = pendingPreviewPointRef.current?.point
+          const dx = previewPoint ? previewPoint.x - p1.x : 0
+          const dy = previewPoint ? previewPoint.y - p1.y : 0
+          const len = Math.hypot(dx, dy)
+          const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
+          const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+          dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
+        } else if (currentEdit.activeField === 'length') {
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+        } else if (currentEdit.activeField === 'angle') {
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'radius' })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
       if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
         event.preventDefault()
         if (!currentEdit) {

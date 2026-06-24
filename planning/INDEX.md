@@ -20,6 +20,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [P0B_PRIMITIVES_Plan.md](P0B_PRIMITIVES_Plan.md) — slot/obround and regular polygon sketch creation primitives (P0b from roadmap)
 - [DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md](DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md) — project-local Claude Code/DeepSeek worker launcher and Codex-led sequential integration-manager workflow
 - [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
 

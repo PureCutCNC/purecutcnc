@@ -2337,6 +2337,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
         return
       }
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length === 1) {
+        const p1 = pendingAdd.points[0]
+        const previewPoint = pendingPreviewPointRef.current?.point
+        const dx = previewPoint ? previewPoint.x - p1.x : 0
+        const dy = previewPoint ? previewPoint.y - p1.y : 0
+        const len = Math.hypot(dx, dy)
+        const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
+        const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+        dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
+        return
+      }
       if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
         const p1 = pendingAdd.points[0]
         const p2 = pendingAdd.points[1]
@@ -3000,7 +3011,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               ? (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2
                 ? 'Move cursor to set width, click to commit'
                 : pendingAdd.shape === 'slot' && pendingAdd.points.length === 1
-                  ? 'Click second end center'
+                  ? 'Click second end center or enter dimensions'
                   : 'Click first end center')
             : creation.creationPanelHasAnchor
               ? (creation.creationPanelShape === 'circle'
@@ -3048,7 +3059,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   type="button"
                   className="tablet-cmd-btn"
                   onClick={creation.triggerDimensionFromCreationPanel}
-                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : 'Dimensions'}</button>
+                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : pendingAdd.shape === 'ngon' ? 'Radius' : 'Dimensions'}</button>
               )}
               {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
@@ -3220,24 +3231,84 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   )}
                 </>
               ) : dimEdit.dimensionEdit.shape === 'slot' ? (
-                <label className="canvas-workflow-panel__field">
-                  <span>Width</span>
-                  <input
-                    ref={dimEdit.widthInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.width}
-                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                      else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                    }}
-                    autoFocus
-                  />
-                </label>
+                dimEdit.dimensionEdit.arcEnd ? (
+                  <label className="canvas-workflow-panel__field">
+                    <span>Width</span>
+                    <input
+                      ref={dimEdit.widthInputRef}
+                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={dimEdit.dimensionEdit.width}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                        else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                      }}
+                      autoFocus
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Length</span>
+                      <input
+                        ref={dimEdit.widthInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.length}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.heightInputRef.current?.focus({ preventScroll: true }) }
+                        }}
+                        autoFocus
+                      />
+                    </label>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Angle °</span>
+                      <input
+                        ref={dimEdit.heightInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.angle}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.radiusInputRef.current?.focus({ preventScroll: true }) }
+                        }}
+                      />
+                    </label>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Width</span>
+                      <input
+                        ref={dimEdit.radiusInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.radius}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                        }}
+                      />
+                    </label>
+                  </>
+                )
               ) : dimEdit.dimensionEdit.shape === 'ngon' ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
@@ -3317,16 +3388,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">
-                <span>Sides</span>
+                <span>Sides (3–50)</span>
                 <input
+                  key={'sides' in pendingAdd ? pendingAdd.session : undefined}
                   className="canvas-workflow-panel__count-input"
-                  type="number"
-                  min={3}
-                  max={50}
-                  value={'sides' in pendingAdd ? pendingAdd.sides : 6}
-                  onChange={(e) => {
-                    const n = Math.max(3, Math.min(50, Math.round(Number(e.target.value))))
-                    if (!Number.isNaN(n)) setPendingNgonSides(n)
+                  type="text"
+                  inputMode="numeric"
+                  defaultValue={'sides' in pendingAdd ? pendingAdd.sides : 6}
+                  onBlur={(e) => {
+                    const n = Math.round(Number(e.target.value))
+                    const clamped = Number.isNaN(n) ? ('sides' in pendingAdd ? pendingAdd.sides : 6) : Math.max(3, Math.min(50, n))
+                    setPendingNgonSides(clamped)
+                    e.target.value = String(clamped)
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') {
+                      const n = Math.round(Number(e.currentTarget.value))
+                      if (!Number.isNaN(n)) setPendingNgonSides(Math.max(3, Math.min(50, n)))
+                    }
                   }}
                 />
               </label>

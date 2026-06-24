@@ -164,6 +164,14 @@ export function computeDimensionEditPreviewPoint(
     }
   }
 
+  if (edit.shape === 'slot' && edit.arcStart && !edit.arcEnd) {
+    const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
+    const angleDeg = parseFloat(edit.angle) || 0
+    const angleRad = angleDeg * (Math.PI / 180)
+    const p1 = edit.arcStart
+    return { x: p1.x + len * Math.cos(angleRad), y: p1.y + len * Math.sin(angleRad) }
+  }
+
   if (edit.shape === 'slot' && edit.arcStart && edit.arcEnd) {
     const w = Math.max(parseLengthInput(edit.width, units) ?? 0, 0)
     const p1 = edit.arcStart
