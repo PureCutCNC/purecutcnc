@@ -283,6 +283,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
   const pendingExtendHitRef = useRef<Point | null>(null)
+  const pendingTrimSpanRef = useRef<{ from: Point; to: Point } | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
   const pendingPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingMovePreviewPointRef = useRef<PendingPreviewPoint | null>(null)
@@ -865,6 +866,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
     pendingExtendHitRef.current = null
+    pendingTrimSpanRef.current = null
     pendingSketchFilletRef.current = null
     fillet.setFilletCornerPicked(false)
   // fillet.setFilletCornerPicked is a useState setter (stable identity), but the
@@ -1720,6 +1722,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           }
         }
       }
+      if (pendingTrimSpanRef.current) {
+        // Draw the span that would be removed in red dashed style
+        const span = pendingTrimSpanRef.current
+        const from = worldToCanvas(span.from, vt)
+        const to = worldToCanvas(span.to, vt)
+        ctx.beginPath()
+        ctx.moveTo(from.cx, from.cy)
+        ctx.lineTo(to.cx, to.cy)
+        ctx.strokeStyle = 'rgba(220, 80, 60, 0.85)'
+        ctx.lineWidth = 2.5
+        ctx.setLineDash([6, 4])
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
         const typedRadius = fillet.filletDimensionEditRef.current
@@ -2291,6 +2307,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (feature && (sketchEditTool === 'trim' || sketchEditTool === 'extend')) {
         pendingSketchExtensionRef.current = null
         pendingExtendHitRef.current = null
+        pendingTrimSpanRef.current = null
         pendingSketchFilletRef.current = null
         fillet.setFilletCornerPicked(false)
         const pending = pendingSketchEditRef.current
@@ -2411,6 +2428,71 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                           previewHits.sort((a, b) => a.tA - b.tA)
                           pendingExtendHitRef.current =
                             previewHits[0].point
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Trim preview: compute span that would be removed
+          if (sketchEditTool === 'trim' && hit && pending.subject) {
+            const trimSubjFeature = project.features.find(
+              (f) => f.id === pending.subject!.featureId,
+            )
+            if (trimSubjFeature && !trimSubjFeature.sketch.profile.closed) {
+              const trimProfile = trimSubjFeature.sketch.profile
+              const trimSegIndex = pending.subject.segmentIndex
+              const segCount = trimProfile.segments.length
+              const isFirst = trimSegIndex === 0
+              const isLast = trimSegIndex === segCount - 1
+              const trimSubjResolved = resolveProfileSegments(trimProfile)
+              const trimSubjSeg = trimSubjResolved[trimSegIndex]
+              if (trimSubjSeg) {
+                const trimTgtFeature = project.features.find(
+                  (f) => f.id === hit.featureId,
+                )
+                if (trimTgtFeature) {
+                  const trimTgtResolved = resolveProfileSegments(
+                    trimTgtFeature.sketch.profile,
+                  )
+                  const trimTgtSeg = trimTgtResolved[hit.segmentIndex]
+                  if (trimTgtSeg) {
+                    const trimHits = segmentIntersections(trimSubjSeg, trimTgtSeg)
+                    if (trimHits.length === 1) {
+                      const h = trimHits[0]
+                      const clickT = pending.subject.t ?? 0.5
+                      const clickBefore = clickT < h.tA
+
+                      if ((isFirst && clickBefore) || (isLast && !clickBefore)) {
+                        if (isFirst && clickBefore) {
+                          pendingTrimSpanRef.current = {
+                            from: trimProfile.start,
+                            to: h.point,
+                          }
+                        } else if (isLast && !clickBefore) {
+                          pendingTrimSpanRef.current = {
+                            from: h.point,
+                            to: trimProfile.segments[segCount - 1].to,
+                          }
+                        }
+                      }
+                    } else if (trimHits.length >= 2) {
+                      const sorted = [...trimHits].sort((a, b) => a.tA - b.tA)
+                      const t0 = sorted[0].tA
+                      const t1 = sorted[sorted.length - 1].tA
+                      const clickT = pending.subject.t ?? 0.5
+                      if (clickT <= t0 && isFirst) {
+                        pendingTrimSpanRef.current = {
+                          from: trimProfile.start,
+                          to: sorted[0].point,
+                        }
+                      } else if (clickT >= t1 && isLast) {
+                        pendingTrimSpanRef.current = {
+                          from: sorted[sorted.length - 1].point,
+                          to: trimProfile.segments[segCount - 1].to,
                         }
                       }
                     }
