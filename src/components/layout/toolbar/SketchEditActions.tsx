@@ -27,6 +27,8 @@ function SketchEditActions({
   onDisconnect,
   onFillet,
   onChamfer,
+  onTrim,
+  onExtend,
 }: {
   enabled: boolean
   activeTool: SketchEditTool | null
@@ -37,6 +39,8 @@ function SketchEditActions({
   onDisconnect: () => void
   onFillet: () => void
   onChamfer: () => void
+  onTrim: () => void
+  onExtend: () => void
 }) {
   if (!enabled) return null
 
@@ -83,6 +87,20 @@ function SketchEditActions({
         active={activeTool === 'chamfer'}
         tooltipSide={tooltipSide}
         onClick={onChamfer}
+      />
+      <ToolbarActionButton
+        icon="trim"
+        label={activeTool === 'trim' ? 'Cancel trim' : 'Trim to cutting edge'}
+        active={activeTool === 'trim'}
+        tooltipSide={tooltipSide}
+        onClick={onTrim}
+      />
+      <ToolbarActionButton
+        icon="extend"
+        label={activeTool === 'extend' ? 'Cancel extend' : 'Extend to target'}
+        active={activeTool === 'extend'}
+        tooltipSide={tooltipSide}
+        onClick={onExtend}
       />
     </div>
   )

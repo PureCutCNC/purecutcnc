@@ -4133,6 +4133,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : selection.sketchEditTool === 'disconnect' ? 'Click an anchor to split'
             : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? 'Click second point or enter radius' : 'Click a corner')
             : selection.sketchEditTool === 'chamfer' ? (fillet.filletCornerPicked ? 'Click second point or enter distance' : 'Click a corner')
+            : selection.sketchEditTool === 'trim' ? (pendingSketchEdit?.phase === 'pick-reference' ? 'Click the cutting segment' : 'Click the part of the segment to remove')
+            : selection.sketchEditTool === 'extend' ? (pendingSketchEdit?.phase === 'pick-reference' ? 'Click the target segment to reach' : 'Click near the open end of the segment to extend')
             : 'Drag nodes or click segments'
           }
           position={editWorkflowPanel.position}
