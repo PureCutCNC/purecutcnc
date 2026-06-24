@@ -548,8 +548,15 @@ are skipped automatically, so exactly the 4 original corners are processed and
 the loop self-terminates. The §9.2 clamp guarantees the helper never returns
 `null` for a valid drag.
 
-Add both helpers to `src/types/project.ts` (importing the corner helpers from
-`profileEdit.ts`), alongside `slotProfile`/`ngonProfile`.
+**Placement (layering):** these helpers must live in the **store-helper layer**,
+NOT in `src/types/project.ts`. `profileEdit.ts` already imports from
+`types/project`, so `project.ts` importing `applyLineCornerFillet` back would be
+a circular dependency. Add `roundedRectProfile` / `chamferedRectProfile` to a new
+`src/store/helpers/cannedRectProfiles.ts` (or append to `profileEdit.ts`), which
+may freely import `rectProfile` from `types/project` *and* the corner helpers
+from `profileEdit.ts`. (Unlike `slotProfile`/`ngonProfile`, which have no store
+dependency and rightly live in `project.ts`.) The feature-creation slice imports
+the new helpers from the store layer.
 
 ### 9.5 Default corner size
 
@@ -571,8 +578,10 @@ failing.
 
 ### 9.7 Files affected (delta on top of §5)
 
-- `src/types/project.ts` — add `roundedRectProfile`, `chamferedRectProfile`
-  (reuse `applyLineCornerFillet`/`applyLineCornerChamfer`).
+- `src/store/helpers/cannedRectProfiles.ts` *(new)* — add `roundedRectProfile`,
+  `chamferedRectProfile` (reuse `rectProfile` from `types/project` +
+  `applyLineCornerFillet`/`applyLineCornerChamfer` from `profileEdit`). NOT in
+  `project.ts` — see §9.4 layering note.
 - `src/store/types.ts` — extend `PendingAddTool` with the two variants; add
   `startAddRoundRectPlacement`, `startAddChamferRectPlacement`,
   `setPendingRectCorner`, `addRoundRectFeature`, `addChamferRectFeature`.
