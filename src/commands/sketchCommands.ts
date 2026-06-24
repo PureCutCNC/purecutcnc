@@ -228,6 +228,14 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         enabled: predicates.featureSketchEditActive,
         active: input.selection.sketchEditTool === 'chamfer',
       },
+      trim: {
+        enabled: predicates.featureSketchEditActive,
+        active: input.selection.sketchEditTool === 'trim',
+      },
+      extend: {
+        enabled: predicates.featureSketchEditActive,
+        active: input.selection.sketchEditTool === 'extend',
+      },
     },
     constraint: {
       enabled: predicates.hasSelectedFeatures && !predicates.hasLockedSelectedFeatures,
@@ -449,6 +457,8 @@ export function useSketchCommands(): SketchCommandState & {
       disconnect: command('disconnect', 'disconnect', state.sketchEdit.disconnect.active ? 'Cancel disconnect' : 'Disconnect point', state.sketchEdit.disconnect, () => toggleSketchEditTool('disconnect')),
       fillet: command('fillet', 'fillet', state.sketchEdit.fillet.active ? 'Cancel fillet' : 'Round corner / fillet', state.sketchEdit.fillet, () => toggleSketchEditTool('fillet')),
       chamfer: command('chamfer', 'chamfer', state.sketchEdit.chamfer.active ? 'Cancel chamfer' : 'Chamfer corner', state.sketchEdit.chamfer, () => toggleSketchEditTool('chamfer')),
+      trim: command('trim', 'trim', state.sketchEdit.trim.active ? 'Cancel trim' : 'Trim segment', state.sketchEdit.trim, () => toggleSketchEditTool('trim')),
+      extend: command('extend', 'extend', state.sketchEdit.extend.active ? 'Cancel extend' : 'Extend segment', state.sketchEdit.extend, () => toggleSketchEditTool('extend')),
     },
     constraint: command('constraint', 'constraint', state.constraint.active ? 'Cancel constraint' : 'Add constraint', state.constraint, toggleConstraint),
     dimension: {
