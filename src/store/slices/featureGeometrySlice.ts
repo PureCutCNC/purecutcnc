@@ -47,6 +47,7 @@ import {
   disconnectProfileAtAnchor,
   insertPointIntoProfile,
   normalizeEditableProfileClosure,
+  splitArcSegment,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
 import { getDefinitionId, getInstanceIdsForDefinition, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
@@ -709,8 +710,226 @@ export function createFeatureGeometrySlice(
       }
     }),
 
-  // TODO(P0a-B/C): Implement trim geometry transform
-  trimFeatureSegment: (_subject, _cutter) => [],
+  trimFeatureSegment: (subjectRef, cutterRef) => {
+    const hints: string[] = []
+    set((s) => {
+      const subjectFeature = s.project.features.find((f) => f.id === subjectRef.featureId)
+      if (!subjectFeature || subjectFeature.locked) {
+        hints.push('Subject feature not found or locked')
+        return {}
+      }
+
+      const profile = subjectFeature.sketch.profile
+      if (profile.closed) {
+        hints.push('Subject profile is closed — MVP trim only works on open profiles')
+        return {}
+      }
+
+      const segCount = profile.segments.length
+      if (segCount === 0) {
+        hints.push('Subject profile has no segments')
+        return {}
+      }
+
+      // Resolve subject segment
+      const subjectResolved = resolveProfileSegments(profile)
+      const segIndex = subjectRef.segmentIndex
+      const subjectSeg = subjectResolved[segIndex]
+      if (!subjectSeg) {
+        hints.push('Subject segment is a bezier — cannot trim')
+        return {}
+      }
+
+      // Guard degenerate line segments (zero length)
+      if (subjectSeg.kind === 'line') {
+        const sdx = subjectSeg.p1.x - subjectSeg.p0.x
+        const sdy = subjectSeg.p1.y - subjectSeg.p0.y
+        if (Math.hypot(sdx, sdy) < 1e-9) {
+          hints.push('Subject segment has zero length')
+          return {}
+        }
+      }
+
+      // Resolve cutter segment
+      const cutterFeature = s.project.features.find((f) => f.id === cutterRef.featureId)
+      if (!cutterFeature) {
+        hints.push('Cutter feature not found')
+        return {}
+      }
+      const cutterResolved = resolveProfileSegments(cutterFeature.sketch.profile)
+      const cutterSeg = cutterResolved[cutterRef.segmentIndex]
+      if (!cutterSeg) {
+        hints.push('Cutter segment is a bezier — cannot use as reference')
+        return {}
+      }
+
+      // Compute intersections — subject is NOT a ray (both sides valid)
+      const hits = segmentIntersections(subjectSeg, cutterSeg)
+      if (hits.length === 0) {
+        hints.push("Cutting edge doesn't cross this segment")
+        return {}
+      }
+
+      const clickT = subjectRef.t ?? 0.5
+      const isFirst = segIndex === 0
+      const isLast = segIndex === segCount - 1
+      const freeStart = isFirst
+      const freeEnd = isLast
+
+      // ── Resolve which hit is relevant based on click position ──────────
+      // Sort hits by tA along the subject
+      const sortedHits = [...hits].sort((a, b) => a.tA - b.tA)
+
+      let action: 'shorten_start' | 'shorten_end' | 'break'
+      let hitT: number
+      let hitPoint: Point
+
+      if (sortedHits.length === 1) {
+        const h = sortedHits[0]
+        hitT = h.tA
+        hitPoint = h.point
+
+        // Guard: hit at endpoint = nothing to trim
+        if (hitT < 1e-9 || hitT > 1 - 1e-9) {
+          hints.push('Intersection is at segment endpoint — nothing to trim')
+          return {}
+        }
+
+        const clickBefore = clickT < hitT
+
+        if (freeStart && clickBefore) {
+          action = 'shorten_start'
+        } else if (freeEnd && !clickBefore) {
+          action = 'shorten_end'
+        } else if (freeStart && freeEnd) {
+          // Single-segment profile, both ends free — pick based on click
+          // (This is covered by the two branches above since isFirst=isLast=true)
+          action = clickBefore ? 'shorten_start' : 'shorten_end'
+        } else {
+          // Interior — the clicked side connects to other segments → break
+          hints.push('Interior trim (break) not yet implemented for MVP')
+          return {}
+        }
+      } else {
+        // 2+ hits — determine whether click is between two hits or outside
+        const t0 = sortedHits[0].tA
+        const t1 = sortedHits[sortedHits.length - 1].tA
+
+        if (clickT > t0 + 1e-9 && clickT < t1 - 1e-9) {
+          // Click between hits → remove middle span
+          hints.push('Trimming middle span (between two crossings) not yet implemented')
+          return {}
+        }
+
+        // Click is outside — pick the nearer hit
+        const nearerHit = clickT <= t0 ? sortedHits[0] : sortedHits[sortedHits.length - 1]
+        hitT = nearerHit.tA
+        hitPoint = nearerHit.point
+
+        if (hitT < 1e-9 || hitT > 1 - 1e-9) {
+          hints.push('Intersection is at segment endpoint — nothing to trim')
+          return {}
+        }
+
+        const clickBefore = clickT < hitT
+
+        if (freeStart && clickBefore) {
+          action = 'shorten_start'
+        } else if (freeEnd && !clickBefore) {
+          action = 'shorten_end'
+        } else {
+          hints.push('Interior trim (break) not yet implemented for MVP')
+          return {}
+        }
+      }
+
+      // ── Apply the trim ──────────────────────────────────────────────────
+      let changed = false
+      let nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== subjectRef.featureId) return feature
+
+          const nextProfile = {
+            ...feature.sketch.profile,
+            start: clonePoint(feature.sketch.profile.start),
+            segments: feature.sketch.profile.segments.map((seg) => {
+              if (seg.type === 'arc') {
+                return {
+                  ...seg,
+                  to: clonePoint(seg.to),
+                  center: clonePoint(seg.center),
+                }
+              }
+              return {
+                ...seg,
+                to: clonePoint(seg.to),
+              }
+            }),
+          }
+
+          const subjectSegOrig = nextProfile.segments[segIndex]
+
+          if (action === 'shorten_start') {
+            // Move profile.start to the hit point, shorten the first segment
+            if (subjectSegOrig.type === 'arc') {
+              const [, kept] = splitArcSegment(subjectSegOrig, hitPoint)
+              nextProfile.segments[segIndex] = kept
+            } else {
+              // Line — keep the endpoint, start moves to hitPoint
+              nextProfile.segments[segIndex] = {
+                type: 'line',
+                to: clonePoint(subjectSegOrig.to),
+              }
+            }
+            nextProfile.start = hitPoint
+          } else {
+            // shorten_end — shorten the last segment to the hit point
+            if (subjectSegOrig.type === 'arc') {
+              const [kept] = splitArcSegment(subjectSegOrig, hitPoint)
+              nextProfile.segments[segIndex] = kept
+            } else {
+              // Line — keep the start (implicit from previous anchor), move to to hitPoint
+              nextProfile.segments[segIndex] = {
+                type: 'line',
+                to: hitPoint,
+              }
+            }
+          }
+
+          const normalized = normalizeEditableProfileClosure(nextProfile)
+          changed = true
+
+          return {
+            ...feature,
+            kind: ['text', 'stl'].includes(feature.kind)
+              ? feature.kind
+              : inferFeatureKind(normalized),
+            sketch: {
+              ...feature.sketch,
+              profile: normalized,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) return {}
+
+      nextProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
+      nextProject = syncStockFromSourceFeature(nextProject, subjectRef.featureId)
+
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+    return hints
+  },
 
   extendFeatureEndpoint: (subjectRef, targetRef) => {
     const hints: string[] = []
