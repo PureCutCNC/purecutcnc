@@ -443,6 +443,7 @@ export interface ProjectStore {
   completePendingOpenComposite: () => void
   setPendingNgonSides: (n: number) => void
   placePendingSlotAt: (p3: Point) => void
+  placePendingNgonAt: (point: Point) => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string, copyMode?: 'reference' | 'independent') => void
   startResizeFeature: (featureId: string) => void

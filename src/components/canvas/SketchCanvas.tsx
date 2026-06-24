@@ -65,6 +65,9 @@ import {
   drawPendingPathLoop,
   drawPendingPoint,
   drawPendingSplineLoop,
+  drawPendingSlotAxis,
+  drawPendingSlotWidth,
+  drawPendingNgon,
   drawPreviewProfile,
   drawToolpath,
   translateProfile,
@@ -367,6 +370,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -604,6 +609,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     triggerDimensionEdit,
     setPendingPreviewPointRef,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -1238,6 +1245,36 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
       if (pendingAdd.shape === 'ellipse') {
         drawMoveGuide(ctx, pendingAdd.anchor, currentPreviewPoint, vt)
+      }
+    } else if (pendingAdd?.shape === 'slot') {
+      const slotPoints = pendingAdd.points
+      if (slotPoints.length === 0) {
+        if (currentPreviewPoint) {
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        }
+      } else if (slotPoints.length === 1) {
+        drawPendingPoint(ctx, slotPoints[0], vt)
+        if (currentPreviewPoint) {
+          drawPendingSlotAxis(ctx, slotPoints[0], currentPreviewPoint, vt, project.meta.units)
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        }
+      } else {
+        drawPendingPoint(ctx, slotPoints[0], vt)
+        drawPendingPoint(ctx, slotPoints[1], vt)
+        if (currentPreviewPoint) {
+          drawPendingSlotWidth(ctx, slotPoints[0], slotPoints[1], currentPreviewPoint, vt, project.meta.units)
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        } else {
+          drawPendingSlotAxis(ctx, slotPoints[0], slotPoints[1], vt, project.meta.units)
+        }
+      }
+    } else if (pendingAdd?.shape === 'ngon') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingNgon(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.sides, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       }
     } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
       const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
@@ -2299,6 +2336,26 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
         return
       }
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
+        const p1 = pendingAdd.points[0]
+        const p2 = pendingAdd.points[1]
+        const previewPoint = pendingPreviewPointRef.current?.point
+        const axisX = p2.x - p1.x
+        const axisY = p2.y - p1.y
+        const axisLen = Math.hypot(axisX, axisY)
+        const currentWidth = previewPoint && axisLen > 1e-10
+          ? Math.max(2 * Math.abs((previewPoint.x - p1.x) * axisY - (previewPoint.y - p1.y) * axisX) / axisLen, 0.001)
+          : (units === 'mm' ? 6 : 0.25)
+        dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, arcEnd: p2, signX: 1, signY: 1, activeField: 'width', width: formatLength(currentWidth, units), height: '', radius: '', length: '', angle: '' })
+        return
+      }
+      if (pendingAdd.shape === 'ngon' && pendingAdd.anchor) {
+        const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+        const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+        const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+        dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
+        return
+      }
     }
 
     if (pendingMove?.fromPoint && !pendingMove.toPoint) {
@@ -2565,6 +2622,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     chamferFeaturePoint,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -2918,6 +2977,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : creation.creationPanelShape === 'clamp' ? 'Clamp'
             : creation.creationPanelShape === 'polygon' ? 'Polygon'
             : creation.creationPanelShape === 'spline' ? 'Spline'
+            : creation.creationPanelShape === 'slot' ? 'Slot'
+            : creation.creationPanelShape === 'ngon' ? 'Polygon'
             : 'Composite'
           }
           step={
@@ -3149,6 +3210,44 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     </label>
                   )}
                 </>
+              ) : dimEdit.dimensionEdit.shape === 'slot' ? (
+                <label className="canvas-workflow-panel__field">
+                  <span>Width</span>
+                  <input
+                    ref={dimEdit.widthInputRef}
+                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={dimEdit.dimensionEdit.width}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                      else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                    }}
+                    autoFocus
+                  />
+                </label>
+              ) : dimEdit.dimensionEdit.shape === 'ngon' ? (
+                <label className="canvas-workflow-panel__field">
+                  <span>Radius</span>
+                  <input
+                    ref={dimEdit.radiusInputRef}
+                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                      else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                    }}
+                    autoFocus
+                  />
+                </label>
               ) : (
                 <>
                   <label className="canvas-workflow-panel__field">

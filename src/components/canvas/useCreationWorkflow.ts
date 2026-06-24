@@ -36,6 +36,8 @@ export interface CreationWorkflowCtx {
   triggerDimensionEdit: () => void
   setPendingPreviewPointRef: (nextPoint: { point: Point; session: number } | null) => void
   placePendingAddAt: (point: Point) => void
+  placePendingSlotAt: (point: Point) => void
+  placePendingNgonAt: (point: Point) => void
   cancelPendingAdd: () => void
   addPendingPolygonPoint: (point: Point) => void
   addPendingCompositePoint: (point: Point) => void
@@ -49,7 +51,7 @@ export interface CreationWorkflowCtx {
   clearTransientCanvasState: () => void
 }
 
-type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | null
+type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | null
 
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
@@ -82,6 +84,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     triggerDimensionEdit,
     setPendingPreviewPointRef,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -99,6 +103,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
     || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
     || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
+    || pendingAdd.shape === 'slot' || pendingAdd.shape === 'ngon'
   ) ? pendingAdd.shape : null
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
   const creationPanelHasPoints = creationPanelShape != null && pendingAdd != null && 'points' in pendingAdd && pendingAdd.points.length > 0
@@ -109,6 +114,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   const creationWorkflowPanel = useCanvasWorkflowPanel({
     open: !!creationPanelShape,
     phaseKey: creationDimEditActive ? 'dimensions'
+      : (pendingAdd?.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2) ? 'width'
       : creationPanelHasAnchor ? 'place'
       : creationPanelHasPoints ? 'adding'
       : creationPanelHasStart ? 'drawing'
@@ -182,6 +188,16 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
         setDimensionEdit(null)
         creationWorkflowPanel.focusCanvasAfterAction()
       }
+    } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length >= 2) {
+      placePendingSlotAt(pt)
+      setPendingPreviewPointRef(null)
+      setDimensionEdit(null)
+      creationWorkflowPanel.focusCanvasAfterAction()
+    } else if (curr?.shape === 'ngon' && 'anchor' in curr && curr.anchor) {
+      placePendingNgonAt(pt)
+      setPendingPreviewPointRef(null)
+      setDimensionEdit(null)
+      creationWorkflowPanel.focusCanvasAfterAction()
     } else {
       placePendingAddAt(pt)
       setPendingPreviewPointRef(null)
