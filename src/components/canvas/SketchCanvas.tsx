@@ -87,6 +87,8 @@ import {
   distance2,
   segmentHitTest,
 } from './hitTest'
+import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
+import { segmentIntersections, type ResolvedSeg } from '../../store/helpers/segmentIntersection'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
   drawBackdropImage,
@@ -280,6 +282,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
+  const pendingExtendHitRef = useRef<Point | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
   const pendingPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingMovePreviewPointRef = useRef<PendingPreviewPoint | null>(null)
@@ -861,6 +864,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   useEffect(() => {
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
+    pendingExtendHitRef.current = null
     pendingSketchFilletRef.current = null
     fillet.setFilletCornerPicked(false)
   // fillet.setFilletCornerPicked is a useState setter (stable identity), but the
@@ -1689,6 +1693,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawMoveGuide(ctx, pendingSketchExtensionRef.current.anchor, sketchEditPreviewRef.current.point, vt, lockModeGuideColor(lockModeRef.current))
         drawPendingPoint(ctx, pendingSketchExtensionRef.current.anchor, vt)
       }
+      if (pendingExtendHitRef.current && pendingSketchEditRef.current?.subject) {
+        const subjFeature = project.features.find(
+          (f) => f.id === pendingSketchEditRef.current!.subject!.featureId,
+        )
+        if (subjFeature && !subjFeature.sketch.profile.closed) {
+          const subjProfile = subjFeature.sketch.profile
+          const segCount = subjProfile.segments.length
+          const segIndex = pendingSketchEditRef.current.subject.segmentIndex
+          const isFirst = segIndex === 0
+          const isLast = segIndex === segCount - 1
+          if (isFirst || isLast) {
+            const subjT = pendingSketchEditRef.current.subject.t ?? 0.5
+            let growFromStart: boolean
+            if (isFirst && isLast) {
+              growFromStart = subjT < 0.5
+            } else if (isFirst) {
+              growFromStart = subjT < 0.5
+            } else {
+              growFromStart = false
+            }
+            const growingPoint = growFromStart
+              ? subjProfile.start
+              : subjProfile.segments[segCount - 1].to
+            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt, 'rgba(239, 188, 122, 0.75)')
+          }
+        }
+      }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
         const typedRadius = fillet.filletDimensionEditRef.current
@@ -2259,6 +2290,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       if (feature && (sketchEditTool === 'trim' || sketchEditTool === 'extend')) {
         pendingSketchExtensionRef.current = null
+        pendingExtendHitRef.current = null
         pendingSketchFilletRef.current = null
         fillet.setFilletCornerPicked(false)
         const pending = pendingSketchEditRef.current
@@ -2273,6 +2305,120 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           sketchEditPreviewRef.current = hit
             ? { point: hit.point, mode: sketchEditTool }
             : { point: pending.subject.point, mode: sketchEditTool }
+
+          // Extend preview: compute extension-line intersection for dashed preview
+          if (sketchEditTool === 'extend' && hit) {
+            const subjFeature = project.features.find(
+              (f) => f.id === pending.subject!.featureId,
+            )
+            if (subjFeature && !subjFeature.sketch.profile.closed) {
+              const subjProfile = subjFeature.sketch.profile
+              const subjSegIndex = pending.subject!.segmentIndex
+              const segCount = subjProfile.segments.length
+              const isFirst = subjSegIndex === 0
+              const isLast = subjSegIndex === segCount - 1
+              if (isFirst || isLast) {
+                const subjT = pending.subject!.t ?? 0.5
+                let growFromStart: boolean
+                if (isFirst && isLast) {
+                  growFromStart = subjT < 0.5
+                } else if (isFirst) {
+                  growFromStart = subjT < 0.5
+                } else {
+                  growFromStart = false
+                }
+                const growingPoint = growFromStart
+                  ? subjProfile.start
+                  : subjProfile.segments[segCount - 1].to
+                const subjResolved = resolveProfileSegments(subjProfile)
+                const subjSeg = subjResolved[subjSegIndex]
+                if (subjSeg) {
+                  const tgtFeature = project.features.find(
+                    (f) => f.id === hit.featureId,
+                  )
+                  if (tgtFeature) {
+                    const tgtResolved = resolveProfileSegments(
+                      tgtFeature.sketch.profile,
+                    )
+                    const tgtSeg = tgtResolved[hit.segmentIndex]
+                    if (tgtSeg) {
+                      // Build extension ray
+                      let extension: ResolvedSeg
+                      const TWO_PI = 2 * Math.PI
+                      if (subjSeg.kind === 'line') {
+                        const dx = subjSeg.p1.x - subjSeg.p0.x
+                        const dy = subjSeg.p1.y - subjSeg.p0.y
+                        const len = Math.hypot(dx, dy)
+                        if (len > 1e-9) {
+                          const ux = dx / len
+                          const uy = dy / len
+                          if (growFromStart) {
+                            extension = {
+                              kind: 'line',
+                              p0: growingPoint,
+                              p1: {
+                                x: growingPoint.x - ux * 1e5,
+                                y: growingPoint.y - uy * 1e5,
+                              },
+                            }
+                          } else {
+                            extension = {
+                              kind: 'line',
+                              p0: growingPoint,
+                              p1: {
+                                x: growingPoint.x + ux * 1e5,
+                                y: growingPoint.y + uy * 1e5,
+                              },
+                            }
+                          }
+                          let previewHits = segmentIntersections(
+                            extension,
+                            tgtSeg,
+                            { rayA: true },
+                          ).filter((h) => h.tA > 1e-9)
+                          if (previewHits.length > 0) {
+                            previewHits.sort((a, b) => a.tA - b.tA)
+                            pendingExtendHitRef.current =
+                              previewHits[0].point
+                          }
+                        }
+                      } else {
+                        // Arc
+                        if (growFromStart) {
+                          extension = {
+                            ...subjSeg,
+                            a0: subjSeg.a0,
+                            a1: subjSeg.ccw
+                              ? subjSeg.a0 - TWO_PI
+                              : subjSeg.a0 + TWO_PI,
+                            ccw: !subjSeg.ccw,
+                          }
+                        } else {
+                          extension = {
+                            ...subjSeg,
+                            a0: subjSeg.a1,
+                            a1: subjSeg.ccw
+                              ? subjSeg.a1 + TWO_PI
+                              : subjSeg.a1 - TWO_PI,
+                          }
+                        }
+                        let previewHits = segmentIntersections(
+                          extension,
+                          tgtSeg,
+                          { rayA: true },
+                        ).filter((h) => h.tA > 1e-9)
+                        if (previewHits.length > 0) {
+                          previewHits.sort((a, b) => a.tA - b.tA)
+                          pendingExtendHitRef.current =
+                            previewHits[0].point
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
         scheduleDraw()
         return
