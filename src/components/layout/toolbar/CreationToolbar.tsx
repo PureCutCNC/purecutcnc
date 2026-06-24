@@ -47,6 +47,8 @@ export function CreationToolbar({
           onSpline={toolbar.creationCommands.shapeCommands[4].onActivate}
           onComposite={toolbar.creationCommands.shapeCommands[5].onActivate}
           onText={toolbar.creationCommands.shapeCommands[6].onActivate}
+          onSlot={toolbar.creationCommands.shapeCommands[7].onActivate}
+          onNgon={toolbar.creationCommands.shapeCommands[8].onActivate}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}

@@ -406,6 +406,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     commitConstraintDistance,
     cancelPendingConstraint,
     updateConstraintValue,
+    setPendingNgonSides,
   } = useProjectStore()
 
   const projectRef = useRef(project)
@@ -2995,13 +2996,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   ? 'Add one more point'
                   : 'Add points or close')
                 : 'Click first point')
+            : creation.creationPanelShape === 'slot'
+              ? (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2
+                ? 'Move cursor to set width, click to commit'
+                : pendingAdd.shape === 'slot' && pendingAdd.points.length === 1
+                  ? 'Click second end center'
+                  : 'Click first end center')
             : creation.creationPanelHasAnchor
               ? (creation.creationPanelShape === 'circle'
                 ? 'Click to set radius or enter dimensions'
                 : creation.creationPanelShape === 'ellipse'
                   ? 'Click to set radii or enter dimensions'
-                  : 'Click opposite corner or enter dimensions')
-              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse')
+                  : creation.creationPanelShape === 'ngon'
+                    ? 'Click to set radius'
+                    : 'Click opposite corner or enter dimensions')
+              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse' || creation.creationPanelShape === 'ngon')
                 ? 'Click center point'
                 : 'Click first corner'
           }
@@ -3039,7 +3048,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   type="button"
                   className="tablet-cmd-btn"
                   onClick={creation.triggerDimensionFromCreationPanel}
-                >Dimensions</button>
+                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : 'Dimensions'}</button>
               )}
               {(creation.creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
@@ -3303,6 +3312,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   </label>
                 </>
               )}
+            </div>
+          )}
+          {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
+            <div className="canvas-workflow-panel__meta">
+              <label className="canvas-workflow-panel__field">
+                <span>Sides</span>
+                <input
+                  className="canvas-workflow-panel__count-input"
+                  type="number"
+                  min={3}
+                  max={50}
+                  value={'sides' in pendingAdd ? pendingAdd.sides : 6}
+                  onChange={(e) => {
+                    const n = Math.max(3, Math.min(50, Math.round(Number(e.target.value))))
+                    if (!Number.isNaN(n)) setPendingNgonSides(n)
+                  }}
+                />
+              </label>
             </div>
           )}
           {pendingDraftHasSelfIntersection ? (

@@ -26,6 +26,8 @@ export const CREATION_SHAPE_OPTIONS = [
   { value: 'spline', icon: 'spline', noun: 'spline' },
   { value: 'composite', icon: 'composite', noun: 'composite' },
   { value: 'text', icon: 'text', noun: 'text' },
+  { value: 'slot', icon: 'slot', noun: 'slot' },
+  { value: 'ngon', icon: 'ngon', noun: 'regular polygon' },
 ] as const
 
 export type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']
@@ -75,6 +77,8 @@ export function useCreationShapeCommands({
     startAddSplinePlacement,
     startAddCompositePlacement,
     startAddTextPlacement,
+    startAddSlotPlacement,
+    startAddNgonPlacement,
     cancelPendingAdd,
   } = useProjectStore()
 
@@ -110,6 +114,10 @@ export function useCreationShapeCommands({
       togglePlacement(shape, startAddPolygonPlacement)
     } else if (shape === 'spline') {
       togglePlacement(shape, startAddSplinePlacement)
+    } else if (shape === 'slot') {
+      togglePlacement(shape, startAddSlotPlacement)
+    } else if (shape === 'ngon') {
+      togglePlacement(shape, startAddNgonPlacement)
     } else {
       togglePlacement(shape, startAddCompositePlacement)
     }
