@@ -22,7 +22,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 - [DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md](DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md) — project-local Claude Code/DeepSeek worker launcher and Codex-led sequential integration-manager workflow
 - [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
-- [FOLDER_GROUP_Plan.md](FOLDER_GROUP_Plan.md) — folder transform groups: toggle a folder "grouped" so its features move/copy/resize/rotate/mirror as one rigid body (shared pivot), select-all-on-member with a distinct highlight; per-instance transforms only (feature-reference safe). Sliced 1–4.
 
 ### Foundational / cross-cutting
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — detailed branch-owned handoff and slice-ledger template for sequential external implementation workers
