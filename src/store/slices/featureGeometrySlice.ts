@@ -41,6 +41,7 @@ import {
   applyLineCornerFillet,
   arcControlPoint,
   buildArcSegmentFromThreePoints,
+  cloneSegment,
   closeOpenProfile,
   deleteAnchorFromProfile,
   deleteSegmentFromProfile,
@@ -731,19 +732,19 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      // Resolve subject segment
+      // Resolve all subject segments (1:1 with profile.segments)
       const subjectResolved = resolveProfileSegments(profile)
-      const segIndex = subjectRef.segmentIndex
-      const subjectSeg = subjectResolved[segIndex]
-      if (!subjectSeg) {
+      const clickedIdx = subjectRef.segmentIndex
+      const clickedSeg = subjectResolved[clickedIdx]
+      if (!clickedSeg) {
         hints.push('Subject segment is a bezier — cannot trim')
         return {}
       }
 
-      // Guard degenerate line segments (zero length)
-      if (subjectSeg.kind === 'line') {
-        const sdx = subjectSeg.p1.x - subjectSeg.p0.x
-        const sdy = subjectSeg.p1.y - subjectSeg.p0.y
+      // Guard degenerate clicked segment (zero-length line)
+      if (clickedSeg.kind === 'line') {
+        const sdx = clickedSeg.p1.x - clickedSeg.p0.x
+        const sdy = clickedSeg.p1.y - clickedSeg.p0.y
         if (Math.hypot(sdx, sdy) < 1e-9) {
           hints.push('Subject segment has zero length')
           return {}
@@ -763,137 +764,156 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      // Compute intersections — subject is NOT a ray (both sides valid)
-      const hits = segmentIntersections(subjectSeg, cutterSeg)
-      if (hits.length === 0) {
-        hints.push("Cutting edge doesn't cross this segment")
+      const clickT = subjectRef.t ?? 0.5
+
+      // ── Walk from each open end to find boundary segments ──────────────
+
+      interface EndCandidate {
+        end: 'start' | 'end'
+        boundaryIdx: number
+        hitT: number
+        hitPoint: Point
+        /** Whole segments to drop (not including the boundary) */
+        wholeSegmentsDropped: number[]
+      }
+
+      const candidates: EndCandidate[] = []
+
+      // Walk from the start end (forward through segments 0..N-1)
+      for (let i = 0; i < segCount; i++) {
+        const seg = subjectResolved[i]
+        if (!seg) continue
+        const hits = segmentIntersections(seg, cutterSeg)
+        if (hits.length > 0) {
+          // Pick the hit closest to the free start (smallest tA),
+          // skipping endpoint hits (adjacent segments touching the cutter)
+          hits.sort((a, b) => a.tA - b.tA)
+          const hit = hits.find((h) => h.tA > 1e-9 && h.tA < 1 - 1e-9)
+          if (!hit) continue
+
+          candidates.push({
+            end: 'start',
+            boundaryIdx: i,
+            hitT: hit.tA,
+            hitPoint: hit.point,
+            wholeSegmentsDropped: Array.from({ length: i }, (_, j) => j),
+          })
+          break
+        }
+      }
+
+      // Walk from the end end (backward through segments N-1..0)
+      for (let i = segCount - 1; i >= 0; i--) {
+        const seg = subjectResolved[i]
+        if (!seg) continue
+        const hits = segmentIntersections(seg, cutterSeg)
+        if (hits.length > 0) {
+          // Pick the hit closest to the free end (largest tA),
+          // skipping endpoint hits (adjacent segments touching the cutter)
+          hits.sort((a, b) => b.tA - a.tA)
+          const hit = hits.find((h) => h.tA > 1e-9 && h.tA < 1 - 1e-9)
+          if (!hit) continue
+
+          candidates.push({
+            end: 'end',
+            boundaryIdx: i,
+            hitT: hit.tA,
+            hitPoint: hit.point,
+            wholeSegmentsDropped: Array.from(
+              { length: segCount - 1 - i },
+              (_, j) => i + 1 + j,
+            ),
+          })
+          break
+        }
+      }
+
+      if (candidates.length === 0) {
+        hints.push("Cutting edge doesn't cross any segment of this profile")
         return {}
       }
 
-      const clickT = subjectRef.t ?? 0.5
-      const isFirst = segIndex === 0
-      const isLast = segIndex === segCount - 1
-      const freeStart = isFirst
-      const freeEnd = isLast
+      // ── Pick the candidate whose removal region contains the click ──────
 
-      // ── Resolve which hit is relevant based on click position ──────────
-      // Sort hits by tA along the subject
-      const sortedHits = [...hits].sort((a, b) => a.tA - b.tA)
-
-      let action: 'shorten_start' | 'shorten_end' | 'break'
-      let hitT: number
-      let hitPoint: Point
-
-      if (sortedHits.length === 1) {
-        const h = sortedHits[0]
-        hitT = h.tA
-        hitPoint = h.point
-
-        // Guard: hit at endpoint = nothing to trim
-        if (hitT < 1e-9 || hitT > 1 - 1e-9) {
-          hints.push('Intersection is at segment endpoint — nothing to trim')
-          return {}
-        }
-
-        const clickBefore = clickT < hitT
-
-        if (freeStart && clickBefore) {
-          action = 'shorten_start'
-        } else if (freeEnd && !clickBefore) {
-          action = 'shorten_end'
-        } else if (freeStart && freeEnd) {
-          // Single-segment profile, both ends free — pick based on click
-          // (This is covered by the two branches above since isFirst=isLast=true)
-          action = clickBefore ? 'shorten_start' : 'shorten_end'
+      function candidateContainsClick(c: EndCandidate): boolean {
+        if (c.end === 'start') {
+          // Removal region: segments 0..boundaryIdx-1 (whole) +
+          // boundary segment t ∈ [0, hitT]
+          if (clickedIdx < c.boundaryIdx) return true
+          if (clickedIdx === c.boundaryIdx && clickT <= c.hitT + 1e-9) return true
+          return false
         } else {
-          // Interior — the clicked side connects to other segments → break
-          hints.push('Interior trim (break) not yet implemented for MVP')
-          return {}
-        }
-      } else {
-        // 2+ hits — determine whether click is between two hits or outside
-        const t0 = sortedHits[0].tA
-        const t1 = sortedHits[sortedHits.length - 1].tA
-
-        if (clickT > t0 + 1e-9 && clickT < t1 - 1e-9) {
-          // Click between hits → remove middle span
-          hints.push('Trimming middle span (between two crossings) not yet implemented')
-          return {}
-        }
-
-        // Click is outside — pick the nearer hit
-        const nearerHit = clickT <= t0 ? sortedHits[0] : sortedHits[sortedHits.length - 1]
-        hitT = nearerHit.tA
-        hitPoint = nearerHit.point
-
-        if (hitT < 1e-9 || hitT > 1 - 1e-9) {
-          hints.push('Intersection is at segment endpoint — nothing to trim')
-          return {}
-        }
-
-        const clickBefore = clickT < hitT
-
-        if (freeStart && clickBefore) {
-          action = 'shorten_start'
-        } else if (freeEnd && !clickBefore) {
-          action = 'shorten_end'
-        } else {
-          hints.push('Interior trim (break) not yet implemented for MVP')
-          return {}
+          // end === 'end'
+          // Removal region: boundary segment t ∈ [hitT, 1] +
+          // segments boundaryIdx+1..N-1 (whole)
+          if (clickedIdx > c.boundaryIdx) return true
+          if (clickedIdx === c.boundaryIdx && clickT >= c.hitT - 1e-9) return true
+          return false
         }
       }
 
-      // ── Apply the trim ──────────────────────────────────────────────────
+      const chosen = candidates.find(candidateContainsClick)
+
+      if (!chosen) {
+        hints.push('Interior trim (break) not yet implemented for MVP')
+        return {}
+      }
+
+      // ── Apply the multi-segment trim ────────────────────────────────────
       let changed = false
       let nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => {
           if (feature.id !== subjectRef.featureId) return feature
 
-          const nextProfile = {
-            ...feature.sketch.profile,
+          const nextProfile: SketchProfile = {
             start: clonePoint(feature.sketch.profile.start),
-            segments: feature.sketch.profile.segments.map((seg) => {
-              if (seg.type === 'arc') {
-                return {
-                  ...seg,
-                  to: clonePoint(seg.to),
-                  center: clonePoint(seg.center),
-                }
-              }
-              return {
-                ...seg,
-                to: clonePoint(seg.to),
-              }
-            }),
+            segments: feature.sketch.profile.segments.map((seg) =>
+              cloneSegment(seg),
+            ),
+            closed: false,
           }
 
-          const subjectSegOrig = nextProfile.segments[segIndex]
+          const { boundaryIdx, hitPoint, end, wholeSegmentsDropped } = chosen
 
-          if (action === 'shorten_start') {
-            // Move profile.start to the hit point, shorten the first segment
-            if (subjectSegOrig.type === 'arc') {
-              const [, kept] = splitArcSegment(subjectSegOrig, hitPoint)
-              nextProfile.segments[segIndex] = kept
-            } else {
-              // Line — keep the endpoint, start moves to hitPoint
-              nextProfile.segments[segIndex] = {
+          // Sort dropped indices descending so splice indices stay valid
+          const sortedDropped = [...wholeSegmentsDropped].sort((a, b) => b - a)
+
+          if (end === 'start') {
+            // Trim the boundary segment from its start side
+            const boundarySeg = nextProfile.segments[boundaryIdx]
+            if (boundarySeg.type === 'arc') {
+              const [, kept] = splitArcSegment(boundarySeg, hitPoint)
+              nextProfile.segments[boundaryIdx] = kept
+            } else if (boundarySeg.type === 'line') {
+              nextProfile.segments[boundaryIdx] = {
                 type: 'line',
-                to: clonePoint(subjectSegOrig.to),
+                to: clonePoint(boundarySeg.to),
               }
             }
+
+            // Drop whole segments before the boundary
+            for (const idx of sortedDropped) {
+              nextProfile.segments.splice(idx, 1)
+            }
+
             nextProfile.start = hitPoint
           } else {
-            // shorten_end — shorten the last segment to the hit point
-            if (subjectSegOrig.type === 'arc') {
-              const [kept] = splitArcSegment(subjectSegOrig, hitPoint)
-              nextProfile.segments[segIndex] = kept
-            } else {
-              // Line — keep the start (implicit from previous anchor), move to to hitPoint
-              nextProfile.segments[segIndex] = {
+            // end === 'end' — trim the boundary segment from its end side
+            const boundarySeg = nextProfile.segments[boundaryIdx]
+            if (boundarySeg.type === 'arc') {
+              const [kept] = splitArcSegment(boundarySeg, hitPoint)
+              nextProfile.segments[boundaryIdx] = kept
+            } else if (boundarySeg.type === 'line') {
+              nextProfile.segments[boundaryIdx] = {
                 type: 'line',
                 to: hitPoint,
               }
+            }
+
+            // Drop whole segments after the boundary
+            for (const idx of sortedDropped) {
+              nextProfile.segments.splice(idx, 1)
             }
           }
 
