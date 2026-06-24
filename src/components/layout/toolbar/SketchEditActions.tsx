@@ -29,6 +29,7 @@ function SketchEditActions({
   onChamfer,
   onTrim,
   onExtend,
+  trimExtendDisabled = false,
 }: {
   enabled: boolean
   activeTool: SketchEditTool | null
@@ -41,6 +42,7 @@ function SketchEditActions({
   onChamfer: () => void
   onTrim: () => void
   onExtend: () => void
+  trimExtendDisabled?: boolean
 }) {
   if (!enabled) return null
 
@@ -90,15 +92,17 @@ function SketchEditActions({
       />
       <ToolbarActionButton
         icon="trim"
-        label={activeTool === 'trim' ? 'Cancel trim' : 'Trim to cutting edge'}
+        label={trimExtendDisabled ? 'Trim — open profiles only' : activeTool === 'trim' ? 'Cancel trim' : 'Trim to cutting edge'}
         active={activeTool === 'trim'}
+        disabled={trimExtendDisabled}
         tooltipSide={tooltipSide}
         onClick={onTrim}
       />
       <ToolbarActionButton
         icon="extend"
-        label={activeTool === 'extend' ? 'Cancel extend' : 'Extend to target'}
+        label={trimExtendDisabled ? 'Extend — open profiles only' : activeTool === 'extend' ? 'Cancel extend' : 'Extend to target'}
         active={activeTool === 'extend'}
+        disabled={trimExtendDisabled}
         tooltipSide={tooltipSide}
         onClick={onExtend}
       />

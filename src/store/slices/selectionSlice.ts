@@ -830,6 +830,19 @@ export function createSelectionSlice(
       }),
 
     cancelPendingSketchEdit: () =>
-      set((s) => (s.pendingSketchEdit ? { pendingSketchEdit: null } : {})),
+      set((s) => {
+        const isTrimExtend =
+          s.selection.sketchEditTool === 'trim' || s.selection.sketchEditTool === 'extend'
+        if (!s.pendingSketchEdit && !isTrimExtend) return {}
+        // Fully deactivate the trim/extend tool so the toolbar button untoggles
+        // and we never leave the tool active with a null pending (which would be
+        // unusable). Esc and post-operation both flow through here.
+        return {
+          pendingSketchEdit: null,
+          selection: isTrimExtend
+            ? { ...s.selection, sketchEditTool: null, activeControl: null }
+            : s.selection,
+        }
+      }),
   }
 }

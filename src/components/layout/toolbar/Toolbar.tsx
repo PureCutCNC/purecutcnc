@@ -143,6 +143,7 @@ export function Toolbar({
           onChamfer={toolbar.sketchCommands.sketchEdit.chamfer.onActivate}
           onTrim={toolbar.sketchCommands.sketchEdit.trim.onActivate}
           onExtend={toolbar.sketchCommands.sketchEdit.extend.onActivate}
+          trimExtendDisabled={!toolbar.sketchCommands.sketchEdit.trim.enabled}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

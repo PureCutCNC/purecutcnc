@@ -58,6 +58,7 @@ export interface SketchCommandPredicates {
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
   featureSketchEditActive: boolean
+  sketchEditFeatureOpen: boolean
   selectedConstraintFeatureId: string | null
 }
 
@@ -126,6 +127,11 @@ export function deriveSketchCommandPredicates({
     selection.mode === 'sketch_edit'
     && selection.selectedNode?.type === 'feature'
     && !!selection.selectedFeatureId
+  const sketchEditFeature = featureSketchEditActive
+    ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
+    : null
+  // Trim/extend only apply to open subjects; disable them while editing a closed feature.
+  const sketchEditFeatureOpen = !!sketchEditFeature && !featureHasClosedGeometry(sketchEditFeature)
   const selectedConstraintFeatureId =
     (selection.selectedNode?.type === 'feature' ? selection.selectedNode.featureId : null) ??
     selection.selectedFeatureId
@@ -143,6 +149,7 @@ export function deriveSketchCommandPredicates({
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
     featureSketchEditActive,
+    sketchEditFeatureOpen,
     selectedConstraintFeatureId,
   }
 }
@@ -229,11 +236,11 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         active: input.selection.sketchEditTool === 'chamfer',
       },
       trim: {
-        enabled: predicates.featureSketchEditActive,
+        enabled: predicates.sketchEditFeatureOpen,
         active: input.selection.sketchEditTool === 'trim',
       },
       extend: {
-        enabled: predicates.featureSketchEditActive,
+        enabled: predicates.sketchEditFeatureOpen,
         active: input.selection.sketchEditTool === 'extend',
       },
     },
