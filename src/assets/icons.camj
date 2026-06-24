@@ -24863,6 +24863,204 @@
       "visible": false,
       "locked": false,
       "text": null
+    },
+    {
+      "id": "icon_slot",
+      "name": "slot_shape_0",
+      "kind": "composite",
+      "folderId": "folder_slot",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_slot_1",
+      "name": "slot_shape_0_1",
+      "kind": "composite",
+      "folderId": "folder_slot",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 5,
+            "y": 16
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 16
+              }
+            },
+            {
+              "type": "arc",
+              "center": {
+                "x": 19,
+                "y": 12
+              },
+              "to": {
+                "x": 19,
+                "y": 8
+              },
+              "clockwise": true
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 5,
+                "y": 8
+              }
+            },
+            {
+              "type": "arc",
+              "center": {
+                "x": 5,
+                "y": 12
+              },
+              "to": {
+                "x": 5,
+                "y": 16
+              },
+              "clockwise": true
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_ngon",
+      "name": "ngon_shape_0",
+      "kind": "composite",
+      "folderId": "folder_ngon",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_ngon_1",
+      "name": "ngon_shape_0_1",
+      "kind": "composite",
+      "folderId": "folder_ngon",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 22.0,
+            "y": 12.0
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 17.0,
+                "y": 20.7
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.0,
+                "y": 20.7
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 2.0,
+                "y": 12.0
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 7.0,
+                "y": 3.3
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 17.0,
+                "y": 3.3
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 22.0,
+                "y": 12.0
+              }
+            }
+          ],
+          "closed": true
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "add",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
@@ -25339,6 +25537,16 @@
     {
       "id": "folder_chamfer",
       "name": "chamfer",
+      "collapsed": true
+    },
+    {
+      "id": "folder_slot",
+      "name": "slot",
+      "collapsed": true
+    },
+    {
+      "id": "folder_ngon",
+      "name": "ngon",
       "collapsed": true
     }
   ],
