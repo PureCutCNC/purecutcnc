@@ -25306,6 +25306,272 @@
       "visible": false,
       "locked": false,
       "text": null
+    },
+    {
+      "id": "icon_extend",
+      "name": "extend_shape_0",
+      "kind": "composite",
+      "folderId": "folder_extend",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 19,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_extend_1",
+      "name": "extend_shape_1",
+      "kind": "composite",
+      "folderId": "folder_extend",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_extend_2",
+      "name": "extend_shape_2",
+      "kind": "composite",
+      "folderId": "folder_extend",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 14,
+            "y": 8
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 19,
+                "y": 12
+              }
+            },
+            {
+              "type": "line",
+              "to": {
+                "x": 14,
+                "y": 16
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_trim",
+      "name": "trim_shape_0",
+      "kind": "composite",
+      "folderId": "folder_trim",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 12,
+            "y": 4
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 20
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_trim_1",
+      "name": "trim_shape_1",
+      "kind": "composite",
+      "folderId": "folder_trim",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 3,
+            "y": 12
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 12,
+                "y": 12
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_trim_2",
+      "name": "trim_shape_2",
+      "kind": "composite",
+      "folderId": "folder_trim",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 14,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 18,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
+    },
+    {
+      "id": "icon_trim_3",
+      "name": "trim_shape_3",
+      "kind": "composite",
+      "folderId": "folder_trim",
+      "sketch": {
+        "profile": {
+          "start": {
+            "x": 18,
+            "y": 10
+          },
+          "segments": [
+            {
+              "type": "line",
+              "to": {
+                "x": 14,
+                "y": 14
+              }
+            }
+          ],
+          "closed": false
+        },
+        "origin": {
+          "x": 0,
+          "y": 0
+        },
+        "orientationAngle": 0,
+        "dimensions": [],
+        "constraints": []
+      },
+      "operation": "line",
+      "z_top": 0,
+      "z_bottom": -1,
+      "visible": false,
+      "locked": false,
+      "text": null
     }
   ],
   "featureFolders": [
@@ -25906,6 +26172,18 @@
     {
       "id": "folder_chamferrect",
       "name": "chamferrect",
+      "collapsed": true,
+      "grouped": false
+    },
+    {
+      "id": "folder_extend",
+      "name": "extend",
+      "collapsed": true,
+      "grouped": false
+    },
+    {
+      "id": "folder_trim",
+      "name": "trim",
       "collapsed": true,
       "grouped": false
     }

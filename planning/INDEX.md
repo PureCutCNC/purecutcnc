@@ -20,6 +20,7 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
+- [P0A_SKETCH_VERBS_Plan.md](P0A_SKETCH_VERBS_Plan.md) — trim / extend sketch-editing verbs (roadmap P0a); two-pick cross-feature tools. Approved 2026-06-24; slices A0/A1 → B/C
 - [P0B_PRIMITIVES_Plan.md](P0B_PRIMITIVES_Plan.md) — slot/obround and regular polygon sketch creation primitives (P0b from roadmap)
 - [DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md](DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md) — project-local Claude Code/DeepSeek worker launcher and Codex-led sequential integration-manager workflow
 - [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
