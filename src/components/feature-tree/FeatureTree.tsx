@@ -460,6 +460,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
                   />
                   {!folder.collapsed ? (
                     <div className="tree-children">
@@ -533,6 +548,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
                   />
                   {!folder.collapsed ? (
                     <div className="tree-children">

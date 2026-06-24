@@ -162,6 +162,7 @@ export function PropertiesPanel() {
     deleteTab,
     deleteClamp,
     deleteFeatureFolder,
+    toggleFolderGrouped,
     setProjectName,
     setShowFeatureInfo,
     setProjectClearances,
@@ -1093,6 +1094,31 @@ export function PropertiesPanel() {
     if (selectedFeatureIds.length > 1) {
       return (
         <div className="properties-panel">
+          {selection.groupFolderId ? (() => {
+            const groupFolder = project.featureFolders.find(f => f.id === selection.groupFolderId)
+            if (!groupFolder) return null
+            return (
+              <div className="properties-group">
+                <span className="properties-section-title">Group</span>
+                <label className="properties-field">
+                  <span>Name</span>
+                  <DraftTextInput
+                    key={`group-name-${groupFolder.id}-${groupFolder.name}`}
+                    value={groupFolder.name}
+                    onCommit={(next) => updateFeatureFolder(groupFolder.id, { name: next })}
+                  />
+                </label>
+                <div className="properties-actions">
+                  <button className="feat-btn" type="button" onClick={() => toggleFolderGrouped(groupFolder.id)}>
+                    Ungroup
+                  </button>
+                  <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(groupFolder.id)}>
+                    Delete Group
+                  </button>
+                </div>
+              </div>
+            )
+          })() : null}
           <div className="properties-group">
             <label className="properties-field">
               <span>Selection</span>
