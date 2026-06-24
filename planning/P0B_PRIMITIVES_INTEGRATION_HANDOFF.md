@@ -13,8 +13,9 @@ The integration manager turns the approved design into sequential worktree slice
 - Base commit: `08d67b65a565af4c05ca16cdbb8ac1922215285e`
 - Approved plan: `planning/P0B_PRIMITIVES_Plan.md`
 - Manager session: `2026-06-23`
-- Status: `slice in progress`
+- Status: `complete — awaiting user test`
 - User authorization for credential-backed worker dispatch: granted (2026-06-23, this session)
+- Final commit: `ee7fb3c` (2026-06-24)
 
 ## Global rules
 
@@ -29,10 +30,10 @@ The integration manager turns the approved design into sequential worktree slice
 
 | Slice | Scope | Base commit | Task branch / worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 |-------|-------|-------------|------------------------|---------------|----------------|-------------------------|-----------------|-------|
-| S1 | Geometry helpers + store layer + unit tests | `08d67b6` | `p0b-s1-geometry` / `/Users/frankp/Projects/worktrees/purecutcnc/p0b-s1-geometry` | `not started` | `pending` | `-` | `npm run build && npx vitest run src/types/slot.test.ts src/types/ngon.test.ts` | No React |
-| S2 | Canvas interaction + preview | after S1 merge | `p0b-s2-canvas` / `/Users/frankp/Projects/worktrees/purecutcnc/p0b-s2-canvas` | `not started` | `pending` | `-` | `npm run build` | Depends on S1 |
-| S3 | Toolbar + workflow panel | after S2 merge | `p0b-s3-toolbar` / `/Users/frankp/Projects/worktrees/purecutcnc/p0b-s3-toolbar` | `not started` | `pending` | `-` | `npm run build` | Depends on S2 |
-| S4 | Icons (manager only) | after S3 merge | n/a — manager edits directly | `not started` | `pending` | `-` | `npm run build && npm run sync-icons` | Manager draws icons in icons.camj |
+| S1 | Geometry helpers + store layer + unit tests | `08d67b6` | `p0b-s1-geometry` / retired | `complete` | `accepted` | `dc22b5d` (merge `2935865`) | pass | 7/7 slot tests, 7/7 ngon tests, build clean |
+| S2 | Canvas interaction + preview | `dc22b5d` | `p0b-s2-canvas` / retired | `complete` | `accepted` | `7989700` (merge `c82c9ca`) | pass | build clean; visual check deferred to user |
+| S3 | Toolbar + workflow panel | `7989700` | `p0b-s3-toolbar` / retired | `complete` | `accepted` | `bf8ffc6` (merge `b87da06`) | pass | build clean |
+| S4 | Icons (manager only) | `bf8ffc6` | n/a — manager direct | `complete` | `accepted` | `ee7fb3c` | pass | slot=obround pill, ngon=flat-top hexagon |
 
 ---
 
