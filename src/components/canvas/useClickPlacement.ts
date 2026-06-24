@@ -23,6 +23,7 @@ import type {
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
+  PendingSketchEdit,
   PendingTransformTool,
   SelectionState,
   SketchControlRef,
@@ -48,6 +49,7 @@ import {
   findHitClampId,
   findHitFeatureId,
   findHitTabId,
+  segmentHitTest,
 } from './hitTest'
 import { hitBackdrop } from './scenePrimitives'
 import { anchorPointForIndex } from './profilePrimitives'
@@ -104,6 +106,7 @@ export interface ClickPlacementCtx {
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   viewStateRef: MutableRefObject<SketchViewState>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
+  pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
   dimensionDeleteArmedRef: MutableRefObject<boolean>
   deleteHoverDimIdRef: MutableRefObject<string | null>
@@ -186,6 +189,10 @@ export interface ClickPlacementCtx {
   disconnectFeaturePoint: (featureId: string, index: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
+  setPendingSketchSubject: (subject: NonNullable<PendingSketchEdit['subject']>) => void
+  cancelPendingSketchEdit: () => void
+  trimFeatureSegment: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, cutter: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
+  extendFeatureEndpoint: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, target: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
   placePendingSlotAt: (point: Point) => void
@@ -225,6 +232,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
+    pendingSketchEditRef,
     pendingDimensionRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
@@ -274,6 +282,10 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    setPendingSketchSubject,
+    cancelPendingSketchEdit,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
     setPendingAddAnchor,
     placePendingAddAt,
     placePendingSlotAt,
@@ -549,6 +561,44 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
             scheduleDraw()
           }
           return
+        }
+
+        if (feature && (selection.sketchEditTool === 'trim' || selection.sketchEditTool === 'extend')) {
+          const pending = pendingSketchEditRef.current
+          if (pending && pending.phase === 'pick-subject') {
+            const hit = segmentHitTest(world, project, vt, { openOnly: true })
+            if (hit) {
+              setPendingSketchSubject({
+                featureId: hit.featureId,
+                segmentIndex: hit.segmentIndex,
+                point: hit.point,
+                t: hit.t,
+              })
+              sketchEditPreviewRef.current = { point: hit.point, mode: selection.sketchEditTool }
+              scheduleDraw()
+            }
+            return
+          }
+          if (pending && pending.phase === 'pick-reference' && pending.subject) {
+            const hit = segmentHitTest(world, project, vt, { openOnly: false })
+            if (hit) {
+              const ref = {
+                featureId: hit.featureId,
+                segmentIndex: hit.segmentIndex,
+                point: hit.point,
+                t: hit.t,
+              }
+              if (pending.tool === 'trim') {
+                trimFeatureSegment(pending.subject, ref)
+              } else {
+                extendFeatureEndpoint(pending.subject, ref)
+              }
+              cancelPendingSketchEdit()
+              sketchEditPreviewRef.current = null
+              scheduleDraw()
+            }
+            return
+          }
         }
 
         if (feature && selection.sketchEditTool === 'disconnect') {

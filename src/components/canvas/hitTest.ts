@@ -15,13 +15,21 @@
  */
 
 import { rectProfile, sampleProfilePoints } from '../../types/project'
-import type { Clamp, Point, SketchProfile, Tab } from '../../types/project'
+import type { Clamp, Point, Project, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 export interface FeatureLike {
   id: string
   visible: boolean
   sketch: { profile: SketchProfile }
+}
+
+export interface SegmentHitResult {
+  featureId: string
+  segmentIndex: number
+  point: Point
+  t: number
 }
 
 export function pointInProfile(x: number, y: number, profile: SketchProfile): boolean {
@@ -78,6 +86,56 @@ export function pointNearProfile(worldPoint: Point, profile: SketchProfile, vt: 
   }
 
   return false
+}
+
+export function segmentHitTest(
+  worldPoint: Point,
+  project: Project,
+  vt: ViewTransform,
+  opts: { openOnly: boolean },
+  tolerancePx = 8,
+): SegmentHitResult | null {
+  const features = resolvedProjectFeatures(project)
+  const toleranceWorld = tolerancePx / Math.max(vt.scale, 1e-6)
+
+  let bestDist = Infinity
+  let best: SegmentHitResult | null = null
+
+  for (const feature of features) {
+    if (!feature.visible) continue
+    const profile = feature.sketch.profile
+    if (opts.openOnly && profile.closed) continue
+
+    const points = sampleProfilePoints(profile)
+    if (points.length < 2) continue
+
+    const segmentCount = profile.closed ? points.length : points.length - 1
+    for (let index = 0; index < segmentCount; index += 1) {
+      const start = points[index]
+      const end = points[(index + 1) % points.length]
+      const dist = distancePointToSegment(worldPoint, start, end)
+      if (dist <= toleranceWorld && dist < bestDist) {
+        // Recompute t for this segment (distancePointToSegment already computes it
+        // internally but doesn't return it; recompute for the best match).
+        const dx = end.x - start.x
+        const dy = end.y - start.y
+        const t = Math.max(0, Math.min(1, ((worldPoint.x - start.x) * dx + (worldPoint.y - start.y) * dy) / Math.max(dx * dx + dy * dy, 1e-18)))
+        const projection = {
+          x: start.x + dx * t,
+          y: start.y + dy * t,
+        }
+        bestDist = dist
+        best = {
+          featureId: feature.id,
+          segmentIndex: index,
+          point: projection,
+          t,
+        }
+      }
+    }
+  }
+
+  return best
 }
 
 export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {

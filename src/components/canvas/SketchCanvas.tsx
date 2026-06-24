@@ -85,6 +85,7 @@ import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransfor
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
+  segmentHitTest,
 } from './hitTest'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
@@ -368,6 +369,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
+    pendingSketchEdit,
+    cancelPendingSketchEdit,
+    setPendingSketchSubject,
     moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
@@ -445,6 +451,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingOffsetRef.current = pendingOffset
   pendingShapeActionRef.current = pendingShapeAction
   pendingConstraintRef.current = pendingConstraint
+  const pendingSketchEditRef = useRef(pendingSketchEdit)
+  pendingSketchEditRef.current = pendingSketchEdit
   viewStateRef.current = viewState
   backdropImageRef.current = backdropImage
   toolpathsRef.current = toolpaths
@@ -2162,7 +2170,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || !!pendingMove
       || !!pendingTransform
       || !!pendingOffset
-      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer' || sketchEditTool === 'trim' || sketchEditTool === 'extend'))
       || isDraggingNodeRef.current
       || constraintPicking
 
@@ -2245,6 +2253,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         fillet.setFilletCornerPicked(false)
         const target = findSketchSegmentHit(feature.sketch.profile, livePoint, vt)
         sketchEditPreviewRef.current = target ? { point: target.point, mode: 'delete_segment' } : null
+        scheduleDraw()
+        return
+      }
+
+      if (feature && (sketchEditTool === 'trim' || sketchEditTool === 'extend')) {
+        pendingSketchExtensionRef.current = null
+        pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
+        const pending = pendingSketchEditRef.current
+        if (pending && pending.phase === 'pick-subject') {
+          const hit = segmentHitTest(livePoint, project, vt, { openOnly: true })
+          sketchEditPreviewRef.current = hit
+            ? { point: hit.point, mode: sketchEditTool }
+            : null
+        } else if (pending && pending.phase === 'pick-reference' && pending.subject) {
+          // Keep subject point highlighted + show reference candidate
+          const hit = segmentHitTest(livePoint, project, vt, { openOnly: false })
+          sketchEditPreviewRef.current = hit
+            ? { point: hit.point, mode: sketchEditTool }
+            : { point: pending.subject.point, mode: sketchEditTool }
+        }
         scheduleDraw()
         return
       }
@@ -2459,6 +2488,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingTransformRef,
     pendingOffsetRef,
     pendingShapeActionRef,
+    pendingSketchEditRef,
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
@@ -2495,6 +2525,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
+    cancelPendingSketchEdit,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -2603,6 +2634,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
+    pendingSketchEditRef,
     pendingDimensionRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
@@ -2652,6 +2684,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    setPendingSketchSubject,
+    cancelPendingSketchEdit,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
     setPendingAddAnchor,
     placePendingAddAt,
     placePendingSlotAt,

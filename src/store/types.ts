@@ -61,7 +61,7 @@ export interface SketchControlRef {
   t?: number
 }
 
-export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer'
+export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer' | 'trim' | 'extend'
 export type OpenProfileEndpoint = 'start' | 'end'
 
 export type FeatureAlignment =
@@ -220,6 +220,17 @@ export interface PendingConstraint {
   session: number
 }
 
+export interface PendingSketchEdit {
+  tool: 'trim' | 'extend'
+  phase: 'pick-subject' | 'pick-reference'
+  subject?: {
+    featureId: string
+    segmentIndex: number
+    point: Point
+    t: number
+  }
+}
+
 export interface ProjectStore {
   project: Project
   selection: SelectionState
@@ -232,6 +243,7 @@ export interface ProjectStore {
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   pendingConstraint: PendingConstraint | null
+  pendingSketchEdit: PendingSketchEdit | null
   // ---- Measure & dimensions (transient tool state, not persisted) ----
   tapeMeasure: TapeMeasureState | null
   pendingDimension: PendingDimensionTool | null
@@ -404,6 +416,8 @@ export interface ProjectStore {
   cancelSketchEdit: () => void
   setSketchEditTool: (tool: SketchEditTool | null) => void
   setActiveControl: (control: SketchControlRef | null) => void
+  setPendingSketchSubject: (subject: NonNullable<PendingSketchEdit['subject']>) => void
+  cancelPendingSketchEdit: () => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
   insertFeaturePoint: (featureId: string, target: SketchInsertTarget) => void
   joinOpenFeatureEndpoints: (
@@ -417,6 +431,8 @@ export interface ProjectStore {
   disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
+  trimFeatureSegment: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, cutter: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
+  extendFeatureEndpoint: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, target: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
   makeUnique: (instanceId: string) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 

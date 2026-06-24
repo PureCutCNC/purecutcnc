@@ -51,6 +51,8 @@ export type SelectionSlice = Pick<
   | 'cancelSketchEdit'
   | 'setSketchEditTool'
   | 'setActiveControl'
+  | 'setPendingSketchSubject'
+  | 'cancelPendingSketchEdit'
 >
 
 export function emptySelection(): SelectionState {
@@ -707,6 +709,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
             history: {
               // Trim mutations during the edit session, push pre-edit state as the undo point
               past: [
@@ -735,6 +738,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
           }
         }
 
@@ -743,6 +747,7 @@ export function createSelectionSlice(
           selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
           sketchEditSession: null,
           pendingConstraint: null,
+          pendingSketchEdit: null,
         }
       }),
 
@@ -753,6 +758,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
           }
         }
 
@@ -768,6 +774,7 @@ export function createSelectionSlice(
           },
           sketchEditSession: null,
           pendingConstraint: null,
+          pendingSketchEdit: null,
           history: {
             past: s.history.past.slice(0, s.sketchEditSession.pastLength),
             future: [],
@@ -777,17 +784,52 @@ export function createSelectionSlice(
       }),
 
     setSketchEditTool: (tool) =>
-      set((s) => ({
-        selection: {
-          ...s.selection,
-          sketchEditTool: s.selection.mode === 'sketch_edit' ? tool : null,
-          activeControl: null,
-        },
-      })),
+      set((s) => {
+        if (s.selection.mode !== 'sketch_edit') {
+          return {
+            selection: { ...s.selection, sketchEditTool: null, activeControl: null },
+            pendingSketchEdit: null,
+          }
+        }
+        // Initialize / clear pendingSketchEdit on tool change
+        const isTrimExtend = tool === 'trim' || tool === 'extend'
+        const wasTrimExtend = s.selection.sketchEditTool === 'trim' || s.selection.sketchEditTool === 'extend'
+        let nextPendingSketchEdit = s.pendingSketchEdit
+        if (isTrimExtend && !wasTrimExtend && tool !== null) {
+          nextPendingSketchEdit = { tool, phase: 'pick-subject' }
+        } else if (!isTrimExtend) {
+          nextPendingSketchEdit = null
+        }
+        return {
+          selection: {
+            ...s.selection,
+            sketchEditTool: tool,
+            activeControl: null,
+          },
+          pendingSketchEdit: nextPendingSketchEdit,
+        }
+      }),
 
     setActiveControl: (control) =>
       set((s) => ({
         selection: { ...s.selection, activeControl: control },
       })),
+
+    setPendingSketchSubject: (subject) =>
+      set((s) => {
+        if (!s.pendingSketchEdit || s.pendingSketchEdit.phase !== 'pick-subject') {
+          return {}
+        }
+        return {
+          pendingSketchEdit: {
+            ...s.pendingSketchEdit,
+            phase: 'pick-reference',
+            subject,
+          },
+        }
+      }),
+
+    cancelPendingSketchEdit: () =>
+      set((s) => (s.pendingSketchEdit ? { pendingSketchEdit: null } : {})),
   }
 }

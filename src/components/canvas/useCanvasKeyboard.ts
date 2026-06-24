@@ -27,6 +27,7 @@ import type {
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
+  PendingSketchEdit,
   PendingTransformTool,
   SelectionState,
   SketchControlRef,
@@ -72,6 +73,7 @@ export interface CanvasKeyboardCtx {
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
+  pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
   tapeMeasureRef: MutableRefObject<TapeMeasureState | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
@@ -110,6 +112,7 @@ export interface CanvasKeyboardCtx {
   cancelPendingOffset: () => void
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
+  cancelPendingSketchEdit: () => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
   completePendingShapeAction: () => void
   beginHistoryTransaction: () => void
@@ -141,6 +144,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingTransformRef,
     pendingOffsetRef,
     pendingShapeActionRef,
+    pendingSketchEditRef,
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
@@ -177,6 +181,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
+    cancelPendingSketchEdit,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -671,6 +676,11 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     if (event.key === 'Tab' && pendingShapeAction?.kind === 'cut' && pendingShapeAction.phase === 'cutters' && pendingShapeAction.cutterIds.length > 0) {
       event.preventDefault()
       confirmCutCutters()
+      return
+    }
+
+    if (event.key === 'Escape' && pendingSketchEditRef.current) {
+      cancelPendingSketchEdit()
       return
     }
 

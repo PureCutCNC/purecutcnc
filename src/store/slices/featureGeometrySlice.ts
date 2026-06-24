@@ -78,6 +78,8 @@ export type FeatureGeometrySlice = Pick<
   | 'disconnectFeaturePoint'
   | 'filletFeaturePoint'
   | 'chamferFeaturePoint'
+  | 'trimFeatureSegment'
+  | 'extendFeatureEndpoint'
   | 'makeUnique'
 >
 
@@ -704,6 +706,12 @@ export function createFeatureGeometrySlice(
         },
       }
     }),
+
+  // TODO(P0a-B/C): Implement trim geometry transform
+  trimFeatureSegment: (_subject, _cutter) => [],
+
+  // TODO(P0a-B/C): Implement extend geometry transform
+  extendFeatureEndpoint: (_subject, _target) => [],
 
   makeUnique: (instanceId) =>
     set((s) => {
