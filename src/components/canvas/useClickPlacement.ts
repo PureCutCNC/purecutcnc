@@ -661,10 +661,10 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           addPendingPolygonPoint(lockedSnapped)
         }
         setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') {
         placePendingAddAt(snapped)
         setPendingPreviewPointRef(null)
       } else if (pendingAdd.shape === 'slot') {

@@ -2294,7 +2294,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingAdd) {
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect')
         && pendingAdd.anchor
       ) {
         const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
@@ -2304,7 +2304,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         } else {
           const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
           const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-          dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
+          const dimShape = (pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') ? 'rect' : pendingAdd.shape
+          dimEdit.setDimensionEdit({ shape: dimShape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
         }
         return
       }

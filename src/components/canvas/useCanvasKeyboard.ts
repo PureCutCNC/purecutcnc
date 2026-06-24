@@ -233,7 +233,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       const units = projectRef.current.meta.units
 
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect')
         && pendingAdd.anchor
       ) {
         event.preventDefault()
@@ -257,8 +257,9 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           } else {
             const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
             const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
+            const dimShape = (pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') ? 'rect' : pendingAdd.shape
             dimEdit.setDimensionEdit({
-              shape: pendingAdd.shape,
+              shape: dimShape,
               anchor: pendingAdd.anchor,
               signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1,
               signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1,
