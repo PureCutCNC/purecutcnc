@@ -119,6 +119,8 @@ export type PendingAddTool =
       closed: boolean
       session: number
     }
+  | { shape: 'slot'; points: Point[]; session: number }
+  | { shape: 'ngon'; anchor: Point | null; sides: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'region'
@@ -423,6 +425,8 @@ export interface ProjectStore {
   startAddSplinePlacement: () => void
   startAddCompositePlacement: () => void
   startAddTextPlacement: (config: TextToolConfig) => void
+  startAddSlotPlacement: () => void
+  startAddNgonPlacement: () => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -437,6 +441,8 @@ export interface ProjectStore {
   closePendingCompositeDraft: () => void
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
+  setPendingNgonSides: (n: number) => void
+  placePendingSlotAt: (p3: Point) => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string, copyMode?: 'reference' | 'independent') => void
   startResizeFeature: (featureId: string) => void
@@ -469,6 +475,8 @@ export interface ProjectStore {
   addEllipseFeature: (name: string, cx: number, cy: number, rx: number, ry: number, depth: number) => void
   addPolygonFeature: (name: string, points: Point[], depth: number) => void
   addSplineFeature: (name: string, points: Point[], depth: number) => void
+  addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
+  addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
 
   beginConstraint: (featureId: string) => void
   setConstraintAnchor: (anchor: { point: Point; snapMode: SnapMode | null }) => void
