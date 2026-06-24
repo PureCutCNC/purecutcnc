@@ -54,7 +54,7 @@ export function resolveProfileSegments(
       case 'arc': {
         const radius = Math.hypot(segStart.x - seg.center.x, segStart.y - seg.center.y)
         const a0 = Math.atan2(segStart.y - seg.center.y, segStart.x - seg.center.x)
-        const a1 = Math.atan2(seg.to.y - seg.center.y, seg.to.x - seg.center.y)
+        const a1 = Math.atan2(seg.to.y - seg.center.y, seg.to.x - seg.center.x)
         result[i] = {
           kind: 'arc',
           center: seg.center,

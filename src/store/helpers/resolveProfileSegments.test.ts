@@ -182,6 +182,28 @@ function testArcAnglesAndRadiusMatch() {
   console.log('  arc angles and radius match: PASSED')
 }
 
+function testArcAsymmetricCenter() {
+  // Regression: arc end-angle (a1) must use center.x for its x-component.
+  // Center is OFF the x=y line so a swapped center.x/center.y is detectable.
+  // Arc center (3,7); start (13,7) → a0 = atan2(0,10) = 0;
+  // end (3,17) → a1 = atan2(10,0) = π/2.  ccw (clockwise:false).
+  const profile: SketchProfile = {
+    start: pt(13, 7),
+    segments: [
+      { type: 'arc', to: pt(3, 17), center: pt(3, 7), clockwise: false },
+    ],
+    closed: false,
+  }
+  const seg = resolveProfileSegments(profile)[0]
+  assert(seg !== null && seg.kind === 'arc', 'should be arc')
+  if (seg!.kind === 'arc') {
+    assert(Math.abs(seg!.a0 - 0) < ε, `a0 should be 0, got ${seg!.a0}`)
+    assert(Math.abs(seg!.a1 - Math.PI / 2) < ε,
+      `a1 should be π/2 (uses center.x), got ${seg!.a1}`)
+  }
+  console.log('  arc with asymmetric center → correct a1: PASSED')
+}
+
 // ── arc round‑trip through segmentIntersections ────────────────────────
 
 function testArcRoundTripSegmentIntersections() {
@@ -507,6 +529,7 @@ run('[line, arc, line] profile', testResolveLineArcLineProfile)
 run('profile with bezier', testResolveProfileWithBezier)
 run('circle to full arc', testResolveCircleToFullArc)
 run('arc angles and radius', testArcAnglesAndRadiusMatch)
+run('arc asymmetric center → correct a1', testArcAsymmetricCenter)
 
 console.log('── arc round‑trip ──')
 run('arc → segmentIntersections', testArcRoundTripSegmentIntersections)
