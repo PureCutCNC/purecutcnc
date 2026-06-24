@@ -108,7 +108,10 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
   const creationPanelHasPoints = creationPanelShape != null && pendingAdd != null && 'points' in pendingAdd && pendingAdd.points.length > 0
   const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
-  const creationCanDimEdit = creationPanelHasAnchor || creationPanelHasPoints || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
+  const slotHasBothPoints = pendingAdd?.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2
+  const creationCanDimEdit = creationPanelHasAnchor
+    || (pendingAdd?.shape === 'slot' ? slotHasBothPoints : creationPanelHasPoints)
+    || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
   const creationDimEditActive = !!creationCanDimEdit && !!dimensionEdit
 
   const creationWorkflowPanel = useCanvasWorkflowPanel({

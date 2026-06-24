@@ -391,6 +391,40 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         }
         return
       }
+
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
+        event.preventDefault()
+        if (!currentEdit) {
+          const p1 = pendingAdd.points[0]
+          const p2 = pendingAdd.points[1]
+          const previewPoint = pendingPreviewPointRef.current?.point
+          const axisX = p2.x - p1.x
+          const axisY = p2.y - p1.y
+          const axisLen = Math.hypot(axisX, axisY)
+          const currentWidth = previewPoint && axisLen > 1e-10
+            ? Math.max(2 * Math.abs((previewPoint.x - p1.x) * axisY - (previewPoint.y - p1.y) * axisX) / axisLen, 0.001)
+            : (units === 'mm' ? 6 : 0.25)
+          dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, arcEnd: p2, signX: 1, signY: 1, activeField: 'width', width: formatLength(currentWidth, units), height: '', radius: '', length: '', angle: '' })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (pendingAdd.shape === 'ngon' && pendingAdd.anchor) {
+        event.preventDefault()
+        if (!currentEdit) {
+          const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+          const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+          const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+          dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
     }
 
     if (event.key === 'Tab' && pendingMove && pendingMove.fromPoint && !pendingMove.toPoint) {

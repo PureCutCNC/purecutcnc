@@ -3050,7 +3050,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   onClick={creation.triggerDimensionFromCreationPanel}
                 >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : 'Dimensions'}</button>
               )}
-              {(creation.creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
+              {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
