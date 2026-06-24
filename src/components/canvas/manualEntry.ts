@@ -20,7 +20,7 @@ import type { Point, Segment } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
 
 export interface DimensionEditState {
-  shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite'
+  shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon'
   anchor: Point
   arcStart?: Point
   arcEnd?: Point
@@ -162,6 +162,25 @@ export function computeDimensionEditPreviewPoint(
       x: edit.anchor.x + len * Math.cos(angleRad),
       y: edit.anchor.y + len * Math.sin(angleRad),
     }
+  }
+
+  if (edit.shape === 'slot' && edit.arcStart && edit.arcEnd) {
+    const w = Math.max(parseLengthInput(edit.width, units) ?? 0, 0)
+    const p1 = edit.arcStart
+    const p2 = edit.arcEnd
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+    const px = -Math.sin(angle)
+    const py = Math.cos(angle)
+    const midX = (p1.x + p2.x) / 2
+    const midY = (p1.y + p2.y) / 2
+    return { x: midX + (w / 2) * px, y: midY + (w / 2) * py }
+  }
+
+  if (edit.shape === 'ngon') {
+    const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
+    const angleDeg = parseFloat(edit.angle) || 0
+    const angleRad = angleDeg * (Math.PI / 180)
+    return { x: edit.anchor.x + r * Math.cos(angleRad), y: edit.anchor.y + r * Math.sin(angleRad) }
   }
 
   const w = Math.max(parseLengthInput(edit.width, units) ?? 0, 0)

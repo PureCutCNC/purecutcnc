@@ -60,6 +60,7 @@ export type PendingAddSlice = Pick<
   | 'completePendingOpenComposite'
   | 'setPendingNgonSides'
   | 'placePendingSlotAt'
+  | 'placePendingNgonAt'
 >
 
 function resetFeaturePlacementSelection(selection: ProjectStore['selection']): ProjectStore['selection'] {
@@ -746,6 +747,25 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       state.addSlotFeature(`Slot ${state.project.features.length + 1}`, p1, p2, width, depth)
+      set({ pendingAdd: null })
+    },
+
+    placePendingNgonAt: (point) => {
+      const state = get()
+      if (!state.pendingAdd || state.pendingAdd.shape !== 'ngon' || !state.pendingAdd.anchor) return
+      const { anchor, sides } = state.pendingAdd
+      const circumradius = Math.hypot(point.x - anchor.x, point.y - anchor.y)
+      if (circumradius < 1e-10) return
+      const firstVertexAngle = Math.atan2(point.y - anchor.y, point.x - anchor.x)
+      const depth = Math.min(state.project.stock.thickness, 10)
+      const NGON_NAMES: Record<number, string> = {
+        3: 'Triangle', 4: 'Square', 5: 'Pentagon', 6: 'Hexagon',
+        7: 'Heptagon', 8: 'Octagon', 9: 'Nonagon', 10: 'Decagon',
+        11: 'Hendecagon', 12: 'Dodecagon',
+      }
+      const baseName = NGON_NAMES[sides] ?? `Polygon${sides}`
+      const name = `${baseName} ${state.project.features.length + 1}`
+      state.addNgonFeature(name, anchor.x, anchor.y, sides, circumradius, firstVertexAngle, depth)
       set({ pendingAdd: null })
     },
   }

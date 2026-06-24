@@ -20,6 +20,8 @@ import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text
 import {
   getProfileBounds,
   splineProfile,
+  slotProfile,
+  ngonProfile,
 } from '../../types/project'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -753,4 +755,50 @@ export function hexToRgba(hex: string, alpha: number): string {
   const g = Number.parseInt(normalized.slice(2, 4), 16)
   const b = Number.parseInt(normalized.slice(4, 6), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+export function drawPendingSlotAxis(
+  ctx: CanvasRenderingContext2D,
+  p1: Point,
+  p2cursor: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  drawLineLengthMeasurement(ctx, p1, p2cursor, vt, units)
+}
+
+export function drawPendingSlotWidth(
+  ctx: CanvasRenderingContext2D,
+  p1: Point,
+  p2: Point,
+  cursorPoint: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const axisX = p2.x - p1.x
+  const axisY = p2.y - p1.y
+  const axisLen = Math.hypot(axisX, axisY)
+  const minWidth = units === 'mm' ? 6 : 0.25
+  const width = axisLen > 1e-10
+    ? Math.max(2 * Math.abs((cursorPoint.x - p1.x) * axisY - (cursorPoint.y - p1.y) * axisX) / axisLen, 0.001)
+    : minWidth
+
+  const profile = slotProfile(p1, p2, width)
+  drawPreviewProfile(ctx, profile, vt, `W = ${formatLength(width, units)}`)
+}
+
+export function drawPendingNgon(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  sides: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const circumradius = Math.hypot(cursorPoint.x - anchor.x, cursorPoint.y - anchor.y)
+  if (circumradius < 1e-10) return
+  const firstVertexAngle = Math.atan2(cursorPoint.y - anchor.y, cursorPoint.x - anchor.x)
+  const profile = ngonProfile(anchor.x, anchor.y, sides, circumradius, firstVertexAngle)
+  drawPreviewProfile(ctx, profile, vt, `R = ${formatLength(circumradius, units)}`)
+  drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
 }

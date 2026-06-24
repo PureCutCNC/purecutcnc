@@ -188,6 +188,8 @@ export interface ClickPlacementCtx {
   chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
+  placePendingSlotAt: (point: Point) => void
+  placePendingNgonAt: (point: Point) => void
   placePendingTextAt: (point: Point) => void
   placeOriginAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
@@ -274,6 +276,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     chamferFeaturePoint,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -663,6 +667,24 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
         placePendingAddAt(snapped)
         setPendingPreviewPointRef(null)
+      } else if (pendingAdd.shape === 'slot') {
+        const lastPoint = pendingAdd.points.length > 0 ? pendingAdd.points[pendingAdd.points.length - 1] : null
+        const lockedSnapped = lastPoint ? applyLock(snapped, lastPoint) : snapped
+        if (pendingAdd.points.length < 2) {
+          addPendingPolygonPoint(lockedSnapped)
+          setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
+        } else {
+          placePendingSlotAt(lockedSnapped)
+          setPendingPreviewPointRef(null)
+        }
+      } else if (pendingAdd.shape === 'ngon') {
+        if (!pendingAdd.anchor) {
+          setPendingAddAnchor(snapped)
+          setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+        } else {
+          placePendingNgonAt(snapped)
+          setPendingPreviewPointRef(null)
+        }
       } else if (pendingAdd.shape === 'text') {
         placePendingTextAt(snapped)
         setPendingPreviewPointRef(null)
