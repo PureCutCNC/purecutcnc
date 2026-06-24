@@ -51,7 +51,7 @@ export interface CreationWorkflowCtx {
   clearTransientCanvasState: () => void
 }
 
-type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | null
+type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'roundrect' | 'chamferrect' | null
 
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
@@ -104,6 +104,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
     || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
     || pendingAdd.shape === 'slot' || pendingAdd.shape === 'ngon'
+    || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect'
   ) ? pendingAdd.shape : null
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
   const creationPanelHasPoints = creationPanelShape != null && pendingAdd != null && 'points' in pendingAdd && pendingAdd.points.length > 0

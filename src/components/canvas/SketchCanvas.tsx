@@ -68,6 +68,8 @@ import {
   drawPendingSlotAxis,
   drawPendingSlotWidth,
   drawPendingNgon,
+  drawPendingRoundRect,
+  drawPendingChamferRect,
   drawPreviewProfile,
   drawToolpath,
   translateProfile,
@@ -407,6 +409,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
     setPendingNgonSides,
+    setPendingRectCorner,
   } = useProjectStore()
 
   const projectRef = useRef(project)
@@ -1272,6 +1275,22 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     } else if (pendingAdd?.shape === 'ngon') {
       if (pendingAdd.anchor && currentPreviewPoint) {
         drawPendingNgon(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.sides, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
+    } else if (pendingAdd?.shape === 'roundrect') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingRoundRect(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.corner, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
+    } else if (pendingAdd?.shape === 'chamferrect') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingChamferRect(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.corner, vt, project.meta.units)
         drawPendingPoint(ctx, pendingAdd.anchor, vt)
         drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       } else if (currentPreviewPoint) {
@@ -2991,6 +3010,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : creation.creationPanelShape === 'spline' ? 'Spline'
             : creation.creationPanelShape === 'slot' ? 'Slot'
             : creation.creationPanelShape === 'ngon' ? 'Polygon'
+            : creation.creationPanelShape === 'roundrect' ? 'Rounded Rectangle'
+            : creation.creationPanelShape === 'chamferrect' ? 'Chamfered Rectangle'
             : 'Composite'
           }
           step={
@@ -3406,6 +3427,33 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     if (e.key === 'Enter') {
                       const n = Math.round(Number(e.currentTarget.value))
                       if (!Number.isNaN(n)) setPendingNgonSides(Math.max(3, Math.min(50, n)))
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          {(pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !creation.creationDimEditActive && (
+            <div className="canvas-workflow-panel__meta">
+              <label className="canvas-workflow-panel__field">
+                <span>{pendingAdd.shape === 'roundrect' ? 'Corner radius' : 'Chamfer'}</span>
+                <input
+                  key={'corner' in pendingAdd ? pendingAdd.session : undefined}
+                  className="canvas-workflow-panel__count-input"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={'corner' in pendingAdd ? pendingAdd.corner : (project.meta.units === 'mm' ? 5 : 0.2)}
+                  onBlur={(e) => {
+                    const v = Number(e.target.value)
+                    const clamped = Number.isNaN(v) || v < 0 ? ('corner' in pendingAdd ? pendingAdd.corner : 0) : v
+                    setPendingRectCorner(clamped)
+                    e.target.value = String(clamped)
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') {
+                      const v = Number(e.currentTarget.value)
+                      if (!Number.isNaN(v) && v >= 0) setPendingRectCorner(v)
                     }
                   }}
                 />

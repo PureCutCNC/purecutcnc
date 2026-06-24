@@ -23,6 +23,7 @@ import {
   slotProfile,
   ngonProfile,
 } from '../../types/project'
+import { roundedRectProfile, chamferedRectProfile } from '../../store/helpers/cannedRectProfiles'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import {
@@ -801,4 +802,42 @@ export function drawPendingNgon(
   const profile = ngonProfile(anchor.x, anchor.y, sides, circumradius, firstVertexAngle)
   drawPreviewProfile(ctx, profile, vt, `R = ${formatLength(circumradius, units)}`)
   drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
+}
+
+export function drawPendingRoundRect(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  corner: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const w = Math.abs(cursorPoint.x - anchor.x)
+  const h = Math.abs(cursorPoint.y - anchor.y)
+  const minDim = Math.max(w, h)
+  if (minDim < 1e-10) return
+  const profile = roundedRectProfile(anchor, cursorPoint, corner)
+  const label = `W=${formatLength(w, units)}, H=${formatLength(h, units)}`
+  drawPreviewProfile(ctx, profile, vt, label)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x + w, y: anchor.y }, vt, units)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x, y: anchor.y + h }, vt, units)
+}
+
+export function drawPendingChamferRect(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  corner: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const w = Math.abs(cursorPoint.x - anchor.x)
+  const h = Math.abs(cursorPoint.y - anchor.y)
+  const minDim = Math.max(w, h)
+  if (minDim < 1e-10) return
+  const profile = chamferedRectProfile(anchor, cursorPoint, corner)
+  const label = `W=${formatLength(w, units)}, H=${formatLength(h, units)}`
+  drawPreviewProfile(ctx, profile, vt, label)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x + w, y: anchor.y }, vt, units)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x, y: anchor.y + h }, vt, units)
 }
