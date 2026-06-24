@@ -121,6 +121,8 @@ export type PendingAddTool =
     }
   | { shape: 'slot'; points: Point[]; session: number }
   | { shape: 'ngon'; anchor: Point | null; sides: number; session: number }
+  | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
+  | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'region'
@@ -427,6 +429,8 @@ export interface ProjectStore {
   startAddTextPlacement: (config: TextToolConfig) => void
   startAddSlotPlacement: () => void
   startAddNgonPlacement: () => void
+  startAddRoundRectPlacement: () => void
+  startAddChamferRectPlacement: () => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -442,6 +446,7 @@ export interface ProjectStore {
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
   setPendingNgonSides: (n: number) => void
+  setPendingRectCorner: (n: number) => void
   placePendingSlotAt: (p3: Point) => void
   placePendingNgonAt: (point: Point) => void
   startMoveFeature: (featureId: string) => void
@@ -478,6 +483,8 @@ export interface ProjectStore {
   addSplineFeature: (name: string, points: Point[], depth: number) => void
   addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
+  addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
+  addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 
   beginConstraint: (featureId: string) => void
   setConstraintAnchor: (anchor: { point: Point; snapMode: SnapMode | null }) => void

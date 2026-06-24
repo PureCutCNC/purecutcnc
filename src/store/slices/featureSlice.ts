@@ -45,6 +45,7 @@ import {
   getProfileBounds,
   IDENTITY_MATRIX,
 } from '../../types/project'
+import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
 import {
@@ -97,6 +98,8 @@ export type FeatureSlice = Pick<
   | 'addSplineFeature'
   | 'addSlotFeature'
   | 'addNgonFeature'
+  | 'addRoundRectFeature'
+  | 'addChamferRectFeature'
   | 'alignFeatures'
   | 'distributeFeatures'
   | 'mergeSelectedFeatures'
@@ -1323,6 +1326,56 @@ export function createFeatureSlice(
         folderId: null,
         sketch: {
           profile: ngonProfile(cx, cy, sides, circumradius, firstVertexAngle),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 90,
+          dimensions: [],
+          constraints: [],
+        },
+        operation,
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      get().addFeature(feature)
+    },
+
+    addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
+      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
+      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
+      const id = nextUniqueGeneratedId(get().project, 'f')
+      const feature: SketchFeature = {
+        id,
+        name: baseName,
+        kind: 'composite',
+        folderId: null,
+        sketch: {
+          profile: roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner),
+          origin: { x: 0, y: 0 },
+          orientationAngle: 90,
+          dimensions: [],
+          constraints: [],
+        },
+        operation,
+        z_top: depth,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      }
+      get().addFeature(feature)
+    },
+
+    addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
+      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
+      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
+      const id = nextUniqueGeneratedId(get().project, 'f')
+      const feature: SketchFeature = {
+        id,
+        name: baseName,
+        kind: 'composite',
+        folderId: null,
+        sketch: {
+          profile: chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner),
           origin: { x: 0, y: 0 },
           orientationAngle: 90,
           dimensions: [],

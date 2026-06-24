@@ -44,6 +44,8 @@ export type PendingAddSlice = Pick<
   | 'startAddTextPlacement'
   | 'startAddSlotPlacement'
   | 'startAddNgonPlacement'
+  | 'startAddRoundRectPlacement'
+  | 'startAddChamferRectPlacement'
   | 'cancelPendingAdd'
   | 'setPendingAddAnchor'
   | 'placePendingAddAt'
@@ -59,6 +61,7 @@ export type PendingAddSlice = Pick<
   | 'completePendingComposite'
   | 'completePendingOpenComposite'
   | 'setPendingNgonSides'
+  | 'setPendingRectCorner'
   | 'placePendingSlotAt'
   | 'placePendingNgonAt'
 >
@@ -206,6 +209,26 @@ export function createPendingAddSlice(
         selection: resetFeaturePlacementSelection(s.selection),
       })),
 
+    startAddRoundRectPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'roundrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddChamferRectPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'chamferrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
     cancelPendingAdd: () => set({ pendingAdd: null }),
 
     setPendingAddAnchor: (point) =>
@@ -224,7 +247,8 @@ export function createPendingAddSlice(
       const depth = Math.min(state.project.stock.thickness, 10)
       const minSize = convertLength(0.01, 'mm', state.project.meta.units)
 
-      if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'tab' || state.pendingAdd.shape === 'clamp') {
+      if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'tab' || state.pendingAdd.shape === 'clamp'
+        || state.pendingAdd.shape === 'roundrect' || state.pendingAdd.shape === 'chamferrect') {
         const x1 = anchor.x
         const y1 = anchor.y
         const x2 = point.x
@@ -316,7 +340,13 @@ export function createPendingAddSlice(
           return
         }
 
-        state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
+        if (state.pendingAdd.shape === 'roundrect') {
+          state.addRoundRectFeature(`Rounded rect ${state.project.features.length + 1}`, x, y, width, height, ('corner' in state.pendingAdd ? state.pendingAdd.corner : 0), depth)
+        } else if (state.pendingAdd.shape === 'chamferrect') {
+          state.addChamferRectFeature(`Chamfered rect ${state.project.features.length + 1}`, x, y, width, height, ('corner' in state.pendingAdd ? state.pendingAdd.corner : 0), depth)
+        } else {
+          state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
+        }
       } else if (state.pendingAdd.shape === 'ellipse') {
         const rx = Math.max(minSize, Math.abs(point.x - anchor.x))
         const ry = Math.max(minSize, Math.abs(point.y - anchor.y))
@@ -726,6 +756,14 @@ export function createPendingAddSlice(
         pendingAdd:
           s.pendingAdd?.shape === 'ngon'
             ? { ...s.pendingAdd, sides: Math.max(3, Math.min(50, Math.round(n))) }
+            : s.pendingAdd,
+      })),
+
+    setPendingRectCorner: (n) =>
+      set((s) => ({
+        pendingAdd:
+          s.pendingAdd?.shape === 'roundrect' || s.pendingAdd?.shape === 'chamferrect'
+            ? { ...s.pendingAdd, corner: Math.max(0, n) }
             : s.pendingAdd,
       })),
 

@@ -42,6 +42,8 @@ function CreationActions({
   onText,
   onSlot,
   onNgon,
+  onRoundRect,
+  onChamferRect,
 }: {
   pendingShape: string | null
   creationTarget: CreationTarget
@@ -56,6 +58,8 @@ function CreationActions({
   onText: () => void
   onSlot: () => void
   onNgon: () => void
+  onRoundRect: () => void
+  onChamferRect: () => void
 }) {
   const [lastShape, setLastShape] = useState<CreationShape>('rect')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -100,6 +104,10 @@ function CreationActions({
       onSlot()
     } else if (shape === 'ngon') {
       onNgon()
+    } else if (shape === 'roundrect') {
+      onRoundRect()
+    } else if (shape === 'chamferrect') {
+      onChamferRect()
     } else {
       onText()
     }

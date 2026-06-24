@@ -28,6 +28,8 @@ export const CREATION_SHAPE_OPTIONS = [
   { value: 'text', icon: 'text', noun: 'text' },
   { value: 'slot', icon: 'slot', noun: 'slot' },
   { value: 'ngon', icon: 'ngon', noun: 'regular polygon' },
+  { value: 'roundrect', icon: 'roundrect', noun: 'rounded rectangle' },
+  { value: 'chamferrect', icon: 'chamferrect', noun: 'chamfered rectangle' },
 ] as const
 
 export type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']
@@ -79,6 +81,8 @@ export function useCreationShapeCommands({
     startAddTextPlacement,
     startAddSlotPlacement,
     startAddNgonPlacement,
+    startAddRoundRectPlacement,
+    startAddChamferRectPlacement,
     cancelPendingAdd,
   } = useProjectStore()
 
@@ -118,6 +122,10 @@ export function useCreationShapeCommands({
       togglePlacement(shape, startAddSlotPlacement)
     } else if (shape === 'ngon') {
       togglePlacement(shape, startAddNgonPlacement)
+    } else if (shape === 'roundrect') {
+      togglePlacement(shape, startAddRoundRectPlacement)
+    } else if (shape === 'chamferrect') {
+      togglePlacement(shape, startAddChamferRectPlacement)
     } else {
       togglePlacement(shape, startAddCompositePlacement)
     }
