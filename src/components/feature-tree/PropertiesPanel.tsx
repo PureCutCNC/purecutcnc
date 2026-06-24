@@ -162,6 +162,7 @@ export function PropertiesPanel() {
     deleteTab,
     deleteClamp,
     deleteFeatureFolder,
+    toggleFolderGrouped,
     setProjectName,
     setShowFeatureInfo,
     setProjectClearances,
@@ -228,6 +229,14 @@ export function PropertiesPanel() {
     allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
       ? allSelectedFeatures[0]?.folderId ?? null
       : '__mixed__'
+  // P2-1: all selected features are in a grouped folder — disable the folder dropdown.
+  const allSelectedInGroupedFolder =
+    allSelectedFeatures.length > 0 &&
+    allSelectedFeatures.every((f) => {
+      if (!f.folderId) return false
+      const folder = project.featureFolders.find((ff) => ff.id === f.folderId)
+      return folder?.grouped === true
+    })
   const commonSelectedOperation =
     allSelectedFeatures.length > 0 &&
     allSelectedFeatures.every((feature) => feature.operation === allSelectedFeatures[0]?.operation)
@@ -329,7 +338,7 @@ export function PropertiesPanel() {
     }
   }
 
-  function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void) {
+  function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void, disabled?: boolean) {
     return (
       <Select
         value={value ?? ''}
@@ -339,6 +348,7 @@ export function PropertiesPanel() {
           ...project.featureFolders.map((folder) => ({ value: folder.id, label: folder.name })),
         ]}
         onChange={(next) => onChange(next === '' || next === '__mixed__' ? null : next)}
+        disabled={disabled}
       />
     )
   }
@@ -1084,6 +1094,31 @@ export function PropertiesPanel() {
     if (selectedFeatureIds.length > 1) {
       return (
         <div className="properties-panel">
+          {selection.groupFolderId ? (() => {
+            const groupFolder = project.featureFolders.find(f => f.id === selection.groupFolderId)
+            if (!groupFolder) return null
+            return (
+              <div className="properties-group">
+                <span className="properties-section-title">Group</span>
+                <label className="properties-field">
+                  <span>Name</span>
+                  <DraftTextInput
+                    key={`group-name-${groupFolder.id}-${groupFolder.name}`}
+                    value={groupFolder.name}
+                    onCommit={(next) => updateFeatureFolder(groupFolder.id, { name: next })}
+                  />
+                </label>
+                <div className="properties-actions">
+                  <button className="feat-btn" type="button" onClick={() => toggleFolderGrouped(groupFolder.id)}>
+                    Ungroup
+                  </button>
+                  <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(groupFolder.id)}>
+                    Delete Group
+                  </button>
+                </div>
+              </div>
+            )
+          })() : null}
           <div className="properties-group">
             <label className="properties-field">
               <span>Selection</span>
@@ -1095,9 +1130,9 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Folder</span>
-              {renderFolderSelect(commonSelectedFolderId, (folderId) =>
-                assignFeaturesToFolder(selectedFeatureIds, folderId),
-              )}
+              {renderFolderSelect(commonSelectedFolderId, (folderId) => {
+                assignFeaturesToFolder(selectedFeatureIds, folderId)
+              }, allSelectedInGroupedFolder)}
             </label>
             <label className="properties-field">
               <span>Operation</span>
@@ -1409,9 +1444,9 @@ export function PropertiesPanel() {
           )}
           <label className="properties-field">
             <span>Folder</span>
-            {renderFolderSelect(selectedFeature.folderId, (folderId) =>
-              assignFeaturesToFolder([selectedFeature.id], folderId),
-            )}
+            {renderFolderSelect(selectedFeature.folderId, (folderId) => {
+              assignFeaturesToFolder([selectedFeature.id], folderId)
+            }, project.featureFolders.find((f) => f.id === selectedFeature.folderId)?.grouped === true)}
           </label>
           <label className="properties-check">
             <input

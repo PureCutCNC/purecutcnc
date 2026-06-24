@@ -322,7 +322,10 @@ export function normalizeMachineDefinitions(project: Project): {
 }
 
 export function syncFeatureTreeProject(project: Project): Project {
-  const featureFolders = project.featureFolders ?? []
+  const featureFolders = (project.featureFolders ?? []).map((folder) => ({
+    ...folder,
+    grouped: folder.grouped ?? false,
+  }))
   const folderIdSet = new Set(featureFolders.map((folder) => folder.id))
   const features = project.features.map((feature) => (
     feature.folderId && !folderIdSet.has(feature.folderId)

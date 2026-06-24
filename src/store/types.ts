@@ -51,6 +51,8 @@ export interface SelectionState {
   hoveredFeatureId: string | null
   sketchEditTool: SketchEditTool | null
   activeControl: SketchControlRef | null
+  /** When set, the current selection originated as a grouped-folder select-all. */
+  groupFolderId?: string | null
 }
 
 export interface SketchControlRef {
@@ -323,6 +325,8 @@ export interface ProjectStore {
   toggleFolderVisible: (folderId: string) => void
   toggleRegionFolderVisible: (folderId: string) => void
   selectFolderFeatures: (folderId: string) => void
+  toggleFolderGrouped: (folderId: string) => void
+  groupSelectedFeaturesIntoNewFolder: () => string
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
   importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]
@@ -375,7 +379,7 @@ export interface ProjectStore {
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void
 
-  selectFeature: (id: string | null, additive?: boolean) => void
+  selectFeature: (id: string | null, additive?: boolean, expandGroup?: boolean) => void
   selectFeatures: (ids: string[]) => void
   selectProject: () => void
   selectGrid: () => void

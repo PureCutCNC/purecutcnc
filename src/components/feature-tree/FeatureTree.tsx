@@ -46,6 +46,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     setAllRegionsVisible,
     toggleFolderVisible,
     toggleRegionFolderVisible,
+    toggleFolderGrouped,
     selectFolderFeatures,
     selectFeatures,
     setAllTabsVisible,
@@ -102,6 +103,31 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     }
 
     const target = dragOverTarget.current
+
+    // P2-1: skip move when dragging a feature out of its grouped folder (store would reject it).
+    // Reordering within the same grouped folder stays allowed.
+    if (dragItem.kind === 'feature') {
+      const sourceFeature = project.features.find((f) => f.id === dragItem.id)
+      const sourceFolder = sourceFeature?.folderId
+        ? project.featureFolders.find((f) => f.id === sourceFeature.folderId)
+        : null
+      if (sourceFeature && sourceFolder?.grouped) {
+        let targetFolder: string | null = null
+        if (target.kind === 'features') {
+          targetFolder = null
+        } else if (target.kind === 'folder') {
+          targetFolder = target.id ?? null
+        } else if (target.kind === 'feature' && target.id) {
+          const targetFeature = project.features.find((f) => f.id === target.id)
+          targetFolder = targetFeature?.folderId ?? null
+        }
+        if (targetFolder !== sourceFeature.folderId) {
+          setDragItem(null)
+          dragOverTarget.current = null
+          return
+        }
+      }
+    }
 
     if (dragItem.kind === 'feature') {
       if (target.kind === 'features') {
@@ -264,12 +290,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         kind="feature"
         depth={depth}
         isSelected={selection.selectedFeatureIds.includes(feature.id)}
+        isGroupSelected={selection.groupFolderId !== null && selection.selectedFeatureIds.includes(feature.id)}
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
         visible={feature.visible}
         operation={feature.operation}
         isFirstFeature={index === 0}
         linkedCount={linkedCount}
-        onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey)}
+        onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
         onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
@@ -281,13 +308,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onContextMenu={(event) => {
           event.preventDefault()
           if (!selection.selectedFeatureIds.includes(feature.id)) {
-            selectFeature(feature.id)
+            selectFeature(feature.id, false, false)
           }
           onFeatureContextMenu?.(feature.id, event.clientX, event.clientY)
         }}
         onMoreMenu={tabletShell && onFeatureContextMenu ? (x, y) => {
           if (!selection.selectedFeatureIds.includes(feature.id)) {
-            selectFeature(feature.id)
+            selectFeature(feature.id, false, false)
           }
           onFeatureContextMenu(feature.id, x, y)
         } : undefined}
@@ -417,11 +444,15 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
+                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
@@ -429,6 +460,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
                   />
                   {!folder.collapsed ? (
                     <div className="tree-children">
@@ -486,11 +532,15 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { selectFeatureFolder(folder.id); updateFeatureFolder(folder.id, { collapsed: !folder.collapsed }) }}
+                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}
                     onMouseLeave={() => hoverFeature(null)}
                     onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
                     onToggleVisible={folderFeatures.length > 0 ? () => toggleRegionFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
@@ -498,6 +548,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
                   />
                   {!folder.collapsed ? (
                     <div className="tree-children">
@@ -622,6 +687,9 @@ interface TreeRowProps {
   onMouseEnter: () => void
   onMouseLeave: () => void
   onToggleVisible?: () => void
+  isGroupSelected?: boolean
+  grouped?: boolean
+  onToggleGrouped?: () => void
   onSelectAllFeatures?: () => void
   onToggleOperation?: (operation: FeatureOperation) => void
   onAddFolder?: () => void
@@ -634,6 +702,8 @@ interface TreeRowProps {
   onMoreMenu?: (x: number, y: number) => void
   onMoveUp?: () => void
   onMoveDown?: () => void
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
@@ -654,6 +724,9 @@ function TreeRow({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  isGroupSelected,
+  grouped,
+  onToggleGrouped,
   onToggleVisible,
   onSelectAllFeatures,
   onToggleOperation,
@@ -667,6 +740,8 @@ function TreeRow({
   onMoreMenu,
   onMoveUp,
   onMoveDown,
+  collapsed,
+  onToggleCollapsed,
   draggable,
   onDragStart,
   onDragEnd,
@@ -691,6 +766,7 @@ function TreeRow({
         depth > 0 ? 'tree-row--nested' : '',
         depth > 1 ? 'tree-row--deep' : '',
         isSelected ? 'tree-row--selected' : '',
+        isGroupSelected ? 'tree-row--group-selected' : '',
         isDragging ? 'tree-row--dragging' : '',
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
       ].join(' ')}
@@ -710,9 +786,22 @@ function TreeRow({
       onContextMenu={onContextMenu}
       style={{ paddingLeft: `${depth * 8}px` }}
     >
-      <span className={`tree-branch tree-branch--${kind}`} aria-hidden="true">
+      <span className={`tree-branch tree-branch--${kind}`}>
         {kind === 'folder' ? (
-          <Icon id="folder" className="tree-icon--folder" />
+          <>
+            {onToggleCollapsed ? (
+              <button
+                type="button"
+                className="tree-folder-chevron"
+                onClick={(e) => { e.stopPropagation(); onToggleCollapsed() }}
+                aria-label={collapsed ? 'Expand folder' : 'Collapse folder'}
+                tabIndex={0}
+              >
+                <Icon id="chevron-down" className={`tree-chevron-icon${collapsed ? ' tree-chevron-icon--collapsed' : ''}`} size={14} />
+              </button>
+            ) : null}
+            <Icon id="folder" className="tree-icon--folder" />
+          </>
         ) : (
           kind === 'project'
             ? 'proj'
@@ -1001,6 +1090,23 @@ function TreeRow({
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
             </svg>
+          </button>
+        ) : null}
+        {onToggleGrouped ? (
+          <button
+            type="button"
+            className={[
+              'tree-action-btn',
+              grouped ? 'tree-action-btn--grouped' : '',
+            ].join(' ')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleGrouped()
+            }}
+            title={grouped ? 'Ungroup features' : 'Group features'}
+            aria-label={grouped ? 'Ungroup features' : 'Group features'}
+          >
+            <Icon id="composite" />
           </button>
         ) : null}
         {onEditEntry && kind !== 'feature' ? (

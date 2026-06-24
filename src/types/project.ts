@@ -361,6 +361,7 @@ export interface FeatureFolder {
   name: string
   collapsed: boolean
   section?: 'features' | 'regions'
+  grouped?: boolean
 }
 
 export type FeatureTreeEntry =

@@ -16,7 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import { IDENTITY_MATRIX } from '../../types/project'
-import type { Clamp, FeatureDefinition, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, FeatureDefinition, FeatureFolder, Matrix2D, Point, Project, SketchFeature, Tab } from '../../types/project'
 import {
   cloneProject,
   projectsEqual,
@@ -29,6 +29,7 @@ import {
 } from '../helpers/derivedFeatures'
 import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
 import { gcOrphanedDefinitions } from '../helpers/featureDefinitions'
+import { nextUniqueGeneratedId } from '../helpers/ids'
 import type { ProjectStore } from '../types'
 import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
@@ -40,6 +41,7 @@ import {
   rotateFeatureFromReference,
 } from '../helpers/referenceTransforms'
 import { buildCopiedClamps, buildCopiedFeatures, buildCopiedTabs, buildMirroredCopies, buildRotatedCopies, extractClonedDefinitions } from '../helpers/copyFeatures'
+import { uniqueFolderName } from '../helpers/naming'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
@@ -157,9 +159,47 @@ export function createPendingCompletionSlice(
               })
             : []
 
+          // Detect group copy: all source features share the same folderId
+          // and that folder has grouped === true. If so, create a new
+          // grouped folder for the copies instead of appending root entries.
+          let finalCreatedFeatures: SketchFeature[] = cleanedCreatedFeatures
+          let groupCopyFolder: FeatureFolder | null = null
+
+          if (mode === 'copy' && cleanedCreatedFeatures.length > 0) {
+            const firstFolderId = sourceFeatures[0].folderId
+            if (
+              firstFolderId != null &&
+              sourceFeatures.every((f) => f.folderId === firstFolderId)
+            ) {
+              const sourceFolder = s.project.featureFolders.find(
+                (f) => f.id === firstFolderId,
+              )
+              if (sourceFolder?.grouped === true) {
+                const newFolderId = nextUniqueGeneratedId(s.project, 'fd')
+                const newFolderName = uniqueFolderName(
+                  `${sourceFolder.name} Copy`,
+                  s.project.featureFolders,
+                )
+                groupCopyFolder = {
+                  id: newFolderId,
+                  name: newFolderName,
+                  collapsed: false,
+                  section: sourceFolder.section,
+                  grouped: true,
+                }
+                finalCreatedFeatures = cleanedCreatedFeatures.map((f) => ({
+                  ...f,
+                  folderId: newFolderId,
+                }))
+              }
+            }
+          }
+
+          const isGroupCopy = groupCopyFolder !== null
+
           const translatedFeatures =
             mode === 'copy'
-              ? [...s.project.features, ...cleanedCreatedFeatures]
+              ? [...s.project.features, ...finalCreatedFeatures]
               : s.project.features.map((feature) => {
                   if (!entityIds.includes(feature.id) || feature.locked) {
                     return feature
@@ -188,7 +228,7 @@ export function createPendingCompletionSlice(
                 })
           const resolvedFeatures =
             mode === 'copy'
-              ? deps.clearStaleConstraints(translatedFeatures, new Set(cleanedCreatedFeatures.map((f) => f.id)))
+              ? deps.clearStaleConstraints(translatedFeatures, new Set(finalCreatedFeatures.map((f) => f.id)))
               : deps.validateAllConstraints(deps.propagateConstraintsOnTranslate(
                   translatedFeatures,
                   new Map(entityIds.filter((id) => !s.project.features.find((f) => f.id === id)?.locked).map((id) => [id, { dx, dy }])),
@@ -201,13 +241,22 @@ export function createPendingCompletionSlice(
             ...s.project,
             features: resolvedFeatures,
             featureDefinitions: nextFeatureDefinitions,
+            featureFolders:
+              isGroupCopy
+                ? [...s.project.featureFolders, groupCopyFolder!]
+                : s.project.featureFolders,
             featureTree:
-              mode === 'copy'
+              isGroupCopy
                 ? [
                     ...s.project.featureTree,
-                    ...cleanedCreatedFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+                    { type: 'folder' as const, folderId: groupCopyFolder!.id },
                   ]
-                : s.project.featureTree,
+                : mode === 'copy'
+                  ? [
+                      ...s.project.featureTree,
+                      ...finalCreatedFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+                    ]
+                  : s.project.featureTree,
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
 
@@ -222,11 +271,14 @@ export function createPendingCompletionSlice(
               mode === 'copy'
                 ? {
                     ...s.selection,
-                    selectedFeatureId: cleanedCreatedFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
-                    selectedFeatureIds: cleanedCreatedFeatures.map((feature) => feature.id),
-                    selectedNode: cleanedCreatedFeatures.at(-1)
-                      ? { type: 'feature', featureId: cleanedCreatedFeatures.at(-1)!.id }
-                      : s.selection.selectedNode,
+                    selectedFeatureId: finalCreatedFeatures.at(-1)?.id ?? s.selection.selectedFeatureId,
+                    selectedFeatureIds: finalCreatedFeatures.map((f) => f.id),
+                    selectedNode: isGroupCopy
+                      ? { type: 'folder', folderId: groupCopyFolder!.id }
+                      : finalCreatedFeatures.at(-1)
+                        ? { type: 'feature', featureId: finalCreatedFeatures.at(-1)!.id }
+                        : s.selection.selectedNode,
+                    groupFolderId: isGroupCopy ? groupCopyFolder!.id : undefined,
                   }
                 : s.selection,
             history: {

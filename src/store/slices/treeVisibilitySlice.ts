@@ -24,6 +24,7 @@ export type TreeVisibilitySlice = Pick<
   | 'toggleFolderVisible'
   | 'toggleRegionFolderVisible'
   | 'selectFolderFeatures'
+  | 'toggleFolderGrouped'
 >
 
 export function createTreeVisibilitySlice(
@@ -112,6 +113,8 @@ export function createTreeVisibilitySlice(
         return {}
       }
       const primaryId = ids.at(-1) ?? null
+      const folder = s.project.featureFolders.find((f) => f.id === folderId)
+      const isGrouped = folder?.grouped ?? false
       return {
         pendingOffset: null,
         pendingShapeAction: null,
@@ -122,9 +125,57 @@ export function createTreeVisibilitySlice(
           selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
           mode: 'feature',
           activeControl: null,
+          groupFolderId: isGrouped ? folderId : null,
         },
         sketchEditSession: null,
       }
+    }),
+
+  toggleFolderGrouped: (folderId) =>
+    set((s) => {
+      const folder = s.project.featureFolders.find((f) => f.id === folderId)
+      if (!folder) {
+        return {}
+      }
+      const nextGrouped = !(folder.grouped ?? false)
+      const nextProject = {
+        ...s.project,
+        featureFolders: s.project.featureFolders.map((f) =>
+          f.id === folderId ? { ...f, grouped: nextGrouped } : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      // Reconcile selection.groupFolderId with the new grouped state.
+      let nextGroupFolderId = s.selection.groupFolderId
+      if (!nextGrouped && s.selection.groupFolderId === folderId) {
+        // Folder is being turned OFF while it was the active group selection.
+        nextGroupFolderId = null
+      } else if (nextGrouped) {
+        // Folder is being turned ON; if every currently selected feature belongs
+        // to this folder, set the group highlight.
+        const selectedIds = s.selection.selectedFeatureIds
+        if (selectedIds.length > 0) {
+          const allInFolder = selectedIds.every((id) => {
+            const feat = s.project.features.find((f) => f.id === id)
+            return feat !== undefined && feat.folderId === folderId
+          })
+          if (allInFolder) {
+            nextGroupFolderId = folderId
+          }
+        }
+      }
+      const selectionChanged = nextGroupFolderId !== s.selection.groupFolderId
+      const base = {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+      return selectionChanged
+        ? { ...base, selection: { ...s.selection, groupFolderId: nextGroupFolderId } }
+        : base
     }),
 
   }

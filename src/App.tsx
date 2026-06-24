@@ -115,6 +115,11 @@ function App() {
     menuQuickOperations,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
+    addToFolderSubmenu,
+    setAddToFolderSubmenu,
+    menuFeatureFolders,
+    menuSelectionInGroupedFolder,
+    menuSelectionIsGroup,
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
@@ -124,6 +129,7 @@ function App() {
     openTabContextMenu,
     closeTreeContextMenu,
     openQuickOpsSubmenu,
+    openAddToFolderSubmenu,
   } = useTreeContextMenu({ project })
 
   const effectiveSelectedOperationId =
@@ -504,12 +510,18 @@ function App() {
         menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
         quickOpsSubmenu={quickOpsSubmenu}
+        menuFeatureFolders={menuFeatureFolders}
+        addToFolderSubmenu={addToFolderSubmenu}
+        menuSelectionInGroupedFolder={menuSelectionInGroupedFolder}
+        menuSelectionIsGroup={menuSelectionIsGroup}
         tabletShell={tabletShell}
         primaryId={treeContextMenu?.primaryId ?? null}
         ids={treeContextMenu?.ids ?? []}
         actions={featureActions}
         onOpenQuickOpsSubmenu={openQuickOpsSubmenu}
         onCloseQuickOpsSubmenu={() => setQuickOpsSubmenu(null)}
+        onOpenAddToFolderSubmenu={openAddToFolderSubmenu}
+        onCloseAddToFolderSubmenu={() => setAddToFolderSubmenu(null)}
       />
     </>
   )

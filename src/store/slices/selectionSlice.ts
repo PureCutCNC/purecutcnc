@@ -62,6 +62,7 @@ export function emptySelection(): SelectionState {
     hoveredFeatureId: null,
     sketchEditTool: null,
     activeControl: null,
+    groupFolderId: null,
   }
 }
 
@@ -86,6 +87,7 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
         hoveredFeatureId: null,
         sketchEditTool: null,
         activeControl: null,
+        groupFolderId: null,
       }
     }
   }
@@ -157,7 +159,7 @@ export function createSelectionSlice(
     selection: emptySelection(),
     sketchEditSession: null,
 
-    selectFeature: (id, additive = false) =>
+    selectFeature: (id, additive = false, expandGroup = true) =>
       set((s) => {
         const joinMode = s.pendingShapeAction?.kind === 'join'
         const cutMode = s.pendingShapeAction?.kind === 'cut'
@@ -199,6 +201,7 @@ export function createSelectionSlice(
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
+              groupFolderId: null,
             },
           }
         }
@@ -236,6 +239,7 @@ export function createSelectionSlice(
                   selectedNode: null,
                   mode: 'feature',
                   activeControl: null,
+                  groupFolderId: null,
                 },
               }
             }
@@ -249,6 +253,7 @@ export function createSelectionSlice(
                 selectedNode: null,
                 mode: 'feature',
                 activeControl: null,
+                groupFolderId: null,
               },
             }
           }
@@ -269,6 +274,7 @@ export function createSelectionSlice(
                 selectedNode: { type: 'feature', featureId: id },
                 mode: 'feature',
                 activeControl: null,
+                groupFolderId: null,
               },
             }
           }
@@ -302,6 +308,7 @@ export function createSelectionSlice(
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
+              groupFolderId: null,
             },
           }
         }
@@ -327,17 +334,37 @@ export function createSelectionSlice(
                       selectedFeatureId: nextPrimaryId,
                       selectedFeatureIds: nextIds,
                       selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
+                      groupFolderId: null,
                     }
                   })()
-                : {
-                    selectedFeatureId: id,
-                    selectedFeatureIds: [id],
-                    selectedNode: { type: 'feature', featureId: id },
-                  }
+                : (() => {
+                    const feature = featureById(s.project, id)
+                    const folderId = feature?.folderId
+                    const folder = folderId ? s.project.featureFolders.find((f) => f.id === folderId) : undefined
+                    if (expandGroup && folder && (folder.grouped ?? false)) {
+                      const ids = s.project.features
+                        .filter((f) => f.folderId === folderId)
+                        .map((f) => f.id)
+                      const primaryId = ids.at(-1) ?? null
+                      return {
+                        selectedFeatureId: primaryId,
+                        selectedFeatureIds: ids,
+                        selectedNode: primaryId ? { type: 'feature', featureId: primaryId } : null,
+                        groupFolderId: folderId,
+                      }
+                    }
+                    return {
+                      selectedFeatureId: id,
+                      selectedFeatureIds: [id],
+                      selectedNode: { type: 'feature', featureId: id },
+                      groupFolderId: null,
+                    }
+                  })()
               : {
                   selectedFeatureId: null,
                   selectedFeatureIds: [],
                   selectedNode: null,
+                  groupFolderId: null,
                 }),
             mode: 'feature',
             activeControl: null,
@@ -378,6 +405,7 @@ export function createSelectionSlice(
             selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
             mode: 'feature',
             activeControl: null,
+            groupFolderId: null,
           },
         }
       }),
@@ -393,6 +421,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'project' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -407,6 +436,7 @@ export function createSelectionSlice(
           selectedFeatureIds: [],
           selectedNode: { type: 'grid' },
           mode: 'feature',
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -421,6 +451,7 @@ export function createSelectionSlice(
           selectedFeatureIds: [],
           selectedNode: { type: 'stock' },
           mode: 'feature',
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -436,6 +467,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'origin' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -451,6 +483,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'backdrop' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -465,6 +498,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'features_root' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -479,6 +513,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'tabs_root' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -493,6 +528,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'regions_root' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -507,6 +543,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'clamps_root' },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -521,6 +558,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'folder', folderId: id },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -535,6 +573,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'tab', tabId: id },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -549,6 +588,7 @@ export function createSelectionSlice(
           selectedNode: { type: 'clamp', clampId: id },
           mode: 'feature',
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: null,
       })),
@@ -587,6 +627,7 @@ export function createSelectionSlice(
             mode: 'sketch_edit',
             sketchEditTool: null,
             activeControl: null,
+            groupFolderId: null,
           },
           sketchEditSession: {
             entityType: 'feature',
@@ -609,6 +650,7 @@ export function createSelectionSlice(
           mode: 'sketch_edit',
           sketchEditTool: null,
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: {
           entityType: 'clamp',
@@ -630,6 +672,7 @@ export function createSelectionSlice(
           mode: 'sketch_edit',
           sketchEditTool: null,
           activeControl: null,
+          groupFolderId: null,
         },
         sketchEditSession: {
           entityType: 'tab',
@@ -661,7 +704,7 @@ export function createSelectionSlice(
               featureTree: nextFeatureTree,
               meta: { ...s.project.meta, modified: new Date().toISOString() },
             },
-            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
             history: {
@@ -689,7 +732,7 @@ export function createSelectionSlice(
 
           return {
             project,
-            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
           }
@@ -697,7 +740,7 @@ export function createSelectionSlice(
 
         // Normal case: not a stock source feature
         return {
-          selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+          selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
           sketchEditSession: null,
           pendingConstraint: null,
         }
@@ -707,7 +750,7 @@ export function createSelectionSlice(
       set((s) => {
         if (!s.sketchEditSession) {
           return {
-            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null },
+            selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
           }
@@ -721,6 +764,7 @@ export function createSelectionSlice(
             mode: 'feature',
             sketchEditTool: null,
             activeControl: null,
+            groupFolderId: null,
           },
           sketchEditSession: null,
           pendingConstraint: null,

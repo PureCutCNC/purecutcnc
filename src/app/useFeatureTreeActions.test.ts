@@ -60,6 +60,9 @@ function makeActions(
     setStockSourceFeature: noop,
     addOperation: (() => null) satisfies ProjectStore['addOperation'],
     makeUnique: noopVoid,
+    groupSelectedFeaturesIntoNewFolder: () => '',
+    assignFeaturesToFolder: noopVoid,
+    addFeatureFolder: (() => '') satisfies ProjectStore['addFeatureFolder'],
     project: undefined as unknown as ProjectStore['project'],
     ...storeOverrides,
   }

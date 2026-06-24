@@ -954,8 +954,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
+      const groupSelected = selection.groupFolderId !== null && selected
 
-      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing)
+      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
