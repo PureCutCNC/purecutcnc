@@ -35,6 +35,9 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath } from './drilling'
 import { generatePocketRestRegionDrafts } from './restRegions'
+import { buildMaskFromClipperPaths, clipToolpathResultToRegionMask } from './regions'
+import { DEFAULT_CLIPPER_SCALE } from './geometry'
+import type { ClipperPath } from './types'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -813,6 +816,45 @@ function draftArea(draft: { profile: { start: { x: number; y: number }; segments
   return Math.abs(area / 2)
 }
 
+function testRegionMaskVisitsNearestRegionFirst() {
+  // Regression: a region-masked toolpath (e.g. a rest operation) used to machine
+  // its regions in whatever arbitrary order the mask paths happened to be in, so
+  // the tool zig-zagged across the part. It should instead hop to the nearest
+  // unvisited region each time.
+  console.log('Testing region-mask clipping visits the nearest region first...')
+  const project = newProject('region-order', 'mm')
+
+  // One left-to-right cut pass crossing three boxes laid out along X.
+  const result: ToolpathResult = {
+    operationId: 'op',
+    moves: [{ kind: 'cut', from: { x: -1, y: 1, z: -1 }, to: { x: 31, y: 1, z: -1 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const box = (x0: number, x1: number): ClipperPath => [
+    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
+    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
+    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
+    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
+  ]
+  // Mask paths deliberately out of travel order: left, RIGHT, middle.
+  const mask = buildMaskFromClipperPaths([box(0, 5), box(25, 30), box(10, 15)])
+  const clipped = clipToolpathResultToRegionMask(project, result, mask)
+
+  const cutStarts = cutMoves(clipped.moves).map((move) => Math.round(move.from.x))
+  // Nearest-first from the first box (0–5) should give left→middle→right: 0,10,25.
+  // The old arbitrary order would have been 0,25,10.
+  assert(
+    cutStarts.length === 3,
+    `expected one cut fragment per region, got ${cutStarts.length} [${cutStarts.join(',')}]`,
+  )
+  assert(
+    cutStarts[0] < cutStarts[1] && cutStarts[1] < cutStarts[2],
+    `expected nearest-first region order (ascending X), got [${cutStarts.join(',')}]`,
+  )
+  console.log('region-mask nearest-region ordering: PASSED')
+}
+
 function testPocketRestRegionsUniformCorners() {
   // Regression: corner rest regions are built analytically from each pocket
   // vertex (apex + tangent points sized by the tool radius), so every equal
@@ -1488,6 +1530,7 @@ try {
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
   testPocketRestRegionsUniformCorners()
+  testRegionMaskVisitsNearestRegionFirst()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeInsideFeatureFirstNearestBlockOrder()
   testEdgeInsideRegionClipsAtBoundary()
