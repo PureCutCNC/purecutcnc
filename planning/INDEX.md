@@ -20,8 +20,6 @@ Every task: write a plan from [`TEMPLATE.md`](TEMPLATE.md) → register it under
 
 ## In progress
 
-- [DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md](DEEPSEEK_CLAUDE_INTEGRATION_MANAGER_Plan.md) — project-local Claude Code/DeepSeek worker launcher and Codex-led sequential integration-manager workflow
-- [POCKET_OFFSET_INNER_FIRST_Plan.md](POCKET_OFFSET_INNER_FIRST_Plan.md) — reverse pocket rough offset traversal so offset pockets cut inner loops first and work outward while preserving selected cut direction
 
 ### Foundational / cross-cutting
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — detailed branch-owned handoff and slice-ledger template for sequential external implementation workers
