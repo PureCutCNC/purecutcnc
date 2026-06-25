@@ -369,6 +369,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   loadWarning: null,
   projectKey: 0,
   pendingConstraint: null,
+  pendingSketchEdit: null,
   history: {
     past: [],
     future: [],

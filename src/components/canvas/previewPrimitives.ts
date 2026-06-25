@@ -20,7 +20,10 @@ import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text
 import {
   getProfileBounds,
   splineProfile,
+  slotProfile,
+  ngonProfile,
 } from '../../types/project'
+import { roundedRectProfile, chamferedRectProfile } from '../../store/helpers/cannedRectProfiles'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import {
@@ -753,4 +756,88 @@ export function hexToRgba(hex: string, alpha: number): string {
   const g = Number.parseInt(normalized.slice(2, 4), 16)
   const b = Number.parseInt(normalized.slice(4, 6), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+export function drawPendingSlotAxis(
+  ctx: CanvasRenderingContext2D,
+  p1: Point,
+  p2cursor: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  drawLineLengthMeasurement(ctx, p1, p2cursor, vt, units)
+}
+
+export function drawPendingSlotWidth(
+  ctx: CanvasRenderingContext2D,
+  p1: Point,
+  p2: Point,
+  cursorPoint: Point,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const axisX = p2.x - p1.x
+  const axisY = p2.y - p1.y
+  const axisLen = Math.hypot(axisX, axisY)
+  const minWidth = units === 'mm' ? 6 : 0.25
+  const width = axisLen > 1e-10
+    ? Math.max(2 * Math.abs((cursorPoint.x - p1.x) * axisY - (cursorPoint.y - p1.y) * axisX) / axisLen, 0.001)
+    : minWidth
+
+  const profile = slotProfile(p1, p2, width)
+  drawPreviewProfile(ctx, profile, vt, `W = ${formatLength(width, units)}`)
+}
+
+export function drawPendingNgon(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  sides: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const circumradius = Math.hypot(cursorPoint.x - anchor.x, cursorPoint.y - anchor.y)
+  if (circumradius < 1e-10) return
+  const firstVertexAngle = Math.atan2(cursorPoint.y - anchor.y, cursorPoint.x - anchor.x)
+  const profile = ngonProfile(anchor.x, anchor.y, sides, circumradius, firstVertexAngle)
+  drawPreviewProfile(ctx, profile, vt, `R = ${formatLength(circumradius, units)}`)
+  drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
+}
+
+export function drawPendingRoundRect(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  corner: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const w = Math.abs(cursorPoint.x - anchor.x)
+  const h = Math.abs(cursorPoint.y - anchor.y)
+  const minDim = Math.max(w, h)
+  if (minDim < 1e-10) return
+  const profile = roundedRectProfile(anchor, cursorPoint, corner)
+  const label = `W=${formatLength(w, units)}, H=${formatLength(h, units)}`
+  drawPreviewProfile(ctx, profile, vt, label)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x + w, y: anchor.y }, vt, units)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x, y: anchor.y + h }, vt, units)
+}
+
+export function drawPendingChamferRect(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  corner: number,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const w = Math.abs(cursorPoint.x - anchor.x)
+  const h = Math.abs(cursorPoint.y - anchor.y)
+  const minDim = Math.max(w, h)
+  if (minDim < 1e-10) return
+  const profile = chamferedRectProfile(anchor, cursorPoint, corner)
+  const label = `W=${formatLength(w, units)}, H=${formatLength(h, units)}`
+  drawPreviewProfile(ctx, profile, vt, label)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x + w, y: anchor.y }, vt, units)
+  drawLineLengthMeasurement(ctx, anchor, { x: anchor.x, y: anchor.y + h }, vt, units)
 }

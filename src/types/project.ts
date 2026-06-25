@@ -661,6 +661,43 @@ export function polygonProfile(points: Point[]): SketchProfile {
   }
 }
 
+export function slotProfile(p1: Point, p2: Point, width: number): SketchProfile {
+  const r = width / 2
+  const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+  const px = -Math.sin(angle)
+  const py = Math.cos(angle)
+
+  const A: Point = { x: p1.x + r * px, y: p1.y + r * py }
+  const B: Point = { x: p2.x + r * px, y: p2.y + r * py }
+  const C: Point = { x: p2.x - r * px, y: p2.y - r * py }
+  const D: Point = { x: p1.x - r * px, y: p1.y - r * py }
+
+  return {
+    start: A,
+    segments: [
+      { type: 'line', to: B },
+      { type: 'arc', center: p2, to: C, clockwise: true },
+      { type: 'line', to: D },
+      { type: 'arc', center: p1, to: A, clockwise: true },
+    ],
+    closed: true,
+  }
+}
+
+export function ngonProfile(
+  cx: number,
+  cy: number,
+  n: number,
+  circumradius: number,
+  firstVertexAngle: number,
+): SketchProfile {
+  const vertices = Array.from({ length: n }, (_, i) => ({
+    x: cx + circumradius * Math.cos(firstVertexAngle + (i * 2 * Math.PI) / n),
+    y: cy + circumradius * Math.sin(firstVertexAngle + (i * 2 * Math.PI) / n),
+  }))
+  return polygonProfile(vertices)
+}
+
 function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
   return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
 }

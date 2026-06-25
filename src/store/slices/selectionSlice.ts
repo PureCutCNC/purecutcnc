@@ -51,6 +51,8 @@ export type SelectionSlice = Pick<
   | 'cancelSketchEdit'
   | 'setSketchEditTool'
   | 'setActiveControl'
+  | 'setPendingSketchSubject'
+  | 'cancelPendingSketchEdit'
 >
 
 export function emptySelection(): SelectionState {
@@ -707,6 +709,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
             history: {
               // Trim mutations during the edit session, push pre-edit state as the undo point
               past: [
@@ -735,6 +738,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
           }
         }
 
@@ -743,6 +747,7 @@ export function createSelectionSlice(
           selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
           sketchEditSession: null,
           pendingConstraint: null,
+          pendingSketchEdit: null,
         }
       }),
 
@@ -753,6 +758,7 @@ export function createSelectionSlice(
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,
+            pendingSketchEdit: null,
           }
         }
 
@@ -768,6 +774,7 @@ export function createSelectionSlice(
           },
           sketchEditSession: null,
           pendingConstraint: null,
+          pendingSketchEdit: null,
           history: {
             past: s.history.past.slice(0, s.sketchEditSession.pastLength),
             future: [],
@@ -777,17 +784,66 @@ export function createSelectionSlice(
       }),
 
     setSketchEditTool: (tool) =>
-      set((s) => ({
-        selection: {
-          ...s.selection,
-          sketchEditTool: s.selection.mode === 'sketch_edit' ? tool : null,
-          activeControl: null,
-        },
-      })),
+      set((s) => {
+        if (s.selection.mode !== 'sketch_edit') {
+          return {
+            selection: { ...s.selection, sketchEditTool: null, activeControl: null },
+            pendingSketchEdit: null,
+          }
+        }
+        // Initialize / clear pendingSketchEdit on tool change. Always reset when
+        // switching INTO trim/extend — including trim↔extend — so a stale subject
+        // from the previous tool can never be dispatched under the new tool's
+        // pending.tool (see useClickPlacement reference-pick dispatch).
+        let nextPendingSketchEdit = s.pendingSketchEdit
+        if (tool === 'trim' || tool === 'extend') {
+          nextPendingSketchEdit = { tool, phase: 'pick-subject' }
+        } else {
+          nextPendingSketchEdit = null
+        }
+        return {
+          selection: {
+            ...s.selection,
+            sketchEditTool: tool,
+            activeControl: null,
+          },
+          pendingSketchEdit: nextPendingSketchEdit,
+        }
+      }),
 
     setActiveControl: (control) =>
       set((s) => ({
         selection: { ...s.selection, activeControl: control },
       })),
+
+    setPendingSketchSubject: (subject) =>
+      set((s) => {
+        if (!s.pendingSketchEdit || s.pendingSketchEdit.phase !== 'pick-subject') {
+          return {}
+        }
+        return {
+          pendingSketchEdit: {
+            ...s.pendingSketchEdit,
+            phase: 'pick-reference',
+            subject,
+          },
+        }
+      }),
+
+    cancelPendingSketchEdit: () =>
+      set((s) => {
+        const isTrimExtend =
+          s.selection.sketchEditTool === 'trim' || s.selection.sketchEditTool === 'extend'
+        if (!s.pendingSketchEdit && !isTrimExtend) return {}
+        // Fully deactivate the trim/extend tool so the toolbar button untoggles
+        // and we never leave the tool active with a null pending (which would be
+        // unusable). Esc and post-operation both flow through here.
+        return {
+          pendingSketchEdit: null,
+          selection: isTrimExtend
+            ? { ...s.selection, sketchEditTool: null, activeControl: null }
+            : s.selection,
+        }
+      }),
   }
 }

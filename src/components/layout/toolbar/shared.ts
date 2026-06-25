@@ -36,13 +36,17 @@ interface CreationToolbarProps {
 }
 
 const CREATION_SHAPE_OPTIONS = [
-  { value: 'rect', icon: 'rect', noun: 'rectangle' },
-  { value: 'circle', icon: 'circle', noun: 'circle' },
-  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse' },
-  { value: 'polygon', icon: 'polygon', noun: 'polygon' },
-  { value: 'spline', icon: 'spline', noun: 'spline' },
-  { value: 'composite', icon: 'composite', noun: 'composite' },
-  { value: 'text', icon: 'text', noun: 'text' },
+  { value: 'rect', icon: 'rect', noun: 'rectangle', tier: 'primary' },
+  { value: 'circle', icon: 'circle', noun: 'circle', tier: 'primary' },
+  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse', tier: 'primary' },
+  { value: 'polygon', icon: 'polygon', noun: 'polygon', tier: 'primary' },
+  { value: 'spline', icon: 'spline', noun: 'spline', tier: 'primary' },
+  { value: 'composite', icon: 'composite', noun: 'composite', tier: 'primary' },
+  { value: 'text', icon: 'text', noun: 'text', tier: 'primary' },
+  { value: 'slot', icon: 'slot', noun: 'slot', tier: 'secondary' },
+  { value: 'ngon', icon: 'ngon', noun: 'regular polygon', tier: 'secondary' },
+  { value: 'roundrect', icon: 'roundrect', noun: 'rounded rectangle', tier: 'secondary' },
+  { value: 'chamferrect', icon: 'chamferrect', noun: 'chamfered rectangle', tier: 'secondary' },
 ] as const
 
 type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']

@@ -23,6 +23,7 @@ import type {
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
+  PendingSketchEdit,
   PendingTransformTool,
   SelectionState,
   SketchControlRef,
@@ -48,6 +49,7 @@ import {
   findHitClampId,
   findHitFeatureId,
   findHitTabId,
+  segmentHitTest,
 } from './hitTest'
 import { hitBackdrop } from './scenePrimitives'
 import { anchorPointForIndex } from './profilePrimitives'
@@ -104,6 +106,7 @@ export interface ClickPlacementCtx {
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   viewStateRef: MutableRefObject<SketchViewState>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
+  pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
   dimensionDeleteArmedRef: MutableRefObject<boolean>
   deleteHoverDimIdRef: MutableRefObject<string | null>
@@ -186,8 +189,14 @@ export interface ClickPlacementCtx {
   disconnectFeaturePoint: (featureId: string, index: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
+  setPendingSketchSubject: (subject: NonNullable<PendingSketchEdit['subject']>) => void
+  cancelPendingSketchEdit: () => void
+  trimFeatureSegment: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, cutter: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
+  extendFeatureEndpoint: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, target: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
+  placePendingSlotAt: (point: Point) => void
+  placePendingNgonAt: (point: Point) => void
   placePendingTextAt: (point: Point) => void
   placeOriginAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
@@ -223,6 +232,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
+    pendingSketchEditRef,
     pendingDimensionRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
@@ -272,8 +282,14 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    setPendingSketchSubject,
+    cancelPendingSketchEdit,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -547,6 +563,44 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           return
         }
 
+        if (feature && (selection.sketchEditTool === 'trim' || selection.sketchEditTool === 'extend')) {
+          const pending = pendingSketchEditRef.current
+          if (pending && pending.phase === 'pick-subject') {
+            const hit = segmentHitTest(world, project, vt, { openOnly: true })
+            if (hit) {
+              setPendingSketchSubject({
+                featureId: hit.featureId,
+                segmentIndex: hit.segmentIndex,
+                point: hit.point,
+                t: hit.t,
+              })
+              sketchEditPreviewRef.current = { point: hit.point, mode: selection.sketchEditTool }
+              scheduleDraw()
+            }
+            return
+          }
+          if (pending && pending.phase === 'pick-reference' && pending.subject) {
+            const hit = segmentHitTest(world, project, vt, { openOnly: false })
+            if (hit) {
+              const ref = {
+                featureId: hit.featureId,
+                segmentIndex: hit.segmentIndex,
+                point: hit.point,
+                t: hit.t,
+              }
+              if (pending.tool === 'trim') {
+                trimFeatureSegment(pending.subject, ref)
+              } else {
+                extendFeatureEndpoint(pending.subject, ref)
+              }
+              cancelPendingSketchEdit()
+              sketchEditPreviewRef.current = null
+              scheduleDraw()
+            }
+            return
+          }
+        }
+
         if (feature && selection.sketchEditTool === 'disconnect') {
           const control = hitEditableControl(point, { includeSegments: false })
           if (control?.kind === 'anchor') {
@@ -657,12 +711,30 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           addPendingPolygonPoint(lockedSnapped)
         }
         setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
-      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') && !pendingAdd.anchor) {
+      } else if ((pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !pendingAdd.anchor) {
         setPendingAddAnchor(snapped)
         setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
-      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp') {
+      } else if (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') {
         placePendingAddAt(snapped)
         setPendingPreviewPointRef(null)
+      } else if (pendingAdd.shape === 'slot') {
+        const lastPoint = pendingAdd.points.length > 0 ? pendingAdd.points[pendingAdd.points.length - 1] : null
+        const lockedSnapped = lastPoint ? applyLock(snapped, lastPoint) : snapped
+        if (pendingAdd.points.length < 2) {
+          addPendingPolygonPoint(lockedSnapped)
+          setPendingPreviewPointRef({ point: lockedSnapped, session: pendingAdd.session })
+        } else {
+          placePendingSlotAt(lockedSnapped)
+          setPendingPreviewPointRef(null)
+        }
+      } else if (pendingAdd.shape === 'ngon') {
+        if (!pendingAdd.anchor) {
+          setPendingAddAnchor(snapped)
+          setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+        } else {
+          placePendingNgonAt(snapped)
+          setPendingPreviewPointRef(null)
+        }
       } else if (pendingAdd.shape === 'text') {
         placePendingTextAt(snapped)
         setPendingPreviewPointRef(null)

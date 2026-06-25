@@ -36,6 +36,8 @@ export interface CreationWorkflowCtx {
   triggerDimensionEdit: () => void
   setPendingPreviewPointRef: (nextPoint: { point: Point; session: number } | null) => void
   placePendingAddAt: (point: Point) => void
+  placePendingSlotAt: (point: Point) => void
+  placePendingNgonAt: (point: Point) => void
   cancelPendingAdd: () => void
   addPendingPolygonPoint: (point: Point) => void
   addPendingCompositePoint: (point: Point) => void
@@ -49,7 +51,7 @@ export interface CreationWorkflowCtx {
   clearTransientCanvasState: () => void
 }
 
-type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | null
+type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'roundrect' | 'chamferrect' | null
 
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
@@ -82,6 +84,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     triggerDimensionEdit,
     setPendingPreviewPointRef,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -99,16 +103,21 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
     || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
     || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
+    || pendingAdd.shape === 'slot' || pendingAdd.shape === 'ngon'
+    || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect'
   ) ? pendingAdd.shape : null
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
   const creationPanelHasPoints = creationPanelShape != null && pendingAdd != null && 'points' in pendingAdd && pendingAdd.points.length > 0
   const creationPanelHasStart = creationPanelShape === 'composite' && pendingAdd?.shape === 'composite' && !!pendingAdd.start
-  const creationCanDimEdit = creationPanelHasAnchor || creationPanelHasPoints || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
+  const creationCanDimEdit = creationPanelHasAnchor
+    || creationPanelHasPoints
+    || (creationPanelHasStart && pendingAdd?.shape === 'composite' && !pendingAdd.closed)
   const creationDimEditActive = !!creationCanDimEdit && !!dimensionEdit
 
   const creationWorkflowPanel = useCanvasWorkflowPanel({
     open: !!creationPanelShape,
     phaseKey: creationDimEditActive ? 'dimensions'
+      : (pendingAdd?.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2) ? 'width'
       : creationPanelHasAnchor ? 'place'
       : creationPanelHasPoints ? 'adding'
       : creationPanelHasStart ? 'drawing'
@@ -182,6 +191,37 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
         setDimensionEdit(null)
         creationWorkflowPanel.focusCanvasAfterAction()
       }
+    } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length === 1 && edit.arcStart && !edit.arcEnd) {
+      const units = projectRef.current.meta.units
+      const len = parseLengthInput(edit.length, units)
+      const angleDeg = parseFloat(edit.angle)
+      const slotWidth = parseLengthInput(edit.radius, units)
+      if (len != null && len > 0 && !Number.isNaN(angleDeg) && slotWidth != null && slotWidth > 0) {
+        const angleRad = angleDeg * Math.PI / 180
+        const p1 = curr.points[0]
+        const p2 = { x: p1.x + len * Math.cos(angleRad), y: p1.y + len * Math.sin(angleRad) }
+        const axisX = p2.x - p1.x
+        const axisY = p2.y - p1.y
+        const axisLen = Math.hypot(axisX, axisY)
+        const perpX = -axisY / axisLen
+        const perpY = axisX / axisLen
+        const perpPoint = { x: p1.x + (slotWidth / 2) * perpX, y: p1.y + (slotWidth / 2) * perpY }
+        addPendingPolygonPoint(p2)
+        placePendingSlotAt(perpPoint)
+        setPendingPreviewPointRef(null)
+        setDimensionEdit(null)
+        creationWorkflowPanel.focusCanvasAfterAction()
+      }
+    } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length >= 2) {
+      placePendingSlotAt(pt)
+      setPendingPreviewPointRef(null)
+      setDimensionEdit(null)
+      creationWorkflowPanel.focusCanvasAfterAction()
+    } else if (curr?.shape === 'ngon' && 'anchor' in curr && curr.anchor) {
+      placePendingNgonAt(pt)
+      setPendingPreviewPointRef(null)
+      setDimensionEdit(null)
+      creationWorkflowPanel.focusCanvasAfterAction()
     } else {
       placePendingAddAt(pt)
       setPendingPreviewPointRef(null)

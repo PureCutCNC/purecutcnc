@@ -65,6 +65,11 @@ import {
   drawPendingPathLoop,
   drawPendingPoint,
   drawPendingSplineLoop,
+  drawPendingSlotAxis,
+  drawPendingSlotWidth,
+  drawPendingNgon,
+  drawPendingRoundRect,
+  drawPendingChamferRect,
   drawPreviewProfile,
   drawToolpath,
   translateProfile,
@@ -80,7 +85,10 @@ import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransfor
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
+  segmentHitTest,
 } from './hitTest'
+import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
+import { segmentIntersections, type ResolvedSeg } from '../../store/helpers/segmentIntersection'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
   drawBackdropImage,
@@ -274,6 +282,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const originPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const sketchEditPreviewRef = useRef<SketchEditPreviewPoint | null>(null)
   const pendingSketchExtensionRef = useRef<PendingSketchExtension | null>(null)
+  const pendingExtendHitRef = useRef<Point | null>(null)
+  const pendingTrimSpanRef = useRef<{ from: Point; to: Point } | null>(null)
   const pendingSketchFilletRef = useRef<PendingSketchFillet | null>(null)
   const pendingPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingMovePreviewPointRef = useRef<PendingPreviewPoint | null>(null)
@@ -363,10 +373,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
+    pendingSketchEdit,
+    cancelPendingSketchEdit,
+    setPendingSketchSubject,
     moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -401,6 +418,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     commitConstraintDistance,
     cancelPendingConstraint,
     updateConstraintValue,
+    setPendingNgonSides,
+    setPendingRectCorner,
   } = useProjectStore()
 
   const projectRef = useRef(project)
@@ -436,6 +455,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingOffsetRef.current = pendingOffset
   pendingShapeActionRef.current = pendingShapeAction
   pendingConstraintRef.current = pendingConstraint
+  const pendingSketchEditRef = useRef(pendingSketchEdit)
+  pendingSketchEditRef.current = pendingSketchEdit
   viewStateRef.current = viewState
   backdropImageRef.current = backdropImage
   toolpathsRef.current = toolpaths
@@ -604,6 +625,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     triggerDimensionEdit,
     setPendingPreviewPointRef,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -842,6 +865,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   useEffect(() => {
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
+    pendingExtendHitRef.current = null
+    pendingTrimSpanRef.current = null
     pendingSketchFilletRef.current = null
     fillet.setFilletCornerPicked(false)
   // fillet.setFilletCornerPicked is a useState setter (stable identity), but the
@@ -1239,6 +1264,52 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (pendingAdd.shape === 'ellipse') {
         drawMoveGuide(ctx, pendingAdd.anchor, currentPreviewPoint, vt)
       }
+    } else if (pendingAdd?.shape === 'slot') {
+      const slotPoints = pendingAdd.points
+      if (slotPoints.length === 0) {
+        if (currentPreviewPoint) {
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        }
+      } else if (slotPoints.length === 1) {
+        drawPendingPoint(ctx, slotPoints[0], vt)
+        if (currentPreviewPoint) {
+          drawPendingSlotAxis(ctx, slotPoints[0], currentPreviewPoint, vt, project.meta.units)
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        }
+      } else {
+        drawPendingPoint(ctx, slotPoints[0], vt)
+        drawPendingPoint(ctx, slotPoints[1], vt)
+        if (currentPreviewPoint) {
+          drawPendingSlotWidth(ctx, slotPoints[0], slotPoints[1], currentPreviewPoint, vt, project.meta.units)
+          drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+        } else {
+          drawPendingSlotAxis(ctx, slotPoints[0], slotPoints[1], vt, project.meta.units)
+        }
+      }
+    } else if (pendingAdd?.shape === 'ngon') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingNgon(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.sides, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
+    } else if (pendingAdd?.shape === 'roundrect') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingRoundRect(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.corner, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
+    } else if (pendingAdd?.shape === 'chamferrect') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingChamferRect(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.corner, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
     } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
       const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
       for (const shape of previewShapes) {
@@ -1623,6 +1694,47 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (pendingSketchExtensionRef.current) {
         drawMoveGuide(ctx, pendingSketchExtensionRef.current.anchor, sketchEditPreviewRef.current.point, vt, lockModeGuideColor(lockModeRef.current))
         drawPendingPoint(ctx, pendingSketchExtensionRef.current.anchor, vt)
+      }
+      if (pendingExtendHitRef.current && pendingSketchEditRef.current?.subject) {
+        const subjFeature = project.features.find(
+          (f) => f.id === pendingSketchEditRef.current!.subject!.featureId,
+        )
+        if (subjFeature && !subjFeature.sketch.profile.closed) {
+          const subjProfile = subjFeature.sketch.profile
+          const segCount = subjProfile.segments.length
+          const segIndex = pendingSketchEditRef.current.subject.segmentIndex
+          const isFirst = segIndex === 0
+          const isLast = segIndex === segCount - 1
+          if (isFirst || isLast) {
+            const subjT = pendingSketchEditRef.current.subject.t ?? 0.5
+            let growFromStart: boolean
+            if (isFirst && isLast) {
+              growFromStart = subjT < 0.5
+            } else if (isFirst) {
+              growFromStart = subjT < 0.5
+            } else {
+              growFromStart = false
+            }
+            const growingPoint = growFromStart
+              ? subjProfile.start
+              : subjProfile.segments[segCount - 1].to
+            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt, 'rgba(239, 188, 122, 0.75)')
+          }
+        }
+      }
+      if (pendingTrimSpanRef.current) {
+        // Draw the span that would be removed in red dashed style
+        const span = pendingTrimSpanRef.current
+        const from = worldToCanvas(span.from, vt)
+        const to = worldToCanvas(span.to, vt)
+        ctx.beginPath()
+        ctx.moveTo(from.cx, from.cy)
+        ctx.lineTo(to.cx, to.cy)
+        ctx.strokeStyle = 'rgba(220, 80, 60, 0.85)'
+        ctx.lineWidth = 2.5
+        ctx.setLineDash([6, 4])
+        ctx.stroke()
+        ctx.setLineDash([])
       }
       if (pendingSketchFilletRef.current && editingFeature) {
         drawPendingPoint(ctx, pendingSketchFilletRef.current.corner, vt)
@@ -2105,7 +2217,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       || !!pendingMove
       || !!pendingTransform
       || !!pendingOffset
-      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
+      || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer' || sketchEditTool === 'trim' || sketchEditTool === 'extend'))
       || isDraggingNodeRef.current
       || constraintPicking
 
@@ -2192,6 +2304,208 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         return
       }
 
+      if (feature && (sketchEditTool === 'trim' || sketchEditTool === 'extend')) {
+        pendingSketchExtensionRef.current = null
+        pendingExtendHitRef.current = null
+        pendingTrimSpanRef.current = null
+        pendingSketchFilletRef.current = null
+        fillet.setFilletCornerPicked(false)
+        const pending = pendingSketchEditRef.current
+        if (pending && pending.phase === 'pick-subject') {
+          const hit = segmentHitTest(livePoint, project, vt, { openOnly: true })
+          sketchEditPreviewRef.current = hit
+            ? { point: hit.point, mode: sketchEditTool }
+            : null
+        } else if (pending && pending.phase === 'pick-reference' && pending.subject) {
+          // Keep subject point highlighted + show reference candidate
+          const hit = segmentHitTest(livePoint, project, vt, { openOnly: false })
+          sketchEditPreviewRef.current = hit
+            ? { point: hit.point, mode: sketchEditTool }
+            : { point: pending.subject.point, mode: sketchEditTool }
+
+          // Extend preview: compute extension-line intersection for dashed preview
+          if (sketchEditTool === 'extend' && hit) {
+            const subjFeature = project.features.find(
+              (f) => f.id === pending.subject!.featureId,
+            )
+            if (subjFeature && !subjFeature.sketch.profile.closed) {
+              const subjProfile = subjFeature.sketch.profile
+              const subjSegIndex = pending.subject!.segmentIndex
+              const segCount = subjProfile.segments.length
+              const isFirst = subjSegIndex === 0
+              const isLast = subjSegIndex === segCount - 1
+              if (isFirst || isLast) {
+                const subjT = pending.subject!.t ?? 0.5
+                let growFromStart: boolean
+                if (isFirst && isLast) {
+                  growFromStart = subjT < 0.5
+                } else if (isFirst) {
+                  growFromStart = subjT < 0.5
+                } else {
+                  growFromStart = false
+                }
+                const growingPoint = growFromStart
+                  ? subjProfile.start
+                  : subjProfile.segments[segCount - 1].to
+                const subjResolved = resolveProfileSegments(subjProfile)
+                const subjSeg = subjResolved[subjSegIndex]
+                if (subjSeg) {
+                  const tgtFeature = project.features.find(
+                    (f) => f.id === hit.featureId,
+                  )
+                  if (tgtFeature) {
+                    const tgtResolved = resolveProfileSegments(
+                      tgtFeature.sketch.profile,
+                    )
+                    const tgtSeg = tgtResolved[hit.segmentIndex]
+                    if (tgtSeg) {
+                      // Build extension ray
+                      let extension: ResolvedSeg
+                      const TWO_PI = 2 * Math.PI
+                      if (subjSeg.kind === 'line') {
+                        const dx = subjSeg.p1.x - subjSeg.p0.x
+                        const dy = subjSeg.p1.y - subjSeg.p0.y
+                        const len = Math.hypot(dx, dy)
+                        if (len > 1e-9) {
+                          const ux = dx / len
+                          const uy = dy / len
+                          if (growFromStart) {
+                            extension = {
+                              kind: 'line',
+                              p0: growingPoint,
+                              p1: {
+                                x: growingPoint.x - ux * 1e5,
+                                y: growingPoint.y - uy * 1e5,
+                              },
+                            }
+                          } else {
+                            extension = {
+                              kind: 'line',
+                              p0: growingPoint,
+                              p1: {
+                                x: growingPoint.x + ux * 1e5,
+                                y: growingPoint.y + uy * 1e5,
+                              },
+                            }
+                          }
+                          let previewHits = segmentIntersections(
+                            extension,
+                            tgtSeg,
+                            { rayA: true },
+                          ).filter((h) => h.tA > 1e-9)
+                          if (previewHits.length > 0) {
+                            previewHits.sort((a, b) => a.tA - b.tA)
+                            pendingExtendHitRef.current =
+                              previewHits[0].point
+                          }
+                        }
+                      } else {
+                        // Arc
+                        if (growFromStart) {
+                          extension = {
+                            ...subjSeg,
+                            a0: subjSeg.a0,
+                            a1: subjSeg.ccw
+                              ? subjSeg.a0 - TWO_PI
+                              : subjSeg.a0 + TWO_PI,
+                            ccw: !subjSeg.ccw,
+                          }
+                        } else {
+                          extension = {
+                            ...subjSeg,
+                            a0: subjSeg.a1,
+                            a1: subjSeg.ccw
+                              ? subjSeg.a1 + TWO_PI
+                              : subjSeg.a1 - TWO_PI,
+                          }
+                        }
+                        let previewHits = segmentIntersections(
+                          extension,
+                          tgtSeg,
+                          { rayA: true },
+                        ).filter((h) => h.tA > 1e-9)
+                        if (previewHits.length > 0) {
+                          previewHits.sort((a, b) => a.tA - b.tA)
+                          pendingExtendHitRef.current =
+                            previewHits[0].point
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Trim preview: compute span that would be removed
+          if (sketchEditTool === 'trim' && hit && pending.subject) {
+            const trimSubjFeature = project.features.find(
+              (f) => f.id === pending.subject!.featureId,
+            )
+            if (trimSubjFeature && !trimSubjFeature.sketch.profile.closed) {
+              const trimProfile = trimSubjFeature.sketch.profile
+              const trimSegIndex = pending.subject.segmentIndex
+              const segCount = trimProfile.segments.length
+              const isFirst = trimSegIndex === 0
+              const isLast = trimSegIndex === segCount - 1
+              const trimSubjResolved = resolveProfileSegments(trimProfile)
+              const trimSubjSeg = trimSubjResolved[trimSegIndex]
+              if (trimSubjSeg) {
+                const trimTgtFeature = project.features.find(
+                  (f) => f.id === hit.featureId,
+                )
+                if (trimTgtFeature) {
+                  const trimTgtResolved = resolveProfileSegments(
+                    trimTgtFeature.sketch.profile,
+                  )
+                  const trimTgtSeg = trimTgtResolved[hit.segmentIndex]
+                  if (trimTgtSeg) {
+                    const trimHits = segmentIntersections(trimSubjSeg, trimTgtSeg)
+                    if (trimHits.length === 1) {
+                      const h = trimHits[0]
+                      const clickT = pending.subject.t ?? 0.5
+                      const clickBefore = clickT < h.tA
+
+                      if ((isFirst && clickBefore) || (isLast && !clickBefore)) {
+                        if (isFirst && clickBefore) {
+                          pendingTrimSpanRef.current = {
+                            from: trimProfile.start,
+                            to: h.point,
+                          }
+                        } else if (isLast && !clickBefore) {
+                          pendingTrimSpanRef.current = {
+                            from: h.point,
+                            to: trimProfile.segments[segCount - 1].to,
+                          }
+                        }
+                      }
+                    } else if (trimHits.length >= 2) {
+                      const sorted = [...trimHits].sort((a, b) => a.tA - b.tA)
+                      const t0 = sorted[0].tA
+                      const t1 = sorted[sorted.length - 1].tA
+                      const clickT = pending.subject.t ?? 0.5
+                      if (clickT <= t0 && isFirst) {
+                        pendingTrimSpanRef.current = {
+                          from: trimProfile.start,
+                          to: sorted[0].point,
+                        }
+                      } else if (clickT >= t1 && isLast) {
+                        pendingTrimSpanRef.current = {
+                          from: sorted[sorted.length - 1].point,
+                          to: trimProfile.segments[segCount - 1].to,
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        scheduleDraw()
+        return
+      }
+
       if (feature && sketchEditTool === 'disconnect') {
         pendingSketchExtensionRef.current = null
         pendingSketchFilletRef.current = null
@@ -2237,7 +2551,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     if (pendingAdd) {
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect')
         && pendingAdd.anchor
       ) {
         const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
@@ -2247,7 +2561,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         } else {
           const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
           const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
-          dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
+          const dimShape = (pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') ? 'rect' : pendingAdd.shape
+          dimEdit.setDimensionEdit({ shape: dimShape, anchor: pendingAdd.anchor, signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1, signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1, activeField: 'width', width: formatLength(w, units), height: formatLength(h, units), radius: '', length: '', angle: '' })
         }
         return
       }
@@ -2297,6 +2612,37 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const angleDeg = (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
         const defaultRadius = pendingAdd.currentMode === 'arc' ? formatLength(len > 1e-9 ? len : 0.5, units) : ''
         dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
+        return
+      }
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length === 1) {
+        const p1 = pendingAdd.points[0]
+        const previewPoint = pendingPreviewPointRef.current?.point
+        const dx = previewPoint ? previewPoint.x - p1.x : 0
+        const dy = previewPoint ? previewPoint.y - p1.y : 0
+        const len = Math.hypot(dx, dy)
+        const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
+        const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+        dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
+        return
+      }
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
+        const p1 = pendingAdd.points[0]
+        const p2 = pendingAdd.points[1]
+        const previewPoint = pendingPreviewPointRef.current?.point
+        const axisX = p2.x - p1.x
+        const axisY = p2.y - p1.y
+        const axisLen = Math.hypot(axisX, axisY)
+        const currentWidth = previewPoint && axisLen > 1e-10
+          ? Math.max(2 * Math.abs((previewPoint.x - p1.x) * axisY - (previewPoint.y - p1.y) * axisX) / axisLen, 0.001)
+          : (units === 'mm' ? 6 : 0.25)
+        dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, arcEnd: p2, signX: 1, signY: 1, activeField: 'width', width: formatLength(currentWidth, units), height: '', radius: '', length: '', angle: '' })
+        return
+      }
+      if (pendingAdd.shape === 'ngon' && pendingAdd.anchor) {
+        const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+        const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+        const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+        dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
         return
       }
     }
@@ -2370,6 +2716,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingTransformRef,
     pendingOffsetRef,
     pendingShapeActionRef,
+    pendingSketchEditRef,
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
@@ -2406,6 +2753,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
+    cancelPendingSketchEdit,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -2514,6 +2862,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
+    pendingSketchEditRef,
     pendingDimensionRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
@@ -2563,8 +2912,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     disconnectFeaturePoint,
     filletFeaturePoint,
     chamferFeaturePoint,
+    setPendingSketchSubject,
+    cancelPendingSketchEdit,
+    trimFeatureSegment,
+    extendFeatureEndpoint,
     setPendingAddAnchor,
     placePendingAddAt,
+    placePendingSlotAt,
+    placePendingNgonAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -2918,6 +3273,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : creation.creationPanelShape === 'clamp' ? 'Clamp'
             : creation.creationPanelShape === 'polygon' ? 'Polygon'
             : creation.creationPanelShape === 'spline' ? 'Spline'
+            : creation.creationPanelShape === 'slot' ? 'Slot'
+            : creation.creationPanelShape === 'ngon' ? 'Polygon'
+            : creation.creationPanelShape === 'roundrect' ? 'Rounded Rectangle'
+            : creation.creationPanelShape === 'chamferrect' ? 'Chamfered Rectangle'
             : 'Composite'
           }
           step={
@@ -2934,13 +3293,21 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   ? 'Add one more point'
                   : 'Add points or close')
                 : 'Click first point')
+            : creation.creationPanelShape === 'slot'
+              ? (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2
+                ? 'Move cursor to set width, click to commit'
+                : pendingAdd.shape === 'slot' && pendingAdd.points.length === 1
+                  ? 'Click second end center or enter dimensions'
+                  : 'Click first end center')
             : creation.creationPanelHasAnchor
               ? (creation.creationPanelShape === 'circle'
                 ? 'Click to set radius or enter dimensions'
                 : creation.creationPanelShape === 'ellipse'
                   ? 'Click to set radii or enter dimensions'
-                  : 'Click opposite corner or enter dimensions')
-              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse')
+                  : creation.creationPanelShape === 'ngon'
+                    ? 'Click to set radius'
+                    : 'Click opposite corner or enter dimensions')
+              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse' || creation.creationPanelShape === 'ngon')
                 ? 'Click center point'
                 : 'Click first corner'
           }
@@ -2978,9 +3345,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   type="button"
                   className="tablet-cmd-btn"
                   onClick={creation.triggerDimensionFromCreationPanel}
-                >Dimensions</button>
+                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : pendingAdd.shape === 'ngon' ? 'Radius' : 'Dimensions'}</button>
               )}
-              {(creation.creationPanelHasPoints || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
+              {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
@@ -3149,6 +3516,104 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     </label>
                   )}
                 </>
+              ) : dimEdit.dimensionEdit.shape === 'slot' ? (
+                dimEdit.dimensionEdit.arcEnd ? (
+                  <label className="canvas-workflow-panel__field">
+                    <span>Width</span>
+                    <input
+                      ref={dimEdit.widthInputRef}
+                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={dimEdit.dimensionEdit.width}
+                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                        else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                      }}
+                      autoFocus
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Length</span>
+                      <input
+                        ref={dimEdit.widthInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.length}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.heightInputRef.current?.focus({ preventScroll: true }) }
+                        }}
+                        autoFocus
+                      />
+                    </label>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Angle °</span>
+                      <input
+                        ref={dimEdit.heightInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.angle}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.radiusInputRef.current?.focus({ preventScroll: true }) }
+                        }}
+                      />
+                    </label>
+                    <label className="canvas-workflow-panel__field">
+                      <span>Width</span>
+                      <input
+                        ref={dimEdit.radiusInputRef}
+                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={dimEdit.dimensionEdit.radius}
+                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                          else if (e.key === 'Tab') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                        }}
+                      />
+                    </label>
+                  </>
+                )
+              ) : dimEdit.dimensionEdit.shape === 'ngon' ? (
+                <label className="canvas-workflow-panel__field">
+                  <span>Radius</span>
+                  <input
+                    ref={dimEdit.radiusInputRef}
+                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={dimEdit.dimensionEdit.radius}
+                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
+                      else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
+                    }}
+                    autoFocus
+                  />
+                </label>
               ) : (
                 <>
                   <label className="canvas-workflow-panel__field">
@@ -3204,6 +3669,60 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   </label>
                 </>
               )}
+            </div>
+          )}
+          {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
+            <div className="canvas-workflow-panel__meta">
+              <label className="canvas-workflow-panel__field">
+                <span>Sides (3–50)</span>
+                <input
+                  key={'sides' in pendingAdd ? pendingAdd.session : undefined}
+                  className="canvas-workflow-panel__count-input"
+                  type="text"
+                  inputMode="numeric"
+                  defaultValue={'sides' in pendingAdd ? pendingAdd.sides : 6}
+                  onBlur={(e) => {
+                    const n = Math.round(Number(e.target.value))
+                    const clamped = Number.isNaN(n) ? ('sides' in pendingAdd ? pendingAdd.sides : 6) : Math.max(3, Math.min(50, n))
+                    setPendingNgonSides(clamped)
+                    e.target.value = String(clamped)
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') {
+                      const n = Math.round(Number(e.currentTarget.value))
+                      if (!Number.isNaN(n)) setPendingNgonSides(Math.max(3, Math.min(50, n)))
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          {(pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !creation.creationDimEditActive && (
+            <div className="canvas-workflow-panel__meta">
+              <label className="canvas-workflow-panel__field">
+                <span>{pendingAdd.shape === 'roundrect' ? 'Corner radius' : 'Chamfer'}</span>
+                <input
+                  key={'corner' in pendingAdd ? pendingAdd.session : undefined}
+                  className="canvas-workflow-panel__count-input"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={'corner' in pendingAdd ? pendingAdd.corner : (project.meta.units === 'mm' ? 5 : 0.2)}
+                  onBlur={(e) => {
+                    const v = Number(e.target.value)
+                    const clamped = Number.isNaN(v) || v < 0 ? ('corner' in pendingAdd ? pendingAdd.corner : 0) : v
+                    setPendingRectCorner(clamped)
+                    e.target.value = String(clamped)
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') {
+                      const v = Number(e.currentTarget.value)
+                      if (!Number.isNaN(v) && v >= 0) setPendingRectCorner(v)
+                    }
+                  }}
+                />
+              </label>
             </div>
           )}
           {pendingDraftHasSelfIntersection ? (
@@ -3614,6 +4133,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : selection.sketchEditTool === 'disconnect' ? 'Click an anchor to split'
             : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? 'Click second point or enter radius' : 'Click a corner')
             : selection.sketchEditTool === 'chamfer' ? (fillet.filletCornerPicked ? 'Click second point or enter distance' : 'Click a corner')
+            : selection.sketchEditTool === 'trim' ? (pendingSketchEdit?.phase === 'pick-reference' ? 'Click the cutting segment' : 'Click the part of the segment to remove')
+            : selection.sketchEditTool === 'extend' ? (pendingSketchEdit?.phase === 'pick-reference' ? 'Click the target segment to reach' : 'Click near the open end of the segment to extend')
             : 'Drag nodes or click segments'
           }
           position={editWorkflowPanel.position}

@@ -41,17 +41,21 @@ import {
   applyLineCornerFillet,
   arcControlPoint,
   buildArcSegmentFromThreePoints,
+  cloneSegment,
   closeOpenProfile,
   deleteAnchorFromProfile,
   deleteSegmentFromProfile,
   disconnectProfileAtAnchor,
   insertPointIntoProfile,
   normalizeEditableProfileClosure,
+  splitArcSegment,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
 import { getDefinitionId, getInstanceIdsForDefinition, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
 import { invertMatrix } from '../helpers/instanceTransforms'
 import { applyMatrixToPoint } from '../helpers/resolveFeatures'
+import { segmentIntersections, type ResolvedSeg, type LineSeg } from '../helpers/segmentIntersection'
+import { resolveProfileSegments } from '../helpers/resolveProfileSegments'
 
 export interface FeatureGeometrySliceDependencies {
   joinOpenProfiles: (
@@ -78,6 +82,8 @@ export type FeatureGeometrySlice = Pick<
   | 'disconnectFeaturePoint'
   | 'filletFeaturePoint'
   | 'chamferFeaturePoint'
+  | 'trimFeatureSegment'
+  | 'extendFeatureEndpoint'
   | 'makeUnique'
 >
 
@@ -704,6 +710,465 @@ export function createFeatureGeometrySlice(
         },
       }
     }),
+
+  trimFeatureSegment: (subjectRef, cutterRef) => {
+    const hints: string[] = []
+    set((s) => {
+      const subjectFeature = s.project.features.find((f) => f.id === subjectRef.featureId)
+      if (!subjectFeature || subjectFeature.locked) {
+        hints.push('Subject feature not found or locked')
+        return {}
+      }
+
+      const profile = subjectFeature.sketch.profile
+      if (profile.closed) {
+        hints.push('Subject profile is closed — MVP trim only works on open profiles')
+        return {}
+      }
+
+      const segCount = profile.segments.length
+      if (segCount === 0) {
+        hints.push('Subject profile has no segments')
+        return {}
+      }
+
+      // Resolve all subject segments (1:1 with profile.segments)
+      const subjectResolved = resolveProfileSegments(profile)
+      const clickedIdx = subjectRef.segmentIndex
+      const clickedSeg = subjectResolved[clickedIdx]
+      if (!clickedSeg) {
+        hints.push('Subject segment is a bezier — cannot trim')
+        return {}
+      }
+
+      // Guard degenerate clicked segment (zero-length line)
+      if (clickedSeg.kind === 'line') {
+        const sdx = clickedSeg.p1.x - clickedSeg.p0.x
+        const sdy = clickedSeg.p1.y - clickedSeg.p0.y
+        if (Math.hypot(sdx, sdy) < 1e-9) {
+          hints.push('Subject segment has zero length')
+          return {}
+        }
+      }
+
+      // Resolve cutter segment
+      const cutterFeature = s.project.features.find((f) => f.id === cutterRef.featureId)
+      if (!cutterFeature) {
+        hints.push('Cutter feature not found')
+        return {}
+      }
+      const cutterResolved = resolveProfileSegments(cutterFeature.sketch.profile)
+      const cutterSeg = cutterResolved[cutterRef.segmentIndex]
+      if (!cutterSeg) {
+        hints.push('Cutter segment is a bezier — cannot use as reference')
+        return {}
+      }
+
+      const clickT = subjectRef.t ?? 0.5
+
+      // ── Walk from each open end to find boundary segments ──────────────
+
+      interface EndCandidate {
+        end: 'start' | 'end'
+        boundaryIdx: number
+        hitT: number
+        hitPoint: Point
+        /** Whole segments to drop (not including the boundary) */
+        wholeSegmentsDropped: number[]
+      }
+
+      const candidates: EndCandidate[] = []
+
+      // Walk from the start end (forward through segments 0..N-1)
+      for (let i = 0; i < segCount; i++) {
+        const seg = subjectResolved[i]
+        if (!seg) continue
+        const hits = segmentIntersections(seg, cutterSeg)
+        if (hits.length > 0) {
+          // Pick the hit closest to the free start (smallest tA),
+          // skipping endpoint hits (adjacent segments touching the cutter)
+          hits.sort((a, b) => a.tA - b.tA)
+          const hit = hits.find((h) => h.tA > 1e-9 && h.tA < 1 - 1e-9)
+          if (!hit) continue
+
+          candidates.push({
+            end: 'start',
+            boundaryIdx: i,
+            hitT: hit.tA,
+            hitPoint: hit.point,
+            wholeSegmentsDropped: Array.from({ length: i }, (_, j) => j),
+          })
+          break
+        }
+      }
+
+      // Walk from the end end (backward through segments N-1..0)
+      for (let i = segCount - 1; i >= 0; i--) {
+        const seg = subjectResolved[i]
+        if (!seg) continue
+        const hits = segmentIntersections(seg, cutterSeg)
+        if (hits.length > 0) {
+          // Pick the hit closest to the free end (largest tA),
+          // skipping endpoint hits (adjacent segments touching the cutter)
+          hits.sort((a, b) => b.tA - a.tA)
+          const hit = hits.find((h) => h.tA > 1e-9 && h.tA < 1 - 1e-9)
+          if (!hit) continue
+
+          candidates.push({
+            end: 'end',
+            boundaryIdx: i,
+            hitT: hit.tA,
+            hitPoint: hit.point,
+            wholeSegmentsDropped: Array.from(
+              { length: segCount - 1 - i },
+              (_, j) => i + 1 + j,
+            ),
+          })
+          break
+        }
+      }
+
+      if (candidates.length === 0) {
+        hints.push("Cutting edge doesn't cross any segment of this profile")
+        return {}
+      }
+
+      // ── Pick the candidate whose removal region contains the click ──────
+
+      function candidateContainsClick(c: EndCandidate): boolean {
+        if (c.end === 'start') {
+          // Removal region: segments 0..boundaryIdx-1 (whole) +
+          // boundary segment t ∈ [0, hitT]
+          if (clickedIdx < c.boundaryIdx) return true
+          if (clickedIdx === c.boundaryIdx && clickT <= c.hitT + 1e-9) return true
+          return false
+        } else {
+          // end === 'end'
+          // Removal region: boundary segment t ∈ [hitT, 1] +
+          // segments boundaryIdx+1..N-1 (whole)
+          if (clickedIdx > c.boundaryIdx) return true
+          if (clickedIdx === c.boundaryIdx && clickT >= c.hitT - 1e-9) return true
+          return false
+        }
+      }
+
+      const chosen = candidates.find(candidateContainsClick)
+
+      if (!chosen) {
+        hints.push('Interior trim (break) not yet implemented for MVP')
+        return {}
+      }
+
+      // ── Apply the multi-segment trim ────────────────────────────────────
+      let changed = false
+      let nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== subjectRef.featureId) return feature
+
+          const nextProfile: SketchProfile = {
+            start: clonePoint(feature.sketch.profile.start),
+            segments: feature.sketch.profile.segments.map((seg) =>
+              cloneSegment(seg),
+            ),
+            closed: false,
+          }
+
+          const { boundaryIdx, hitPoint, end, wholeSegmentsDropped } = chosen
+
+          // Sort dropped indices descending so splice indices stay valid
+          const sortedDropped = [...wholeSegmentsDropped].sort((a, b) => b - a)
+
+          if (end === 'start') {
+            // Trim the boundary segment from its start side
+            const boundarySeg = nextProfile.segments[boundaryIdx]
+            if (boundarySeg.type === 'arc') {
+              const [, kept] = splitArcSegment(boundarySeg, hitPoint)
+              nextProfile.segments[boundaryIdx] = kept
+            } else if (boundarySeg.type === 'line') {
+              nextProfile.segments[boundaryIdx] = {
+                type: 'line',
+                to: clonePoint(boundarySeg.to),
+              }
+            }
+
+            // Drop whole segments before the boundary
+            for (const idx of sortedDropped) {
+              nextProfile.segments.splice(idx, 1)
+            }
+
+            nextProfile.start = hitPoint
+          } else {
+            // end === 'end' — trim the boundary segment from its end side
+            const boundarySeg = nextProfile.segments[boundaryIdx]
+            if (boundarySeg.type === 'arc') {
+              const [kept] = splitArcSegment(boundarySeg, hitPoint)
+              nextProfile.segments[boundaryIdx] = kept
+            } else if (boundarySeg.type === 'line') {
+              nextProfile.segments[boundaryIdx] = {
+                type: 'line',
+                to: hitPoint,
+              }
+            }
+
+            // Drop whole segments after the boundary
+            for (const idx of sortedDropped) {
+              nextProfile.segments.splice(idx, 1)
+            }
+          }
+
+          const normalized = normalizeEditableProfileClosure(nextProfile)
+          changed = true
+
+          return {
+            ...feature,
+            kind: ['text', 'stl'].includes(feature.kind)
+              ? feature.kind
+              : inferFeatureKind(normalized),
+            sketch: {
+              ...feature.sketch,
+              profile: normalized,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) return {}
+
+      nextProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
+      nextProject = syncStockFromSourceFeature(nextProject, subjectRef.featureId)
+
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+    return hints
+  },
+
+  extendFeatureEndpoint: (subjectRef, targetRef) => {
+    const hints: string[] = []
+    set((s) => {
+      const subjectFeature = s.project.features.find((f) => f.id === subjectRef.featureId)
+      if (!subjectFeature || subjectFeature.locked) {
+        hints.push('Subject feature not found or locked')
+        return {}
+      }
+
+      const profile = subjectFeature.sketch.profile
+      if (profile.closed) {
+        hints.push('Subject profile is closed — cannot extend a closed profile')
+        return {}
+      }
+
+      const segCount = profile.segments.length
+      if (segCount === 0) {
+        hints.push('Subject profile has no segments')
+        return {}
+      }
+
+      const segIndex = subjectRef.segmentIndex
+      const isFirst = segIndex === 0
+      const isLast = segIndex === segCount - 1
+      if (!isFirst && !isLast) {
+        hints.push('Picked segment is not an end segment — MVP only extends free ends')
+        return {}
+      }
+
+      // Determine the growing end: for an end segment, the free profile endpoint
+      // is at t=0 for the first segment's start, or t=1 for the last segment's to.
+      const t = subjectRef.t ?? 0.5
+      let growingEnd: 'start' | 'end'
+      if (isFirst && isLast) {
+        // Single-segment: both ends are free — the click decides which grows.
+        growingEnd = t < 0.5 ? 'start' : 'end'
+      } else if (isFirst) {
+        // First of 2+ segments: only profile.start is free — always grow it,
+        // regardless of where on the segment the user clicked.
+        growingEnd = 'start'
+      } else {
+        // Last of 2+ segments: only the last segment's `to` is free.
+        growingEnd = 'end'
+      }
+
+      // Resolve segments
+      const subjectResolved = resolveProfileSegments(profile)
+      const subjectSeg = subjectResolved[segIndex]
+      if (!subjectSeg) {
+        hints.push('Subject segment is a bezier — cannot extend')
+        return {}
+      }
+
+      const targetFeature = s.project.features.find((f) => f.id === targetRef.featureId)
+      if (!targetFeature) {
+        hints.push('Target feature not found')
+        return {}
+      }
+      const targetResolved = resolveProfileSegments(targetFeature.sketch.profile)
+      const targetSeg = targetResolved[targetRef.segmentIndex]
+      if (!targetSeg) {
+        hints.push('Target segment is a bezier — cannot use as reference')
+        return {}
+      }
+
+      // Build the forward extension ray from the growing end.
+      // tA=0 is always at the growing endpoint; tA>0 is forward.
+      const growingPoint =
+        growingEnd === 'start'
+          ? profile.start
+          : profile.segments[segCount - 1].to
+      let extension: ResolvedSeg
+
+      if (subjectSeg.kind === 'line') {
+        const dx = subjectSeg.p1.x - subjectSeg.p0.x
+        const dy = subjectSeg.p1.y - subjectSeg.p0.y
+        const len = Math.hypot(dx, dy)
+        if (len < 1e-9) {
+          hints.push('Subject segment has zero length')
+          return {}
+        }
+        const ux = dx / len
+        const uy = dy / len
+        if (growingEnd === 'start') {
+          // Extend backward from profile.start
+          extension = {
+            kind: 'line',
+            p0: { x: growingPoint.x, y: growingPoint.y },
+            p1: { x: growingPoint.x - ux * 1e5, y: growingPoint.y - uy * 1e5 },
+          }
+        } else {
+          // Extend forward from last-segment endpoint
+          extension = {
+            kind: 'line',
+            p0: { x: growingPoint.x, y: growingPoint.y },
+            p1: { x: growingPoint.x + ux * 1e5, y: growingPoint.y + uy * 1e5 },
+          }
+        }
+      } else {
+        // Arc: extend along the circle from the growing end
+        const FULL = 2 * Math.PI
+        if (growingEnd === 'start') {
+          // Extend backward from a0 — go full circle in reverse direction
+          extension = {
+            ...subjectSeg,
+            a0: subjectSeg.a0,
+            a1: subjectSeg.ccw ? subjectSeg.a0 - FULL : subjectSeg.a0 + FULL,
+            ccw: !subjectSeg.ccw,
+          }
+        } else {
+          // Extend forward from a1 — go full circle in same sweep direction
+          extension = {
+            ...subjectSeg,
+            a0: subjectSeg.a1,
+            a1: subjectSeg.ccw ? subjectSeg.a1 + FULL : subjectSeg.a1 - FULL,
+          }
+        }
+      }
+
+      // Primary intersection: extension ray × target segment extent
+      let hits = segmentIntersections(extension, targetSeg, { rayA: true })
+      // Keep only forward hits (tA > 0, i.e., beyond the current endpoint)
+      hits = hits.filter((h) => h.tA > 1e-9)
+
+      // Apparent-intersection fallback: retry against the target's supporting
+      // infinite line (through its two endpoints).
+      if (hits.length === 0) {
+        let fallbackLine: LineSeg
+        if (targetSeg.kind === 'line') {
+          const tdx = targetSeg.p1.x - targetSeg.p0.x
+          const tdy = targetSeg.p1.y - targetSeg.p0.y
+          fallbackLine = {
+            kind: 'line',
+            p0: { x: targetSeg.p0.x - tdx * 1e5, y: targetSeg.p0.y - tdy * 1e5 },
+            p1: { x: targetSeg.p1.x + tdx * 1e5, y: targetSeg.p1.y + tdy * 1e5 },
+          }
+        } else {
+          // Arc target: build line through arc endpoints
+          const a0x = targetSeg.center.x + targetSeg.radius * Math.cos(targetSeg.a0)
+          const a0y = targetSeg.center.y + targetSeg.radius * Math.sin(targetSeg.a0)
+          const a1x = targetSeg.center.x + targetSeg.radius * Math.cos(targetSeg.a1)
+          const a1y = targetSeg.center.y + targetSeg.radius * Math.sin(targetSeg.a1)
+          const tdx = a1x - a0x
+          const tdy = a1y - a0y
+          fallbackLine = {
+            kind: 'line',
+            p0: { x: a0x - tdx * 1e5, y: a0y - tdy * 1e5 },
+            p1: { x: a1x + tdx * 1e5, y: a1y + tdy * 1e5 },
+          }
+        }
+        const fallbackHits = segmentIntersections(extension, fallbackLine, { rayA: true })
+        hits = fallbackHits.filter((h) => h.tA > 1e-9)
+      }
+
+      if (hits.length === 0) {
+        hints.push('No intersection found — target is parallel or out of reach')
+        return {}
+      }
+
+      // Nearest forward hit
+      hits.sort((a, b) => a.tA - b.tA)
+      const hit = hits[0].point
+
+      // Apply the extension: move the growing endpoint to the hit point
+      let changed = false
+      let nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => {
+          if (feature.id !== subjectRef.featureId) return feature
+
+          const nextProfile = {
+            ...feature.sketch.profile,
+            start: clonePoint(feature.sketch.profile.start),
+            segments: feature.sketch.profile.segments.map((seg) => ({
+              ...seg,
+              to: clonePoint(seg.to),
+            })),
+          }
+
+          if (growingEnd === 'start') {
+            nextProfile.start = hit
+          } else {
+            nextProfile.segments[segCount - 1].to = hit
+          }
+
+          const normalized = normalizeEditableProfileClosure(nextProfile)
+          changed = true
+
+          return {
+            ...feature,
+            kind: ['text', 'stl'].includes(feature.kind)
+              ? feature.kind
+              : inferFeatureKind(normalized),
+            sketch: {
+              ...feature.sketch,
+              profile: normalized,
+            },
+          }
+        }),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+
+      if (!changed || projectsEqual(nextProject, s.project)) return {}
+
+      nextProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
+      nextProject = syncStockFromSourceFeature(nextProject, subjectRef.featureId)
+
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+    return hints
+  },
 
   makeUnique: (instanceId) =>
     set((s) => {

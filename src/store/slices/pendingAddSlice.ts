@@ -42,6 +42,10 @@ export type PendingAddSlice = Pick<
   | 'startAddSplinePlacement'
   | 'startAddCompositePlacement'
   | 'startAddTextPlacement'
+  | 'startAddSlotPlacement'
+  | 'startAddNgonPlacement'
+  | 'startAddRoundRectPlacement'
+  | 'startAddChamferRectPlacement'
   | 'cancelPendingAdd'
   | 'setPendingAddAnchor'
   | 'placePendingAddAt'
@@ -56,6 +60,10 @@ export type PendingAddSlice = Pick<
   | 'closePendingCompositeDraft'
   | 'completePendingComposite'
   | 'completePendingOpenComposite'
+  | 'setPendingNgonSides'
+  | 'setPendingRectCorner'
+  | 'placePendingSlotAt'
+  | 'placePendingNgonAt'
 >
 
 function resetFeaturePlacementSelection(selection: ProjectStore['selection']): ProjectStore['selection'] {
@@ -181,6 +189,46 @@ export function createPendingAddSlice(
         selection: resetFeaturePlacementSelection(s.selection),
       })),
 
+    startAddSlotPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'slot', points: [], session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddNgonPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'ngon', anchor: null, sides: 6, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddRoundRectPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'roundrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddChamferRectPlacement: () =>
+      set((s) => ({
+        pendingAdd: { shape: 'chamferrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
     cancelPendingAdd: () => set({ pendingAdd: null }),
 
     setPendingAddAnchor: (point) =>
@@ -199,7 +247,8 @@ export function createPendingAddSlice(
       const depth = Math.min(state.project.stock.thickness, 10)
       const minSize = convertLength(0.01, 'mm', state.project.meta.units)
 
-      if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'tab' || state.pendingAdd.shape === 'clamp') {
+      if (state.pendingAdd.shape === 'rect' || state.pendingAdd.shape === 'tab' || state.pendingAdd.shape === 'clamp'
+        || state.pendingAdd.shape === 'roundrect' || state.pendingAdd.shape === 'chamferrect') {
         const x1 = anchor.x
         const y1 = anchor.y
         const x2 = point.x
@@ -291,7 +340,13 @@ export function createPendingAddSlice(
           return
         }
 
-        state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
+        if (state.pendingAdd.shape === 'roundrect') {
+          state.addRoundRectFeature(`Rounded rect ${state.project.features.length + 1}`, x, y, width, height, ('corner' in state.pendingAdd ? state.pendingAdd.corner : 0), depth)
+        } else if (state.pendingAdd.shape === 'chamferrect') {
+          state.addChamferRectFeature(`Chamfered rect ${state.project.features.length + 1}`, x, y, width, height, ('corner' in state.pendingAdd ? state.pendingAdd.corner : 0), depth)
+        } else {
+          state.addRectFeature(`Rect ${state.project.features.length + 1}`, x, y, width, height, depth)
+        }
       } else if (state.pendingAdd.shape === 'ellipse') {
         const rx = Math.max(minSize, Math.abs(point.x - anchor.x))
         const ry = Math.max(minSize, Math.abs(point.y - anchor.y))
@@ -693,6 +748,62 @@ export function createPendingAddSlice(
       }
 
       state.addFeature(feature)
+      set({ pendingAdd: null })
+    },
+
+    setPendingNgonSides: (n) =>
+      set((s) => ({
+        pendingAdd:
+          s.pendingAdd?.shape === 'ngon'
+            ? { ...s.pendingAdd, sides: Math.max(3, Math.min(50, Math.round(n))) }
+            : s.pendingAdd,
+      })),
+
+    setPendingRectCorner: (n) =>
+      set((s) => ({
+        pendingAdd:
+          s.pendingAdd?.shape === 'roundrect' || s.pendingAdd?.shape === 'chamferrect'
+            ? { ...s.pendingAdd, corner: Math.max(0, n) }
+            : s.pendingAdd,
+      })),
+
+    placePendingSlotAt: (p3) => {
+      const state = get()
+      if (!state.pendingAdd || state.pendingAdd.shape !== 'slot' || state.pendingAdd.points.length < 2) return
+
+      const p1 = state.pendingAdd.points[0]
+      const p2 = state.pendingAdd.points[1]
+
+      const axisX = p2.x - p1.x
+      const axisY = p2.y - p1.y
+      const axisLen = Math.hypot(axisX, axisY)
+      if (axisLen < 1e-10) return
+
+      const perp = Math.abs((p3.x - p1.x) * axisY - (p3.y - p1.y) * axisX) / axisLen
+      const width = perp * 2
+      if (width < 1e-10) return
+
+      const depth = Math.min(state.project.stock.thickness, 10)
+      state.addSlotFeature(`Slot ${state.project.features.length + 1}`, p1, p2, width, depth)
+      set({ pendingAdd: null })
+    },
+
+    placePendingNgonAt: (point) => {
+      const state = get()
+      if (!state.pendingAdd || state.pendingAdd.shape !== 'ngon' || !state.pendingAdd.anchor) return
+      const { anchor, sides } = state.pendingAdd
+      const circumradius = Math.hypot(point.x - anchor.x, point.y - anchor.y)
+      if (circumradius < 1e-10) return
+      const firstVertexAngle = Math.atan2(point.y - anchor.y, point.x - anchor.x)
+      const depth = Math.min(state.project.stock.thickness, 10)
+      const NGON_NAMES: Record<number, string> = {
+        3: 'Triangle', 4: 'Square', 5: 'Pentagon', 6: 'Hexagon',
+        7: 'Heptagon', 8: 'Octagon', 9: 'Nonagon', 10: 'Decagon',
+        11: 'Hendecagon', 12: 'Dodecagon',
+      }
+      const baseName = NGON_NAMES[sides] ?? `Polygon${sides}`
+      const name = `${baseName} ${state.project.features.length + 1}`
+      state.addNgonFeature(name, anchor.x, anchor.y, sides, circumradius, firstVertexAngle, depth)
       set({ pendingAdd: null })
     },
   }

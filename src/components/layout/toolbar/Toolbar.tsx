@@ -97,6 +97,10 @@ export function Toolbar({
           onSpline={toolbar.creationCommands.shapeCommands[4].onActivate}
           onComposite={toolbar.creationCommands.shapeCommands[5].onActivate}
           onText={toolbar.creationCommands.shapeCommands[6].onActivate}
+          onSlot={toolbar.creationCommands.shapeCommands[7].onActivate}
+          onNgon={toolbar.creationCommands.shapeCommands[8].onActivate}
+          onRoundRect={toolbar.creationCommands.shapeCommands[9].onActivate}
+          onChamferRect={toolbar.creationCommands.shapeCommands[10].onActivate}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}
@@ -130,13 +134,16 @@ export function Toolbar({
         />
         <SketchEditActions
           enabled={toolbar.sketchCommands.predicates.featureSketchEditActive}
-          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : toolbar.sketchCommands.sketchEdit.chamfer.active ? 'chamfer' : null}
+          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : toolbar.sketchCommands.sketchEdit.chamfer.active ? 'chamfer' : toolbar.sketchCommands.sketchEdit.trim.active ? 'trim' : toolbar.sketchCommands.sketchEdit.extend.active ? 'extend' : null}
           onAddPoint={toolbar.sketchCommands.sketchEdit.add_point.onActivate}
           onDeletePoint={toolbar.sketchCommands.sketchEdit.delete_point.onActivate}
           onDeleteSegment={toolbar.sketchCommands.sketchEdit.delete_segment.onActivate}
           onDisconnect={toolbar.sketchCommands.sketchEdit.disconnect.onActivate}
           onFillet={toolbar.sketchCommands.sketchEdit.fillet.onActivate}
           onChamfer={toolbar.sketchCommands.sketchEdit.chamfer.onActivate}
+          onTrim={toolbar.sketchCommands.sketchEdit.trim.onActivate}
+          onExtend={toolbar.sketchCommands.sketchEdit.extend.onActivate}
+          trimExtendDisabled={!toolbar.sketchCommands.sketchEdit.trim.enabled}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

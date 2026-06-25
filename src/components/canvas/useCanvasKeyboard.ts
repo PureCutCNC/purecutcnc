@@ -27,6 +27,7 @@ import type {
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
+  PendingSketchEdit,
   PendingTransformTool,
   SelectionState,
   SketchControlRef,
@@ -72,6 +73,7 @@ export interface CanvasKeyboardCtx {
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
+  pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
   tapeMeasureRef: MutableRefObject<TapeMeasureState | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
@@ -110,6 +112,7 @@ export interface CanvasKeyboardCtx {
   cancelPendingOffset: () => void
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
+  cancelPendingSketchEdit: () => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
   completePendingShapeAction: () => void
   beginHistoryTransaction: () => void
@@ -141,6 +144,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingTransformRef,
     pendingOffsetRef,
     pendingShapeActionRef,
+    pendingSketchEditRef,
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
@@ -177,6 +181,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
+    cancelPendingSketchEdit,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -233,7 +238,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       const units = projectRef.current.meta.units
 
       if (
-        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp')
+        (pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse' || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp' || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect')
         && pendingAdd.anchor
       ) {
         event.preventDefault()
@@ -257,8 +262,9 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           } else {
             const w = Math.abs(previewPoint.x - pendingAdd.anchor.x)
             const h = Math.abs(previewPoint.y - pendingAdd.anchor.y)
+            const dimShape = (pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') ? 'rect' : pendingAdd.shape
             dimEdit.setDimensionEdit({
-              shape: pendingAdd.shape,
+              shape: dimShape,
               anchor: pendingAdd.anchor,
               signX: previewPoint.x >= pendingAdd.anchor.x ? 1 : -1,
               signY: previewPoint.y >= pendingAdd.anchor.y ? 1 : -1,
@@ -385,6 +391,62 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           })
         } else if (currentEdit.activeField === 'length') {
           dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length === 1) {
+        event.preventDefault()
+        const p1 = pendingAdd.points[0]
+        if (!currentEdit) {
+          const previewPoint = pendingPreviewPointRef.current?.point
+          const dx = previewPoint ? previewPoint.x - p1.x : 0
+          const dy = previewPoint ? previewPoint.y - p1.y : 0
+          const len = Math.hypot(dx, dy)
+          const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
+          const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+          dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
+        } else if (currentEdit.activeField === 'length') {
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
+        } else if (currentEdit.activeField === 'angle') {
+          dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'radius' })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2) {
+        event.preventDefault()
+        if (!currentEdit) {
+          const p1 = pendingAdd.points[0]
+          const p2 = pendingAdd.points[1]
+          const previewPoint = pendingPreviewPointRef.current?.point
+          const axisX = p2.x - p1.x
+          const axisY = p2.y - p1.y
+          const axisLen = Math.hypot(axisX, axisY)
+          const currentWidth = previewPoint && axisLen > 1e-10
+            ? Math.max(2 * Math.abs((previewPoint.x - p1.x) * axisY - (previewPoint.y - p1.y) * axisX) / axisLen, 0.001)
+            : (units === 'mm' ? 6 : 0.25)
+          dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, arcEnd: p2, signX: 1, signY: 1, activeField: 'width', width: formatLength(currentWidth, units), height: '', radius: '', length: '', angle: '' })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
+
+      if (pendingAdd.shape === 'ngon' && pendingAdd.anchor) {
+        event.preventDefault()
+        if (!currentEdit) {
+          const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
+          const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+          const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+          dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
         } else {
           dimEdit.setDimensionEdit(null)
           canvasRef.current?.focus({ preventScroll: true })
@@ -614,6 +676,11 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     if (event.key === 'Tab' && pendingShapeAction?.kind === 'cut' && pendingShapeAction.phase === 'cutters' && pendingShapeAction.cutterIds.length > 0) {
       event.preventDefault()
       confirmCutCutters()
+      return
+    }
+
+    if (event.key === 'Escape' && pendingSketchEditRef.current) {
+      cancelPendingSketchEdit()
       return
     }
 

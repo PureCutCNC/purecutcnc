@@ -289,6 +289,8 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <RailButton icon="segment-delete" label="Delete segment" active={sketchCommands.sketchEdit.delete_segment.active} onClick={sketchCommands.sketchEdit.delete_segment.onActivate} />
             <RailButton icon="disconnect" label="Disconnect" active={sketchCommands.sketchEdit.disconnect.active} onClick={sketchCommands.sketchEdit.disconnect.onActivate} />
             <RailButton icon="fillet" label="Fillet" active={sketchCommands.sketchEdit.fillet.active} onClick={sketchCommands.sketchEdit.fillet.onActivate} />
+            <RailButton icon="trim" label="Trim" active={sketchCommands.sketchEdit.trim.active} disabled={!sketchCommands.sketchEdit.trim.enabled} onClick={sketchCommands.sketchEdit.trim.onActivate} />
+            <RailButton icon="extend" label="Extend" active={sketchCommands.sketchEdit.extend.active} disabled={!sketchCommands.sketchEdit.extend.enabled} onClick={sketchCommands.sketchEdit.extend.onActivate} />
           </div>
         )}
       </nav>

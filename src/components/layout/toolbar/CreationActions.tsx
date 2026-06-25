@@ -40,6 +40,10 @@ function CreationActions({
   onSpline,
   onComposite,
   onText,
+  onSlot,
+  onNgon,
+  onRoundRect,
+  onChamferRect,
 }: {
   pendingShape: string | null
   creationTarget: CreationTarget
@@ -52,6 +56,10 @@ function CreationActions({
   onSpline: () => void
   onComposite: () => void
   onText: () => void
+  onSlot: () => void
+  onNgon: () => void
+  onRoundRect: () => void
+  onChamferRect: () => void
 }) {
   const [lastShape, setLastShape] = useState<CreationShape>('rect')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -65,6 +73,8 @@ function CreationActions({
     ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
     : CREATION_SHAPE_OPTIONS
   const lastShapeOption = availableShapeOptions.find((option) => option.value === lastShape) ?? availableShapeOptions[0]
+  const primaryOptions = availableShapeOptions.filter((o) => o.tier === 'primary')
+  const secondaryOptions = availableShapeOptions.filter((o) => o.tier === 'secondary')
 
   function clearDrawerTimers() {
     if (openTimerRef.current !== null) {
@@ -90,6 +100,14 @@ function CreationActions({
       onSpline()
     } else if (shape === 'composite') {
       onComposite()
+    } else if (shape === 'slot') {
+      onSlot()
+    } else if (shape === 'ngon') {
+      onNgon()
+    } else if (shape === 'roundrect') {
+      onRoundRect()
+    } else if (shape === 'chamferrect') {
+      onChamferRect()
     } else {
       onText()
     }
@@ -235,7 +253,8 @@ function CreationActions({
                   top: drawerCoords?.top ?? -9999,
                   left: drawerCoords?.left ?? -9999,
                   visibility: drawerCoords ? 'visible' : 'hidden',
-                  gridTemplateColumns: `repeat(${availableShapeOptions.length}, auto)`,
+                  display: 'flex',
+                  flexDirection: 'column' as const,
                 }}
                 role="menu"
                 onPointerEnter={(event) => {
@@ -249,18 +268,35 @@ function CreationActions({
                   }
                 }}
               >
-                {availableShapeOptions.map((option) => (
-                  <ToolbarActionButton
-                    key={option.value}
-                    icon={option.icon}
-                    label={`Add ${creationTarget} ${option.noun}`}
-                    active={lastShapeOption.value === option.value}
-                    tooltipSide="bottom"
-                    onClick={() => {
-                      selectShape(option.value)
-                    }}
-                  />
-                ))}
+                <div style={{ display: 'flex' }}>
+                  {primaryOptions.map((option) => (
+                    <ToolbarActionButton
+                      key={option.value}
+                      icon={option.icon}
+                      label={`Add ${creationTarget} ${option.noun}`}
+                      active={lastShapeOption.value === option.value}
+                      tooltipSide="bottom"
+                      onClick={() => { selectShape(option.value) }}
+                    />
+                  ))}
+                </div>
+                {secondaryOptions.length > 0 && (
+                  <>
+                    <div aria-hidden style={{ height: '1px', background: 'currentColor', opacity: 0.15, margin: '2px 0' }} />
+                    <div style={{ display: 'flex' }}>
+                      {secondaryOptions.map((option) => (
+                        <ToolbarActionButton
+                          key={option.value}
+                          icon={option.icon}
+                          label={`Add ${creationTarget} ${option.noun}`}
+                          active={lastShapeOption.value === option.value}
+                          tooltipSide="bottom"
+                          onClick={() => { selectShape(option.value) }}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>,
               document.body,
             )

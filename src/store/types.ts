@@ -61,7 +61,7 @@ export interface SketchControlRef {
   t?: number
 }
 
-export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer'
+export type SketchEditTool = 'add_point' | 'delete_point' | 'delete_segment' | 'disconnect' | 'fillet' | 'chamfer' | 'trim' | 'extend'
 export type OpenProfileEndpoint = 'start' | 'end'
 
 export type FeatureAlignment =
@@ -119,6 +119,10 @@ export type PendingAddTool =
       closed: boolean
       session: number
     }
+  | { shape: 'slot'; points: Point[]; session: number }
+  | { shape: 'ngon'; anchor: Point | null; sides: number; session: number }
+  | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
+  | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'region'
@@ -216,6 +220,17 @@ export interface PendingConstraint {
   session: number
 }
 
+export interface PendingSketchEdit {
+  tool: 'trim' | 'extend'
+  phase: 'pick-subject' | 'pick-reference'
+  subject?: {
+    featureId: string
+    segmentIndex: number
+    point: Point
+    t: number
+  }
+}
+
 export interface ProjectStore {
   project: Project
   selection: SelectionState
@@ -228,6 +243,7 @@ export interface ProjectStore {
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
   pendingConstraint: PendingConstraint | null
+  pendingSketchEdit: PendingSketchEdit | null
   // ---- Measure & dimensions (transient tool state, not persisted) ----
   tapeMeasure: TapeMeasureState | null
   pendingDimension: PendingDimensionTool | null
@@ -400,6 +416,8 @@ export interface ProjectStore {
   cancelSketchEdit: () => void
   setSketchEditTool: (tool: SketchEditTool | null) => void
   setActiveControl: (control: SketchControlRef | null) => void
+  setPendingSketchSubject: (subject: NonNullable<PendingSketchEdit['subject']>) => void
+  cancelPendingSketchEdit: () => void
   moveFeatureControl: (featureId: string, control: SketchControlRef, point: Point) => void
   insertFeaturePoint: (featureId: string, target: SketchInsertTarget) => void
   joinOpenFeatureEndpoints: (
@@ -413,6 +431,8 @@ export interface ProjectStore {
   disconnectFeaturePoint: (featureId: string, anchorIndex: number) => void
   filletFeaturePoint: (featureId: string, anchorIndex: number, radius: number) => void
   chamferFeaturePoint: (featureId: string, anchorIndex: number, distance: number) => void
+  trimFeatureSegment: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, cutter: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
+  extendFeatureEndpoint: (subject: { featureId: string; segmentIndex: number; point?: Point; t?: number }, target: { featureId: string; segmentIndex: number; point?: Point; t?: number }) => string[]
   makeUnique: (instanceId: string) => void
   moveClampControl: (clampId: string, control: SketchControlRef, point: Point) => void
 
@@ -423,6 +443,10 @@ export interface ProjectStore {
   startAddSplinePlacement: () => void
   startAddCompositePlacement: () => void
   startAddTextPlacement: (config: TextToolConfig) => void
+  startAddSlotPlacement: () => void
+  startAddNgonPlacement: () => void
+  startAddRoundRectPlacement: () => void
+  startAddChamferRectPlacement: () => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -437,6 +461,10 @@ export interface ProjectStore {
   closePendingCompositeDraft: () => void
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
+  setPendingNgonSides: (n: number) => void
+  setPendingRectCorner: (n: number) => void
+  placePendingSlotAt: (p3: Point) => void
+  placePendingNgonAt: (point: Point) => void
   startMoveFeature: (featureId: string) => void
   startCopyFeature: (featureId: string, copyMode?: 'reference' | 'independent') => void
   startResizeFeature: (featureId: string) => void
@@ -469,6 +497,10 @@ export interface ProjectStore {
   addEllipseFeature: (name: string, cx: number, cy: number, rx: number, ry: number, depth: number) => void
   addPolygonFeature: (name: string, points: Point[], depth: number) => void
   addSplineFeature: (name: string, points: Point[], depth: number) => void
+  addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
+  addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
+  addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
+  addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 
   beginConstraint: (featureId: string) => void
   setConstraintAnchor: (anchor: { point: Point; snapMode: SnapMode | null }) => void
