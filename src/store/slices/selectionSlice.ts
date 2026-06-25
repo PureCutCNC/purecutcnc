@@ -791,13 +791,14 @@ export function createSelectionSlice(
             pendingSketchEdit: null,
           }
         }
-        // Initialize / clear pendingSketchEdit on tool change
-        const isTrimExtend = tool === 'trim' || tool === 'extend'
-        const wasTrimExtend = s.selection.sketchEditTool === 'trim' || s.selection.sketchEditTool === 'extend'
+        // Initialize / clear pendingSketchEdit on tool change. Always reset when
+        // switching INTO trim/extend — including trim↔extend — so a stale subject
+        // from the previous tool can never be dispatched under the new tool's
+        // pending.tool (see useClickPlacement reference-pick dispatch).
         let nextPendingSketchEdit = s.pendingSketchEdit
-        if (isTrimExtend && !wasTrimExtend && tool !== null) {
+        if (tool === 'trim' || tool === 'extend') {
           nextPendingSketchEdit = { tool, phase: 'pick-subject' }
-        } else if (!isTrimExtend) {
+        } else {
           nextPendingSketchEdit = null
         }
         return {
