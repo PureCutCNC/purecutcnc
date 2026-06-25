@@ -363,6 +363,47 @@ export function clipToolpathResultToObstaclesByLevel(
   }
 }
 
+interface RegionCutGroup {
+  moves: ToolpathMove[]
+  start: ToolpathPoint
+  end: ToolpathPoint
+}
+
+/**
+ * Greedy nearest-neighbour ordering of per-region cut groups: keep the first
+ * group, then always hop to the region whose entry point is closest to where
+ * the tool currently sits. Without this, regions are machined in whatever
+ * arbitrary order their mask paths happened to be in, so the tool zig-zags back
+ * and forth across the part (very visible on rest operations, which produce many
+ * small disjoint corner regions). Mirrors orderPartsByNearestBlock.
+ */
+function orderRegionCutGroupsByNearest(groups: RegionCutGroup[]): RegionCutGroup[] {
+  if (groups.length <= 1) return groups
+
+  const ordered: RegionCutGroup[] = [groups[0]]
+  const remaining = groups.slice(1)
+  let current = groups[0].end
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = Infinity
+    for (let index = 0; index < remaining.length; index += 1) {
+      const dx = remaining[index].start.x - current.x
+      const dy = remaining[index].start.y - current.y
+      const distance = dx * dx + dy * dy
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+    const [next] = remaining.splice(bestIndex, 1)
+    ordered.push(next)
+    current = next.end
+  }
+
+  return ordered
+}
+
 export function clipToolpathResultToRegionMask(
   project: Project,
   result: ToolpathResult,
@@ -376,12 +417,16 @@ export function clipToolpathResultToRegionMask(
   let clippedCutCount = 0
   const cutMoves = result.moves.filter((move) => move.kind === 'cut')
 
+  // Clip the toolpath to each region independently, keeping every region's
+  // fragments in pass order, then visit the regions nearest-first.
+  const groups: RegionCutGroup[] = []
   for (const path of mask.paths) {
     const pathMask: RegionMask = {
       paths: [path],
       containsPoint: (point) => pointInClipperPaths(point, [path]),
     }
 
+    const groupMoves: ToolpathMove[] = []
     for (const move of cutMoves) {
       const fragments = clipCutMoveToRegion(move, pathMask)
       if (fragments.length === 0) {
@@ -397,14 +442,24 @@ export function clipToolpathResultToRegionMask(
       }
 
       for (const fragment of fragments) {
-        current = pushSafeTransition(clippedMoves, current, fragment.from, safeZ)
-        clippedMoves.push({
-          ...move,
-          from: fragment.from,
-          to: fragment.to,
-        })
-        current = fragment.to
+        groupMoves.push({ ...move, from: fragment.from, to: fragment.to })
       }
+    }
+
+    if (groupMoves.length > 0) {
+      groups.push({
+        moves: groupMoves,
+        start: groupMoves[0].from,
+        end: groupMoves[groupMoves.length - 1].to,
+      })
+    }
+  }
+
+  for (const group of orderRegionCutGroupsByNearest(groups)) {
+    for (const move of group.moves) {
+      current = pushSafeTransition(clippedMoves, current, move.from, safeZ)
+      clippedMoves.push(move)
+      current = move.to
     }
   }
 
