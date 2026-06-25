@@ -985,21 +985,14 @@ export function createFeatureGeometrySlice(
       const t = subjectRef.t ?? 0.5
       let growingEnd: 'start' | 'end'
       if (isFirst && isLast) {
-        // Single-segment: both ends are free
+        // Single-segment: both ends are free — the click decides which grows.
         growingEnd = t < 0.5 ? 'start' : 'end'
       } else if (isFirst) {
-        // First of 2+ segments: only profile.start is free
-        if (t >= 0.5) {
-          hints.push('Click is nearer the connected end of the first segment — not a free end')
-          return {}
-        }
+        // First of 2+ segments: only profile.start is free — always grow it,
+        // regardless of where on the segment the user clicked.
         growingEnd = 'start'
       } else {
-        // Last of 2+ segments: only lastSegment.to is free
-        if (t < 0.5) {
-          hints.push('Click is nearer the connected end of the last segment — not a free end')
-          return {}
-        }
+        // Last of 2+ segments: only the last segment's `to` is free.
         growingEnd = 'end'
       }
 
