@@ -35,6 +35,13 @@ npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons.camj
 
 Always run `npm run build` from the project root to verify changes compile before committing. `npm test` runs automatically as part of the build, so a failing structural test will fail the build. Do not start the dev/preview server.
 
+## Git & Branching
+
+- **Never commit directly to `main`.** All work lands through a feature branch + PR — even a one-line fix. This holds even when a request says "commit here", "commit and push", or "no PR": "no PR" means *don't open a PR yet*, not *commit onto `main`*. Branch first (`git checkout -b feat/<change>`), commit there, push the branch.
+- Only commit on `main` if a human explicitly says "commit on `main`" / "commit directly to `main`".
+- **Enforcement (Claude Code):** a `PreToolUse` hook — [`.claude/hooks/block-default-branch-commit.sh`](.claude/hooks/block-default-branch-commit.sh), wired in [`.claude/settings.json`](.claude/settings.json) — blocks any `git commit` while `HEAD` is on `main`/`master`. Commits on other branches pass through untouched.
+- **Other tools (Codex, plain `git`, humans):** that hook only binds Claude Code sessions. Codex must follow this rule by reading this file (AGENTS.md). For tool-agnostic enforcement, a native git `pre-commit` hook can be added under a committed `.githooks/` dir + `git config core.hooksPath .githooks` — not set up yet.
+
 ## DeepSeek implementation workers
 
 The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs one non-interactive Claude Code session against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded slice** — it is not a general-purpose autonomous command. The management session dispatches it directly (filling the prompt template, piping it in, reading the worker's completion block back) so the user is not a copy/paste middleman.
