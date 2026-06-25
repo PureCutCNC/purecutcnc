@@ -241,3 +241,29 @@ independently buildable and testable.
 *Manager task (not a blocker):*
 - **Icons** — draw `trim` / `extend` icons via the camj flow; reuse the
   sketch-edit visual language.
+
+---
+
+## 10. C2 — Multi-segment trim (approved 2026-06-24)
+
+The MVP trim (C) shortens only the single picked segment to the cutter
+intersection. It can't clean up a **dangling tail of multiple segments** (e.g. an
+imported polyline that crosses itself, leaving several segments hanging past the
+crossing). C2 lifts that limitation.
+
+**Behavior:** picking a segment in a dangling tail + a cutter removes the whole
+chain from the clicked point out to the open end, back to where the chain crosses
+the cutter — shortening the boundary segment at the intersection and dropping the
+segments between it and the free end.
+
+**Algorithm:** for each open end E (start, end) of the subject open profile, walk
+the chain inward, intersecting each segment with the cutter; stop at the first
+segment that crosses. The region from E to that crossing is a removal candidate.
+Whichever candidate contains the clicked point P is removed: shorten the boundary
+segment to the intersection (`splitArcSegment` for arcs), drop the segments
+between the boundary and the free end, rebuild via `profileFromOpenSegments` /
+adjust `profile.start`. If the clicked point reaches the *other* open end without
+a crossing → interior split (still deferred / no-op with hint).
+
+Single-segment trim (C) is the special case where the boundary segment IS the
+clicked segment. Keep both paths; C2 generalises.
