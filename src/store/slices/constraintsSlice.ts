@@ -22,12 +22,22 @@ import {
   solveFeatureTranslation,
   validateConstraintsOnFeature,
   type ConstraintInput,
+  type ConstraintProfileResolver,
 } from '../../sketch/constraintSolver'
-import type { LocalConstraint } from '../../types/project'
+import {
+  IDENTITY_MATRIX,
+  type AnchorTarget,
+  type ConstraintIntersectionReference,
+  type LocalConstraint,
+  type Matrix2D,
+  type Project,
+  type SketchFeature,
+} from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { translateProfile, transformProfile } from '../helpers/transform'
 import { cloneProject } from '../helpers/normalize'
+import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 
 export type ConstraintsSlice = Pick<
   ProjectStore,
@@ -39,6 +49,57 @@ export type ConstraintsSlice = Pick<
   | 'deleteConstraint'
   | 'updateConstraintValue'
 >
+
+function featureIdFromTarget(target: AnchorTarget): string | null {
+  return target.source === 'feature' ? target.featureId : null
+}
+
+function referenceFeatureIdsFromIntersection(
+  intersection: ConstraintIntersectionReference,
+  ownerFeatureId: string,
+): string[] {
+  const ids = [
+    featureIdFromTarget(intersection.a.target),
+    featureIdFromTarget(intersection.b.target),
+  ].filter((id): id is string => Boolean(id) && id !== ownerFeatureId)
+
+  return [...new Set(ids)]
+}
+
+function firstReferenceFeatureId(
+  intersection: ConstraintIntersectionReference | undefined,
+  fallbackFeatureId: string | null,
+  ownerFeatureId: string,
+): string | null {
+  if (!intersection) return fallbackFeatureId
+  return referenceFeatureIdsFromIntersection(intersection, ownerFeatureId)[0] ?? fallbackFeatureId
+}
+
+function createProjectProfileResolver(
+  project: Project,
+  featureById: Map<string, SketchFeature>,
+): ConstraintProfileResolver {
+  return (target) => {
+    if (target.source === 'stock') return project.stock.profile
+    return featureById.get(target.featureId)?.sketch.profile ?? null
+  }
+}
+
+function translateFeatureRow(feature: SketchFeature, dx: number, dy: number): SketchFeature {
+  if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
+    return feature
+  }
+
+  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
+  return {
+    ...feature,
+    sketch: {
+      ...feature.sketch,
+      profile: translateProfile(feature.sketch.profile, dx, dy),
+    },
+    transform: multiplyMatrix(moveDelta(dx, dy), currentTransform),
+  } as SketchFeature & { transform: Matrix2D }
+}
 
 export function createConstraintsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
@@ -98,6 +159,7 @@ export function createConstraintsSlice(
       const anchor = pending.anchor.point
       const ref = pending.reference.point
       const segment = pending.reference.segment
+      const intersection = pending.reference.intersection
       let storedValue = distance
       if (segment) {
         const sx = segment.b.x - segment.a.x
@@ -115,13 +177,20 @@ export function createConstraintsSlice(
       }
 
       const constraintId = nextUniqueGeneratedId(s.project, 'c')
-      const referenceIds = pending.reference.featureId
-        ? [pending.reference.featureId]
-        : []
+      const referenceIds = intersection
+        ? referenceFeatureIdsFromIntersection(intersection, pending.featureId)
+        : pending.reference.featureId
+          ? [pending.reference.featureId]
+          : []
+      const referenceFeatureId = firstReferenceFeatureId(
+        intersection,
+        pending.reference.featureId,
+        pending.featureId,
+      )
 
       // Infer semantic indices from snap modes
-      const refFeature = pending.reference.featureId
-        ? s.project.features.find((f) => f.id === pending.reference!.featureId) ?? null
+      const refFeature = referenceFeatureId
+        ? s.project.features.find((f) => f.id === referenceFeatureId) ?? null
         : null
       const semanticIndices = inferSemanticIndices(
         feature.sketch.profile,
@@ -154,16 +223,19 @@ export function createConstraintsSlice(
         reference_segment: segment,
         anchor_index: semanticIndices.anchor_index,
         anchor_type: semanticIndices.anchor_type,
-        reference_feature_id: pending.reference.featureId ?? undefined,
+        reference_feature_id: referenceFeatureId ?? undefined,
         reference_index: semanticIndices.reference_index,
-        reference_type: semanticIndices.reference_type,
+        reference_type: intersection ? 'intersection' : semanticIndices.reference_type,
         reference_t: semanticIndices.reference_t,
+        reference_snap_mode: pending.reference.snapMode ?? undefined,
+        reference_intersection: intersection,
       }
 
       // Solve ALL constraints simultaneously (existing + new) to find the position
       // that satisfies all of them without modifying any stored values.
       const allConstraints = [...feature.sketch.constraints, newConstraint]
       const featureByIdSolve = new Map(s.project.features.map((f) => [f.id, f]))
+      const resolveProfile = createProjectProfileResolver(s.project, featureByIdSolve)
       const solverInputs: ConstraintInput[] = []
       for (const c of allConstraints) {
         if (c.type !== 'fixed_distance') continue
@@ -173,6 +245,7 @@ export function createConstraintsSlice(
           feature.sketch.profile,
           cRefFeature?.sketch.profile ?? null,
           c,
+          resolveProfile,
         )
         if (rederived && rederived.isValid) {
           if (rederived.referenceSegment) {
@@ -214,17 +287,16 @@ export function createConstraintsSlice(
 
       const nextFeatures = s.project.features.map((f) => {
         if (f.id !== pending.featureId) return f
-        const nextProfile =
-          Math.abs(translateDx) < 1e-9 && Math.abs(translateDy) < 1e-9
-            ? f.sketch.profile
-            : translateProfile(f.sketch.profile, translateDx, translateDy)
+        const translatedFeature = translateFeatureRow(f, translateDx, translateDy)
+        const nextProfile = translatedFeature.sketch.profile
         // Refresh all constraint caches from the solved position — values are never touched
-        const featureByIdNext = new Map([...featureByIdSolve, [f.id, { ...f, sketch: { ...f.sketch, profile: nextProfile } }]])
+        const featureByIdNext = new Map([...featureByIdSolve, [f.id, translatedFeature]])
+        const resolveNextProfile = createProjectProfileResolver(s.project, featureByIdNext)
         const refreshedConstraints = allConstraints.map((c) => {
           if (c.type !== 'fixed_distance') return c
           const cRefId = c.reference_feature_id ?? c.segment_ids[0]
           const cRefFeature = cRefId ? featureByIdNext.get(cRefId) : null
-          const result = rederiveConstraintGeometry(nextProfile, cRefFeature?.sketch.profile ?? null, c)
+          const result = rederiveConstraintGeometry(nextProfile, cRefFeature?.sketch.profile ?? null, c, resolveNextProfile)
           if (!result || !result.isValid) return c
           return {
             ...c,
@@ -235,7 +307,7 @@ export function createConstraintsSlice(
             error_message: undefined,
           }
         })
-        return { ...f, sketch: { ...f.sketch, profile: nextProfile, constraints: refreshedConstraints } }
+        return { ...translatedFeature, sketch: { ...translatedFeature.sketch, constraints: refreshedConstraints } }
       })
       const refreshedFeatures = nextFeatures
 
@@ -294,12 +366,15 @@ export function createConstraintsSlice(
 
       const refFeatureId = constraint.reference_feature_id ?? constraint.segment_ids[0]
       const refFeature = refFeatureId ? s.project.features.find((f) => f.id === refFeatureId) : null
+      const currentFeatureById = new Map(s.project.features.map((f) => [f.id, f]))
+      const resolveProfile = createProjectProfileResolver(s.project, currentFeatureById)
 
       // Re-derive current geometry for the edited constraint
       const rederived = rederiveConstraintGeometry(
         feature.sketch.profile,
         refFeature?.sketch.profile ?? null,
         constraint,
+        resolveProfile,
       )
 
       let translateDx = 0
@@ -360,14 +435,11 @@ export function createConstraintsSlice(
       const updatedConstraint = { ...constraint, value: storedValue, is_invalid: false, error_message: undefined }
       let nextFeatures = s.project.features.map((f) => {
         if (f.id !== featureId) return f
-        const nextProfile = Math.abs(translateDx) < 1e-9 && Math.abs(translateDy) < 1e-9
-          ? f.sketch.profile
-          : translateProfile(f.sketch.profile, translateDx, translateDy)
+        const translatedFeature = translateFeatureRow(f, translateDx, translateDy)
         return {
-          ...f,
+          ...translatedFeature,
           sketch: {
-            ...f.sketch,
-            profile: nextProfile,
+            ...translatedFeature.sketch,
             constraints: f.sketch.constraints.map((c) => c.id === constraintId ? updatedConstraint : c),
           },
         }

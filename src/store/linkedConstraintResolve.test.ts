@@ -36,11 +36,14 @@ import {
   type SketchFeature,
   type SketchProfile,
 } from '../types/project'
-import { resolveProfile } from './helpers/resolveFeatures'
+import { resolveFeatureInstance, resolveProfile } from './helpers/resolveFeatures'
 import {
   getInstanceIdsForDefinition,
   rebakeAllInstances,
 } from './helpers/featureDefinitions'
+import { resolveSketchSnap } from '../components/canvas/snappingHelpers'
+import type { ViewTransform } from '../components/canvas/viewTransform'
+import { useProjectStore } from './projectStore'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -242,6 +245,26 @@ function test(name: string, fn: () => void): void {
   }
 }
 
+function resetStore(project: Project): void {
+  useProjectStore.setState({
+    project,
+    selection: {
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedNode: null,
+      mode: 'feature' as const,
+      sketchEditTool: null,
+      activeControl: null,
+      hoveredFeatureId: null,
+    },
+    history: { past: [], future: [], transactionStart: null },
+    sketchEditSession: null,
+    pendingConstraint: null,
+    pendingTransform: null,
+    pendingOffset: null,
+  } as Partial<ReturnType<typeof useProjectStore.getState>>)
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 1. Linked edit → dependent of sibling re-solves
 // ──────────────────────────────────────────────────────────────────────
@@ -390,6 +413,115 @@ test('no-drift stability: double re-solve is idempotent', () => {
       `no drift: ${f1.id} start (${f1.sketch.profile.start.x}, ${f1.sketch.profile.start.y}) vs (${f2.sketch.profile.start.x}, ${f2.sketch.profile.start.y})`,
     )
   }
+})
+
+// ──────────────────────────────────────────────────────────────────────
+// 4. Constraint-created moves keep v2 resolved geometry in sync for snapping
+// ──────────────────────────────────────────────────────────────────────
+
+test('constraint commit updates instance transform so snapping sees moved circle centre', () => {
+  const horizontalProfile: SketchProfile = {
+    start: { x: 0, y: 0 },
+    segments: [{ type: 'line', to: { x: 20, y: 0 } }],
+    closed: false,
+  }
+  const verticalProfile: SketchProfile = {
+    start: { x: 6, y: -5 },
+    segments: [{ type: 'line', to: { x: 6, y: 5 } }],
+    closed: false,
+  }
+  const circleProf = circleProfile(6, -5, 1)
+
+  const horizontal: SketchFeature = {
+    id: 'horizontal',
+    name: 'Horizontal',
+    kind: 'polygon',
+    folderId: null,
+    sketch: { profile: horizontalProfile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+  attachDefinitionRef(horizontal, 'def-horizontal', { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+
+  const vertical: SketchFeature = {
+    id: 'vertical',
+    name: 'Vertical',
+    kind: 'polygon',
+    folderId: null,
+    sketch: { profile: verticalProfile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+  attachDefinitionRef(vertical, 'def-vertical', { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+
+  const circle: SketchFeature = {
+    id: 'circle',
+    name: 'Circle',
+    kind: 'circle',
+    folderId: null,
+    sketch: { profile: circleProf, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+  attachDefinitionRef(circle, 'def-circle', { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+
+  const project = newProject()
+  project.features = [horizontal, vertical, circle]
+  project.featureDefinitions = {
+    'def-horizontal': { id: 'def-horizontal', kind: 'polygon', profile: horizontalProfile, dimensions: [], operation: 'add' },
+    'def-vertical': { id: 'def-vertical', kind: 'polygon', profile: verticalProfile, dimensions: [], operation: 'add' },
+    'def-circle': { id: 'def-circle', kind: 'circle', profile: circleProf, dimensions: [], operation: 'add' },
+  }
+
+  resetStore(project)
+  const store = useProjectStore.getState()
+  store.beginConstraint('circle')
+  store.setConstraintAnchor({ point: { x: 6, y: -5 }, snapMode: 'center' })
+  store.setConstraintReference({
+    point: { x: 6, y: 0 },
+    featureId: 'horizontal',
+    snapMode: 'intersection',
+    intersection: {
+      a: { target: { source: 'feature', featureId: 'horizontal' }, segmentIndex: 0 },
+      b: { target: { source: 'feature', featureId: 'vertical' }, segmentIndex: 0 },
+    },
+  })
+  store.commitConstraintDistance(10)
+
+  const nextProject = useProjectStore.getState().project
+  const circleRow = nextProject.features.find((f) => f.id === 'circle') as (SketchFeature & { transform?: Matrix2D }) | undefined
+  assert(circleRow !== undefined, 'circle row should exist')
+  assert(approx(circleRow.transform?.f ?? 0, -5), `circle transform.f should be -5, got ${circleRow.transform?.f}`)
+
+  const resolvedCircle = resolveFeatureInstance(nextProject, 'circle')
+  assert(resolvedCircle !== null, 'resolved circle should exist')
+  const segment = resolvedCircle!.sketch.profile.segments[0]
+  assert(segment?.type === 'circle', 'resolved segment should be circle')
+  if (segment.type === 'circle') {
+    assert(approx(segment.center.x, 6), `resolved circle center x should be 6, got ${segment.center.x}`)
+    assert(approx(segment.center.y, -10), `resolved circle center y should be -10, got ${segment.center.y}`)
+  }
+
+  const vt: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 }
+  const snap = resolveSketchSnap({
+    rawPoint: { x: 6, y: -10 },
+    vt,
+    snapSettings: { enabled: true, modes: ['center', 'line'], pixelRadius: 4 },
+    project: nextProject,
+    referencePoint: null,
+  })
+  assert(snap.mode === 'center', `snap at moved circle center should be center, got ${snap.mode}`)
+  assert(approx(snap.point.x, 6) && approx(snap.point.y, -10),
+    `snap point should be moved center (6,-10), got (${snap.point.x}, ${snap.point.y})`)
 })
 
 // ── Report ────────────────────────────────────────────────────────────

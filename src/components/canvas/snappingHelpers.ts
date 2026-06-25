@@ -16,8 +16,10 @@
 
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { profileVertices, rectProfile } from '../../types/project'
-import type { AnchorTarget, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
+import type { AnchorTarget, ConstraintIntersectionReference, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
+import { segmentIntersections } from '../../store/helpers/segmentIntersection'
 import { distance2 } from './hitTest'
 import {
   nearestPointOnPolyline,
@@ -35,6 +37,8 @@ export interface SnapGuide {
   to: Point
 }
 
+export type SnapIntersectionReference = ConstraintIntersectionReference
+
 interface SnapCandidate {
   mode: SnapMode
   point: Point
@@ -42,10 +46,25 @@ interface SnapCandidate {
   priority: number
   guide?: SnapGuide
   perpendicularSegment?: { a: Point; b: Point }
+  intersection?: SnapIntersectionReference
   // Provenance: what geometry produced this snap, so a dimension placed here can
   // anchor to it and follow the geometry when it moves. Absent for grid/line/
   // perpendicular snaps (no stable geometry identity).
   anchor?: DimensionAnchor
+}
+
+interface SnapProfileGeometry {
+  profile: SketchProfile
+  source?: AnchorTarget
+}
+
+type ResolvedProfileSegment = NonNullable<ReturnType<typeof resolveProfileSegments>[number]>
+
+interface SegmentBounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
 }
 
 export interface ResolvedSnap {
@@ -54,8 +73,11 @@ export interface ResolvedSnap {
   mode: SnapMode | null
   guide?: SnapGuide
   perpendicularSegment?: { a: Point; b: Point }
+  intersection?: SnapIntersectionReference
   /** Anchor describing the snapped geometry, when the snap has stable identity. */
   anchor?: DimensionAnchor
+  /** Epoch time until which the transient label should be drawn. */
+  labelVisibleUntil?: number
 }
 
 function distanceToCanvas(a: { cx: number; cy: number }, b: { cx: number; cy: number }): number {
@@ -63,7 +85,7 @@ function distanceToCanvas(a: { cx: number; cy: number }, b: { cx: number; cy: nu
 }
 
 function snapPriority(mode: SnapMode): number {
-  if (mode === 'point' || mode === 'center' || mode === 'midpoint') {
+  if (mode === 'point' || mode === 'center' || mode === 'midpoint' || mode === 'intersection') {
     return 1
   }
 
@@ -89,6 +111,60 @@ function normalizeAngle(rad: number): number {
   return v
 }
 
+function pointsNear(a: Point, b: Point, tolerance = 1e-7): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= tolerance
+}
+
+function shouldCompareProfileSegments(
+  profile: SketchProfile,
+  segmentIndexA: number,
+  segmentIndexB: number,
+): boolean {
+  if (segmentIndexA === segmentIndexB) {
+    return false
+  }
+
+  if (Math.abs(segmentIndexA - segmentIndexB) === 1) {
+    return false
+  }
+
+  return !(profile.closed
+    && Math.min(segmentIndexA, segmentIndexB) === 0
+    && Math.max(segmentIndexA, segmentIndexB) === profile.segments.length - 1)
+}
+
+function segmentBounds(segment: ResolvedProfileSegment): SegmentBounds {
+  if (segment.kind === 'line') {
+    return {
+      minX: Math.min(segment.p0.x, segment.p1.x),
+      maxX: Math.max(segment.p0.x, segment.p1.x),
+      minY: Math.min(segment.p0.y, segment.p1.y),
+      maxY: Math.max(segment.p0.y, segment.p1.y),
+    }
+  }
+
+  return {
+    minX: segment.center.x - segment.radius,
+    maxX: segment.center.x + segment.radius,
+    minY: segment.center.y - segment.radius,
+    maxY: segment.center.y + segment.radius,
+  }
+}
+
+function boundsNearPoint(bounds: SegmentBounds, point: Point, radius: number): boolean {
+  return point.x >= bounds.minX - radius
+    && point.x <= bounds.maxX + radius
+    && point.y >= bounds.minY - radius
+    && point.y <= bounds.maxY + radius
+}
+
+function boundsOverlap(a: SegmentBounds, b: SegmentBounds): boolean {
+  return a.minX <= b.maxX
+    && a.maxX >= b.minX
+    && a.minY <= b.maxY
+    && a.maxY >= b.minY
+}
+
 function pushSnapCandidate(
   candidates: SnapCandidate[],
   rawPoint: Point,
@@ -99,6 +175,7 @@ function pushSnapCandidate(
   guide?: SnapGuide,
   perpendicularSegment?: { a: Point; b: Point },
   anchor?: DimensionAnchor,
+  intersection?: SnapIntersectionReference,
 ) {
   const distancePx = distanceToCanvas(worldToCanvas(rawPoint, vt), worldToCanvas(point, vt))
   if (distancePx > snapRadiusPx) {
@@ -112,8 +189,90 @@ function pushSnapCandidate(
     priority: snapPriority(mode),
     guide,
     perpendicularSegment,
+    intersection,
     anchor,
   })
+}
+
+function addIntersectionSnapCandidates(
+  candidates: SnapCandidate[],
+  profiles: SnapProfileGeometry[],
+  rawPoint: Point,
+  vt: ViewTransform,
+  snapRadiusPx: number,
+) {
+  const snapRadiusWorld = snapRadiusPx / Math.max(vt.scale, 1e-9)
+  const resolvedProfiles = profiles.map((entry) => ({
+    ...entry,
+    segments: resolveProfileSegments(entry.profile),
+  }))
+  const acceptedPoints: Point[] = []
+
+  for (let profileIndexA = 0; profileIndexA < resolvedProfiles.length; profileIndexA += 1) {
+    const profileA = resolvedProfiles[profileIndexA]
+    for (let segmentIndexA = 0; segmentIndexA < profileA.segments.length; segmentIndexA += 1) {
+      const segmentA = profileA.segments[segmentIndexA]
+      if (!segmentA) {
+        continue
+      }
+      const boundsA = segmentBounds(segmentA)
+      if (!boundsNearPoint(boundsA, rawPoint, snapRadiusWorld)) {
+        continue
+      }
+
+      for (let profileIndexB = profileIndexA; profileIndexB < resolvedProfiles.length; profileIndexB += 1) {
+        const profileB = resolvedProfiles[profileIndexB]
+        const firstSegmentB = profileIndexA === profileIndexB ? segmentIndexA + 1 : 0
+
+        for (let segmentIndexB = firstSegmentB; segmentIndexB < profileB.segments.length; segmentIndexB += 1) {
+          if (profileIndexA === profileIndexB && !shouldCompareProfileSegments(profileA.profile, segmentIndexA, segmentIndexB)) {
+            continue
+          }
+
+          const segmentB = profileB.segments[segmentIndexB]
+          if (!segmentB) {
+            continue
+          }
+          const boundsB = segmentBounds(segmentB)
+          if (!boundsNearPoint(boundsB, rawPoint, snapRadiusWorld) || !boundsOverlap(boundsA, boundsB)) {
+            continue
+          }
+
+          for (const intersection of segmentIntersections(segmentA, segmentB)) {
+            if (acceptedPoints.some((point) => pointsNear(point, intersection.point))) {
+              continue
+            }
+
+            const distancePx = distanceToCanvas(worldToCanvas(rawPoint, vt), worldToCanvas(intersection.point, vt))
+            if (distancePx > snapRadiusPx) {
+              continue
+            }
+
+            acceptedPoints.push(intersection.point)
+            const intersectionReference: SnapIntersectionReference | undefined =
+              profileA.source?.source === 'feature' && profileB.source?.source === 'feature'
+                ? {
+                    a: { target: profileA.source, segmentIndex: segmentIndexA },
+                    b: { target: profileB.source, segmentIndex: segmentIndexB },
+                  }
+                : undefined
+            pushSnapCandidate(
+              candidates,
+              rawPoint,
+              vt,
+              snapRadiusPx,
+              'intersection',
+              intersection.point,
+              undefined,
+              undefined,
+              undefined,
+              intersectionReference,
+            )
+          }
+        }
+      }
+    }
+  }
 }
 
 function addProfileSnapCandidates(
@@ -270,6 +429,7 @@ export function resolveSketchSnap(input: {
   const activeModes = new Set(snapSettings.modes)
   const snapRadiusPx = snapSettings.pixelRadius
   const candidates: SnapCandidate[] = []
+  const snapProfiles: SnapProfileGeometry[] = []
 
   if (activeModes.has('grid')) {
     const gridPoint = {
@@ -279,12 +439,14 @@ export function resolveSketchSnap(input: {
     pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'grid', gridPoint)
   }
 
+  snapProfiles.push({ profile: project.stock.profile, source: { source: 'stock' } })
   addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
 
   for (const feature of resolvedProjectFeatures(project)) {
     if (!feature.visible || feature.id === excludeFeatureId) {
       continue
     }
+    snapProfiles.push({ profile: feature.sketch.profile, source: { source: 'feature', featureId: feature.id } })
     addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'feature', featureId: feature.id })
   }
 
@@ -292,18 +454,26 @@ export function resolveSketchSnap(input: {
     if (!tab.visible || tab.id === excludeTabId) {
       continue
     }
-    addProfileSnapCandidates(candidates, rectProfile(tab.x, tab.y, tab.w, tab.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
+    snapProfiles.push({ profile })
+    addProfileSnapCandidates(candidates, profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
   }
 
   for (const clamp of project.clamps) {
     if (!clamp.visible || clamp.id === excludeClampId) {
       continue
     }
-    addProfileSnapCandidates(candidates, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
+    const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
+    snapProfiles.push({ profile })
+    addProfileSnapCandidates(candidates, profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
   }
 
   if (activeModes.has('point') && project.origin.visible) {
     pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y }, undefined, undefined, { kind: 'origin' })
+  }
+
+  if (activeModes.has('intersection')) {
+    addIntersectionSnapCandidates(candidates, snapProfiles, rawPoint, vt, snapRadiusPx)
   }
 
   if (candidates.length === 0) {
@@ -322,6 +492,7 @@ export function resolveSketchSnap(input: {
     mode: best.mode,
     guide: best.guide,
     perpendicularSegment: best.perpendicularSegment,
+    intersection: best.intersection,
     anchor: best.anchor,
   }
 }

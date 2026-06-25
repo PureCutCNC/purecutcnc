@@ -1494,26 +1494,31 @@ export function PropertiesPanel() {
               const refFeature = refId ? project.features.find((f) => f.id === refId) : null
               const label = typeof c.value === 'number' ? formatLength(c.value, units) : '—'
               const refName = refFeature?.name ?? (refId ? `#${refId}` : 'World')
-              const typeLabel = c.reference_type === 'segment'
-                ? 'perp'
-                : c.reference_type === 'point_on_segment'
-                  ? 'line'
-                  : c.reference_type === 'midpoint'
-                    ? 'midpt'
-                    : c.reference_index === -1
-                      ? 'center'
-                      : 'point'
+              const isIntersectionConstraint = c.reference_type === 'intersection' || c.reference_snap_mode === 'intersection'
+              const typeLabel = isIntersectionConstraint
+                ? 'intersect'
+                : c.reference_type === 'segment'
+                  ? 'perp'
+                  : c.reference_type === 'point_on_segment'
+                    ? 'line'
+                    : c.reference_type === 'midpoint'
+                      ? 'midpt'
+                      : c.reference_index === -1
+                        ? 'center'
+                        : 'point'
               const tooltipText = c.is_invalid
                 ? (c.error_message ?? 'Invalid')
-                : c.reference_type === 'segment'
-                  ? 'Perpendicular distance to segment'
-                  : c.reference_type === 'point_on_segment'
-                    ? `Distance to point on segment (${Math.round((c.reference_t ?? 0) * 100)}%)`
-                    : c.reference_type === 'midpoint'
-                      ? 'Distance to segment midpoint'
-                      : c.reference_index === -1
-                        ? 'Distance to feature center'
-                        : 'Distance to vertex'
+                : isIntersectionConstraint
+                  ? 'Distance to intersection'
+                  : c.reference_type === 'segment'
+                    ? 'Perpendicular distance to segment'
+                    : c.reference_type === 'point_on_segment'
+                      ? `Distance to point on segment (${Math.round((c.reference_t ?? 0) * 100)}%)`
+                      : c.reference_type === 'midpoint'
+                        ? 'Distance to segment midpoint'
+                        : c.reference_index === -1
+                          ? 'Distance to feature center'
+                          : 'Distance to vertex'
               return (
                 <div key={c.id} className={`properties-constraint-row${c.is_invalid ? ' properties-constraint-row--invalid' : ''}`}>
                   <span className="properties-constraint-type" title={tooltipText}>{typeLabel}</span>

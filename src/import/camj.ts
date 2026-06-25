@@ -27,6 +27,7 @@ import {
   type Operation,
   type PersistedImportedMesh,
   type Project,
+  type ConstraintSegmentReference,
   type SketchFeature,
   type Stock,
   type Tool,
@@ -165,6 +166,16 @@ function remapConstraint(
   constraint: LocalConstraint,
   featureIdMap: Map<string, string>,
 ): LocalConstraint | null {
+  const remapSegmentReference = (reference: ConstraintSegmentReference): ConstraintSegmentReference | null => {
+    if (reference.target.source === 'stock') return reference
+    const mapped = featureIdMap.get(reference.target.featureId)
+    if (!mapped) return null
+    return {
+      ...reference,
+      target: { source: 'feature', featureId: mapped },
+    }
+  }
+
   const segmentIds = constraint.segment_ids.map((id) => featureIdMap.get(id) ?? id)
   const referencedFeatureIds = constraint.segment_ids.filter((id) => featureIdMap.has(id))
   if (referencedFeatureIds.length !== constraint.segment_ids.length) {
@@ -176,6 +187,12 @@ function remapConstraint(
     const mapped = featureIdMap.get(constraint.reference_feature_id)
     if (!mapped) return null
     next.reference_feature_id = mapped
+  }
+  if (constraint.reference_intersection) {
+    const a = remapSegmentReference(constraint.reference_intersection.a)
+    const b = remapSegmentReference(constraint.reference_intersection.b)
+    if (!a || !b) return null
+    next.reference_intersection = { a, b }
   }
   return next
 }

@@ -80,6 +80,14 @@ function SnapActions({
           onClick={() => onToggleSnapMode('center')}
         />
         <ToolbarActionButton
+          icon="snap-intersection"
+          label="Snap to intersection"
+          active={snapSettings.enabled && hasMode('intersection')}
+          emphasized={snapSettings.enabled && activeSnapMode === 'intersection'}
+          tooltipSide={tooltipSide}
+          onClick={() => onToggleSnapMode('intersection')}
+        />
+        <ToolbarActionButton
           icon="snap-perpendicular"
           label="Snap perpendicular"
           active={snapSettings.enabled && hasMode('perpendicular')}

@@ -20,6 +20,7 @@ import type { SnapMode } from '../sketch/snapping'
 import type {
   BackdropImage,
   Clamp,
+  ConstraintIntersectionReference,
   DimensionAnchor,
   DimensionAnnotation,
   DimensionType,
@@ -216,6 +217,7 @@ export interface PendingConstraint {
     featureId: string | null
     snapMode: SnapMode | null
     segment?: { a: Point; b: Point }
+    intersection?: ConstraintIntersectionReference
   } | null
   session: number
 }
@@ -504,7 +506,13 @@ export interface ProjectStore {
 
   beginConstraint: (featureId: string) => void
   setConstraintAnchor: (anchor: { point: Point; snapMode: SnapMode | null }) => void
-  setConstraintReference: (reference: { point: Point; featureId: string | null; snapMode: SnapMode | null; segment?: { a: Point; b: Point } }) => void
+  setConstraintReference: (reference: {
+    point: Point
+    featureId: string | null
+    snapMode: SnapMode | null
+    segment?: { a: Point; b: Point }
+    intersection?: ConstraintIntersectionReference
+  }) => void
   commitConstraintDistance: (distance: number) => void
   cancelPendingConstraint: () => void
   deleteConstraint: (featureId: string, constraintId: string) => void

@@ -15,7 +15,15 @@
  */
 
 
-import { propagateConstraintsOnTranslate, propagateConstraintsOnRotate, rederiveConstraintGeometry, calculateGeometricCenter, nearestVertexIndex, nearestSegmentIndex, projectPointOntoSegmentT } from './constraintSolver'
+import {
+  propagateConstraintsOnTranslate,
+  propagateConstraintsOnRotate,
+  rederiveConstraintGeometry,
+  calculateGeometricCenter,
+  nearestVertexIndex,
+  nearestSegmentIndex,
+  projectPointOntoSegmentT,
+} from './constraintSolver'
 import type { SketchFeature, Point, SketchProfile, Segment } from '../types/project'
 
 function assert(condition: boolean, message: string) {
@@ -1110,6 +1118,73 @@ function testPointOnSegmentRederivation() {
   console.log('Point-on-Segment Re-derivation Test Passed!')
 }
 
+function testIntersectionConstraintRederivesLivePoint() {
+  console.log('Testing Intersection Constraint Live Re-derivation...')
+
+  const ownerProfile: SketchProfile = {
+    start: { x: 9, y: -5 },
+    segments: [{ type: 'circle', center: { x: 8, y: -5 }, to: { x: 9, y: -5 }, clockwise: true }],
+    closed: true,
+  }
+
+  const horizontalProfile: SketchProfile = {
+    start: { x: 0, y: 0 },
+    segments: [{ type: 'line', to: { x: 20, y: 0 } }],
+    closed: false,
+  }
+
+  let verticalProfile: SketchProfile = {
+    start: { x: 6, y: -5 },
+    segments: [{ type: 'line', to: { x: 6, y: 5 } }],
+    closed: false,
+  }
+
+  const resolveProfile = (target: { source: 'feature'; featureId: string } | { source: 'stock' }) => {
+    if (target.source !== 'feature') return null
+    if (target.featureId === 'horizontal') return horizontalProfile
+    if (target.featureId === 'vertical') return verticalProfile
+    return null
+  }
+
+  const constraint = {
+    id: 'c-intersection',
+    type: 'fixed_distance' as const,
+    segment_ids: ['horizontal', 'vertical'],
+    value: 5,
+    anchor_index: -1,
+    anchor_type: 'anchor' as const,
+    reference_feature_id: 'horizontal',
+    reference_type: 'intersection' as const,
+    reference_point: { x: 6, y: 0 },
+    reference_intersection: {
+      a: { target: { source: 'feature' as const, featureId: 'horizontal' }, segmentIndex: 0 },
+      b: { target: { source: 'feature' as const, featureId: 'vertical' }, segmentIndex: 0 },
+    },
+  }
+
+  const result = rederiveConstraintGeometry(ownerProfile, horizontalProfile, constraint, resolveProfile)
+
+  assert(result !== null, 'Intersection rederive result should not be null')
+  assert(result!.isValid, 'Intersection rederive result should be valid')
+  assert(approx(result!.referencePoint!.x, 6), `Reference point x should remain 6, got ${result!.referencePoint!.x}`)
+  assert(approx(result!.referencePoint!.y, 0), `Reference point y should remain 0, got ${result!.referencePoint!.y}`)
+
+  verticalProfile = {
+    start: { x: 8, y: -5 },
+    segments: [{ type: 'line', to: { x: 8, y: 5 } }],
+    closed: false,
+  }
+
+  const result2 = rederiveConstraintGeometry(ownerProfile, horizontalProfile, constraint, resolveProfile)
+
+  assert(result2 !== null, 'Moved intersection rederive result should not be null')
+  assert(result2!.isValid, 'Moved intersection rederive result should be valid')
+  assert(approx(result2!.referencePoint!.x, 8), `Moved reference point x should be 8, got ${result2!.referencePoint!.x}`)
+  assert(approx(result2!.referencePoint!.y, 0), `Moved reference point y should remain 0, got ${result2!.referencePoint!.y}`)
+
+  console.log('Intersection Constraint Live Re-derivation Test Passed!')
+}
+
 function testSegmentSidePreservation() {
   console.log('Testing Segment Side Preservation (Issue 14)...')
 
@@ -1348,6 +1423,7 @@ try {
   testFrozenInvalidFeature()
   testZeroSeedDoesNotUpdateValues()
   testPointOnSegmentRederivation()
+  testIntersectionConstraintRederivesLivePoint()
   testSegmentSidePreservation()
 } catch (e) {
   console.error(e)

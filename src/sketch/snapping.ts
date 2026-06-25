@@ -20,6 +20,7 @@ export type SnapMode =
   | 'line'
   | 'midpoint'
   | 'center'
+  | 'intersection'
   | 'perpendicular'
 
 export interface SnapSettings {
@@ -34,6 +35,7 @@ export const ALL_SNAP_MODES: SnapMode[] = [
   'line',
   'midpoint',
   'center',
+  'intersection',
   'perpendicular',
 ]
 

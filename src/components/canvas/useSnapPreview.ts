@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useRef, type MutableRefObject } from 'react'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type {
   PendingAddTool,
@@ -29,6 +29,8 @@ import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { pointsEqual } from './hitTest'
 import type { ViewTransform } from './viewTransform'
+
+const SNAP_LABEL_VISIBLE_MS = 2500
 
 export interface SnapPreviewCtx {
   snapSettingsRef: MutableRefObject<SnapSettings>
@@ -70,12 +72,51 @@ export function useSnapPreview(ctx: SnapPreviewCtx): UseSnapPreviewReturn {
   } = ctx
 
   const activeSnapRef = useRef<ResolvedSnap | null>(null)
+  const labelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (labelTimeoutRef.current !== null) {
+      clearTimeout(labelTimeoutRef.current)
+    }
+  }, [])
 
   const updateActiveSnap = useStableEvent((nextSnap: ResolvedSnap | null) => {
-    activeSnapRef.current = nextSnap?.mode ? nextSnap : null
+    const previousSnap = activeSnapRef.current
+    if (!nextSnap?.mode) {
+      activeSnapRef.current = null
+      clearSnapLabelTimeout()
+      onActiveSnapModeChange(null)
+      scheduleDraw()
+      return
+    }
+
+    const sameSnap =
+      previousSnap?.mode === nextSnap.mode
+      && pointsEqual(previousSnap.point, nextSnap.point, 1e-6)
+    const labelVisibleUntil = sameSnap && previousSnap?.labelVisibleUntil
+      ? previousSnap.labelVisibleUntil
+      : Date.now() + SNAP_LABEL_VISIBLE_MS
+
+    activeSnapRef.current = { ...nextSnap, labelVisibleUntil }
+    scheduleSnapLabelExpiry(labelVisibleUntil)
     onActiveSnapModeChange(nextSnap?.mode ?? null)
     scheduleDraw()
   })
+
+  function clearSnapLabelTimeout(): void {
+    if (labelTimeoutRef.current !== null) {
+      clearTimeout(labelTimeoutRef.current)
+      labelTimeoutRef.current = null
+    }
+  }
+
+  function scheduleSnapLabelExpiry(labelVisibleUntil: number): void {
+    clearSnapLabelTimeout()
+    labelTimeoutRef.current = setTimeout(() => {
+      labelTimeoutRef.current = null
+      scheduleDraw()
+    }, Math.max(0, labelVisibleUntil - Date.now()) + 16)
+  }
 
   function currentSnapReferencePoint(): Point | null {
     const pendingMove = pendingMoveRef.current

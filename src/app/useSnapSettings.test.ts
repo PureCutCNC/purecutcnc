@@ -53,6 +53,9 @@ function testToggleSnapMode() {
   const removed = toggleSnapMode(makeSettings({ modes: ['grid', 'center', 'point'] }), 'center')
   assert(removed.modes.join(',') === 'grid,point', 'existing mode is removed')
 
+  const intersection = toggleSnapMode(makeSettings({ modes: ['grid'] }), 'intersection')
+  assert(intersection.modes.join(',') === 'grid,intersection', 'intersection mode is toggled like other modes')
+
   console.log('snap mode toggle: PASSED')
 }
 

@@ -520,6 +520,10 @@ export function clearStaleConstraints(features: SketchFeature[], movedIds: Set<s
   if (movedIds.size === 0) return features
   let anyChanged = false
   const featureById = new Map(features.map((f) => [f.id, f]))
+  const resolveProfile = (target: { source: 'feature'; featureId: string } | { source: 'stock' }) =>
+    target.source === 'feature'
+      ? featureById.get(target.featureId)?.sketch.profile ?? null
+      : null
   const next = features.map((feature) => {
     if (!movedIds.has(feature.id)) return feature
     const updatedConstraints = feature.sketch.constraints.map((c) => {
@@ -531,6 +535,7 @@ export function clearStaleConstraints(features: SketchFeature[], movedIds: Set<s
         feature.sketch.profile,
         refFeature?.sketch.profile ?? null,
         c,
+        resolveProfile,
       )
       if (result && result.isValid) {
         let newValue: number | undefined

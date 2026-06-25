@@ -14,8 +14,18 @@
  * limitations under the License.
  */
 
-import type { LocalConstraint, Point, SketchFeature, SketchProfile } from '../types/project'
+import type {
+  AnchorTarget,
+  ConstraintIntersectionReference,
+  ConstraintSegmentReference,
+  LocalConstraint,
+  Point,
+  SketchFeature,
+  SketchProfile,
+} from '../types/project'
 import { profileVertices, getProfileBounds } from '../types/project'
+import { resolveProfileSegments } from '../store/helpers/resolveProfileSegments'
+import { segmentIntersections } from '../store/helpers/segmentIntersection'
 
 export interface PointDistanceInput {
   kind: 'point'
@@ -166,6 +176,66 @@ export interface RederiveResult {
   errorMessage?: string
 }
 
+export type ConstraintProfileResolver = (target: AnchorTarget) => SketchProfile | null
+
+function targetLabel(target: AnchorTarget): string {
+  return target.source === 'stock' ? 'stock' : `feature ${target.featureId}`
+}
+
+function resolveConstraintSegment(
+  reference: ConstraintSegmentReference,
+  resolveProfile: ConstraintProfileResolver,
+): { segment: ReturnType<typeof resolveProfileSegments>[number]; errorMessage?: string } {
+  const profile = resolveProfile(reference.target)
+  if (!profile) {
+    return { segment: null, errorMessage: `Reference ${targetLabel(reference.target)} not found` }
+  }
+
+  const segment = resolveProfileSegments(profile)[reference.segmentIndex] ?? null
+  if (!segment) {
+    return {
+      segment: null,
+      errorMessage: `Reference segment index ${reference.segmentIndex} out of bounds`,
+    }
+  }
+
+  return { segment }
+}
+
+function resolveIntersectionPoint(
+  reference: ConstraintIntersectionReference,
+  resolveProfile: ConstraintProfileResolver,
+  preferredPoint?: Point,
+): { point?: Point; errorMessage?: string } {
+  const segmentA = resolveConstraintSegment(reference.a, resolveProfile)
+  if (!segmentA.segment) {
+    return { errorMessage: segmentA.errorMessage }
+  }
+
+  const segmentB = resolveConstraintSegment(reference.b, resolveProfile)
+  if (!segmentB.segment) {
+    return { errorMessage: segmentB.errorMessage }
+  }
+
+  const intersections = segmentIntersections(segmentA.segment, segmentB.segment)
+  if (intersections.length === 0) {
+    return { errorMessage: 'Reference intersection no longer exists' }
+  }
+
+  const preferred = preferredPoint ?? intersections[0].point
+  let best = intersections[0].point
+  let bestDistance = Infinity
+  for (const intersection of intersections) {
+    const distance = Math.hypot(intersection.point.x - preferred.x, intersection.point.y - preferred.y)
+    if (distance < bestDistance) {
+      best = intersection.point
+      bestDistance = distance
+    }
+  }
+
+  return { point: best }
+}
+
 /**
  * Re-derive the geometric points for a constraint from semantic indices.
  * Returns null if the constraint has no semantic fields (legacy constraint).
@@ -174,14 +244,18 @@ export function rederiveConstraintGeometry(
   ownerProfile: SketchProfile,
   referenceProfile: SketchProfile | null,
   constraint: LocalConstraint,
+  resolveProfile?: ConstraintProfileResolver,
 ): RederiveResult | null {
   // Only process constraints with semantic fields
   if (
     constraint.anchor_index === undefined ||
     constraint.anchor_type === undefined ||
-    constraint.reference_index === undefined ||
     constraint.reference_type === undefined
   ) {
+    return null
+  }
+
+  if (constraint.reference_type !== 'intersection' && constraint.reference_index === undefined) {
     return null
   }
 
@@ -201,6 +275,41 @@ export function rederiveConstraintGeometry(
     }
   }
 
+  if (constraint.reference_type === 'intersection') {
+    if (!constraint.reference_intersection) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: 'Intersection reference metadata missing',
+      }
+    }
+    if (!resolveProfile) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: 'Intersection reference resolver missing',
+      }
+    }
+    const intersection = resolveIntersectionPoint(
+      constraint.reference_intersection,
+      resolveProfile,
+      constraint.reference_point,
+    )
+    if (!intersection.point) {
+      return {
+        anchorPoint,
+        isValid: false,
+        errorMessage: intersection.errorMessage,
+      }
+    }
+    return { anchorPoint, referencePoint: intersection.point, isValid: true }
+  }
+
+  const referenceIndex = constraint.reference_index
+  if (referenceIndex === undefined) {
+    return null
+  }
+
   // If no reference profile, we can't derive reference geometry
   if (!referenceProfile) {
     return {
@@ -212,12 +321,12 @@ export function rederiveConstraintGeometry(
 
   // Derive reference geometry
   if (constraint.reference_type === 'segment') {
-    const seg = getSegmentPair(referenceProfile, constraint.reference_index)
+    const seg = getSegmentPair(referenceProfile, referenceIndex)
     if (!seg) {
       return {
         anchorPoint,
         isValid: false,
-        errorMessage: `Reference segment index ${constraint.reference_index} out of bounds`,
+        errorMessage: `Reference segment index ${referenceIndex} out of bounds`,
       }
     }
     // Compute foot of perpendicular as reference_point for rendering
@@ -236,36 +345,36 @@ export function rederiveConstraintGeometry(
 
   if (constraint.reference_type === 'point_on_segment') {
     const t = constraint.reference_t ?? 0
-    const refPoint = getSegmentPointAtT(referenceProfile, constraint.reference_index, t)
+    const refPoint = getSegmentPointAtT(referenceProfile, referenceIndex, t)
     if (!refPoint) {
       return {
         anchorPoint,
         isValid: false,
-        errorMessage: `Reference segment index ${constraint.reference_index} out of bounds`,
+        errorMessage: `Reference segment index ${referenceIndex} out of bounds`,
       }
     }
     return { anchorPoint, referencePoint: refPoint, isValid: true }
   }
 
   if (constraint.reference_type === 'midpoint') {
-    const refPoint = getMidpoint(referenceProfile, constraint.reference_index)
+    const refPoint = getMidpoint(referenceProfile, referenceIndex)
     if (!refPoint) {
       return {
         anchorPoint,
         isValid: false,
-        errorMessage: `Reference midpoint index ${constraint.reference_index} out of bounds`,
+        errorMessage: `Reference midpoint index ${referenceIndex} out of bounds`,
       }
     }
     return { anchorPoint, referencePoint: refPoint, isValid: true }
   }
 
   // anchor type
-  const refPoint = getVertexPoint(referenceProfile, constraint.reference_index)
+  const refPoint = getVertexPoint(referenceProfile, referenceIndex)
   if (!refPoint) {
     return {
       anchorPoint,
       isValid: false,
-      errorMessage: `Reference vertex index ${constraint.reference_index} out of bounds`,
+      errorMessage: `Reference vertex index ${referenceIndex} out of bounds`,
     }
   }
   return { anchorPoint, referencePoint: refPoint, isValid: true }
@@ -279,8 +388,9 @@ export function refreshConstraintCache(
   constraint: LocalConstraint,
   ownerProfile: SketchProfile,
   referenceProfile: SketchProfile | null,
+  resolveProfile?: ConstraintProfileResolver,
 ): LocalConstraint {
-  const result = rederiveConstraintGeometry(ownerProfile, referenceProfile, constraint)
+  const result = rederiveConstraintGeometry(ownerProfile, referenceProfile, constraint, resolveProfile)
   if (!result) return constraint
 
   return {
@@ -303,6 +413,11 @@ export function validateConstraintsOnFeature(
   featureById: Map<string, SketchFeature>,
   tolerance = 1e-3,
 ): SketchFeature {
+  const resolveProfile: ConstraintProfileResolver = (target) =>
+    target.source === 'feature'
+      ? featureById.get(target.featureId)?.sketch.profile ?? null
+      : null
+
   let anyChanged = false
   const nextConstraints = feature.sketch.constraints.map((c) => {
     if (c.type !== 'fixed_distance' || c.value === undefined) return c
@@ -312,6 +427,7 @@ export function validateConstraintsOnFeature(
       feature.sketch.profile,
       refFeature?.sketch.profile ?? null,
       c,
+      resolveProfile,
     )
     if (!result) return c
     if (!result.isValid) {
@@ -459,7 +575,7 @@ export function inferSemanticIndices(
       x: (referenceSegment.a.x + referenceSegment.b.x) / 2,
       y: (referenceSegment.a.y + referenceSegment.b.y) / 2,
     })
-  } else if (referenceSnapMode === 'line') {
+  } else if (referenceSnapMode === 'line' || referenceSnapMode === 'intersection') {
     // Point on segment: find nearest segment and compute fractional t
     reference_index = nearestSegmentIndex(referenceProfile, referencePoint)
     const vertices = profileVertices(referenceProfile)
@@ -600,6 +716,10 @@ export function propagateRigidTransforms(
   const initialFeatures = new Map<string, SketchFeature>(features.map((f) => [f.id, JSON.parse(JSON.stringify(f))]))
   const currentById = new Map<string, SketchFeature>(features.map((f) => [f.id, f]))
   const movedIds = new Set(movedTransforms.keys())
+  const resolveProfile: ConstraintProfileResolver = (target) =>
+    target.source === 'feature'
+      ? currentById.get(target.featureId)?.sketch.profile ?? null
+      : null
 
   // 1. Update reference fields and preserve constraints on moved features (seeds)
   for (const [id, feature] of currentById) {
@@ -718,7 +838,7 @@ export function propagateRigidTransforms(
       // Check if the reference geometry is still structurally valid
       const refFeature = currentById.get(refId)
       if (!refFeature) return true  // reference deleted — structural
-      const check = rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c)
+      const check = rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c, resolveProfile)
       return !check || !check.isValid  // out-of-bounds index — structural
     })
     if (hasStructurallyInvalidConstraint) continue
@@ -765,7 +885,7 @@ export function propagateRigidTransforms(
         const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
         const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
         if (refFeature) {
-          const rederivCheck = rederiveConstraintGeometry(initialFeature.sketch.profile, refFeature.sketch.profile, c)
+          const rederivCheck = rederiveConstraintGeometry(initialFeature.sketch.profile, refFeature.sketch.profile, c, resolveProfile)
           if (rederivCheck?.referenceSegment) {
             const { a, b } = rederivCheck.referenceSegment
             const sx = b.x - a.x; const sy = b.y - a.y
@@ -790,7 +910,7 @@ export function propagateRigidTransforms(
       const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
       const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
       const rederived = refFeature
-        ? rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c)
+        ? rederiveConstraintGeometry(feature.sketch.profile, refFeature.sketch.profile, c, resolveProfile)
         : null
 
       if (rederived && rederived.isValid) {
@@ -860,7 +980,7 @@ export function propagateRigidTransforms(
       if (c.type !== 'fixed_distance') return c
       const refFeatureId = c.reference_feature_id ?? c.segment_ids[0]
       const refFeature = refFeatureId ? currentById.get(refFeatureId) : null
-      const result = rederiveConstraintGeometry(nextProfile, refFeature?.sketch.profile ?? null, c)
+      const result = rederiveConstraintGeometry(nextProfile, refFeature?.sketch.profile ?? null, c, resolveProfile)
       if (!result) return c
       return {
         ...c,
@@ -894,11 +1014,11 @@ export function propagateRigidTransforms(
         const next: LocalConstraint = { ...c }
         let cChanged = false
         
-        if (initialC.reference_point) {
+        if (!initialC.reference_intersection && initialC.reference_point) {
           next.reference_point = applyTransform(initialC.reference_point, finalAbsoluteTransform)
           cChanged = true
         }
-        if (initialC.reference_segment) {
+        if (!initialC.reference_intersection && initialC.reference_segment) {
           next.reference_segment = {
             a: applyTransform(initialC.reference_segment.a, finalAbsoluteTransform),
             b: applyTransform(initialC.reference_segment.b, finalAbsoluteTransform),

@@ -32,6 +32,7 @@ const SNAP_MODES: { mode: SnapMode; icon: string; label: string }[] = [
   { mode: 'line', icon: 'snap-line', label: 'Snap to line' },
   { mode: 'midpoint', icon: 'snap-midpoint', label: 'Snap to midpoint' },
   { mode: 'center', icon: 'snap-center', label: 'Snap to center' },
+  { mode: 'intersection', icon: 'snap-intersection', label: 'Snap to intersection' },
   { mode: 'perpendicular', icon: 'snap-perpendicular', label: 'Snap perpendicular' },
 ]
 
