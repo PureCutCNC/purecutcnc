@@ -1,6 +1,6 @@
 Read and follow `AGENTS.md` for project overview, build commands, coding standards, directory layout, and key conventions.
 Read `ARCHITECTURE.md` for deeper architectural detail.
-Consult `planning/` for feature-specific implementation plans before starting work.
+Tasks are tracked on the [GitHub Project board](https://github.com/orgs/PureCutCNC/projects/1): open an issue, write the plan in the issue, get approval, then implement (see the workflow in `AGENTS.md`). Consult `planning/` for durable feature-specific **design docs** before starting work.
 
 ## Codex MCP Delegation
 
