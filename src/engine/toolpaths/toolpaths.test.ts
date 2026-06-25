@@ -24,7 +24,7 @@
  */
 
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
-import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
@@ -802,6 +802,91 @@ function testPocketRestRegionsFindCornerCusps() {
   console.log('pocket corner rest-region generation: PASSED')
 }
 
+function draftArea(draft: { profile: { start: { x: number; y: number }; segments: Array<{ to: { x: number; y: number } }> } }): number {
+  const pts = [draft.profile.start, ...draft.profile.segments.map((segment) => segment.to)]
+  let area = 0
+  for (let index = 0; index < pts.length; index += 1) {
+    const current = pts[index]
+    const next = pts[(index + 1) % pts.length]
+    area += current.x * next.y - next.x * current.y
+  }
+  return Math.abs(area / 2)
+}
+
+function testPocketRestRegionsUniformCorners() {
+  // Regression: corner rest regions are built analytically from each pocket
+  // vertex (apex + tangent points sized by the tool radius), so every equal
+  // corner comes out identical regardless of the pocket's orientation. The old
+  // sliver-derived approach produced wedges (hundreds of mm²) for hex/oct pockets
+  // and, once those were split, left the axis-aligned corners 2-3x larger than
+  // the diagonal ones. Each corner must now be one small, uniform region.
+  console.log('Testing pocket rest-region generation builds uniform corners...')
+  const tool = makeFlatEndmill('t1', 4)
+
+  // Same hexagon at two orientations + an octagon. Each must yield exactly one
+  // region per corner, all near-identical in area, none ballooned into a wedge.
+  // The tight (radius 6) cases guard the merge regression: with a tool that
+  // large relative to the pocket, the extended corners used to grow into each
+  // other and union into a single ring (emitted as inside+outside regions).
+  const cases: Array<{ sides: number; phase: number; radius: number }> = [
+    { sides: 6, phase: Math.PI / 2, radius: 20 }, // pointy-top
+    { sides: 6, phase: 0, radius: 20 },           // flat-top
+    { sides: 8, phase: Math.PI / 8, radius: 20 },
+    { sides: 6, phase: Math.PI / 2, radius: 6 },  // tight pocket (Ø4 tool)
+    { sides: 8, phase: Math.PI / 8, radius: 7 },
+  ]
+
+  for (const { sides, phase, radius } of cases) {
+    const points = Array.from({ length: sides }, (_, index) => {
+      const angle = phase + (index * 2 * Math.PI) / sides
+      return { x: radius * Math.cos(angle), y: radius * Math.sin(angle) }
+    })
+    const feature: SketchFeature = {
+      id: 'p1',
+      name: 'p1',
+      kind: 'polygon',
+      folderId: null,
+      sketch: {
+        profile: polygonProfile(points),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'subtract',
+      z_top: 0,
+      z_bottom: -4,
+      visible: true,
+      locked: false,
+    }
+    const project = baseProject([tool], [feature])
+    const op = makePocketOp({
+      kind: 'pocket',
+      target: { source: 'features', featureIds: ['p1'] },
+      toolRef: 't1',
+    })
+    const result = generatePocketRestRegionDrafts(project, op)
+
+    assert(
+      result.drafts.length === sides,
+      `expected exactly ${sides} corner rest regions for a ${sides}-gon (phase ${phase.toFixed(2)}), got ${result.drafts.length}`,
+    )
+
+    const areas = result.drafts.map(draftArea)
+    const minArea = Math.min(...areas)
+    const maxArea = Math.max(...areas)
+    // No wedge: the bug produced regions in the hundreds of mm² (>40% of pocket).
+    assert(maxArea < 100, `corner rest region ballooned to ${maxArea.toFixed(1)} mm² for a ${sides}-gon`)
+    // Uniformity: identical corners must come out the same size (the reported
+    // "top/bottom bigger than the sides" symptom had a ~2.5x spread).
+    assert(
+      maxArea / minArea < 1.2,
+      `corner rest regions should be uniform, got ${minArea.toFixed(2)}..${maxArea.toFixed(2)} mm² for a ${sides}-gon`,
+    )
+  }
+  console.log('pocket uniform corner rest-region generation: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // Inside edge-route ordering (same band-driven code path as pocket)
 // ---------------------------------------------------------------------------
@@ -1402,6 +1487,7 @@ try {
   testPocketRegionClipsMachiningArea()
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
+  testPocketRestRegionsUniformCorners()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeInsideFeatureFirstNearestBlockOrder()
   testEdgeInsideRegionClipsAtBoundary()

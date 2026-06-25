@@ -68,10 +68,23 @@ function offsetClosedPaths(paths: ClipperPath[], delta: number, joinType: number
 function splitNarrowConnections(paths: ClipperPath[], clearance: number): ClipperPath[] {
   if (paths.length === 0 || clearance <= 0) return paths
 
-  const eroded = offsetClosedPaths(paths, -clearance, ClipperLib.JoinType.jtMiter)
+  // Erode to sever the thin necks that join otherwise-separate rest blobs (e.g.
+  // the per-corner cusps of a polygon pocket), then dilate back to restore the
+  // surviving cores. The corner cusps of finer polygons (hexagons, octagons)
+  // are thinner than the nominal clearance, so a single fixed erosion wipes the
+  // whole sliver out — `eroded` comes back empty and we lose the split, leaving
+  // multiple corners fused into one blob that downstream hulls into a wedge.
+  // Back the clearance off until the erosion leaves cores standing.
+  let activeClearance = clearance
+  let eroded: ClipperPath[] = []
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    eroded = offsetClosedPaths(paths, -activeClearance, ClipperLib.JoinType.jtMiter)
+    if (eroded.length > 0) break
+    activeClearance *= 0.5
+  }
   if (eroded.length === 0) return paths
 
-  const restored = offsetClosedPaths(eroded, clearance, ClipperLib.JoinType.jtMiter)
+  const restored = offsetClosedPaths(eroded, activeClearance, ClipperLib.JoinType.jtMiter)
   return restored.length > 0 ? unionClipperPaths(restored) : paths
 }
 
@@ -254,6 +267,146 @@ function restPathsToDrafts(paths: ClipperPath[], toolDiameter: number, operation
   }))
 }
 
+function unitVector(from: Point, to: Point): Point | null {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const length = Math.hypot(dx, dy)
+  if (length <= 1e-9) return null
+  return { x: dx / length, y: dy / length }
+}
+
+/**
+ * Even-odd containment against a set of Clipper paths (outers + holes). Used to
+ * decide which side of a boundary vertex is solid material, so corner cusps are
+ * built only where the pocket is actually convex into the stock.
+ */
+function pointInsidePaths(point: Point, paths: ClipperPath[]): boolean {
+  const probe = {
+    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+  }
+  let crossings = 0
+  for (const path of paths) {
+    if ((ClipperLib.Clipper as unknown as { PointInPolygon(p: { X: number; Y: number }, path: ClipperPath): number })
+      .PointInPolygon(probe, path) !== 0) {
+      crossings += 1
+    }
+  }
+  return crossings % 2 === 1
+}
+
+/**
+ * Build the analytical corner cusps for a single closed boundary loop. A flat
+ * (cylindrical) tool of effective radius `R` rolled tight into a convex corner
+ * of interior angle θ leaves a triangular cusp: apex at the vertex, with the two
+ * tangent points a distance R/tan(θ/2) back along each wall. We emit that exact
+ * triangle so every equal corner comes out identical, independent of the loop's
+ * orientation — unlike deriving the shape from the (orientation-noisy) leftover
+ * sliver. `materialPaths` marks the solid side so the same routine handles both
+ * the outer wall (material inside) and islands (material outside).
+ *
+ * The back of the triangle is a straight chord across the two tangent points,
+ * optionally pushed a little further down the walls by `backExtension` so the
+ * finishing tool has a touch of engagement room. The reach down each wall is
+ * capped so a neighbouring corner on a tight pocket is never met — the corners
+ * stay distinct triangles instead of merging into one ring.
+ */
+function cornerCuspTriangles(
+  loop: Point[],
+  materialPaths: ClipperPath[],
+  effectiveRadius: number,
+  backExtension: number,
+): ClipperPath[] {
+  const points = cleanClosedContour(loop)
+  const count = points.length
+  if (count < 3) return []
+
+  const minTurn = 0.15 // ~8.6°: ignore near-straight vertices (e.g. flattened curves)
+  const probeDistance = Math.max(2 / DEFAULT_CLIPPER_SCALE, effectiveRadius * 0.02)
+  const triangles: ClipperPath[] = []
+
+  for (let index = 0; index < count; index += 1) {
+    const previous = points[(index - 1 + count) % count]
+    const vertex = points[index]
+    const next = points[(index + 1) % count]
+
+    const wall1 = unitVector(vertex, previous)
+    const wall2 = unitVector(vertex, next)
+    if (!wall1 || !wall2) continue
+
+    const dot = Math.min(1, Math.max(-1, wall1.x * wall2.x + wall1.y * wall2.y))
+    const interiorAngle = Math.acos(dot)
+    if (interiorAngle > Math.PI - minTurn) continue // effectively straight — no cusp
+
+    const bisectorX = wall1.x + wall2.x
+    const bisectorY = wall1.y + wall2.y
+    const bisectorLength = Math.hypot(bisectorX, bisectorY)
+    if (bisectorLength <= 1e-9) continue
+    const bisector = { x: bisectorX / bisectorLength, y: bisectorY / bisectorLength }
+
+    // The cusp only exists where the solid material sits on the narrow-angle
+    // side of the vertex (a convex corner). If material is on the wide-angle
+    // side the corner is reflex and the tool reaches it cleanly.
+    const inside = { x: vertex.x + probeDistance * bisector.x, y: vertex.y + probeDistance * bisector.y }
+    const outside = { x: vertex.x - probeDistance * bisector.x, y: vertex.y - probeDistance * bisector.y }
+    if (!pointInsidePaths(inside, materialPaths) || pointInsidePaths(outside, materialPaths)) continue
+
+    const tangentDistance = effectiveRadius / Math.tan(interiorAngle / 2)
+    if (!(tangentDistance > 0) || !Number.isFinite(tangentDistance)) continue
+
+    // Reach down each wall = the tangent distance plus a small straight
+    // back-extension, but capped at ~45% of the shorter adjacent wall so a
+    // neighbouring corner is never met (the corners stay distinct triangles).
+    const edgePrevious = Math.hypot(previous.x - vertex.x, previous.y - vertex.y)
+    const edgeNext = Math.hypot(next.x - vertex.x, next.y - vertex.y)
+    const reach = Math.min(tangentDistance + backExtension, 0.45 * Math.min(edgePrevious, edgeNext))
+    if (!(reach > 0)) continue
+
+    const back1 = { x: vertex.x + reach * wall1.x, y: vertex.y + reach * wall1.y }
+    const back2 = { x: vertex.x + reach * wall2.x, y: vertex.y + reach * wall2.y }
+    triangles.push(toClipperPath(normalizeWinding([vertex, back1, back2], false), DEFAULT_CLIPPER_SCALE))
+  }
+
+  return triangles
+}
+
+/** Morphological open: drop anything thinner than 2·clearance, keep fatter blobs. */
+function removeThinSlivers(paths: ClipperPath[], clearance: number): ClipperPath[] {
+  if (paths.length === 0 || clearance <= 0) return paths
+  const eroded = offsetClosedPaths(paths, -clearance, ClipperLib.JoinType.jtMiter)
+  if (eroded.length === 0) return []
+  return offsetClosedPaths(eroded, clearance, ClipperLib.JoinType.jtMiter)
+}
+
+function signedContourArea(contour: Point[]): number {
+  let area = 0
+  for (let index = 0; index < contour.length; index += 1) {
+    const current = contour[index]
+    const next = contour[(index + 1) % contour.length]
+    area += current.x * next.y - next.x * current.y
+  }
+  return area / 2
+}
+
+function areaPathsToDrafts(paths: ClipperPath[], toolRadius: number, operation: Operation): RestRegionDraft[] {
+  const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolRadius * toolRadius * 0.0004)
+  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.04)
+  return clipperPathsToPointContours(paths)
+    .filter((contour) => contour.length >= 3)
+    // Drop hole contours: a draft profile is a single loop, and emitting a hole
+    // as a positive region would carve out an already-cleared centre as its own
+    // "inside" region.
+    .filter((contour) => signedContourArea(contour) > 0)
+    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
+    .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
+    .map(cleanClosedContour)
+    .filter((contour) => contour.length >= 3)
+    .map((contour) => ({
+      profile: polygonProfile(contour),
+      sourceOperationId: operation.id,
+    }))
+}
+
 function generateAreaRestRegionDrafts(
   resolved: ResolvedPocketResult,
   operation: Operation,
@@ -286,10 +439,55 @@ function generateAreaRestRegionDrafts(
     reachableUnion = intersectClipperPaths(reachableUnion, sourceMaskPaths)
   }
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
-  const splitClearance = Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.08)
-  const splitRestPaths = splitNarrowConnections(restPaths, splitClearance)
-  const outputRestPaths = rebuildOriginalRestComponents(restPaths, splitRestPaths, Math.max(splitClearance * 2, toolRadius * 0.6))
-  return restPathsToDrafts(outputRestPaths, toolRadius * 2, operation)
+  if (restPaths.length === 0) return []
+
+  // Build one analytical cusp triangle per convex corner of every pocket
+  // boundary (outer wall + islands). Each is a simple triangle — apex at the
+  // corner, straight chord across the back — sized from the corner geometry and
+  // the effective tool radius, so equal corners are identical regardless of how
+  // the boundary happens to be oriented. The small straight back-extension gives
+  // the finishing tool a little engagement room without ballooning the region.
+  const backExtension = toolRadius * 0.5
+  const cornerTriangles: ClipperPath[] = []
+  for (const band of resolved.bands) {
+    for (const region of band.regions) {
+      for (const loop of [region.outer, ...region.islands]) {
+        if (loop.length >= 3) {
+          cornerTriangles.push(...cornerCuspTriangles(loop, sourceUnion, centerInset, backExtension))
+        }
+      }
+    }
+  }
+
+  // The leftover sliver is only used as a placement gate: skip corners where no
+  // material actually remains (already cleared by stock-to-leave, masked out, or
+  // too shallow to matter). Each surviving corner triangle is clipped back to the
+  // pocket so it never spills past a wall, and kept as its own region — never
+  // unioned together — so a hexagon yields six separate corner regions.
+  const gateArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolRadius * toolRadius * 0.0004)
+  const cornerRegions: ClipperPath[] = []
+  for (const triangle of cornerTriangles) {
+    const remaining = intersectClipperPaths([triangle], restPaths)
+    if (remaining.length === 0) continue
+    const remainingArea = remaining.reduce((sum, path) => sum + pathArea(path), 0)
+    if (remainingArea < gateArea) continue
+
+    cornerRegions.push(...intersectClipperPaths([triangle], sourceUnion))
+  }
+
+  // Corners alone don't cover unreachable material away from a convex corner —
+  // e.g. a channel narrower than the tool, or a pocket the tool can't enter at
+  // all. Emit that residual too, but first open it to shed the thin corner-cusp
+  // remnants, the sub-grid slivers that run along walls, and the small crumbs a
+  // round tool leaves at a concave corner (all minor and visually noisy). A real
+  // unreachable channel or pocket is wider than this and survives.
+  const cornerUnion = unionClipperPaths(cornerRegions)
+  const residual = cornerUnion.length > 0
+    ? differenceClipperPaths(restPaths, cornerUnion)
+    : restPaths
+  const residualBlobs = removeThinSlivers(residual, Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.4))
+
+  return areaPathsToDrafts([...cornerRegions, ...residualBlobs], toolRadius, operation)
 }
 
 export function generatePocketRestRegionDrafts(project: Project, operation: Operation): RestRegionDraftResult {
