@@ -10,17 +10,18 @@ Start every session by reading [`INDEX.md`](INDEX.md) at the repo root. It maps 
 
 **Maintenance rule:** when you add, rename, remove, or significantly change the purpose of a file, update the nearest `INDEX.md` in the same commit. If you create a new folder with non-trivial content, add an `INDEX.md` there and link it from the parent index.
 
-## Workflow: Plan → Approve → Implement → Archive
+## Workflow: Issue → Plan → Approve → Implement → PR
 
-**Every task follows this loop. No exceptions — even a one-line bug fix gets a short plan.** The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable.
+**Every task follows this loop. No exceptions — even a one-line bug fix gets an issue and a short plan.** The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable. Tasks are tracked on the GitHub Project board ([PureCutCNC project #1](https://github.com/orgs/PureCutCNC/projects/1)), **not** in checked-in plan files.
 
-1. **Plan.** Before changing any code, write a plan to `planning/<TOPIC>_Plan.md` using [`planning/TEMPLATE.md`](planning/TEMPLATE.md). Add an entry under "Pending approval" in [`planning/INDEX.md`](planning/INDEX.md). The plan's frontmatter starts at `status: Draft`.
-2. **Approve.** Share the plan with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, update the plan and re-confirm.
-3. **Implement.** On approval, set `status: Approved` (then `In progress` once you begin) and move the index entry to "In progress". Implement against the plan. If the plan needs to change mid-flight, update the plan file in the same commit as the deviation.
-4. **Archive before PR.** When the work is complete and the build is green, **before opening the PR**: `git mv planning/<TOPIC>_Plan.md planning/archive/`, set `status: Done`, and remove the entry from `planning/INDEX.md`. The PR description should link to the archived plan.
-5. **Abandon.** If a plan is dropped before implementation, set `status: Abandoned`, move it to `planning/archive/`, and remove the index entry.
+1. **Issue.** Open a GitHub issue for the work (`gh issue create`). Add it to the Project board, set the area label and Size, and set Status to `Backlog` (or `Ready` once planned).
+2. **Plan.** Before changing any code, write the plan **in the issue** — in the body, or a follow-up comment if it grows. Do not create a `planning/*_Plan.md` file; the issue is the plan's home.
+3. **Approve.** Share the issue with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, edit the issue and re-confirm. On approval, set Status to `Ready`.
+4. **Implement.** Branch (`<type>/issue-<NN>-<slug>`), set the board Status to `In progress`, and implement against the plan in the issue. If the plan changes mid-flight, edit the issue so it stays the source of truth.
+5. **PR when done.** When work is complete and the build is green, open the PR with `Closes #NN` in the description. Move Status to `In review`. The PR is created at the **end** as the delivery — it is not where the plan lives.
+6. **Merge.** Merging auto-closes the issue and moves the card to `Done`.
 
-The existing 13 active plans at `planning/` root predate this rule — treat them as `In progress` even though they don't carry the frontmatter.
+Abandoned work: close the issue with a short reason; the board moves it to `Done`/closed. No file cleanup needed.
 
 ## Build & Verify
 
@@ -129,7 +130,9 @@ STL files are imported via `src/import/stl.ts`. The pipeline:
 
 ## Planning & Design Docs
 
-Check `planning/` for feature-specific implementation plans before starting work on a feature. These take precedence over general defaults.
+Active tasks, backlog, and tech-debt live on the [GitHub Project board](https://github.com/orgs/PureCutCNC/projects/1) — see the workflow section above.
+
+`planning/` now holds **durable design & reference docs only** (the "why" behind the data shapes, algorithm references, area-specific design). Check [`planning/INDEX.md`](planning/INDEX.md) for the one that matches your area before starting feature work — these take precedence over general defaults. They are living reference, not task trackers; update them in the same commit when you change the behavior they describe.
 
 ## Data Format
 
