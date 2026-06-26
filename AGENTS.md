@@ -31,7 +31,7 @@ npm test               # Run the structural test suite (every src/**/*.test.ts v
 npm run dev            # Vite dev server (do NOT start this — the user runs it themselves)
 npm run lint           # ESLint over supported source only: src, vite.config.ts, and build/test scripts
 npm run lint:scripts   # Optional: lint the one-off diagnostic scripts in scripts/ (not a quality gate)
-npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons.camj
+npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons/*.svg
 ```
 
 Always run `npm run build` from the project root to verify changes compile before committing. `npm test` runs automatically as part of the build, so a failing structural test will fail the build. Do not start the dev/preview server.
@@ -118,7 +118,7 @@ src/types/project.ts    Core data model definitions
 
 ## Icon System
 
-Icons live in `src/assets/icons.camj` (a .camj project file editable in the app itself). Running `npm run sync-icons` converts them to `public/icons.svg` as an SVG sprite sheet. Never edit `public/icons.svg` directly.
+Icons are **SVG-first**: each icon is an editable standalone SVG in `src/assets/icons/<name>.svg`. Running `npm run sync-icons` assembles them into the `public/icons.svg` sprite sheet. Never edit `public/icons.svg` directly. See [`src/assets/icons/README.md`](src/assets/icons/README.md) for sizing/colour conventions and how to add an icon.
 
 ## STL / 3D Mesh Import
 

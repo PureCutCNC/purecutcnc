@@ -21,7 +21,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
 - [platform/](platform/) — platform abstraction (web vs Tauri)
 - [styles/](styles/) — shared CSS (incl. `tablet.css` for touch UX)
-- [assets/](assets/) — `icons.camj` source, fonts, etc.
+- [assets/](assets/) — editable per-icon SVG sources in `icons/` (see `icons/README.md`), fonts, etc.
 
 ## Loose files
 - `toolLibrary.ts` — built-in tool definitions and tool-library helpers

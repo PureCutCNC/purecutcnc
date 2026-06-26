@@ -56,15 +56,17 @@ PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape upd
 
 ## 6. Icon System
 
-Icons are managed as a custom build pipeline using the `.camj` project format.
+Icons are **SVG-first**: editable per-icon SVG files are the source of truth and the build assembles them into a sprite. (Reworked in issue #176 — the previous `src/assets/icons.camj` CAD-profile source has been removed; see `src/assets/icons/README.md` for the contributor guide.)
 
-- **Source of truth:** `src/assets/icons.camj` — a standard `.camj` project file where each icon is a named folder of sketch features on a 24×24 unit canvas. This file can be opened and edited in the application itself.
-- **Build output:** `public/icons.svg` — an SVG sprite sheet generated from `icons.camj`. This file is **generated; do not edit it directly**.
-- **Build command:** `npm run sync-icons` (also runs as part of the full `npm run build`).
-- **Conversion script:** `scripts/convert-camj-to-icons.js` reads `icons.camj`, converts each feature's sketch profile to an SVG `<path>`, and writes `<symbol>` elements to `public/icons.svg`. Features with empty segment arrays are skipped.
-- **Icon naming:** The folder `name` in `icons.camj` becomes the symbol `id` in the SVG (e.g. folder name `"view-top"` → `<symbol id="view-top">`).
-- **Usage in components:** Import `Icon` from `src/components/Icon.tsx` and pass the folder name as the `id` prop: `<Icon id="view-top" size={18} />`. The component renders a `<use href="icons.svg#id" />` reference, so the icon inherits `stroke="currentColor"` and `fill="none"` from the SVG wrapper.
-- **Adding new icons:** Add feature folders and features to `icons.camj`, then run `npm run sync-icons`. Each icon group needs a `featureFolders` entry and a `featureTree` entry in addition to the `features` entries.
+- **Source of truth:** `src/assets/icons/<name>.svg` — one standalone, editor-friendly SVG per icon on a 24×24 viewBox. These open and edit directly in Inkscape/Illustrator and can carry colours/fills (not just monochrome outlines).
+- **Build output:** `public/icons.svg` — an SVG `<symbol>` sprite generated from the folder. This file is **generated; do not edit it directly**. The sprite root carries **no `display:none`** so the same file works both as an external `<use>` target (this app's `Icon.tsx`) and as a fetch+inline sprite (the purecutcnc.github.io guide loader).
+- **Build command:** `npm run sync-icons` (also runs first in the full `npm run build`).
+- **Generator:** `scripts/build-icon-sprite.ts` reads each `src/assets/icons/*.svg`, strips its outer `<svg>` wrapper (and editor cruft), and wraps the contents in `<symbol id="<name>" viewBox="…">`. The pure assembly logic lives in `src/components/iconSprite.ts` (unit-tested by `iconSprite.test.ts`).
+- **Icon naming:** The filename becomes the symbol `id` (e.g. `view-top.svg` → `<symbol id="view-top">`).
+- **Monochrome vs colour:** `Icon.tsx` defaults to `fill="none" stroke="currentColor" strokeWidth="1.5"`, so outline icons inherit text colour. Pass `<Icon id="…" fullColor />` to drop those defaults and let an icon's own per-element paint render.
+- **Usage in components:** Import `Icon` from `src/components/Icon.tsx` and pass the filename (sans `.svg`) as the `id` prop: `<Icon id="view-top" size={18} />`. The component renders a `<use href="icons.svg#id" />` reference.
+- **Adding new icons:** Drop a `<name>.svg` into `src/assets/icons/`, then run `npm run sync-icons`. See `src/assets/icons/README.md` for sizing/colour conventions.
+- **Legacy:** the original `src/assets/icons.camj` CAD-profile source and its camj-based scripts (`convert-camj-to-icons.js`, `seed-icons-from-camj.js`, `redraw-icons.js`, `convert-icons-to-camj.js`) have been removed — the per-icon SVGs are now the sole source. The migration history lives in git (issue #176).
 
 ## 7. Coding Standards & Conventions
 - **Strict TypeScript:** No `any`. Use interfaces and types defined in `src/types/project.ts`.

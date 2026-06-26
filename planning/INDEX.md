@@ -31,3 +31,6 @@ Older plans for shipped features and historical bug analyses live in [`archive/`
 
 ## UI / toolbar
 - [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — design notes on the current (temporary) always-left toolbar and the intended structural split. Reference for the redesign tracked on the board.
+
+## UI / icons
+- [../src/assets/icons/README.md](../src/assets/icons/README.md) — how to edit icons (SVG-first source, sizing, monochrome vs colour, regenerating the sprite, cross-repo note). Read before adding/changing icons.
