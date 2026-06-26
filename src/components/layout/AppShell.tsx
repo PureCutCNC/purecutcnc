@@ -168,7 +168,7 @@ export function AppShell({
       rail.removeEventListener('scroll', updateFades)
       observer.disconnect()
     }
-  })
+  }, [])
 
   const showLeft = workspaceLayout === 'lcr' || workspaceLayout === 'lc'
   const showRight = workspaceLayout === 'lcr' || workspaceLayout === 'cr'
