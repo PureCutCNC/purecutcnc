@@ -40,8 +40,6 @@ export function MachineDefinitionEditorDialog({
   const [advancedJson, setAdvancedJson] = useState<string>(() =>
     JSON.stringify(definition, null, 2),
   )
-  const [jsonError, setJsonError] = useState<string | null>(null)
-  const [validationError, setValidationError] = useState<string | null>(null)
   const textAreaRef = useRef<HTMLTextAreaElement>(null)
 
   // Escape key closes the dialog.
@@ -53,35 +51,28 @@ export function MachineDefinitionEditorDialog({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  // Validate on every change to compute whether Save should be enabled.
-  const mergedDef = useMemo<MachineDefinition | null>(() => {
-    // If the user has touched the Advanced JSON editor, use that as the
-    // source of truth; otherwise merge the focused form onto the original.
+  // Pure derivation — no setState calls inside useMemo.
+  const { mergedDef, jsonError, validationError } = useMemo(() => {
+    // Try parsing + validating the Advanced JSON editor first.
     try {
       const parsed = JSON.parse(advancedJson)
       const result = validateDef(parsed)
       if (result.ok) {
-        setJsonError(null)
-        setValidationError(null)
-        return result.ok
+        return { mergedDef: result.ok, jsonError: null, validationError: null }
       }
-      setJsonError(null)
-      setValidationError(result.error)
-      return null
+      return { mergedDef: null, jsonError: null, validationError: result.error }
     } catch {
-      // JSON parse error — fall back to form merge for now.
+      // JSON syntax error — fall back to merging the focused form.
+      const jsonErr = 'Invalid JSON syntax'
       try {
         const merged = mergeFormData(definition, form)
         const result = validateDef(merged)
         if (result.ok) {
-          setValidationError(null)
-          return result.ok
+          return { mergedDef: result.ok, jsonError: jsonErr, validationError: null }
         }
-        setValidationError(result.error)
-        return null
+        return { mergedDef: null, jsonError: jsonErr, validationError: result.error }
       } catch {
-        setValidationError('Invalid definition')
-        return null
+        return { mergedDef: null, jsonError: jsonErr, validationError: 'Invalid definition' }
       }
     }
   }, [advancedJson, definition, form])
@@ -111,12 +102,9 @@ export function MachineDefinitionEditorDialog({
       const result = validateDef(parsed)
       if (result.ok) {
         setForm(toFormData(result.ok))
-        setJsonError(null)
-      } else {
-        setJsonError(null) // valid JSON but invalid definition
       }
     } catch {
-      setJsonError('Invalid JSON syntax')
+      // JSON syntax error — jsonError is derived from advancedJson in useMemo.
     }
   }
 
@@ -126,17 +114,16 @@ export function MachineDefinitionEditorDialog({
   }
 
   function handleJsonBlur() {
-    // Re-validate and sync on blur.
+    // Re-validate and sync the focused form on blur so it stays in
+    // sync with any hand-edited JSON.
     try {
       const parsed = JSON.parse(advancedJson)
       const result = validateDef(parsed)
       if (result.ok) {
         setForm(toFormData(result.ok))
-        setJsonError(null)
-        return
       }
     } catch {
-      // Keep jsonError from typing
+      // JSON still invalid — nothing to sync.
     }
   }
 

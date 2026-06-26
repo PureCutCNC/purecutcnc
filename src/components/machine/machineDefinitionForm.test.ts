@@ -191,6 +191,31 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
   assertDeepEqual(merged.toolChange.commands, ['T1', 'M06', 'G43 H1'], 'mergeFormData: toolChange round-trip')
 }
 
+{
+  // Coolant: create object from form fields when source def has coolant: null.
+  const def = makeTestDef({ coolant: null })
+  const form = toFormData(def)
+  form.floodOnCommand = 'M8'
+  form.mistOnCommand = ''
+  form.coolantOffCommand = 'M9'
+  const merged = mergeFormData(def, form)
+  assert(merged.coolant !== null, 'mergeFormData: coolant created from form when source was null')
+  assert(merged.coolant!.floodOnCommand === 'M8', 'mergeFormData: coolant floodOn set')
+  assert(merged.coolant!.mistOnCommand === '', 'mergeFormData: coolant mistOn empty')
+  assert(merged.coolant!.coolantOffCommand === 'M9', 'mergeFormData: coolant off set')
+}
+
+{
+  // Coolant: stays null when all fields empty and source was null.
+  const def = makeTestDef({ coolant: null })
+  const form = toFormData(def)
+  form.floodOnCommand = ''
+  form.mistOnCommand = ''
+  form.coolantOffCommand = ''
+  const merged = mergeFormData(def, form)
+  assert(merged.coolant === null, 'mergeFormData: coolant stays null when all empty')
+}
+
 // ── validateDef ─────────────────────────────────────────────────
 
 {

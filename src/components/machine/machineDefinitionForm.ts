@@ -92,14 +92,15 @@ export function mergeFormData(
       ...def.toolChange,
       commands: splitLines(form.toolChangeCommands),
     },
-    coolant: def.coolant
-      ? {
-          ...def.coolant,
-          floodOnCommand: form.floodOnCommand,
-          mistOnCommand: form.mistOnCommand,
-          coolantOffCommand: form.coolantOffCommand,
-        }
-      : null,
+    coolant:
+      def.coolant || form.floodOnCommand || form.mistOnCommand || form.coolantOffCommand
+        ? {
+            ...def.coolant,
+            floodOnCommand: form.floodOnCommand,
+            mistOnCommand: form.mistOnCommand,
+            coolantOffCommand: form.coolantOffCommand,
+          }
+        : null,
   }
 }
 
