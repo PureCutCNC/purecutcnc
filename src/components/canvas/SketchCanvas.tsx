@@ -4249,7 +4249,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           )}
         >
           <div className="canvas-workflow-panel__summary">
-            Move the pointer to preview the paste location. Esc cancels.
+            Move the pointer to preview the paste location.
           </div>
         </CanvasWorkflowPanel>
       )}
