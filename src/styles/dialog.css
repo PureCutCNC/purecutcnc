@@ -539,6 +539,92 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+/* ── Panel expand modal ──────────────────── */
+
+.dialog--panel-expand {
+  max-width: 960px;
+}
+
+.dialog-body--panel-expand {
+  grid-template-columns: 1fr;
+  padding: 20px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Override display:grid so CSS columns can take effect.
+   .properties-panel defaults to display:grid (layout.css), but grid
+   containers ignore the `columns` property — switch to block flow. */
+.dialog--panel-expand .properties-panel {
+  display: block;
+  columns: 2;
+  column-gap: 24px;
+}
+
+/* Let .properties-group split across columns so its children flow.
+   Individual .properties-field / .disclosure-section rows still avoid
+   internal breaks (label + control stay together). */
+.dialog--panel-expand .properties-group {
+  margin-bottom: 10px;
+}
+
+.dialog--panel-expand .properties-field {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .disclosure-section {
+  break-inside: avoid;
+  margin-bottom: 10px;
+}
+
+.dialog--panel-expand .properties-check {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .properties-actions {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .properties-machine-status {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .properties-constraint-row {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .properties-constraint {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .cam-section-body {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .cam-region-note {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .cam-field-note-list {
+  break-inside: avoid;
+}
+
+.dialog--panel-expand .cam-field-message {
+  break-inside: avoid;
+}
+
+@media (max-width: 720px) {
+  .dialog--panel-expand .properties-panel {
+    display: block;
+    columns: 1;
+  }
+
+  .dialog-body--panel-expand {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+}
+
 @media (max-width: 720px) {
   .dialog-body {
     grid-template-columns: 1fr;

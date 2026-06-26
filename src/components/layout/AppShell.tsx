@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import { getStockBounds } from '../../types/project'
@@ -23,10 +24,13 @@ import { platform } from '../../platform'
 import { loadVersion } from '../../utils/version'
 import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
+import { Icon } from '../Icon'
 import { TopCommandBar } from './TopCommandBar'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
+
+
 
 interface AppShellProps {
   globalToolbar: ReactNode
@@ -112,6 +116,11 @@ export function AppShell({
   const tabletShell = isTabletMode(shellMode)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
+  const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
+  const expandedPanelContextValue = useMemo(
+    () => ({ closeExpandedPanel: () => setExpandedPanel(null) }),
+    [],
+  )
   const [statusBarExpanded, setStatusBarExpanded] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
@@ -265,6 +274,18 @@ export function AppShell({
     }
   }, [resizeLeftPanel, resizeRightPanel])
 
+  // Close the expanded-panel modal on Escape.
+  useEffect(() => {
+    if (!expandedPanel) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setExpandedPanel(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [expandedPanel])
+
   // left=L/(L+C), right=R/(C+R) → express as fr with centre always 1fr:
   //   L fr = leftRatio/(1-leftRatio), R fr = rightRatio/(1-rightRatio)
   const bodyStyle: React.CSSProperties = {}
@@ -306,6 +327,7 @@ export function AppShell({
   ] as const
 
   return (
+    <ExpandedPanelContext.Provider value={expandedPanelContextValue}>
     <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined} data-left-open={leftDrawerOpen ? 'true' : undefined}>
       <div className="tablet-rotate-overlay" aria-hidden="true">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -388,7 +410,18 @@ export function AppShell({
               <div className="panel-content">{featureTree}</div>
             </section>
             <section className="panel panel-properties">
-              <div className="panel-header">Properties</div>
+              <div className="panel-header">
+                Properties
+                <button
+                  className="tree-action-btn"
+                  type="button"
+                  title="Expand properties panel"
+                  aria-label="Expand properties panel"
+                  onClick={() => setExpandedPanel('properties')}
+                >
+                  <Icon id="expand" />
+                </button>
+              </div>
               <div className="panel-content">{propertiesPanel}</div>
             </section>
           </PanelSplit>
@@ -741,6 +774,26 @@ export function AppShell({
           <span className="statusbar-shell-mode" title="Shell mode (dev only)">{shellMode}</span>
         )}
       </footer>
+
+      {/* ── Expanded panel modal ── */}
+      {expandedPanel && (
+        <div className="dialog-backdrop" onClick={() => setExpandedPanel(null)}>
+          <div className="dialog dialog--panel-expand" onClick={(event) => event.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 className="dialog-title">Properties</h2>
+              <button className="dialog-close" onClick={() => setExpandedPanel(null)} aria-label="Close" type="button">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="dialog-body dialog-body--panel-expand">
+              {propertiesPanel}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </ExpandedPanelContext.Provider>
   )
 }
