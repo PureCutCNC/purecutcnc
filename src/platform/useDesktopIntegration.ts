@@ -15,10 +15,18 @@
  */
 
 import { useEffect, useRef } from 'react'
+import type { MutableRefObject } from 'react'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
 import { checkDesktopUpdate, loadChannel, saveChannel } from '../utils/updateCheck'
+import {
+  copySelectedFeatures,
+  cutSelectedFeatures,
+  isEditableShortcutTarget,
+  pasteClipboardFeatures,
+  type FeatureClipboardPayload,
+} from './featureClipboard'
 
 /**
  * Run the user-initiated desktop update check and report the result via native
@@ -88,6 +96,34 @@ interface DesktopIntegrationOptions {
   onExportGcode: () => void
 }
 
+type FeatureClipboardCommand = 'copy' | 'cut' | 'paste'
+
+function runFeatureClipboardCommand(
+  command: FeatureClipboardCommand,
+  target: EventTarget | null,
+  clipboardRef: MutableRefObject<FeatureClipboardPayload>,
+): boolean {
+  if (isEditableShortcutTarget(target)) {
+    return false
+  }
+
+  const store = useProjectStore.getState()
+  switch (command) {
+    case 'copy': {
+      const copied = copySelectedFeatures(store)
+      if (copied) clipboardRef.current = copied
+      return copied !== null
+    }
+    case 'cut': {
+      const cut = cutSelectedFeatures(store)
+      if (cut) clipboardRef.current = cut
+      return cut !== null
+    }
+    case 'paste':
+      return pasteClipboardFeatures(store, clipboardRef.current).length > 0
+  }
+}
+
 /**
  * Wires up all desktop-specific shell behaviours:
  *  - document.title + Tauri window title updated with file name + dirty indicator
@@ -102,6 +138,7 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
   // Keep a ref so event handlers always call the latest version without
   // needing to be re-registered when the callback identity changes.
   const onExportGcodeRef = useRef(onExportGcode)
+  const featureClipboardRef = useRef<FeatureClipboardPayload>([])
   useEffect(() => {
     onExportGcodeRef.current = onExportGcode
   })
@@ -129,6 +166,33 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
       getSetWindowTitle().then((setTitle) => setTitle(title))
     }
   }, [filePath, dirty, projectName])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((!event.metaKey && !event.ctrlKey) || event.altKey) {
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      const command: FeatureClipboardCommand | null =
+        key === 'c' ? 'copy'
+        : key === 'x' ? 'cut'
+        : key === 'v' ? 'paste'
+        : null
+      if (!command) {
+        return
+      }
+
+      const handled = runFeatureClipboardCommand(command, event.target, featureClipboardRef)
+      if (handled) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // -------------------------------------------------------------------------
   // Desktop-only: window close prompt, menu events, drag-and-drop
@@ -265,6 +329,11 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
             store.selectFeatures(visibleIds)
             break
           }
+          case 'copy':
+          case 'cut':
+          case 'paste':
+            runFeatureClipboardCommand(event.payload, document.activeElement, featureClipboardRef)
+            break
           case 'undo':
             store.undo()
             break

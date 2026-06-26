@@ -66,6 +66,9 @@ pub fn run() {
       let export_i     = MenuItem::with_id(app, "export_gcode","Export G-code\u{2026}", true, Some("CmdOrCtrl+E"))?;
       let undo_i       = MenuItem::with_id(app, "undo",        "Undo",             true, Some("CmdOrCtrl+Z"))?;
       let redo_i       = MenuItem::with_id(app, "redo",        "Redo",             true, Some("CmdOrCtrl+Shift+Z"))?;
+      let copy_i       = MenuItem::with_id(app, "copy",        "Copy",             true, Some("CmdOrCtrl+C"))?;
+      let cut_i        = MenuItem::with_id(app, "cut",         "Cut",              true, Some("CmdOrCtrl+X"))?;
+      let paste_i      = MenuItem::with_id(app, "paste",       "Paste",            true, Some("CmdOrCtrl+V"))?;
       let quit_i       = MenuItem::with_id(app, "quit",        "Quit PureCutCNC",  true, Some("CmdOrCtrl+Q"))?;
 
       // Update items. The native "About" panel is left untouched; "Check for
@@ -116,9 +119,9 @@ pub fn run() {
         &undo_i,
         &redo_i,
         &PredefinedMenuItem::separator(app)?,
-        &PredefinedMenuItem::copy(app, None)?,
-        &PredefinedMenuItem::cut(app, None)?,
-        &PredefinedMenuItem::paste(app, None)?,
+        &copy_i,
+        &cut_i,
+        &paste_i,
         // Custom item — no accelerator so Cmd+A is handled by the webview
         // (which checks whether a text field is focused before selecting features)
         &MenuItem::with_id(app, "select_all", "Select All", true, None::<&str>)?,
