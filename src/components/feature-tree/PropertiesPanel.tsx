@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { Select } from '../Select'
@@ -27,6 +27,7 @@ import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helper
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { platform } from '../../platform'
+import { MachineDefinitionEditorDialog } from '../machine/MachineDefinitionEditorDialog'
 
 interface DraftTextInputProps {
   value: string
@@ -169,6 +170,8 @@ export function PropertiesPanel() {
     setSelectedMachineId,
     addMachineDefinition,
     removeMachineDefinition,
+    updateMachineDefinition,
+    duplicateMachineDefinition,
     refreshMachineDefinitions,
     setOrigin,
     startPlaceOrigin,
@@ -338,6 +341,37 @@ export function PropertiesPanel() {
     }
   }
 
+  const [editingDefinition, setEditingDefinition] = useState<import('../../engine/gcode/types').MachineDefinition | null>(null)
+
+  function handleEditMachine() {
+    if (!selectedMachine) return
+    setEditingDefinition(selectedMachine)
+  }
+
+  function handleDuplicateMachine() {
+    if (!selectedMachine) return
+    duplicateMachineDefinition(selectedMachine.id)
+  }
+
+  function handleExportMachine() {
+    if (!selectedMachine) return
+    // Remove the builtin flag for export — it's a runtime-only marker.
+    const { builtin: _, ...exportDef } = selectedMachine as import('../../engine/gcode/types').MachineDefinition & { builtin?: boolean }
+    platform.saveTextFile(
+      `${selectedMachine.name}.json`,
+      JSON.stringify(exportDef, null, 2),
+      'json',
+    )
+  }
+
+  function handleEditorSave(definition: import('../../engine/gcode/types').MachineDefinition) {
+    if (!selectedMachine) return
+    updateMachineDefinition(selectedMachine.id, definition)
+    setEditingDefinition(null)
+  }
+
+  function renderContent() {
+
   function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void, disabled?: boolean) {
     return (
       <Select
@@ -449,6 +483,27 @@ export function PropertiesPanel() {
           <div className="properties-actions">
             <button type="button" onClick={handleAddMachine}>
               Add machine
+            </button>
+            <button
+              type="button"
+              onClick={handleEditMachine}
+              disabled={!selectedMachine || selectedMachine.builtin}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={handleDuplicateMachine}
+              disabled={!selectedMachine}
+            >
+              Duplicate
+            </button>
+            <button
+              type="button"
+              onClick={handleExportMachine}
+              disabled={!selectedMachine}
+            >
+              Export
             </button>
             <button
               type="button"
@@ -1540,5 +1595,19 @@ export function PropertiesPanel() {
         </div>
       ) : null}
     </div>
+  )
+  } // closes renderContent
+
+  return (
+    <>
+      {renderContent()}
+      {editingDefinition && (
+        <MachineDefinitionEditorDialog
+          definition={editingDefinition}
+          onSave={handleEditorSave}
+          onClose={() => setEditingDefinition(null)}
+        />
+      )}
+    </>
   )
 }

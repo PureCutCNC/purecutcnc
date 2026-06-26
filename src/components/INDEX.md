@@ -24,6 +24,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `layout/` — app shell (toolbars, sidebars, mode switching); toolbar internals are documented in `layout/toolbar/INDEX.md`
 - `project/` — project-level UI (new/open/save, stock, machine, units)
 - `export/` — export dialogs (G-code, SVG, DXF, STL preview)
+- `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)
 - `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)

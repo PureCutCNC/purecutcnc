@@ -1171,6 +1171,11 @@
     overflow-y: auto;
   }
 
+  /* Machine editor needs room for its two-column layout (form + JSON/help). */
+  .dialog--machine-editor {
+    max-width: min(820px, 98vw);
+  }
+
   .dialog input,
   .dialog select,
   .dialog textarea {
