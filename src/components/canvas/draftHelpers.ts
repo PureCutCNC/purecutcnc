@@ -15,6 +15,7 @@
  */
 
 import { convertLength } from '../../utils/units'
+import type { SnapMode } from '../../sketch/snapping'
 import type { Point, Segment, SketchProfile } from '../../types/project'
 import { circleProfile, ellipseProfile, polygonProfile, profileVertices, rectProfile, splineProfile } from '../../types/project'
 import type { PendingAddTool, SketchControlRef } from '../../store/types'
@@ -53,6 +54,77 @@ function drawDiamond(
   ctx.lineTo(cx, cy + radius)
   ctx.lineTo(cx - radius, cy)
   ctx.closePath()
+}
+
+function snapModeLabel(mode: SnapMode): string {
+  switch (mode) {
+    case 'grid':
+      return 'Grid'
+    case 'point':
+      return 'Point'
+    case 'line':
+      return 'Line'
+    case 'midpoint':
+      return 'Midpoint'
+    case 'center':
+      return 'Center'
+    case 'intersection':
+      return 'Intersection'
+    case 'perpendicular':
+      return 'Perpendicular'
+  }
+}
+
+function drawSnapLabel(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  mode: SnapMode,
+): void {
+  const label = snapModeLabel(mode)
+  const paddingX = 7
+  const labelHeight = 22
+  const offset = 14
+  const margin = 8
+
+  ctx.save()
+  ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+
+  const metrics = ctx.measureText(label)
+  const labelWidth = Math.ceil(metrics.width) + paddingX * 2
+  let x = cx + offset
+  let y = cy - labelHeight - 8
+
+  if (x + labelWidth > ctx.canvas.width - margin) {
+    x = cx - labelWidth - offset
+  }
+  if (x < margin) {
+    x = margin
+  }
+  if (y < margin) {
+    y = cy + offset
+  }
+  if (y + labelHeight > ctx.canvas.height - margin) {
+    y = ctx.canvas.height - margin - labelHeight
+  }
+
+  ctx.fillStyle = 'rgba(24, 28, 34, 0.88)'
+  ctx.strokeStyle = 'rgba(247, 211, 148, 0.82)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.roundRect(x, y, labelWidth, labelHeight, 5)
+  ctx.fill()
+  ctx.stroke()
+
+  ctx.fillStyle = '#fff4d7'
+  const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
+  const textY = textHeight > 0
+    ? y + (labelHeight - textHeight) / 2 + metrics.actualBoundingBoxAscent
+    : y + labelHeight / 2
+  ctx.fillText(label, x + paddingX, textY)
+  ctx.restore()
 }
 
 export function buildArcSegmentFromThreePoints(start: Point, end: Point, through: Point): Segment | null {
@@ -344,6 +416,13 @@ export function drawSnapIndicator(
     ctx.rect(cx - 4, cy - 4, 8, 8)
     ctx.fill()
     ctx.stroke()
+  } else if (resolvedSnap.mode === 'intersection') {
+    ctx.beginPath()
+    ctx.moveTo(cx - 5, cy - 5)
+    ctx.lineTo(cx + 5, cy + 5)
+    ctx.moveTo(cx + 5, cy - 5)
+    ctx.lineTo(cx - 5, cy + 5)
+    ctx.stroke()
   } else {
     ctx.beginPath()
     ctx.arc(cx, cy, 5, 0, Math.PI * 2)
@@ -352,6 +431,9 @@ export function drawSnapIndicator(
   }
 
   ctx.restore()
+  if (resolvedSnap.labelVisibleUntil === undefined || resolvedSnap.labelVisibleUntil >= Date.now()) {
+    drawSnapLabel(ctx, cx, cy, resolvedSnap.mode)
+  }
 }
 
 export function buildPendingDraftProfile(

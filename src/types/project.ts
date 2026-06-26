@@ -16,6 +16,7 @@
 
 import type { MachineDefinition } from '../engine/gcode/types'
 import { copyBundledDefinitions } from '../engine/gcode/definitions'
+import type { SnapMode } from '../sketch/snapping'
 
 // ============================================================
 // Core geometry primitives
@@ -88,6 +89,16 @@ export interface NamedDimension {
 export type AnchorTarget =
   | { source: 'feature'; featureId: string }
   | { source: 'stock' }
+
+export interface ConstraintSegmentReference {
+  target: AnchorTarget
+  segmentIndex: number
+}
+
+export interface ConstraintIntersectionReference {
+  a: ConstraintSegmentReference
+  b: ConstraintSegmentReference
+}
 
 // A reference to a live point in the scene. Resolves to a world Point each frame.
 export type DimensionAnchor =
@@ -165,8 +176,10 @@ export interface LocalConstraint {
   anchor_type?: 'anchor' | 'midpoint'
   reference_feature_id?: string  // mirrors segment_ids[0]
   reference_index?: number       // vertex/segment index, or -1 for natural center
-  reference_type?: 'anchor' | 'midpoint' | 'segment' | 'point_on_segment'
+  reference_type?: 'anchor' | 'midpoint' | 'segment' | 'point_on_segment' | 'intersection'
   reference_t?: number  // fractional position [0,1] along segment for 'point_on_segment'
+  reference_snap_mode?: SnapMode // original picked snap mode for UI display
+  reference_intersection?: ConstraintIntersectionReference
 
   // Validity
   is_invalid?: boolean

@@ -626,6 +626,101 @@ function testMergePreservesLinkedInstanceTransform(): void {
     `resolved origin start.x should be ~0, got ${resolvedOrigin!.sketch.profile.start.x}`)
 }
 
+function testMergeRemapsIntersectionConstraintReferences(): void {
+  const source = {
+    ...newProject('Source', 'mm'),
+    features: [
+      makeFeature({
+        id: 'f-horizontal',
+        name: 'Horizontal',
+        folderId: 'fd-src',
+        sketch: {
+          profile: {
+            start: { x: 0, y: 0 },
+            segments: [{ type: 'line', to: { x: 20, y: 0 } }],
+            closed: false,
+          },
+          origin: { x: 0, y: 0 },
+          orientationAngle: 0,
+          dimensions: [],
+          constraints: [],
+        },
+      }),
+      makeFeature({
+        id: 'f-vertical',
+        name: 'Vertical',
+        folderId: 'fd-src',
+        sketch: {
+          profile: {
+            start: { x: 10, y: -10 },
+            segments: [{ type: 'line', to: { x: 10, y: 10 } }],
+            closed: false,
+          },
+          origin: { x: 0, y: 0 },
+          orientationAngle: 0,
+          dimensions: [],
+          constraints: [],
+        },
+      }),
+      makeFeature({
+        id: 'f-owner',
+        name: 'Owner',
+        folderId: 'fd-src',
+        sketch: {
+          profile: {
+            start: { x: 11, y: -5 },
+            segments: [{ type: 'circle', center: { x: 10, y: -5 }, to: { x: 11, y: -5 }, clockwise: true }],
+            closed: true,
+          },
+          origin: { x: 0, y: 0 },
+          orientationAngle: 0,
+          dimensions: [],
+          constraints: [{
+            id: 'c-intersection',
+            type: 'fixed_distance',
+            segment_ids: ['f-horizontal', 'f-vertical'],
+            value: 5,
+            anchor_index: -1,
+            anchor_type: 'anchor',
+            reference_feature_id: 'f-horizontal',
+            reference_type: 'intersection',
+            reference_point: { x: 10, y: 0 },
+            reference_intersection: {
+              a: { target: { source: 'feature', featureId: 'f-horizontal' }, segmentIndex: 0 },
+              b: { target: { source: 'feature', featureId: 'f-vertical' }, segmentIndex: 0 },
+            },
+          }],
+        },
+      }),
+    ],
+    featureFolders: [makeFolder('fd-src', 'Refs')],
+    featureTree: [{ type: 'folder', folderId: 'fd-src' }],
+  } satisfies Project
+
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: source,
+    selectedFolderIds: ['fd-src'],
+  })
+
+  const importedOwner = result.project.features.find((f) => f.name === 'Owner')
+  const importedHorizontal = result.project.features.find((f) => f.name === 'Horizontal')
+  const importedVertical = result.project.features.find((f) => f.name === 'Vertical')
+  assert(importedOwner !== undefined, 'owner should be imported')
+  assert(importedHorizontal !== undefined, 'horizontal reference should be imported')
+  assert(importedVertical !== undefined, 'vertical reference should be imported')
+
+  const constraint = importedOwner!.sketch.constraints[0]
+  assert(constraint.reference_intersection !== undefined, 'intersection metadata should be preserved')
+  assert(constraint.segment_ids.includes(importedHorizontal!.id), 'segment_ids should include remapped horizontal id')
+  assert(constraint.segment_ids.includes(importedVertical!.id), 'segment_ids should include remapped vertical id')
+  assert(constraint.reference_feature_id === importedHorizontal!.id, 'reference_feature_id should be remapped')
+  const targetA = constraint.reference_intersection!.a.target
+  const targetB = constraint.reference_intersection!.b.target
+  assert(targetA.source === 'feature' && targetA.featureId === importedHorizontal!.id, 'intersection target A should be remapped')
+  assert(targetB.source === 'feature' && targetB.featureId === importedVertical!.id, 'intersection target B should be remapped')
+}
+
 testInspectListsFoldersWithFeatures()
 testInspectHidesEmptyFolders()
 testInspectRejectsBadJson()
@@ -648,4 +743,5 @@ testMergeImportsStockWithoutFolders()
 testMergeImportsStockMmToInchScales()
 testMergeStockImportNoOpWhenSourceNotFeatureBased()
 testMergePreservesLinkedInstanceTransform()
+testMergeRemapsIntersectionConstraintReferences()
 console.log('camj import tests passed')

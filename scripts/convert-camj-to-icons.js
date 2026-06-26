@@ -67,6 +67,15 @@ function profileToSvgPath(profile) {
     return d;
 }
 
+function resolveFeatureProfile(project, feature) {
+    const definitionId = feature.definitionId;
+    if (definitionId && project.featureDefinitions?.[definitionId]?.profile) {
+        return project.featureDefinitions[definitionId].profile;
+    }
+
+    return feature.sketch?.profile ?? null;
+}
+
 function projectToSvgSprite(project) {
     const icons = {};
 
@@ -78,7 +87,8 @@ function projectToSvgSprite(project) {
         if (!icons[id]) icons[id] = [];
         
         for (const feature of folderFeatures) {
-            const path = profileToSvgPath(feature.sketch.profile);
+            const profile = resolveFeatureProfile(project, feature);
+            const path = profile ? profileToSvgPath(profile) : '';
             if (path) {
                 // If it's a rect/circle kind, we could potentially export as <rect /> or <circle />
                 // but path is more universal and works for everything in icons.camj.

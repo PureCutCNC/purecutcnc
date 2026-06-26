@@ -180,6 +180,16 @@ const ICON_DESIGNS = {
     'M 12 7.5 L 16 14.25 L 8 14.25 Z',
   ],
 
+  // snap-intersection — two crossing segments with a CAD-standard X marker.
+  'snap-intersection': [
+    // Crossing geometry
+    'M 4 20 L 20 4',
+    'M 4 4 L 20 20',
+    // X marker centered at the crossing
+    'M 9 9 L 15 15',
+    'M 15 9 L 9 15',
+  ],
+
   // snap-perpendicular — horizontal line + vertical line + right-angle square
   'snap-perpendicular': [
     // Primary (horizontal) line
@@ -193,38 +203,58 @@ const ICON_DESIGNS = {
 
 // ---------------------------------------------------------------------------
 
-function profilesToFeatures(iconId, folderId, paths) {
+function cloneProfile(profile) {
+  return {
+    start: { x: profile.start.x, y: profile.start.y },
+    segments: profile.segments.map((s) => {
+      const seg = { type: s.type, to: { x: s.to.x, y: s.to.y } };
+      if (s.control1) seg.control1 = { x: s.control1.x, y: s.control1.y };
+      if (s.control2) seg.control2 = { x: s.control2.x, y: s.control2.y };
+      if (s.center) seg.center = { x: s.center.x, y: s.center.y };
+      if ('clockwise' in s) seg.clockwise = s.clockwise;
+      return seg;
+    }),
+    closed: !!profile.closed,
+  };
+}
+
+function nextIconFeatureId(iconId, usedIds, ordinal) {
+  let nextOrdinal = ordinal;
+  while (true) {
+    const suffix = nextOrdinal > 0 ? `_${nextOrdinal}` : '';
+    const id = `icon_${iconId}${suffix}`;
+    nextOrdinal += 1;
+    if (!usedIds.has(id)) {
+      usedIds.add(id);
+      return { id, nextOrdinal };
+    }
+  }
+}
+
+function profilesToFeatures(iconId, folderId, paths, useFeatureDefinitions, usedIds) {
   const features = [];
+  const definitions = {};
   let pathIndex = 0;
+  let nextOrdinal = 0;
 
   for (const d of paths) {
     const profiles = svgPathToProfiles(d);
     let subIndex = 0;
 
     for (const profile of profiles) {
-      const suffixA = pathIndex > 0 ? `_${pathIndex}` : '';
-      const suffixB = subIndex > 0 ? `_${subIndex}` : '';
-      const featureId = `icon_${iconId}${suffixA}${suffixB}`;
+      const allocated = nextIconFeatureId(iconId, usedIds, nextOrdinal);
+      const featureId = allocated.id;
+      nextOrdinal = allocated.nextOrdinal;
       const name = `${iconId}_shape_${pathIndex}${subIndex > 0 ? `_${subIndex}` : ''}`;
+      const projectProfile = cloneProfile(profile);
 
-      features.push({
+      const feature = {
         id: featureId,
         name,
         kind: 'composite',
         folderId,
         sketch: {
-          profile: {
-            start: { x: profile.start.x, y: profile.start.y },
-            segments: profile.segments.map((s) => {
-              const seg = { type: s.type, to: { x: s.to.x, y: s.to.y } };
-              if (s.control1) seg.control1 = { x: s.control1.x, y: s.control1.y };
-              if (s.control2) seg.control2 = { x: s.control2.x, y: s.control2.y };
-              if (s.center) seg.center = { x: s.center.x, y: s.center.y };
-              if ('clockwise' in s) seg.clockwise = s.clockwise;
-              return seg;
-            }),
-            closed: !!profile.closed,
-          },
+          profile: projectProfile,
           origin: { x: 0, y: 0 },
           orientationAngle: 0,
           dimensions: [],
@@ -235,18 +265,37 @@ function profilesToFeatures(iconId, folderId, paths) {
         z_bottom: -1,
         visible: false,
         locked: false,
-      });
+      };
+
+      if (useFeatureDefinitions) {
+        feature.definitionId = featureId;
+        definitions[featureId] = {
+          id: featureId,
+          kind: feature.kind,
+          profile: cloneProfile(projectProfile),
+          dimensions: [],
+          text: null,
+          stl: null,
+          operation: feature.operation,
+        };
+      }
+
+      features.push(feature);
 
       subIndex += 1;
     }
     pathIndex += 1;
   }
 
-  return features;
+  return { features, definitions };
 }
 
 function main() {
   const project = JSON.parse(fs.readFileSync(camjPath, 'utf-8'));
+  const useFeatureDefinitions = project.version === '2.0' || !!project.featureDefinitions;
+  if (useFeatureDefinitions && !project.featureDefinitions) {
+    project.featureDefinitions = {};
+  }
 
   // Build folder-name → folderId lookup
   const folderByName = new Map();
@@ -256,6 +305,17 @@ function main() {
 
   const redrawn = [];
   const missing = [];
+  const usedIds = new Set();
+  function refreshUsedIds() {
+    usedIds.clear();
+    for (const feature of project.features) {
+      usedIds.add(feature.id);
+    }
+    for (const definitionId of Object.keys(project.featureDefinitions ?? {})) {
+      usedIds.add(definitionId);
+    }
+  }
+  refreshUsedIds();
 
   for (const [iconId, paths] of Object.entries(ICON_DESIGNS)) {
     const folderId = folderByName.get(iconId);
@@ -264,12 +324,29 @@ function main() {
       continue;
     }
 
+    const removedFeatures = project.features.filter((f) => f.folderId === folderId);
+    if (useFeatureDefinitions) {
+      for (const feature of removedFeatures) {
+        usedIds.delete(feature.id);
+        usedIds.delete(feature.definitionId ?? feature.id);
+        delete project.featureDefinitions[feature.definitionId ?? feature.id];
+      }
+    } else {
+      for (const feature of removedFeatures) {
+        usedIds.delete(feature.id);
+      }
+    }
+
     // Drop all existing features for this folder
     project.features = project.features.filter((f) => f.folderId !== folderId);
+    refreshUsedIds();
 
     // Append the new features for this icon
-    const newFeatures = profilesToFeatures(iconId, folderId, paths);
+    const { features: newFeatures, definitions } = profilesToFeatures(iconId, folderId, paths, useFeatureDefinitions, usedIds);
     project.features.push(...newFeatures);
+    if (useFeatureDefinitions) {
+      Object.assign(project.featureDefinitions, definitions);
+    }
 
     redrawn.push({ id: iconId, features: newFeatures.length });
   }

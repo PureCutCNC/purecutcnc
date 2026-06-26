@@ -176,6 +176,7 @@ export interface ClickPlacementCtx {
     featureId: string | null
     snapMode: ResolvedSnap['mode']
     segment?: { a: Point; b: Point } | undefined
+    intersection?: ResolvedSnap['intersection']
   }) => void
   insertFeaturePoint: (featureId: string, point: { kind: PendingSketchExtension['kind']; point: Point } | { kind: 'segment'; segmentIndex: number; point: Point; t: number }) => void
   joinOpenFeatureEndpoints: (
@@ -476,6 +477,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         featureId: targetId,
         snapMode: resolvedSnap.mode,
         segment: resolvedSnap.mode === 'perpendicular' ? resolvedSnap.perpendicularSegment : undefined,
+        intersection: resolvedSnap.mode === 'intersection' ? resolvedSnap.intersection : undefined,
       })
       const dx = pendingConstraint.anchor.point.x - lockedPickedPoint.x
       const dy = pendingConstraint.anchor.point.y - lockedPickedPoint.y
