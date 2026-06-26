@@ -119,6 +119,12 @@ import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
+import {
+  buildPlacedClipboardFeatures,
+  FEATURE_CLIPBOARD_PLACEMENT_EVENT,
+  pasteClipboardFeatures,
+  type FeatureClipboardPayload,
+} from '../../platform/featureClipboard'
 
 const NODE_HIT_RADIUS = 9
 const HANDLE_HIT_RADIUS = 7
@@ -290,6 +296,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingTransformPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
   const pendingOffsetRawPreviewPointRef = useRef<PendingPreviewPoint | null>(null)
+  const clipboardPlacementPreviewPointRef = useRef<Point | null>(null)
   const livePointerWorldRef = useRef<Point | null>(null)
 
   function stopPan() {
@@ -325,6 +332,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const shellMode = useShellMode()
   const isTablet = isTabletMode(shellMode)
   const [multiSelectMode, setMultiSelectMode] = useState(false)
+  const [pendingClipboardPlacement, setPendingClipboardPlacement] = useState<FeatureClipboardPayload | null>(null)
 
   const {
     project,
@@ -445,6 +453,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const selectedAnnotationIdRef = useRef(selectedAnnotationId)
   const deleteHoverDimIdRef = useRef<string | null>(null)
   const operationHighlightKindRef = useRef(operationHighlightKind)
+  const pendingClipboardPlacementRef = useRef(pendingClipboardPlacement)
 
   projectRef.current = project
   selectionRef.current = selection
@@ -469,6 +478,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   dimensionDeleteArmedRef.current = dimensionDeleteArmed
   selectedAnnotationIdRef.current = selectedAnnotationId
   operationHighlightKindRef.current = operationHighlightKind
+  pendingClipboardPlacementRef.current = pendingClipboardPlacement
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
 
   const dimEdit = useDimensionEditWorkflow({
@@ -554,6 +564,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const dimensionDeleteWorkflowPanel = useCanvasWorkflowPanel({
     open: dimensionDeleteArmed,
     phaseKey: 'delete',
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+  const clipboardPlacementWorkflowPanel = useCanvasWorkflowPanel({
+    open: pendingClipboardPlacement !== null,
+    phaseKey: pendingClipboardPlacement ? `features:${pendingClipboardPlacement.length}` : null,
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -658,6 +675,68 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const setPendingOffsetRawPreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingOffsetRawPreviewPointRef.current = nextPoint
     scheduleDraw()
+  })
+
+  const setClipboardPlacementPreviewPoint = useStableEvent((nextPoint: Point | null) => {
+    clipboardPlacementPreviewPointRef.current = nextPoint
+    scheduleDraw()
+  })
+
+  const cancelClipboardPlacement = useStableEvent(() => {
+    setPendingClipboardPlacement(null)
+    setClipboardPlacementPreviewPoint(null)
+    clipboardPlacementWorkflowPanel.focusCanvasAfterAction()
+  })
+
+  const beginClipboardPlacement = useStableEvent((clipboard: FeatureClipboardPayload) => {
+    if (clipboard.length === 0) {
+      return
+    }
+
+    if (pendingAddRef.current) {
+      originPreviewPointRef.current = null
+      cancelPendingAdd()
+      setPendingPreviewPointRef(null)
+    }
+    if (pendingMoveRef.current) {
+      cancelPendingMove()
+      setPendingMovePreviewPointRef(null)
+      setCopyCountDraft('1')
+    }
+    if (pendingTransformRef.current) {
+      cancelPendingTransform()
+      setPendingTransformPreviewPointRef(null)
+      transformExact.setPendingRotateCopyPoint(null)
+      transformExact.setRotateCopyCountDraft('1')
+    }
+    if (pendingOffsetRef.current) {
+      cancelPendingOffset()
+      setPendingOffsetPreviewPointRef(null)
+      setPendingOffsetRawPreviewPointRef(null)
+    }
+    if (pendingShapeActionRef.current) {
+      cancelPendingShapeAction()
+    }
+    if (pendingSketchEditRef.current) {
+      cancelPendingSketchEdit()
+    }
+
+    resetLock()
+    setOperationDimEdit(null)
+    setPendingClipboardPlacement(clipboard)
+    setClipboardPlacementPreviewPoint(livePointerWorldRef.current)
+    window.requestAnimationFrame(() => canvasRef.current?.focus({ preventScroll: true }))
+  })
+
+  const placeClipboardAt = useStableEvent((placementPoint: Point) => {
+    const clipboard = pendingClipboardPlacementRef.current
+    if (!clipboard) {
+      return
+    }
+
+    pasteClipboardFeatures(useProjectStore.getState(), clipboard, placementPoint)
+    setPendingClipboardPlacement(null)
+    setClipboardPlacementPreviewPoint(null)
   })
 
   function sameControl(a: SketchControlRef | null, b: SketchControlRef | null): boolean {
@@ -794,6 +873,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   useEffect(() => {
+    function handleClipboardPlacement(event: Event) {
+      if (!(event instanceof CustomEvent)) {
+        return
+      }
+      beginClipboardPlacement(event.detail as FeatureClipboardPayload)
+    }
+
+    window.addEventListener(FEATURE_CLIPBOARD_PLACEMENT_EVENT, handleClipboardPlacement)
+    return () => window.removeEventListener(FEATURE_CLIPBOARD_PLACEMENT_EVENT, handleClipboardPlacement)
+  }, [beginClipboardPlacement])
+
+  useEffect(() => {
     if (!project.backdrop?.imageDataUrl) {
       setBackdropImage(null)
       setBackdropImageLoading(false)
@@ -860,7 +951,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -902,6 +993,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingOffsetPreviewPointRef.current = null
     pendingOffsetRawPreviewPointRef.current = null
   }, [pendingOffset?.session])
+
+  useEffect(() => {
+    if (!pendingClipboardPlacement) {
+      clipboardPlacementPreviewPointRef.current = null
+      scheduleDraw()
+    }
+  }, [pendingClipboardPlacement, scheduleDraw])
 
   useEffect(() => {
     if (zoomWindowActive) {
@@ -1041,6 +1139,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
         ctx.restore()
       }
+    }
+
+    const clipboardPlacement = pendingClipboardPlacementRef.current
+    const clipboardPlacementPreviewPoint = clipboardPlacementPreviewPointRef.current
+    if (clipboardPlacement && clipboardPlacementPreviewPoint) {
+      const previewFeatures = buildPlacedClipboardFeatures(clipboardPlacement, project, clipboardPlacementPreviewPoint)
+      for (const feature of previewFeatures) {
+        drawPreviewProfile(ctx, feature.sketch.profile, vt, 'Paste preview')
+      }
+      drawPendingPoint(ctx, clipboardPlacementPreviewPoint, vt, snap.isActiveSnapPoint(clipboardPlacementPreviewPoint))
     }
 
     const pendingConstraintDraw = pendingConstraintRef.current
@@ -2720,6 +2828,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
+    pendingClipboardPlacementRef,
     dimensionDeleteArmedRef,
     selectedAnnotationIdRef,
     pendingPreviewPointRef,
@@ -2741,6 +2850,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTapeMeasure,
     cancelPendingDimension,
     setDimensionDeleteArmed,
+    cancelClipboardPlacement,
     deleteDimensionAnnotation,
     undoPendingPolygonPoint,
     completePendingOpenPath,
@@ -2798,6 +2908,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMovePreviewPointRef,
     pendingConstraintRef,
     pendingDimensionRef,
+    pendingClipboardPlacementRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
     pendingSketchExtensionRef,
@@ -2842,6 +2953,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setClipboardPlacementPreviewPoint,
     setHoveredEditControl,
     zoomWindowActive,
     onZoomWindowComplete,
@@ -2870,6 +2982,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingSketchExtensionRef,
     pendingSketchFilletRef,
     sketchEditPreviewRef,
+    pendingClipboardPlacementRef,
     originPreviewPointRef,
     tapeMeasureRef,
     constraintLabelRectsRef,
@@ -2893,7 +3006,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setClipboardPlacementPreviewPoint,
     tapeMeasureClick,
+    placeClipboardAt,
     cancelPendingDimension,
     addDimensionAnnotation,
     pendingDimensionPick,
@@ -2981,7 +3096,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction || pendingClipboardPlacement ? 'sketch-canvas--placing' : ''}`}
         onPointerDown={gestures.handlePointerDown}
         onPointerUp={gestures.handlePointerUp}
         onPointerCancel={gestures.handlePointerUp}
@@ -4118,6 +4233,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         >
           <div className="canvas-workflow-panel__summary">
             Click each dimension you want to remove. Esc or Done to finish.
+          </div>
+        </CanvasWorkflowPanel>
+      )}
+      {pendingClipboardPlacement && (
+        <CanvasWorkflowPanel
+          title="Paste features"
+          step="Click in the sketch to place"
+          position={clipboardPlacementWorkflowPanel.position}
+          panelRef={clipboardPlacementWorkflowPanel.panelRef}
+          handleProps={clipboardPlacementWorkflowPanel.handleProps}
+          actionRowProps={clipboardPlacementWorkflowPanel.actionRowProps}
+          actions={(
+            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelClipboardPlacement}>Cancel</button>
+          )}
+        >
+          <div className="canvas-workflow-panel__summary">
+            Move the pointer to preview the paste location. Esc cancels.
           </div>
         </CanvasWorkflowPanel>
       )}

@@ -15,10 +15,10 @@
  */
 
 import {
-  FEATURE_CLIPBOARD_OFFSET,
-  buildPastedClipboardFeatures,
+  buildPlacedClipboardFeatures,
   copySelectedFeatures,
   cutSelectedFeatures,
+  featureClipboardAnchor,
   isEditableShortcutTarget,
   pasteClipboardFeatures,
   selectedVisibleClipboardFeatures,
@@ -36,6 +36,10 @@ import { emptySelection } from '../store/slices/selectionSlice'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function assertNear(actual: number, expected: number, message: string): void {
+  assert(Math.abs(actual - expected) < 1e-9, `${message}: expected ${expected}, got ${actual}`)
 }
 
 function rectFeature(id: string, name: string, x: number, y: number, visible = true): SketchFeature {
@@ -134,7 +138,7 @@ function testCutCopiesThenDeletes(): void {
   assert(useProjectStore.getState().history.past.length === 1, 'cut should add one history entry')
 }
 
-function testPasteOffsetsAndSelectsPastedFeatures(): void {
+function testPastePlacesGroupCenterAndSelectsPastedFeatures(): void {
   const first = rectFeature('f1', 'First', 0, 0)
   const second = rectFeature('f2', 'Second', 5, 5)
   resetStore(projectWithFeatures([first, second]))
@@ -143,9 +147,10 @@ function testPasteOffsetsAndSelectsPastedFeatures(): void {
   assert(clipboard !== null, 'copy should produce clipboard payload')
   useProjectStore.setState({ dirty: false, history: { past: [], future: [], transactionStart: null } })
 
-  const pastedIds = pasteClipboardFeatures(useProjectStore.getState(), clipboard)
+  const pastedIds = pasteClipboardFeatures(useProjectStore.getState(), clipboard, { x: 20, y: 30 })
   const state = useProjectStore.getState()
   const pasted = state.project.features.filter((feature) => pastedIds.includes(feature.id))
+  const pastedAnchor = featureClipboardAnchor(pasted)
 
   assert(pastedIds.length === 2, 'paste should create one feature per clipboard feature')
   assert(new Set(pastedIds).size === 2, 'pasted feature ids should be unique')
@@ -154,14 +159,9 @@ function testPasteOffsetsAndSelectsPastedFeatures(): void {
   assert(state.selection.selectedFeatureIds.every((id) => pastedIds.includes(id)), 'selection should contain pasted ids')
   assert(state.dirty === true, 'paste should dirty the project')
   assert(state.history.past.length === 1, 'multi-feature paste should add one history entry')
-  assert(
-    pasted[0].sketch.profile.start.x === first.sketch.profile.start.x + FEATURE_CLIPBOARD_OFFSET,
-    'paste should offset copied geometry in X',
-  )
-  assert(
-    pasted[0].sketch.profile.start.y === first.sketch.profile.start.y + FEATURE_CLIPBOARD_OFFSET,
-    'paste should offset copied geometry in Y',
-  )
+  assert(pastedAnchor !== null, 'pasted features should have an anchor')
+  assertNear(pastedAnchor.x, 20, 'paste should place group center at clicked X')
+  assertNear(pastedAnchor.y, 30, 'paste should place group center at clicked Y')
 }
 
 function testIndependentPasteClonesDefinitions(): void {
@@ -171,7 +171,7 @@ function testIndependentPasteClonesDefinitions(): void {
     meta: { ...newProject().meta, copyMode: 'independent' as const },
   }
 
-  const pasted = buildPastedClipboardFeatures([feature], project)
+  const pasted = buildPlacedClipboardFeatures([feature], project, { x: 20, y: 20 })
 
   assert(pasted.length === 1, 'independent paste should create a feature')
   const sourceDefinitionId = (feature as SketchFeature & { definitionId: string }).definitionId
@@ -220,7 +220,7 @@ function testEditableShortcutTargetGuard(): void {
 testCopyUsesSelectedVisibleFeaturesOnly()
 testCopyDoesNotDirtyProject()
 testCutCopiesThenDeletes()
-testPasteOffsetsAndSelectsPastedFeatures()
+testPastePlacesGroupCenterAndSelectsPastedFeatures()
 testIndependentPasteClonesDefinitions()
 testEditableShortcutTargetGuard()
 

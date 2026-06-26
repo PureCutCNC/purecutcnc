@@ -23,8 +23,8 @@ import { checkDesktopUpdate, loadChannel, saveChannel } from '../utils/updateChe
 import {
   copySelectedFeatures,
   cutSelectedFeatures,
+  FEATURE_CLIPBOARD_PLACEMENT_EVENT,
   isEditableShortcutTarget,
-  pasteClipboardFeatures,
   type FeatureClipboardPayload,
 } from './featureClipboard'
 
@@ -120,7 +120,14 @@ function runFeatureClipboardCommand(
       return cut !== null
     }
     case 'paste':
-      return pasteClipboardFeatures(store, clipboardRef.current).length > 0
+      if (clipboardRef.current.length === 0) {
+        return false
+      }
+      window.dispatchEvent(new CustomEvent<FeatureClipboardPayload>(
+        FEATURE_CLIPBOARD_PLACEMENT_EVENT,
+        { detail: clipboardRef.current },
+      ))
+      return true
   }
 }
 

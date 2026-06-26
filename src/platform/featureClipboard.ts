@@ -14,13 +14,21 @@
  * limitations under the License.
  */
 
-import type { Project, SketchFeature } from '../types/project'
+import { getProfileBounds } from '../types/project'
+import type { Point, Project, SketchFeature } from '../types/project'
 import { buildCopiedFeatures } from '../store/helpers/copyFeatures'
 import type { ProjectStore } from '../store/types'
 
 export type FeatureClipboardPayload = SketchFeature[]
 
-export const FEATURE_CLIPBOARD_OFFSET = 10
+export const FEATURE_CLIPBOARD_PLACEMENT_EVENT = 'purecutcnc:place-feature-clipboard'
+
+export interface FeatureClipboardBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
   if (typeof HTMLElement === 'undefined') {
@@ -45,19 +53,49 @@ export function selectedVisibleClipboardFeatures(project: Project, selectedFeatu
     .map((feature) => JSON.parse(JSON.stringify(feature)) as SketchFeature)
 }
 
-export function buildPastedClipboardFeatures(
+export function featureClipboardBounds(clipboard: FeatureClipboardPayload): FeatureClipboardBounds | null {
+  let bounds: FeatureClipboardBounds | null = null
+
+  for (const feature of clipboard) {
+    const featureBounds = getProfileBounds(feature.sketch.profile)
+    bounds = bounds
+      ? {
+          minX: Math.min(bounds.minX, featureBounds.minX),
+          minY: Math.min(bounds.minY, featureBounds.minY),
+          maxX: Math.max(bounds.maxX, featureBounds.maxX),
+          maxY: Math.max(bounds.maxY, featureBounds.maxY),
+        }
+      : { ...featureBounds }
+  }
+
+  return bounds
+}
+
+export function featureClipboardAnchor(clipboard: FeatureClipboardPayload): Point | null {
+  const bounds = featureClipboardBounds(clipboard)
+  return bounds
+    ? {
+        x: (bounds.minX + bounds.maxX) / 2,
+        y: (bounds.minY + bounds.maxY) / 2,
+      }
+    : null
+}
+
+export function buildPlacedClipboardFeatures(
   clipboard: FeatureClipboardPayload,
   project: Project,
+  placementPoint: Point,
 ): SketchFeature[] {
-  if (clipboard.length === 0) {
+  const anchor = featureClipboardAnchor(clipboard)
+  if (!anchor) {
     return []
   }
 
   return buildCopiedFeatures(
     clipboard,
     project.features,
-    FEATURE_CLIPBOARD_OFFSET,
-    FEATURE_CLIPBOARD_OFFSET,
+    placementPoint.x - anchor.x,
+    placementPoint.y - anchor.y,
     1,
     project.featureDefinitions,
     project.meta.copyMode,
@@ -79,8 +117,12 @@ export function cutSelectedFeatures(store: ProjectStore): FeatureClipboardPayloa
   return features
 }
 
-export function pasteClipboardFeatures(store: ProjectStore, clipboard: FeatureClipboardPayload): string[] {
-  const features = buildPastedClipboardFeatures(clipboard, store.project)
+export function pasteClipboardFeatures(
+  store: ProjectStore,
+  clipboard: FeatureClipboardPayload,
+  placementPoint: Point,
+): string[] {
+  const features = buildPlacedClipboardFeatures(clipboard, store.project, placementPoint)
   if (features.length === 0) {
     return []
   }
