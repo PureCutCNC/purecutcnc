@@ -211,32 +211,44 @@ export function MachineDefinitionManagerDialog({
 
                 <div className="machine-manager-actions">
                   {!isActive ? (
-                    <button className="machine-manager-action btn-primary" type="button" onClick={handleUseThisMachine}>
+                    <button className="btn-primary" type="button" onClick={handleUseThisMachine}>
                       Use this machine
                     </button>
                   ) : null}
 
-                  {!previewDef.builtin ? (
-                    <button className="machine-manager-action btn-secondary" type="button" onClick={handleEdit}>
-                      Edit
+                  <div className="machine-manager-actions-row">
+                    {!previewDef.builtin ? (
+                      <button className="btn-secondary" type="button" onClick={handleEdit}>
+                        Edit
+                      </button>
+                    ) : null}
+
+                    <button className="btn-secondary" type="button" onClick={handleDuplicateToEdit}>
+                      {previewDef.builtin ? 'Duplicate to edit' : 'Duplicate'}
                     </button>
-                  ) : null}
 
-                  <button className="machine-manager-action btn-secondary" type="button" onClick={handleDuplicateToEdit}>
-                    {previewDef.builtin ? 'Duplicate to edit' : 'Duplicate'}
-                  </button>
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={handleImportJson}
+                      title="Import a machine definition JSON file"
+                    >
+                      Import machine
+                    </button>
 
-                  <button className="machine-manager-action btn-secondary" type="button" onClick={handleImportJson}>
-                    Import JSON
-                  </button>
-
-                  <button className="machine-manager-action btn-secondary" type="button" onClick={handleExportJson}>
-                    Export JSON
-                  </button>
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={handleExportJson}
+                      title="Export this machine definition as JSON"
+                    >
+                      Export machine
+                    </button>
+                  </div>
 
                   {!previewDef.builtin ? (
-                    <button className="machine-manager-action machine-manager-action--remove" type="button" onClick={handleRemove}>
-                      Remove
+                    <button className="machine-manager-action--remove" type="button" onClick={handleRemove}>
+                      Remove machine
                     </button>
                   ) : null}
                 </div>

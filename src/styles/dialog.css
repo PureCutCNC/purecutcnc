@@ -893,24 +893,35 @@
 .machine-manager-actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
   margin-top: 4px;
 }
 
-.machine-manager-action {
-  width: 100%;
-  text-align: center;
+.machine-manager-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.machine-manager-actions-row .btn-secondary {
+  flex: 0 0 auto;
 }
 
 .machine-manager-action--remove {
-  border-color: rgba(255, 100, 80, 0.35) !important;
-  color: #f7726a !important;
-  background: transparent !important;
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  color: #f7726a;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 0;
+  opacity: 0.8;
 }
 
 .machine-manager-action--remove:hover {
-  background: rgba(255, 80, 60, 0.1) !important;
-  border-color: rgba(255, 100, 80, 0.6) !important;
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .machine-manager-empty {
@@ -997,11 +1008,23 @@
 
 [data-shell-mode="tablet"] .machine-manager-actions,
 [data-shell-mode="tablet-compact"] .machine-manager-actions {
+  gap: 14px;
+}
+
+[data-shell-mode="tablet"] .machine-manager-actions-row,
+[data-shell-mode="tablet-compact"] .machine-manager-actions-row {
   gap: 10px;
 }
 
-[data-shell-mode="tablet"] .machine-manager-action,
-[data-shell-mode="tablet-compact"] .machine-manager-action {
+[data-shell-mode="tablet"] .machine-manager-actions-row .btn-secondary,
+[data-shell-mode="tablet-compact"] .machine-manager-actions-row .btn-secondary {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 0 18px;
+}
+
+[data-shell-mode="tablet"] .machine-manager-action--remove,
+[data-shell-mode="tablet-compact"] .machine-manager-action--remove {
   min-height: 44px;
   font-size: 15px;
 }
