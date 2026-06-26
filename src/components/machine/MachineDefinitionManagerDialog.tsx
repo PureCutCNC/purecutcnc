@@ -119,15 +119,21 @@ export function MachineDefinitionManagerDialog({
   const handleRemove = useCallback(() => {
     if (!previewDef || previewDef.builtin) return
     removeMachineDefinition(previewDef.id)
-    // preview will be synced by the useEffect above.
+    // The store updates synchronously; reset previewId so the list
+    // selection row stays in sync with the detail pane.
+    const updated = useProjectStore.getState().project.meta.machineDefinitions
+    setPreviewId(updated.length > 0 ? updated[0].id : null)
   }, [previewDef, removeMachineDefinition])
 
   const handleEditorSave = useCallback(
     (definition: MachineDefinition) => {
-      updateMachineDefinition(definition.id, definition)
+      // Use the original editingDef.id for the lookup so that editing the
+      // "id" field in the raw JSON editor does not cause the update to
+      // target a non-existent key and silently no-op.
+      updateMachineDefinition(editingDef!.id, definition)
       setEditingDef(null)
     },
-    [updateMachineDefinition],
+    [updateMachineDefinition, editingDef],
   )
 
   const isActive = previewDef?.id === activeId

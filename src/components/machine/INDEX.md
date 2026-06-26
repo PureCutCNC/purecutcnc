@@ -3,7 +3,7 @@
 Machine definition editing UI. In-app editor and manager for custom CNC machine definitions.
 
 ## Files
-- `MachineDefinitionManagerDialog.tsx` — machine lifecycle manager dialog: list of definitions (name + Built-in/Custom badge + active highlight) on the left, selected machine details and actions on the right. Opened from the Properties panel via "Manage machines…". Actions: Use this machine, Edit (custom only), Duplicate to edit, Import JSON, Export JSON, Remove (custom only). Reuses `MachineDefinitionEditorDialog` for editing.
+- `MachineDefinitionManagerDialog.tsx` — machine lifecycle manager dialog: list of definitions (name + Built-in/Custom badge + active highlight) on the left, selected machine details and actions on the right. Opened from the Properties panel via "Manage machines…". Actions: Use this machine, Edit (custom only), Duplicate to edit, Import machine, Export machine, Remove (custom only). Reuses `MachineDefinitionEditorDialog` for editing.
 - `MachineDefinitionEditorDialog.tsx` — hybrid editor modal (focused form + raw JSON `DisclosureSection` + inline Zod validation + variable reference help). Portaled to `document.body` via `createPortal`.
 - `machineDefinitionForm.ts` — pure form↔`MachineDefinition` mapping/merge module. No React imports. Exports `toFormData`, `mergeFormData`, `joinLines`/`splitLines`, and `validateDef` (non-throwing Zod wrapper with user-friendly error formatting).
 
