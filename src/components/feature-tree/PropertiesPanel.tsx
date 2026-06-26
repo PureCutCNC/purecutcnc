@@ -17,7 +17,7 @@
 import { useCallback, useContext, useRef } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
-import { ExpandedPanelContext } from '../layout/AppShell'
+import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'

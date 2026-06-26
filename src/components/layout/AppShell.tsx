@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import { getStockBounds } from '../../types/project'
@@ -29,7 +30,7 @@ import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
 
-export const ExpandedPanelContext = createContext<{ closeExpandedPanel: () => void } | null>(null)
+
 
 interface AppShellProps {
   globalToolbar: ReactNode
