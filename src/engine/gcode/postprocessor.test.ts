@@ -20,9 +20,10 @@
  * Run with: npx tsx src/engine/gcode/postprocessor.test.ts
  */
 
-import { defaultTool, newProject } from '../../types/project'
-import type { Operation } from '../../types/project'
+import { circleProfile, defaultTool, newProject } from '../../types/project'
+import type { Operation, SketchFeature } from '../../types/project'
 import { normalizeToolForProject } from '../toolpaths/geometry'
+import { generateDrillingToolpath } from '../toolpaths/drilling'
 import type { ToolpathResult } from '../toolpaths/types'
 import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
@@ -208,4 +209,318 @@ testOperationHeaderDescription()
 testEmptyDescriptionIsSkipped()
 testMultilineDescription()
 testLegacyDefinitionFallback()
+
+// ── Canned cycle tests ────────────────────────────────────────────────
+
+function cannedCycleDefinition(): MachineDefinition {
+  return validateMachineDefinition({
+    id: 'test-canned',
+    name: 'TestCanned',
+    description: 'Test controller with canned cycles',
+    builtin: false,
+    fileExtension: 'nc',
+    coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
+    numberFormat: {
+      decimalPlaces: { mm: 3, inch: 4 },
+      trailingZeros: false,
+      leadingZero: true,
+    },
+    units: { mmCommand: 'G21', inchCommand: 'G20' },
+    program: {
+      header: ['; {programName}'],
+      footer: [],
+      commentPrefix: ';',
+      commentSuffix: '',
+      lineNumbers: false,
+      lineNumberIncrement: 10,
+    },
+    workCoordinates: { selectCommand: null },
+    motion: {
+      rapidCommand: 'G0',
+      linearCommand: 'G1',
+      cwArcCommand: 'G2',
+      ccwArcCommand: 'G3',
+      arcFormat: 'ij',
+      modalMotion: true,
+    },
+    feedSpeed: {
+      feedCommand: 'F',
+      rpmCommand: 'S',
+      spindleOnCW: 'M3',
+      spindleOnCCW: 'M4',
+      spindleOff: 'M5',
+      inlineWithMotion: true,
+      modalFeedSpeed: true,
+    },
+    toolChange: {
+      commands: ['M0 ; Tool change: {toolName}'],
+      stopSpindleFirst: true,
+      pauseAfterChange: false,
+      pauseCommand: 'M0',
+    },
+    cannedCycles: {
+      drillCommand: 'G81',
+      drillWithDwellCommand: 'G82',
+      peckDrillCommand: 'G83',
+      chipBreakDrillCommand: 'G73',
+      peckStepWord: 'Q',
+      retractMode: 'G98',
+      cancelCommand: 'G80',
+    },
+    coolant: null,
+    stop: { programEndCommand: 'M30' },
+  })
+}
+
+function grblDefinition(): MachineDefinition {
+  return validateMachineDefinition({
+    id: 'test-grbl',
+    name: 'TestGRBL',
+    description: 'Test GRBL controller (no canned cycles)',
+    builtin: false,
+    fileExtension: 'nc',
+    coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
+    numberFormat: {
+      decimalPlaces: { mm: 3, inch: 4 },
+      trailingZeros: false,
+      leadingZero: true,
+    },
+    units: { mmCommand: 'G21', inchCommand: 'G20' },
+    program: {
+      header: ['; {programName}'],
+      footer: [],
+      commentPrefix: ';',
+      commentSuffix: '',
+      lineNumbers: false,
+      lineNumberIncrement: 10,
+    },
+    workCoordinates: { selectCommand: null },
+    motion: {
+      rapidCommand: 'G0',
+      linearCommand: 'G1',
+      cwArcCommand: 'G2',
+      ccwArcCommand: 'G3',
+      arcFormat: 'ij',
+      modalMotion: true,
+    },
+    feedSpeed: {
+      feedCommand: 'F',
+      rpmCommand: 'S',
+      spindleOnCW: 'M3',
+      spindleOnCCW: 'M4',
+      spindleOff: 'M5',
+      inlineWithMotion: true,
+      modalFeedSpeed: true,
+    },
+    toolChange: {
+      commands: ['M0 ; Tool change: {toolName}'],
+      stopSpindleFirst: true,
+      pauseAfterChange: false,
+      pauseCommand: 'M0',
+    },
+    cannedCycles: null,
+    coolant: null,
+    stop: { programEndCommand: 'M30' },
+  })
+}
+
+function runDrillingFixture(
+  definition: MachineDefinition,
+  drillType: 'simple' | 'peck' | 'dwell' | 'chip_breaking',
+  overrides?: { peckDepth?: number; dwellTime?: number },
+): { gcode: string; warnings: string[] } {
+  const project = newProject('Canned Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '3 mm Drill', type: 'drill' as const, diameter: 3, defaultPlungeFeed: 150 }
+  project.tools = [toolRecord]
+
+  const circle: SketchFeature = {
+    id: 'c1',
+    name: 'Hole',
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: circleProfile(20, 20, 5),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -6,
+    visible: true,
+    locked: false,
+  }
+  project.features = [circle]
+
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Drill Op',
+    kind: 'drilling',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    drillType,
+    peckDepth: overrides?.peckDepth,
+    dwellTime: overrides?.dwellTime,
+  }
+
+  const toolpath = generateDrillingToolpath(project, operation)
+  if (!toolpath.drillCycles || toolpath.drillCycles.length === 0) {
+    throw new Error('Fixture error: drillCycles missing or empty')
+  }
+
+  const result = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(toolRecord, project),
+      toolpath,
+    }],
+    options: {
+      emitToolChanges: true,
+      emitCoolant: false,
+      programName: project.meta.name,
+    },
+  })
+  return { gcode: result.gcode, warnings: result.warnings }
+}
+
+function testCannedSimpleG81(): void {
+  console.log('Testing canned cycle G81 (simple)...')
+  const { gcode } = runDrillingFixture(cannedCycleDefinition(), 'simple')
+  assert(gcode.includes('G81'), 'G-code should contain G81 for simple drilling')
+  assert(gcode.includes('Z'), 'G-code should contain Z depth')
+  assert(gcode.includes('R'), 'G-code should contain R retract plane')
+  assert(gcode.includes('F'), 'G-code should contain feed rate')
+  assert(gcode.includes('G80'), 'G-code should contain G80 cancel')
+}
+
+function testCannedDwellG82(): void {
+  console.log('Testing canned cycle G82 (dwell)...')
+  const { gcode } = runDrillingFixture(cannedCycleDefinition(), 'dwell', { dwellTime: 1.5 })
+  assert(gcode.includes('G82'), 'G-code should contain G82 for dwell drilling')
+  assert(gcode.includes('P'), 'G-code should contain P dwell time')
+  assert(gcode.includes('G80'), 'G-code should contain G80 cancel')
+}
+
+function testCannedPeckG83(): void {
+  console.log('Testing canned cycle G83 (peck)...')
+  const { gcode } = runDrillingFixture(cannedCycleDefinition(), 'peck', { peckDepth: 2 })
+  assert(gcode.includes('G83'), 'G-code should contain G83 for peck drilling')
+  assert(gcode.includes('Q'), 'G-code should contain Q peck step')
+  assert(gcode.includes('G80'), 'G-code should contain G80 cancel')
+}
+
+function testCannedChipBreakingG73(): void {
+  console.log('Testing canned cycle G73 (chip breaking)...')
+  const { gcode } = runDrillingFixture(cannedCycleDefinition(), 'chip_breaking', { peckDepth: 2 })
+  assert(gcode.includes('G73'), 'G-code should contain G73 for chip breaking')
+  assert(gcode.includes('Q'), 'G-code should contain Q peck step')
+  assert(gcode.includes('G80'), 'G-code should contain G80 cancel')
+}
+
+function testRegressionGrblNoCannedCycles(): void {
+  console.log('Testing regression: GRBL (cannedCycles null) still expands to G0/G1...')
+  const { gcode } = runDrillingFixture(grblDefinition(), 'simple')
+  assert(!gcode.includes('G81'), 'GRBL G-code should NOT contain G81')
+  assert(!gcode.includes('G80'), 'GRBL G-code should NOT contain G80')
+  assert(gcode.includes('G0'), 'GRBL G-code should contain G0 rapid moves')
+  assert(gcode.includes('G1'), 'GRBL G-code should contain G1 linear moves')
+  assert(gcode.includes('M30'), 'GRBL G-code should contain program end')
+}
+
+function testLegacyCannedCycleDefaults(): void {
+  console.log('Testing legacy canned-cycle definition defaults (missing chipBreakDrillCommand + cancelCommand)...')
+  const legacyDef = {
+    id: 'test-legacy',
+    name: 'TestLegacy',
+    description: 'Legacy controller',
+    builtin: false,
+    fileExtension: 'nc',
+    coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
+    numberFormat: {
+      decimalPlaces: { mm: 3, inch: 4 },
+      trailingZeros: false,
+      leadingZero: true,
+    },
+    units: { mmCommand: 'G21', inchCommand: 'G20' },
+    program: {
+      header: ['; {programName}'],
+      footer: [],
+      commentPrefix: ';',
+      commentSuffix: '',
+      lineNumbers: false,
+      lineNumberIncrement: 10,
+    },
+    workCoordinates: { selectCommand: null },
+    motion: {
+      rapidCommand: 'G0',
+      linearCommand: 'G1',
+      cwArcCommand: 'G2',
+      ccwArcCommand: 'G3',
+      arcFormat: 'ij',
+      modalMotion: true,
+    },
+    feedSpeed: {
+      feedCommand: 'F',
+      rpmCommand: 'S',
+      spindleOnCW: 'M3',
+      spindleOnCCW: 'M4',
+      spindleOff: 'M5',
+      inlineWithMotion: true,
+      modalFeedSpeed: true,
+    },
+    toolChange: {
+      commands: ['M0 ; Tool change: {toolName}'],
+      stopSpindleFirst: true,
+      pauseAfterChange: false,
+      pauseCommand: 'M0',
+    },
+    cannedCycles: {
+      drillCommand: 'G81',
+      drillWithDwellCommand: 'G82',
+      peckDrillCommand: 'G83',
+      peckStepWord: 'Q',
+      retractMode: 'G98',
+    },
+    coolant: null,
+    stop: { programEndCommand: 'M30' },
+  }
+
+  let validated: MachineDefinition
+  try {
+    validated = validateMachineDefinition(legacyDef)
+  } catch (err) {
+    throw new Error(`Legacy definition should not throw: ${String(err)}`)
+  }
+  assert(validated.cannedCycles !== null, 'cannedCycles should not be null')
+  assert(validated.cannedCycles!.chipBreakDrillCommand === null, 'chipBreakDrillCommand should default to null')
+  assert(validated.cannedCycles!.cancelCommand === 'G80', 'cancelCommand should default to G80')
+}
+
+testCannedSimpleG81()
+testCannedDwellG82()
+testCannedPeckG83()
+testCannedChipBreakingG73()
+testRegressionGrblNoCannedCycles()
+testLegacyCannedCycleDefaults()
+
 console.log('gcode postprocessor tests passed')

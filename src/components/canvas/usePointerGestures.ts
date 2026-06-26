@@ -30,6 +30,7 @@ import type {
   TapeMeasureState,
 } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
+import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
@@ -121,6 +122,7 @@ export interface PointerGesturesCtx {
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
+  pendingClipboardPlacementRef: MutableRefObject<FeatureClipboardPayload | null>
   dimensionDeleteArmedRef: MutableRefObject<boolean>
   deleteHoverDimIdRef: MutableRefObject<string | null>
   pendingSketchExtensionRef: MutableRefObject<PendingSketchExtension | null>
@@ -185,6 +187,7 @@ export interface PointerGesturesCtx {
   setPendingTransformPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetRawPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
+  setClipboardPlacementPreviewPoint: (nextPoint: Point | null) => void
   setHoveredEditControl: (nextControl: SketchControlRef | null) => void
 
   // Props
@@ -268,6 +271,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingShapeActionRef,
     pendingConstraintRef,
     pendingDimensionRef,
+    pendingClipboardPlacementRef,
     dimensionDeleteArmedRef,
     deleteHoverDimIdRef,
     pendingMovePreviewPointRef,
@@ -313,6 +317,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setClipboardPlacementPreviewPoint,
     setHoveredEditControl,
     zoomWindowActive,
     onZoomWindowComplete,
@@ -328,6 +333,13 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
 
     if (event.pointerType === 'touch') {
       event.currentTarget.setPointerCapture(event.pointerId)
+    }
+
+    if (pendingClipboardPlacementRef.current) {
+      contextMenu.cancelLongPress()
+      setHoveredEditControl(null)
+      hoverFeature(null)
+      return
     }
 
     contextMenu.startLongPress(event)
@@ -478,6 +490,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
+    const pendingClipboardPlacement = pendingClipboardPlacementRef.current
     const viewState = viewStateRef.current
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
@@ -577,6 +590,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || !!pendingMove
         || !!pendingTransform
         || !!pendingOffset
+        || !!pendingClipboardPlacement
         || !!tapeMeasureRef.current
         || !!pendingDimensionRef.current
         || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
@@ -597,6 +611,18 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
           : null
         : snapped
     snap.updateActiveSnap(shouldPreviewSnap ? resolvedSnap : null)
+
+    if (pendingClipboardPlacement) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
+      hoverFeature(null)
+      setClipboardPlacementPreviewPoint(
+        snap.requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : snapped,
+      )
+      return
+    }
 
     if (pendingAdd) {
       sketchEditPreviewRef.current = null
@@ -996,6 +1022,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     setHoveredEditControl(null)
     setPendingOffsetPreviewPointRef(null)
     setPendingOffsetRawPreviewPointRef(null)
+    setClipboardPlacementPreviewPoint(null)
     hoverFeature(null)
     snap.updateActiveSnap(null)
     if (pendingAdd?.shape === 'polygon' || pendingAdd?.shape === 'spline' || pendingAdd?.shape === 'composite') {

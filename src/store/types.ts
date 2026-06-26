@@ -290,6 +290,8 @@ export interface ProjectStore {
   setSelectedMachineId: (id: string | null) => void
   addMachineDefinition: (definition: MachineDefinition) => void
   removeMachineDefinition: (id: string) => void
+  updateMachineDefinition: (id: string, definition: MachineDefinition) => void
+  duplicateMachineDefinition: (id: string) => void
   refreshMachineDefinitions: () => void
   loadProject: (p: Project) => void
   saveProject: () => string

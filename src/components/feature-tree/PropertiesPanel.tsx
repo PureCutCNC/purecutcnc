@@ -14,20 +14,19 @@
  * limitations under the License.
  */
 
-import { useCallback, useContext, useRef } from 'react'
+import { useCallback, useContext, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
-import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
-import { platform } from '../../platform'
+import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 
 interface DraftTextInputProps {
   value: string
@@ -168,8 +167,6 @@ export function PropertiesPanel() {
     setShowFeatureInfo,
     setProjectClearances,
     setSelectedMachineId,
-    addMachineDefinition,
-    removeMachineDefinition,
     refreshMachineDefinitions,
     setOrigin,
     startPlaceOrigin,
@@ -332,17 +329,9 @@ export function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
-  async function handleAddMachine() {
-    const content = await platform.pickJsonFile()
-    if (!content) return
-    try {
-      const parsed = JSON.parse(content)
-      const validated = validateMachineDefinition({ ...parsed, builtin: false })
-      addMachineDefinition(validated)
-    } catch (error) {
-      alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
+  const [showManager, setShowManager] = useState(false)
+
+  function renderContent() {
 
   function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void, disabled?: boolean) {
     return (
@@ -452,16 +441,20 @@ export function PropertiesPanel() {
               onChange={(value) => setSelectedMachineId(value || null)}
             />
           </label>
+          {selectedMachine ? (
+            <div className="properties-machine-status">
+              <span className={selectedMachine.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
+                {selectedMachine.builtin ? 'Built-in' : 'Custom'}
+              </span>
+              <span className="properties-machine-ext">.{selectedMachine.fileExtension}</span>
+              {selectedMachine.builtin ? (
+                <span className="properties-machine-hint">duplicate to edit</span>
+              ) : null}
+            </div>
+          ) : null}
           <div className="properties-actions">
-            <button type="button" onClick={handleAddMachine}>
-              Add machine
-            </button>
-            <button
-              type="button"
-              onClick={() => selectedMachine && removeMachineDefinition(selectedMachine.id)}
-              disabled={!selectedMachine || selectedMachine.builtin}
-            >
-              Remove machine
+            <button type="button" onClick={() => setShowManager(true)}>
+              Manage machines...
             </button>
           </div>
         </div>
@@ -1546,5 +1539,17 @@ export function PropertiesPanel() {
         </div>
       ) : null}
     </div>
+  )
+  } // closes renderContent
+
+  return (
+    <>
+      {renderContent()}
+      {showManager && (
+        <MachineDefinitionManagerDialog
+          onClose={() => setShowManager(false)}
+        />
+      )}
+    </>
   )
 }

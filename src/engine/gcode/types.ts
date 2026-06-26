@@ -90,8 +90,10 @@ export const MachineDefinitionSchema = z.object({
     drillCommand: z.string().nullable(),
     drillWithDwellCommand: z.string().nullable(),
     peckDrillCommand: z.string().nullable(),
+    chipBreakDrillCommand: z.string().nullable().default(null),
     peckStepWord: z.string(),
     retractMode: z.enum(['G98', 'G99']).nullable(),
+    cancelCommand: z.string().default('G80'),
   }).nullable(),
   coolant: z.object({
     floodOnCommand: z.string(),

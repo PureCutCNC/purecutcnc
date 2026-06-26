@@ -1171,6 +1171,16 @@
     overflow-y: auto;
   }
 
+  /* Machine editor needs room for its two-column layout (form + JSON/help). */
+  .dialog--machine-editor {
+    max-width: min(820px, 98vw);
+  }
+
+  /* Machine manager also needs room for list + detail columns. */
+  .dialog--machine-manager {
+    max-width: min(720px, 98vw);
+  }
+
   .dialog input,
   .dialog select,
   .dialog textarea {

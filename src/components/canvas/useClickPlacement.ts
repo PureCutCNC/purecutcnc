@@ -31,6 +31,7 @@ import type {
   TapeMeasureState,
 } from '../../store/types'
 import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeature } from '../../types/project'
+import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -114,6 +115,7 @@ export interface ClickPlacementCtx {
   pendingSketchExtensionRef: MutableRefObject<PendingSketchExtension | null>
   pendingSketchFilletRef: MutableRefObject<PendingSketchFillet | null>
   sketchEditPreviewRef: MutableRefObject<SketchEditPreviewPoint | null>
+  pendingClipboardPlacementRef: MutableRefObject<FeatureClipboardPayload | null>
   originPreviewPointRef: MutableRefObject<PendingPreviewPoint | null>
   tapeMeasureRef: MutableRefObject<TapeMeasureState | null>
   constraintLabelRectsRef: MutableRefObject<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>
@@ -149,8 +151,10 @@ export interface ClickPlacementCtx {
   setPendingTransformPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetRawPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
+  setClipboardPlacementPreviewPoint: (nextPoint: Point | null) => void
 
   tapeMeasureClick: (point: Point) => void
+  placeClipboardAt: (point: Point) => void
   cancelPendingDimension: () => void
   addDimensionAnnotation: (annotation: {
     type: DimensionAnnotation['type']
@@ -241,6 +245,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     pendingSketchExtensionRef,
     pendingSketchFilletRef,
     sketchEditPreviewRef,
+    pendingClipboardPlacementRef,
     originPreviewPointRef,
     tapeMeasureRef,
     constraintLabelRectsRef,
@@ -264,7 +269,9 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setClipboardPlacementPreviewPoint,
     tapeMeasureClick,
+    placeClipboardAt,
     cancelPendingDimension,
     addDimensionAnnotation,
     pendingDimensionPick,
@@ -431,6 +438,15 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         precisionOverride: null,
       })
       cancelPendingDimension()
+      return
+    }
+
+    if (pendingClipboardPlacementRef.current) {
+      if (!pickedPoint) {
+        return
+      }
+      placeClipboardAt(pickedPoint)
+      setClipboardPlacementPreviewPoint(null)
       return
     }
 
