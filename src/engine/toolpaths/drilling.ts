@@ -15,7 +15,7 @@
  */
 
 import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
-import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
   getOperationSafeZ,
@@ -306,7 +306,10 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     : Math.min(safeZ, highestTop + defaultRetractOffset)
 
   const moves: ToolpathMove[] = []
+  const drillCycles: DrillCycle[] = []
   let currentPosition: ToolpathPoint | null = null
+
+  const dwellTime = operation.dwellTime ?? 0
 
   for (const target of sortedTargets) {
     const topZ = target.span.top
@@ -328,6 +331,17 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
       drillType,
       peckDepth,
     )
+
+    drillCycles.push({
+      x: target.center.x,
+      y: target.center.y,
+      clearZ: safeZ,
+      retractZ,
+      bottomZ,
+      drillType,
+      peckDepth: operation.peckDepth ?? 0,
+      dwellTime,
+    })
   }
 
   return {
@@ -335,5 +349,6 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     moves,
     warnings,
     bounds: computeBounds(moves),
+    drillCycles,
   }
 }

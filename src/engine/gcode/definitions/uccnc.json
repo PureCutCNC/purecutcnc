@@ -74,8 +74,10 @@
     "drillCommand": "G81",
     "drillWithDwellCommand": "G82",
     "peckDrillCommand": "G83",
+    "chipBreakDrillCommand": "G73",
     "peckStepWord": "Q",
-    "retractMode": "G98"
+    "retractMode": "G98",
+    "cancelCommand": "G80"
   },
   "coolant": {
     "floodOnCommand": "M8",

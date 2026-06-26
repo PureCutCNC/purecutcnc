@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Operation, Point, Tool } from '../../types/project'
+import type { Operation, Point, Tool, DrillType } from '../../types/project'
 import type { Units } from '../../utils/units'
 
 export type ToolpathMoveKind = 'rapid' | 'plunge' | 'cut' | 'lead_in' | 'lead_out'
@@ -44,6 +44,17 @@ export interface ToolpathBounds {
   maxZ: number
 }
 
+export interface DrillCycle {
+  x: number
+  y: number
+  clearZ: number
+  retractZ: number
+  bottomZ: number
+  drillType: DrillType
+  peckDepth?: number
+  dwellTime?: number
+}
+
 export interface ToolpathResult {
   operationId: string
   moves: ToolpathMove[]
@@ -56,6 +67,11 @@ export interface ToolpathResult {
   /** True when the source operation has debugToolpath enabled. The 3D viewport
    *  renders extra diagnostic markers (source-tag symbols) when this is set. */
   debugToolpath?: boolean
+  /** Structured drill cycle data for canned-cycle G-code emission.
+   *  Present only for drilling operations. When non-empty and the active
+   *  machine definition supports the cycle, the post-processor emits
+   *  G81/G82/G83/G73 blocks instead of expanded G0/G1 moves. */
+  drillCycles?: DrillCycle[]
 }
 
 export interface PocketToolpathResult extends ToolpathResult {

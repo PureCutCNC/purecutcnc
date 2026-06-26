@@ -251,36 +251,170 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       }
     }
 
-    // Moves
-    toolpath.moves.forEach(move => {
-      moveCount++
-      const mPoint = projectToMachinePoint(move.to, project.origin, definition)
+    // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
+    let emittedCanned = false
 
-      const feed = (move.kind === 'plunge')
-        ? (operation.plungeFeed || tool.defaultPlungeFeed)
-        : (operation.feed || tool.defaultFeed)
+    if (
+      operation.kind === 'drilling'
+      && toolpath.drillCycles
+      && toolpath.drillCycles.length > 0
+      && definition.cannedCycles
+    ) {
+      const cycles = toolpath.drillCycles
+      const cannedDef = definition.cannedCycles
 
-      if (move.kind === 'rapid') {
-        const current = state.currentPosition
-        const hasXYChange =
-          current === null
-          || current.x !== mPoint.x
-          || current.y !== mPoint.y
-        const hasZChange =
-          current === null
-          || current.z !== mPoint.z
-
-        if (hasZChange) {
-          emitMotionLine(definition.motion.rapidCommand, { z: mPoint.z })
-        }
-        if (hasXYChange) {
-          emitMotionLine(definition.motion.rapidCommand, { x: mPoint.x, y: mPoint.y })
-        }
-        return
+      // Resolve the command word for the operation's drill type
+      const drillTypeCommandMap: Record<string, string | null> = {
+        simple: cannedDef.drillCommand,
+        dwell: cannedDef.drillWithDwellCommand,
+        peck: cannedDef.peckDrillCommand,
+        chip_breaking: cannedDef.chipBreakDrillCommand,
       }
+      const cycleDrillType = cycles[0].drillType
+      const cannedCmd = drillTypeCommandMap[cycleDrillType]
 
-      emitMotionLine(definition.motion.linearCommand, mPoint, feed)
-    })
+      if (cannedCmd) {
+        emittedCanned = true
+
+        const plungeFeed = operation.plungeFeed || tool.defaultPlungeFeed
+        const feedWord = definition.feedSpeed.feedCommand
+        let feedEmitted = false
+
+        // Rapid to first hole XY at clearZ so the controller has a defined initial plane
+        const firstCycle = cycles[0]
+        const firstMachineXY = projectToMachinePoint({ x: firstCycle.x, y: firstCycle.y, z: firstCycle.clearZ }, project.origin, definition)
+        if (state.currentPosition) {
+          const cp = state.currentPosition
+          if (cp.z !== firstMachineXY.z) {
+            emitMotionLine(definition.motion.rapidCommand, { z: firstMachineXY.z })
+          }
+          if (cp.x !== firstMachineXY.x || cp.y !== firstMachineXY.y) {
+            emitMotionLine(definition.motion.rapidCommand, { x: firstMachineXY.x, y: firstMachineXY.y })
+          }
+        } else {
+          emitMotionLine(definition.motion.rapidCommand, { x: firstMachineXY.x, y: firstMachineXY.y, z: firstMachineXY.z })
+        }
+
+        // Retract mode (G98 / G99), once before the first canned line
+        if (cannedDef.retractMode) {
+          emitLine(cannedDef.retractMode)
+        }
+
+        // Emit modal canned-cycle lines
+        let lastZ: string | null = null
+        let lastR: string | null = null
+        let lastQ: string | null = null
+        let lastP: string | null = null
+
+        for (const cycle of cycles) {
+          moveCount++
+
+          const segs: string[] = []
+
+          // Command word (modal — only when first or when motion state was reset)
+          if (state.motionCommand !== cannedCmd) {
+            segs.push(cannedCmd)
+            state.motionCommand = cannedCmd
+          }
+
+          // X / Y
+          const machineXY = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: 0 }, project.origin, definition)
+          segs.push(`X${formatGCodeNumber(machineXY.x, definition, outputUnits)}`)
+          segs.push(`Y${formatGCodeNumber(machineXY.y, definition, outputUnits)}`)
+
+          // Z (bottom)
+          const machineBottomZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.bottomZ }, project.origin, definition).z
+          const zStr = formatGCodeNumber(machineBottomZ, definition, outputUnits)
+          if (zStr !== lastZ) {
+            segs.push(`Z${zStr}`)
+            lastZ = zStr
+          }
+
+          // R (retract plane)
+          const machineRetractZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.retractZ }, project.origin, definition).z
+          const rStr = formatGCodeNumber(machineRetractZ, definition, outputUnits)
+          if (rStr !== lastR) {
+            segs.push(`R${rStr}`)
+            lastR = rStr
+          }
+
+          // Q (peck step) — only for peck / chip_breaking with positive peckDepth
+          if ((cycleDrillType === 'peck' || cycleDrillType === 'chip_breaking') && cycle.peckDepth && cycle.peckDepth > 0) {
+            const qStr = formatGCodeNumber(cycle.peckDepth, definition, outputUnits)
+            if (qStr !== lastQ) {
+              segs.push(`${cannedDef.peckStepWord}${qStr}`)
+              lastQ = qStr
+            }
+          }
+
+          // P (dwell time) — only for dwell type with positive dwellTime
+          if (cycleDrillType === 'dwell' && cycle.dwellTime && cycle.dwellTime > 0) {
+            const pStr = formatGCodeNumber(cycle.dwellTime, definition, outputUnits)
+            if (pStr !== lastP) {
+              segs.push(`P${pStr}`)
+              lastP = pStr
+            }
+          }
+
+          // F (plunge feed) — emit once, inline with motion
+          if (!feedEmitted) {
+            segs.push(`${feedWord}${formatGCodeNumber(plungeFeed, definition, outputUnits)}`)
+            state.feedRate = plungeFeed
+            feedEmitted = true
+          }
+
+          emitLine(segs.join(' '))
+        }
+
+        // Cancel canned cycle
+        emitLine(cannedDef.cancelCommand)
+
+        // Reset state: canned cancel breaks motion modality
+        state.motionCommand = null
+
+        // Track position as last hole's XY at clearZ (machine coords)
+        const lastCycle = cycles[cycles.length - 1]
+        const lastMachinePos = projectToMachinePoint({ x: lastCycle.x, y: lastCycle.y, z: lastCycle.clearZ }, project.origin, definition)
+        state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
+      } else {
+        // Command not available for this drill type — fall back to expanded moves
+        warnings.push(
+          `Operation "${operation.name}": ${cycleDrillType} canned cycle not supported by machine "${definition.name}"; emitting expanded moves.`,
+        )
+      }
+    }
+
+    if (!emittedCanned) {
+      toolpath.moves.forEach(move => {
+        moveCount++
+        const mPoint = projectToMachinePoint(move.to, project.origin, definition)
+
+        const feed = (move.kind === 'plunge')
+          ? (operation.plungeFeed || tool.defaultPlungeFeed)
+          : (operation.feed || tool.defaultFeed)
+
+        if (move.kind === 'rapid') {
+          const current = state.currentPosition
+          const hasXYChange =
+            current === null
+            || current.x !== mPoint.x
+            || current.y !== mPoint.y
+          const hasZChange =
+            current === null
+            || current.z !== mPoint.z
+
+          if (hasZChange) {
+            emitMotionLine(definition.motion.rapidCommand, { z: mPoint.z })
+          }
+          if (hasXYChange) {
+            emitMotionLine(definition.motion.rapidCommand, { x: mPoint.x, y: mPoint.y })
+          }
+          return
+        }
+
+        emitMotionLine(definition.motion.linearCommand, mPoint, feed)
+      })
+    }
 
     // Spindle off after last move of operation if tool change follows or it's the last op
     const nextOp = operations[opIndex + 1]

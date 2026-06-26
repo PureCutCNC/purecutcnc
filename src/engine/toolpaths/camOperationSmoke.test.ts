@@ -451,11 +451,11 @@ test('drilling chip_breaking: multiple plunges with small retracts', () => {
 })
 
 // ---------------------------------------------------------------------
-// NOTE: Canned cycles (G81/G82/G83/G73) are NOT currently emitted by the
-// postprocessor. The drill-type differentiation lives at the toolpath
-// generation level only. The postprocessor emits all moves as G0/G1.
-// The MachineDefinition.cannedCycles schema exists but is not wired into
-// runPostProcessor. This is a known deferred feature, not a regression.
+// NOTE: Canned cycles (G81/G82/G83/G73) are emitted by the postprocessor
+// when the active machine definition supports them AND the operation is
+// drilling. The smoke-test definition has cannedCycles:null, so these
+// tests exercise the expanded G0/G1 fallback path — that is correct and
+// expected. See postprocessor.test.ts for canned-cycle-specific tests.
 // ---------------------------------------------------------------------
 
 // =====================================================================
