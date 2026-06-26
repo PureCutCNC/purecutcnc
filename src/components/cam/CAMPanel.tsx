@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
@@ -603,6 +604,7 @@ export function CAMPanel({
     text: string
   } | null>(null)
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
+  const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
@@ -703,6 +705,18 @@ export function CAMPanel({
 
     void ensureBundledLibraryLoaded()
   }, [ensureBundledLibraryLoaded, libraryError, libraryLoading, libraryTools.length, mode])
+  // Close expanded section modal on Escape.
+  useEffect(() => {
+    if (!expandedCamSection) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setExpandedCamSection(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [expandedCamSection])
+
 
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
     () => {
@@ -1064,219 +1078,12 @@ export function CAMPanel({
     }
   }
 
-  return (
-    <div className="cam-panel">
-      {mode === 'operations' ? (
-        <div className="cam-operations-shell">
-          <PanelSplit className="cam-operations-layout" storageKey="operations" initialRatio={0.54} minFirst={160} minSecond={160}>
-            <section className="cam-section cam-section--tree">
-              <div className="cam-section-header">
-                <span>Operations</span>
-                <span className="feature-count">{project.operations.length}</span>
-              </div>
-              <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-toolbar cam-section-toolbar--end">
-                  <div className="cam-section-header-actions" ref={addOperationMenuRef}>
-                  <button
-                    className="tree-action-btn tree-action-btn--visibility"
-                    type="button"
-                    title="Show all toolpaths"
-                    aria-label="Show all toolpaths"
-                    disabled={project.operations.length === 0}
-                    onClick={() => setAllOperationToolpathVisibility(true)}
-                  >
-                    <Icon id="eye" />
-                  </button>
-                  <button
-                    className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
-                    type="button"
-                    title="Hide all toolpaths"
-                    aria-label="Hide all toolpaths"
-                    disabled={project.operations.length === 0}
-                    onClick={() => setAllOperationToolpathVisibility(false)}
-                  >
-                    <Icon id="eye-off" />
-                  </button>
-                  <button
-                    className="cam-header-action"
-                    type="button"
-                    onClick={onExport}
-                  >
-                    Export
-                  </button>
-                  <button
-                    className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
-                    type="button"
-                    title={selection.selectedFeatureIds.length === 0 ? 'Select geometry first, then choose an operation type' : undefined}
-                    aria-expanded={showAddOperationMenu}
-                    aria-haspopup="dialog"
-                    onClick={() => {
-                      setSelectedNewOperationKind(null)
-                      setShowAddOperationMenu((value) => !value)
-                    }}
-                  >
-                    Add
-                  </button>
-                    {showAddOperationMenu ? (
-                      <OperationAddMenu
-                        operationButtons={operationButtons}
-                        selectedNewOperationKind={selectedNewOperationKind}
-                        selectedNewOperationHint={selectedNewOperationHint}
-                        operationSupportsPass={operationSupportsPassSelection}
-                        onChooseOperation={handleChooseOperationForAdd}
-                        onAddOperation={handleAddOperation}
-                        onHighlightOperation={onOperationHighlightChange}
-                        onSelectFeatures={selectFeatures}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-                <div className="cam-section-body">
-                {project.operations.length === 0 ? (
-                  <div className="panel-empty">
-                    Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
-                    Outside route requires add features. Surface clean accepts add features.
-                  </div>
-                ) : (
-                  <div className="feature-tree-panel cam-operation-tree">
-                    <div className="tree-root-label">CAM</div>
-                    <div className="tree-list">
-                      {project.operations.map((operation) => (
-                        <div
-                          key={operation.id}
-                          className={[
-                            'tree-row',
-                            'tree-row--feature',
-                            operation.id === selectedOperationId ? 'tree-row--selected' : '',
-                            dragOperationId === operation.id ? 'tree-row--dragging' : '',
-                          ].join(' ')}
-                          onClick={() => handleSelectOperation(operation.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              handleSelectOperation(operation.id)
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                          draggable
-                          onDragStart={() => handleOperationDragStart(operation.id)}
-                          onDragEnd={() => setDragOperationId(null)}
-                          onDragOver={(event) => handleOperationDragOver(event, operation.id)}
-                          onDrop={handleOperationDrop}
-                        >
-                          <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
-                          {tabletShell && project.operations.length > 1 ? (
-                            <button
-                              className="tree-action-btn tree-drag-grip"
-                              type="button"
-                              title="Drag to reorder"
-                              aria-label="Drag to reorder"
-                              onPointerDown={(e) => {
-                                if (e.pointerType !== 'touch') return
-                                e.preventDefault()
-                                e.stopPropagation()
-                                e.currentTarget.setPointerCapture(e.pointerId)
-                                gripDragRef.current = { operationId: operation.id, lastSwapY: e.clientY, pointerId: e.pointerId }
-                              }}
-                              onPointerMove={(e) => {
-                                const state = gripDragRef.current
-                                if (!state || state.pointerId !== e.pointerId) return
-                                e.preventDefault()
-                                const delta = e.clientY - state.lastSwapY
-                                const threshold = 36
-                                if (delta > threshold) {
-                                  handleMoveOperation(state.operationId, 1)
-                                  state.lastSwapY = e.clientY
-                                } else if (delta < -threshold) {
-                                  handleMoveOperation(state.operationId, -1)
-                                  state.lastSwapY = e.clientY
-                                }
-                              }}
-                              onPointerUp={(e) => {
-                                gripDragRef.current = null
-                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                                  e.currentTarget.releasePointerCapture(e.pointerId)
-                                }
-                              }}
-                              onPointerCancel={(e) => {
-                                gripDragRef.current = null
-                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                                  e.currentTarget.releasePointerCapture(e.pointerId)
-                                }
-                              }}
-                            >
-                              <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
-                                <circle cx="5" cy="3.5" r="1.2" fill="currentColor" /><circle cx="9" cy="3.5" r="1.2" fill="currentColor" />
-                                <circle cx="5" cy="7" r="1.2" fill="currentColor" /><circle cx="9" cy="7" r="1.2" fill="currentColor" />
-                                <circle cx="5" cy="10.5" r="1.2" fill="currentColor" /><circle cx="9" cy="10.5" r="1.2" fill="currentColor" />
-                              </svg>
-                            </button>
-                          ) : null}
-                          <span className="tree-label">
-                            {operation.name}
-                          </span>
-                          <span className="tree-row-actions">
-                            {generatingOperationIds?.has(operation.id) ? (
-                              <span className="cam-operation-badge cam-operation-badge--generating">
-                                <span className="cam-generating-spinner" />
-                              </span>
-                            ) : null}
-                            <button
-                              className="tree-action-btn"
-                              type="button"
-                              title={operation.showToolpath ? 'Hide toolpath' : 'Show toolpath'}
-                              aria-label={`${operation.showToolpath ? 'Hide' : 'Show'} toolpath for ${operation.name}`}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                updateOperation(operation.id, { showToolpath: !operation.showToolpath })
-                              }}
-                            >
-                              <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
-                            </button>
-                            {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
-                            <button
-                              className="tree-action-btn"
-                              type="button"
-                              title="Duplicate operation"
-                              aria-label="Duplicate operation"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handleDuplicateOperation(operation.id)
-                              }}
-                            >
-                              <Icon id="copy" size={14} />
-                            </button>
-                            <button
-                              className="tree-action-btn tree-action-btn--delete"
-                              type="button"
-                              title="Delete operation"
-                              aria-label="Delete operation"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handleDeleteOperation(operation.id)
-                              }}
-                            >
-                              <Icon id="trash" />
-                            </button>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                </div>
-              </div>
-            </section>
-
-            <section className="cam-section cam-section--properties">
-              <div className="cam-section-header">
-                <span>Properties</span>
-              </div>
-              <div className="cam-section-content cam-section-content--stack">
-                <div className="cam-section-body">
-                {selectedOperation ? (
-                  <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
+  function renderOperationProperties() {
+    if (!selectedOperation) {
+      return <div className="panel-empty">Select an operation to edit its parameters.</div>
+    }
+    return (
+      <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
                     <div className="properties-group">
                   <label className="properties-field">
                     <span>Name</span>
@@ -1773,10 +1580,367 @@ export function CAMPanel({
                   ) : null}
                   </DisclosureSection>
                     </div>
+      </div>
+    )
+  }
+
+  function renderToolProperties() {
+    if (!selectedTool) {
+      return <div className="panel-empty">Select a tool to edit its properties.</div>
+    }
+    return (
+      <div key={selectedTool.id} className="properties-panel cam-tool-properties">
+                      <div className="properties-group">
+                      <label className="properties-field">
+                        <span>Name</span>
+                        <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
+                      </label>
+                      <label className="properties-field">
+                        <span>Type</span>
+                        <Select
+                          value={selectedTool.type}
+                          options={[
+                            { value: 'flat_endmill', label: 'Flat Endmill' },
+                            { value: 'ball_endmill', label: 'Ball Endmill' },
+                            { value: 'v_bit', label: 'V-Bit' },
+                            { value: 'drill', label: 'Drill' },
+                          ]}
+                          onChange={(nextType) => updateTool(selectedTool.id, {
+                            type: nextType,
+                            vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
+                          })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Units</span>
+                        <Select
+                          value={selectedTool.units}
+                          options={[
+                            { value: 'mm', label: 'Millimeters' },
+                            { value: 'inch', label: 'Inches' },
+                          ]}
+                          onChange={(value) => updateTool(selectedTool.id, convertToolUnits(selectedTool, value))}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Diameter</span>
+                        <DraftLengthInput
+                          value={selectedTool.diameter}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
+                        />
+                      </label>
+                      {selectedTool.type === 'v_bit' ? (
+                        <label className="properties-field">
+                          <span>V Angle</span>
+                          <DraftNumberInput
+                            value={selectedTool.vBitAngle ?? 60}
+                            min={1}
+                            max={179}
+                            onCommit={(value) => updateTool(selectedTool.id, { vBitAngle: value })}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="properties-field">
+                        <span>Flutes</span>
+                        <DraftNumberInput
+                          value={selectedTool.flutes}
+                          min={1}
+                          max={12}
+                          onCommit={(value) => updateTool(selectedTool.id, { flutes: Math.round(value) })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Material</span>
+                        <Select
+                          value={selectedTool.material}
+                          options={[
+                            { value: 'carbide', label: 'Carbide' },
+                            { value: 'hss', label: 'HSS' },
+                          ]}
+                          onChange={(value) => updateTool(selectedTool.id, { material: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Default RPM</span>
+                        <DraftNumberInput
+                          value={selectedTool.defaultRpm}
+                          min={1}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultRpm: Math.round(value) })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Default Feed</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultFeed}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultFeed: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Plunge Feed</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultPlungeFeed}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultPlungeFeed: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Stepdown</span>
+                        <DraftLengthInput
+                          value={selectedTool.defaultStepdown}
+                          units={selectedTool.units}
+                          min={0.0001}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepdown: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Max Cut Depth</span>
+                        <DraftLengthInput
+                          value={selectedTool.maxCutDepth}
+                          units={selectedTool.units}
+                          min={0}
+                          onCommit={(value) => updateTool(selectedTool.id, { maxCutDepth: value })}
+                        />
+                      </label>
+                      <label className="properties-field">
+                        <span>Stepover Ratio</span>
+                        <DraftNumberInput
+                          value={selectedTool.defaultStepover}
+                          min={0.01}
+                          max={1}
+                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
+                        />
+                      </label>
+                      </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="cam-panel">
+      {mode === 'operations' ? (
+        <div className="cam-operations-shell">
+          <PanelSplit className="cam-operations-layout" storageKey="operations" initialRatio={0.54} minFirst={160} minSecond={160}>
+            <section className="cam-section cam-section--tree">
+              <div className="cam-section-header">
+                <span>Operations</span>
+                <span className="feature-count">{project.operations.length}</span>
+              </div>
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-toolbar cam-section-toolbar--end">
+                  <div className="cam-section-header-actions" ref={addOperationMenuRef}>
+                  <button
+                    className="tree-action-btn tree-action-btn--visibility"
+                    type="button"
+                    title="Show all toolpaths"
+                    aria-label="Show all toolpaths"
+                    disabled={project.operations.length === 0}
+                    onClick={() => setAllOperationToolpathVisibility(true)}
+                  >
+                    <Icon id="eye" />
+                  </button>
+                  <button
+                    className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
+                    type="button"
+                    title="Hide all toolpaths"
+                    aria-label="Hide all toolpaths"
+                    disabled={project.operations.length === 0}
+                    onClick={() => setAllOperationToolpathVisibility(false)}
+                  >
+                    <Icon id="eye-off" />
+                  </button>
+                  <button
+                    className="cam-header-action"
+                    type="button"
+                    onClick={onExport}
+                  >
+                    Export
+                  </button>
+                  <button
+                    className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
+                    type="button"
+                    title={selection.selectedFeatureIds.length === 0 ? 'Select geometry first, then choose an operation type' : undefined}
+                    aria-expanded={showAddOperationMenu}
+                    aria-haspopup="dialog"
+                    onClick={() => {
+                      setSelectedNewOperationKind(null)
+                      setShowAddOperationMenu((value) => !value)
+                    }}
+                  >
+                    Add
+                  </button>
+                    {showAddOperationMenu ? (
+                      <OperationAddMenu
+                        operationButtons={operationButtons}
+                        selectedNewOperationKind={selectedNewOperationKind}
+                        selectedNewOperationHint={selectedNewOperationHint}
+                        operationSupportsPass={operationSupportsPassSelection}
+                        onChooseOperation={handleChooseOperationForAdd}
+                        onAddOperation={handleAddOperation}
+                        onHighlightOperation={onOperationHighlightChange}
+                        onSelectFeatures={selectFeatures}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div className="cam-section-body">
+                {project.operations.length === 0 ? (
+                  <div className="panel-empty">
+                    Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
+                    Outside route requires add features. Surface clean accepts add features.
                   </div>
                 ) : (
-                  <div className="panel-empty">Select an operation to edit its parameters.</div>
+                  <div className="feature-tree-panel cam-operation-tree">
+                    <div className="tree-root-label">CAM</div>
+                    <div className="tree-list">
+                      {project.operations.map((operation) => (
+                        <div
+                          key={operation.id}
+                          className={[
+                            'tree-row',
+                            'tree-row--feature',
+                            operation.id === selectedOperationId ? 'tree-row--selected' : '',
+                            dragOperationId === operation.id ? 'tree-row--dragging' : '',
+                          ].join(' ')}
+                          onClick={() => handleSelectOperation(operation.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              handleSelectOperation(operation.id)
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          onDragStart={() => handleOperationDragStart(operation.id)}
+                          onDragEnd={() => setDragOperationId(null)}
+                          onDragOver={(event) => handleOperationDragOver(event, operation.id)}
+                          onDrop={handleOperationDrop}
+                        >
+                          <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
+                          {tabletShell && project.operations.length > 1 ? (
+                            <button
+                              className="tree-action-btn tree-drag-grip"
+                              type="button"
+                              title="Drag to reorder"
+                              aria-label="Drag to reorder"
+                              onPointerDown={(e) => {
+                                if (e.pointerType !== 'touch') return
+                                e.preventDefault()
+                                e.stopPropagation()
+                                e.currentTarget.setPointerCapture(e.pointerId)
+                                gripDragRef.current = { operationId: operation.id, lastSwapY: e.clientY, pointerId: e.pointerId }
+                              }}
+                              onPointerMove={(e) => {
+                                const state = gripDragRef.current
+                                if (!state || state.pointerId !== e.pointerId) return
+                                e.preventDefault()
+                                const delta = e.clientY - state.lastSwapY
+                                const threshold = 36
+                                if (delta > threshold) {
+                                  handleMoveOperation(state.operationId, 1)
+                                  state.lastSwapY = e.clientY
+                                } else if (delta < -threshold) {
+                                  handleMoveOperation(state.operationId, -1)
+                                  state.lastSwapY = e.clientY
+                                }
+                              }}
+                              onPointerUp={(e) => {
+                                gripDragRef.current = null
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId)
+                                }
+                              }}
+                              onPointerCancel={(e) => {
+                                gripDragRef.current = null
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId)
+                                }
+                              }}
+                            >
+                              <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+                                <circle cx="5" cy="3.5" r="1.2" fill="currentColor" /><circle cx="9" cy="3.5" r="1.2" fill="currentColor" />
+                                <circle cx="5" cy="7" r="1.2" fill="currentColor" /><circle cx="9" cy="7" r="1.2" fill="currentColor" />
+                                <circle cx="5" cy="10.5" r="1.2" fill="currentColor" /><circle cx="9" cy="10.5" r="1.2" fill="currentColor" />
+                              </svg>
+                            </button>
+                          ) : null}
+                          <span className="tree-label">
+                            {operation.name}
+                          </span>
+                          <span className="tree-row-actions">
+                            {generatingOperationIds?.has(operation.id) ? (
+                              <span className="cam-operation-badge cam-operation-badge--generating">
+                                <span className="cam-generating-spinner" />
+                              </span>
+                            ) : null}
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title={operation.showToolpath ? 'Hide toolpath' : 'Show toolpath'}
+                              aria-label={`${operation.showToolpath ? 'Hide' : 'Show'} toolpath for ${operation.name}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                updateOperation(operation.id, { showToolpath: !operation.showToolpath })
+                              }}
+                            >
+                              <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
+                            </button>
+                            {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title="Duplicate operation"
+                              aria-label="Duplicate operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDuplicateOperation(operation.id)
+                              }}
+                            >
+                              <Icon id="copy" size={14} />
+                            </button>
+                            <button
+                              className="tree-action-btn tree-action-btn--delete"
+                              type="button"
+                              title="Delete operation"
+                              aria-label="Delete operation"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDeleteOperation(operation.id)
+                              }}
+                            >
+                              <Icon id="trash" />
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
+                </div>
+              </div>
+            </section>
+
+            <section className="cam-section cam-section--properties">
+              <div className="cam-section-header">
+                <span>Properties</span>
+                <button
+                  className="tree-action-btn"
+                  type="button"
+                  title="Expand operation properties"
+                  aria-label="Expand operation properties"
+                  onClick={() => setExpandedCamSection('operation')}
+                >
+                  <Icon id="expand" />
+                </button>
+              </div>
+              <div className="cam-section-content cam-section-content--stack">
+                <div className="cam-section-body">
+                {renderOperationProperties()}
                 </div>
               </div>
             </section>
@@ -1923,147 +2087,48 @@ export function CAMPanel({
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
                 <span>Properties</span>
+                <button
+                  className="tree-action-btn"
+                  type="button"
+                  title="Expand tool properties"
+                  aria-label="Expand tool properties"
+                  onClick={() => setExpandedCamSection('tool')}
+                >
+                  <Icon id="expand" />
+                </button>
               </div>
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-body">
-                  {selectedTool ? (
-                    <div key={selectedTool.id} className="properties-panel cam-tool-properties">
-                      <div className="properties-group">
-                      <label className="properties-field">
-                        <span>Name</span>
-                        <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
-                      </label>
-                      <label className="properties-field">
-                        <span>Type</span>
-                        <Select
-                          value={selectedTool.type}
-                          options={[
-                            { value: 'flat_endmill', label: 'Flat Endmill' },
-                            { value: 'ball_endmill', label: 'Ball Endmill' },
-                            { value: 'v_bit', label: 'V-Bit' },
-                            { value: 'drill', label: 'Drill' },
-                          ]}
-                          onChange={(nextType) => updateTool(selectedTool.id, {
-                            type: nextType,
-                            vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
-                          })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Units</span>
-                        <Select
-                          value={selectedTool.units}
-                          options={[
-                            { value: 'mm', label: 'Millimeters' },
-                            { value: 'inch', label: 'Inches' },
-                          ]}
-                          onChange={(value) => updateTool(selectedTool.id, convertToolUnits(selectedTool, value))}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Diameter</span>
-                        <DraftLengthInput
-                          value={selectedTool.diameter}
-                          units={selectedTool.units}
-                          min={0.0001}
-                          onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
-                        />
-                      </label>
-                      {selectedTool.type === 'v_bit' ? (
-                        <label className="properties-field">
-                          <span>V Angle</span>
-                          <DraftNumberInput
-                            value={selectedTool.vBitAngle ?? 60}
-                            min={1}
-                            max={179}
-                            onCommit={(value) => updateTool(selectedTool.id, { vBitAngle: value })}
-                          />
-                        </label>
-                      ) : null}
-                      <label className="properties-field">
-                        <span>Flutes</span>
-                        <DraftNumberInput
-                          value={selectedTool.flutes}
-                          min={1}
-                          max={12}
-                          onCommit={(value) => updateTool(selectedTool.id, { flutes: Math.round(value) })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Material</span>
-                        <Select
-                          value={selectedTool.material}
-                          options={[
-                            { value: 'carbide', label: 'Carbide' },
-                            { value: 'hss', label: 'HSS' },
-                          ]}
-                          onChange={(value) => updateTool(selectedTool.id, { material: value })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Default RPM</span>
-                        <DraftNumberInput
-                          value={selectedTool.defaultRpm}
-                          min={1}
-                          onCommit={(value) => updateTool(selectedTool.id, { defaultRpm: Math.round(value) })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Default Feed</span>
-                        <DraftLengthInput
-                          value={selectedTool.defaultFeed}
-                          units={selectedTool.units}
-                          min={0.0001}
-                          onCommit={(value) => updateTool(selectedTool.id, { defaultFeed: value })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Plunge Feed</span>
-                        <DraftLengthInput
-                          value={selectedTool.defaultPlungeFeed}
-                          units={selectedTool.units}
-                          min={0.0001}
-                          onCommit={(value) => updateTool(selectedTool.id, { defaultPlungeFeed: value })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Stepdown</span>
-                        <DraftLengthInput
-                          value={selectedTool.defaultStepdown}
-                          units={selectedTool.units}
-                          min={0.0001}
-                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepdown: value })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Max Cut Depth</span>
-                        <DraftLengthInput
-                          value={selectedTool.maxCutDepth}
-                          units={selectedTool.units}
-                          min={0}
-                          onCommit={(value) => updateTool(selectedTool.id, { maxCutDepth: value })}
-                        />
-                      </label>
-                      <label className="properties-field">
-                        <span>Stepover Ratio</span>
-                        <DraftNumberInput
-                          value={selectedTool.defaultStepover}
-                          min={0.01}
-                          max={1}
-                          onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
-                        />
-                      </label>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="panel-empty">Select a tool to edit its properties.</div>
-                  )}
+                  {renderToolProperties()}
                 </div>
               </div>
             </section>
           </PanelSplit>
         </div>
       )}
+      {/* ── Expanded CAM section modal (portalled to body to escape
+           tablet-drawer transform containing block) ── */}
+      {expandedCamSection && createPortal(
+        <div className="dialog-backdrop" onClick={() => setExpandedCamSection(null)}>
+          <div className="dialog dialog--panel-expand" onClick={(event) => event.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 className="dialog-title">
+                {expandedCamSection === 'operation' ? 'Operation Properties' : 'Tool Properties'}
+              </h2>
+              <button className="dialog-close" onClick={() => setExpandedCamSection(null)} aria-label="Close" type="button">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="dialog-body dialog-body--panel-expand">
+              {expandedCamSection === 'operation' ? renderOperationProperties() : renderToolProperties()}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
     </div>
   )
 }

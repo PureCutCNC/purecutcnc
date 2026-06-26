@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useRef } from 'react'
+import { useCallback, useContext, useRef } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
+import { ExpandedPanelContext } from '../layout/AppShell'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
@@ -199,6 +200,11 @@ export function PropertiesPanel() {
     makeUnique,
   } = useProjectStore()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
+  const expandedPanelCtx = useContext(ExpandedPanelContext)
+  const closeExpanded = useCallback(
+    () => expandedPanelCtx?.closeExpandedPanel(),
+    [expandedPanelCtx],
+  )
 
   const selectedFeatureIds = selection.selectedFeatureIds
   const selectedFeatureId = selectedFeatureIds.length === 1 ? selectedFeatureIds[0] : null
@@ -581,14 +587,14 @@ export function PropertiesPanel() {
               <button
                 className="feature-context-menu__item"
                 type="button"
-                onClick={() => enterStockSketchEdit(sourceFeature.id)}
+                onClick={() => { enterStockSketchEdit(sourceFeature.id); closeExpanded() }}
               >
                 Edit Sketch
               </button>
               <button
                 className="feature-context-menu__item"
                 type="button"
-                onClick={() => setStockSourceFeature(null)}
+                onClick={() => { setStockSourceFeature(null); closeExpanded() }}
               >
                 Reset to Rectangle
               </button>
@@ -720,7 +726,7 @@ export function PropertiesPanel() {
         </div>
 
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => startPlaceOrigin()}>
+          <button className="feat-btn" type="button" onClick={() => { startPlaceOrigin(); closeExpanded() }}>
             Place Origin
           </button>
         </div>
@@ -841,16 +847,16 @@ export function PropertiesPanel() {
           <button className="feat-btn" type="button" onClick={() => backdropFileInputRef.current?.click()} disabled={backdropImageLoading}>
             {backdropImageLoading ? 'Loading Image...' : backdrop ? 'Replace Image' : 'Load Image'}
           </button>
-          <button className="feat-btn" type="button" onClick={() => startMoveBackdrop()} disabled={!backdrop || backdropImageLoading}>
+          <button className="feat-btn" type="button" onClick={() => { startMoveBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
             Move
           </button>
-          <button className="feat-btn" type="button" onClick={() => startResizeBackdrop()} disabled={!backdrop || backdropImageLoading}>
+          <button className="feat-btn" type="button" onClick={() => { startResizeBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
             Resize
           </button>
-          <button className="feat-btn" type="button" onClick={() => startRotateBackdrop()} disabled={!backdrop || backdropImageLoading}>
+          <button className="feat-btn" type="button" onClick={() => { startRotateBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
             Rotate
           </button>
-          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteBackdrop()} disabled={!backdrop || backdropImageLoading}>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
             Delete
           </button>
         </div>
@@ -890,7 +896,7 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => addFeatureFolder()}>
+          <button className="feat-btn" type="button" onClick={() => { addFeatureFolder(); closeExpanded() }}>
             Add Folder
           </button>
         </div>
@@ -912,7 +918,7 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => startAddClampPlacement()}>
+          <button className="feat-btn" type="button" onClick={() => { startAddClampPlacement(); closeExpanded() }}>
             Add Clamp
           </button>
         </div>
@@ -934,7 +940,7 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => startAddTabPlacement()}>
+          <button className="feat-btn" type="button" onClick={() => { startAddTabPlacement(); closeExpanded() }}>
             Add Tab
           </button>
         </div>
@@ -972,7 +978,7 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(selectedFolder.id)}>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeatureFolder(selectedFolder.id); closeExpanded() }}>
             Delete Folder
           </button>
         </div>
@@ -1024,10 +1030,10 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => enterClampEdit(selectedClamp.id)}>
+          <button className="feat-btn" type="button" onClick={() => { enterClampEdit(selectedClamp.id); closeExpanded() }}>
             Edit Sketch
           </button>
-          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteClamp(selectedClamp.id)}>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteClamp(selectedClamp.id); closeExpanded() }}>
             Delete Clamp
           </button>
         </div>
@@ -1079,10 +1085,10 @@ export function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => enterTabEdit(selectedTab.id)}>
+          <button className="feat-btn" type="button" onClick={() => { enterTabEdit(selectedTab.id); closeExpanded() }}>
             Edit Sketch
           </button>
-          <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteTab(selectedTab.id)}>
+          <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteTab(selectedTab.id); closeExpanded() }}>
             Delete Tab
           </button>
         </div>
@@ -1112,7 +1118,7 @@ export function PropertiesPanel() {
                   <button className="feat-btn" type="button" onClick={() => toggleFolderGrouped(groupFolder.id)}>
                     Ungroup
                   </button>
-                  <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatureFolder(groupFolder.id)}>
+                  <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeatureFolder(groupFolder.id); closeExpanded() }}>
                     Delete Group
                   </button>
                 </div>
@@ -1229,7 +1235,7 @@ export function PropertiesPanel() {
             <button className="feat-btn" type="button" disabled title="Edit Sketch is only available for a single feature">
               Edit Sketch
             </button>
-            <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeatures(selectedFeatureIds)}>
+            <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeatures(selectedFeatureIds); closeExpanded() }}>
               Delete Selected
             </button>
           </div>
@@ -1356,7 +1362,7 @@ export function PropertiesPanel() {
               <button
                 className="feat-btn"
                 type="button"
-                onClick={() => makeUnique(selectedFeature.id)}
+                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
               >
                 Make Unique
               </button>
@@ -1477,10 +1483,10 @@ export function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button className="feat-btn" type="button" onClick={() => enterSketchEdit(selectedFeature.id)} disabled={isTextFeature}>
+        <button className="feat-btn" type="button" onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }} disabled={isTextFeature}>
           Edit Sketch
         </button>
-        <button className="feat-btn feat-btn--delete" type="button" onClick={() => deleteFeature(selectedFeature.id)}>
+        <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           Delete Feature
         </button>
       </div>
@@ -1528,7 +1534,7 @@ export function PropertiesPanel() {
                   <button
                     type="button"
                     className="tree-action-btn properties-constraint-delete"
-                    onClick={() => deleteConstraint(selectedFeature.id, c.id)}
+                    onClick={() => { deleteConstraint(selectedFeature.id, c.id); closeExpanded() }}
                     title="Delete constraint"
                     aria-label="Delete constraint"
                   >
