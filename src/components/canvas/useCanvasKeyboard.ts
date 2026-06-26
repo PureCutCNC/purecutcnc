@@ -34,6 +34,7 @@ import type {
   TapeMeasureState,
 } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
+import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength } from '../../utils/units'
 import { buildArcSegmentFromThreePoints } from './draftHelpers'
 import { resolveOffsetPreview } from './draftGeometry'
@@ -77,6 +78,7 @@ export interface CanvasKeyboardCtx {
   viewStateRef: MutableRefObject<SketchViewState>
   tapeMeasureRef: MutableRefObject<TapeMeasureState | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
+  pendingClipboardPlacementRef: MutableRefObject<FeatureClipboardPayload | null>
   dimensionDeleteArmedRef: MutableRefObject<boolean>
   selectedAnnotationIdRef: MutableRefObject<string | null>
   pendingPreviewPointRef: MutableRefObject<PendingPreviewPoint | null>
@@ -100,6 +102,7 @@ export interface CanvasKeyboardCtx {
   clearTapeMeasure: () => void
   cancelPendingDimension: () => void
   setDimensionDeleteArmed: (armed: boolean) => void
+  cancelClipboardPlacement: () => void
   deleteDimensionAnnotation: (id: string) => void
   undoPendingPolygonPoint: () => void
   completePendingOpenPath: () => void
@@ -148,6 +151,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     viewStateRef,
     tapeMeasureRef,
     pendingDimensionRef,
+    pendingClipboardPlacementRef,
     dimensionDeleteArmedRef,
     selectedAnnotationIdRef,
     pendingPreviewPointRef,
@@ -169,6 +173,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     clearTapeMeasure,
     cancelPendingDimension,
     setDimensionDeleteArmed,
+    cancelClipboardPlacement,
     deleteDimensionAnnotation,
     undoPendingPolygonPoint,
     completePendingOpenPath,
@@ -225,6 +230,11 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     if (event.key === 'Escape' && dimensionDeleteArmedRef.current) {
       event.preventDefault()
       setDimensionDeleteArmed(false)
+      return
+    }
+    if (event.key === 'Escape' && pendingClipboardPlacementRef.current) {
+      event.preventDefault()
+      cancelClipboardPlacement()
       return
     }
     if ((event.key === 'Delete' || event.key === 'Backspace') && selectedAnnotationIdRef.current) {

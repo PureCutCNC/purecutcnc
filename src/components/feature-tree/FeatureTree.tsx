@@ -290,7 +290,11 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         kind="feature"
         depth={depth}
         isSelected={selection.selectedFeatureIds.includes(feature.id)}
-        isGroupSelected={selection.groupFolderId !== null && selection.selectedFeatureIds.includes(feature.id)}
+        isGroupSelected={
+          selection.groupFolderId != null &&
+          feature.folderId === selection.groupFolderId &&
+          selection.selectedFeatureIds.includes(feature.id)
+        }
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
         visible={feature.visible}
         operation={feature.operation}

@@ -19,7 +19,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
-- [platform/](platform/) — platform abstraction (web vs Tauri)
+- [platform/](platform/) — platform abstraction (web vs Tauri), desktop integration, and feature clipboard helpers
 - [styles/](styles/) — shared CSS (incl. `tablet.css` for touch UX)
 - [assets/](assets/) — editable per-icon SVG sources in `icons/` (see `icons/README.md`), fonts, etc.
 

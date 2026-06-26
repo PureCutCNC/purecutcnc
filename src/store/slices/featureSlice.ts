@@ -434,14 +434,16 @@ export function createFeatureSlice(
 
     addFeature: (feature) =>
       set((s) => {
-        const safeId = s.project.features.some((existing) => existing.id === feature.id)
+        const { _clonedDefinition: clonedDefinition, ...featureForInsert } =
+          feature as SketchFeature & { _clonedDefinition?: FeatureDefinition }
+        const safeId = s.project.features.some((existing) => existing.id === featureForInsert.id)
           ? nextUniqueGeneratedId(s.project, 'f')
-          : feature.id
-        const isFirstMachiningFeature = feature.operation !== 'region'
+          : featureForInsert.id
+        const isFirstMachiningFeature = featureForInsert.operation !== 'region'
           && !s.project.features.some((existing) => existing.operation !== 'region')
-        const preserveImportedModelOperation = isFirstMachiningFeature && isImportedModelFeature(feature)
+        const preserveImportedModelOperation = isFirstMachiningFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
-        let effectiveFolderId: string | null = feature.folderId ?? null
+        let effectiveFolderId: string | null = featureForInsert.folderId ?? null
         let insertAfterFeatureId: string | null = null
         if (selectedNode?.type === 'folder') {
           effectiveFolderId = selectedNode.folderId
@@ -454,15 +456,15 @@ export function createFeatureSlice(
           ? s.project.featureFolders.find((folder) => folder.id === effectiveFolderId) ?? null
           : null
         const effectiveFolderSection = effectiveFolder?.section ?? 'features'
-        if (feature.operation === 'region' && effectiveFolderSection !== 'regions') {
+        if (featureForInsert.operation === 'region' && effectiveFolderSection !== 'regions') {
           effectiveFolderId = null
         }
-        if (feature.operation !== 'region' && effectiveFolderSection === 'regions') {
+        if (featureForInsert.operation !== 'region' && effectiveFolderSection === 'regions') {
           effectiveFolderId = null
         }
         const safeFeatureBase: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
-          ? normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId, operation: 'add' })
-          : normalizeFeatureZRange({ ...feature, id: safeId, folderId: effectiveFolderId })
+          ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, operation: 'add' })
+          : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId })
         const nextModelAssets = { ...s.project.modelAssets }
         let safeFeature: SketchFeature = {
           ...safeFeatureBase,
@@ -473,7 +475,7 @@ export function createFeatureSlice(
         // (idempotent — snapshot results and migrated features already carry
         // an explicit definitionId and are left untouched).
         const featureHasExplicitDefId =
-          (feature as SketchFeature & { definitionId?: string }).definitionId !== undefined
+          (featureForInsert as SketchFeature & { definitionId?: string }).definitionId !== undefined
         let nextDefinitions = { ...s.project.featureDefinitions }
 
         if (!featureHasExplicitDefId) {
@@ -484,6 +486,8 @@ export function createFeatureSlice(
             transform: IDENTITY_MATRIX,
           } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
           nextDefinitions = { ...nextDefinitions, [minted.definitionId]: minted.definition }
+        } else if (clonedDefinition) {
+          nextDefinitions = { ...nextDefinitions, [clonedDefinition.id]: clonedDefinition }
         }
 
         let nextFeatures: SketchFeature[]
@@ -515,16 +519,24 @@ export function createFeatureSlice(
           featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
-        return {
+        const result = {
           project: nextProject,
           selection: {
             ...s.selection,
             selectedFeatureId: safeFeature.id,
             selectedFeatureIds: [safeFeature.id],
-            selectedNode: { type: 'feature', featureId: safeFeature.id },
-            mode: 'feature',
+            selectedNode: { type: 'feature' as const, featureId: safeFeature.id },
+            mode: 'feature' as const,
             activeControl: null,
           },
+        }
+
+        if (s.history.transactionStart) {
+          return result
+        }
+
+        return {
+          ...result,
           history: {
             past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],
