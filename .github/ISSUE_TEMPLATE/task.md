@@ -26,6 +26,8 @@ The strategy at a high level. Bullets are fine. Mention key data-model changes, 
 
 Keep this list honest — it's the agreement about scope.
 
+> Anchor references on **file + function/symbol names** (e.g. `updateHeightfieldTexture()` in `gpuMesh.ts`), not line numbers — line numbers go stale on the next refactor. A line number is fine as a parenthetical hint, never as the anchor.
+
 ## Tests
 
 What unit/integration tests will be added or updated. Engine work **must** have unit tests (see AGENTS.md).
