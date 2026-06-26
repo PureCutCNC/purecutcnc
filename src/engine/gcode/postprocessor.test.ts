@@ -447,10 +447,80 @@ function testRegressionGrblNoCannedCycles(): void {
   assert(gcode.includes('M30'), 'GRBL G-code should contain program end')
 }
 
+function testLegacyCannedCycleDefaults(): void {
+  console.log('Testing legacy canned-cycle definition defaults (missing chipBreakDrillCommand + cancelCommand)...')
+  const legacyDef = {
+    id: 'test-legacy',
+    name: 'TestLegacy',
+    description: 'Legacy controller',
+    builtin: false,
+    fileExtension: 'nc',
+    coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
+    numberFormat: {
+      decimalPlaces: { mm: 3, inch: 4 },
+      trailingZeros: false,
+      leadingZero: true,
+    },
+    units: { mmCommand: 'G21', inchCommand: 'G20' },
+    program: {
+      header: ['; {programName}'],
+      footer: [],
+      commentPrefix: ';',
+      commentSuffix: '',
+      lineNumbers: false,
+      lineNumberIncrement: 10,
+    },
+    workCoordinates: { selectCommand: null },
+    motion: {
+      rapidCommand: 'G0',
+      linearCommand: 'G1',
+      cwArcCommand: 'G2',
+      ccwArcCommand: 'G3',
+      arcFormat: 'ij',
+      modalMotion: true,
+    },
+    feedSpeed: {
+      feedCommand: 'F',
+      rpmCommand: 'S',
+      spindleOnCW: 'M3',
+      spindleOnCCW: 'M4',
+      spindleOff: 'M5',
+      inlineWithMotion: true,
+      modalFeedSpeed: true,
+    },
+    toolChange: {
+      commands: ['M0 ; Tool change: {toolName}'],
+      stopSpindleFirst: true,
+      pauseAfterChange: false,
+      pauseCommand: 'M0',
+    },
+    cannedCycles: {
+      drillCommand: 'G81',
+      drillWithDwellCommand: 'G82',
+      peckDrillCommand: 'G83',
+      peckStepWord: 'Q',
+      retractMode: 'G98',
+    },
+    coolant: null,
+    stop: { programEndCommand: 'M30' },
+  }
+
+  let validated: MachineDefinition
+  try {
+    validated = validateMachineDefinition(legacyDef)
+  } catch (err) {
+    throw new Error(`Legacy definition should not throw: ${String(err)}`)
+  }
+  assert(validated.cannedCycles !== null, 'cannedCycles should not be null')
+  assert(validated.cannedCycles!.chipBreakDrillCommand === null, 'chipBreakDrillCommand should default to null')
+  assert(validated.cannedCycles!.cancelCommand === 'G80', 'cancelCommand should default to G80')
+}
+
 testCannedSimpleG81()
 testCannedDwellG82()
 testCannedPeckG83()
 testCannedChipBreakingG73()
 testRegressionGrblNoCannedCycles()
+testLegacyCannedCycleDefaults()
 
 console.log('gcode postprocessor tests passed')
