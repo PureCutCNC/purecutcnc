@@ -1176,6 +1176,11 @@
     max-width: min(820px, 98vw);
   }
 
+  /* Machine manager also needs room for list + detail columns. */
+  .dialog--machine-manager {
+    max-width: min(720px, 98vw);
+  }
+
   .dialog input,
   .dialog select,
   .dialog textarea {

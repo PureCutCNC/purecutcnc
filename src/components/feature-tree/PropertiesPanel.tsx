@@ -20,14 +20,12 @@ import { Icon } from '../Icon'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
-import { validateMachineDefinition } from '../../engine/gcode'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
-import { platform } from '../../platform'
-import { MachineDefinitionEditorDialog } from '../machine/MachineDefinitionEditorDialog'
+import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 
 interface DraftTextInputProps {
   value: string
@@ -168,10 +166,6 @@ export function PropertiesPanel() {
     setShowFeatureInfo,
     setProjectClearances,
     setSelectedMachineId,
-    addMachineDefinition,
-    removeMachineDefinition,
-    updateMachineDefinition,
-    duplicateMachineDefinition,
     refreshMachineDefinitions,
     setOrigin,
     startPlaceOrigin,
@@ -329,46 +323,7 @@ export function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
-  async function handleAddMachine() {
-    const content = await platform.pickJsonFile()
-    if (!content) return
-    try {
-      const parsed = JSON.parse(content)
-      const validated = validateMachineDefinition({ ...parsed, builtin: false })
-      addMachineDefinition(validated)
-    } catch (error) {
-      alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
-  const [editingDefinition, setEditingDefinition] = useState<import('../../engine/gcode/types').MachineDefinition | null>(null)
-
-  function handleEditMachine() {
-    if (!selectedMachine) return
-    setEditingDefinition(selectedMachine)
-  }
-
-  function handleDuplicateMachine() {
-    if (!selectedMachine) return
-    duplicateMachineDefinition(selectedMachine.id)
-  }
-
-  function handleExportMachine() {
-    if (!selectedMachine) return
-    // Remove the builtin flag for export — it's a runtime-only marker.
-    const { builtin: _, ...exportDef } = selectedMachine as import('../../engine/gcode/types').MachineDefinition & { builtin?: boolean }
-    platform.saveTextFile(
-      `${selectedMachine.name}.json`,
-      JSON.stringify(exportDef, null, 2),
-      'json',
-    )
-  }
-
-  function handleEditorSave(definition: import('../../engine/gcode/types').MachineDefinition) {
-    if (!selectedMachine) return
-    updateMachineDefinition(selectedMachine.id, definition)
-    setEditingDefinition(null)
-  }
+  const [showManager, setShowManager] = useState(false)
 
   function renderContent() {
 
@@ -480,37 +435,20 @@ export function PropertiesPanel() {
               onChange={(value) => setSelectedMachineId(value || null)}
             />
           </label>
+          {selectedMachine ? (
+            <div className="properties-machine-status">
+              <span className={selectedMachine.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
+                {selectedMachine.builtin ? 'Built-in' : 'Custom'}
+              </span>
+              <span className="properties-machine-ext">.{selectedMachine.fileExtension}</span>
+              {selectedMachine.builtin ? (
+                <span className="properties-machine-hint">duplicate to edit</span>
+              ) : null}
+            </div>
+          ) : null}
           <div className="properties-actions">
-            <button type="button" onClick={handleAddMachine}>
-              Add machine
-            </button>
-            <button
-              type="button"
-              onClick={handleEditMachine}
-              disabled={!selectedMachine || selectedMachine.builtin}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={handleDuplicateMachine}
-              disabled={!selectedMachine}
-            >
-              Duplicate
-            </button>
-            <button
-              type="button"
-              onClick={handleExportMachine}
-              disabled={!selectedMachine}
-            >
-              Export
-            </button>
-            <button
-              type="button"
-              onClick={() => selectedMachine && removeMachineDefinition(selectedMachine.id)}
-              disabled={!selectedMachine || selectedMachine.builtin}
-            >
-              Remove machine
+            <button type="button" onClick={() => setShowManager(true)}>
+              Manage machines...
             </button>
           </div>
         </div>
@@ -1601,11 +1539,9 @@ export function PropertiesPanel() {
   return (
     <>
       {renderContent()}
-      {editingDefinition && (
-        <MachineDefinitionEditorDialog
-          definition={editingDefinition}
-          onSave={handleEditorSave}
-          onClose={() => setEditingDefinition(null)}
+      {showManager && (
+        <MachineDefinitionManagerDialog
+          onClose={() => setShowManager(false)}
         />
       )}
     </>
