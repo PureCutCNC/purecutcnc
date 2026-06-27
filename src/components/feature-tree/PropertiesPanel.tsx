@@ -195,6 +195,7 @@ export function PropertiesPanel() {
     enterClampEdit,
     deleteConstraint,
     makeUnique,
+    expandTextFeature,
   } = useProjectStore()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
   const expandedPanelCtx = useContext(ExpandedPanelContext)
@@ -330,6 +331,7 @@ export function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
+  const [removeOriginalOnExpand, setRemoveOriginalOnExpand] = useState(false)
 
   function renderContent() {
 
@@ -1343,6 +1345,34 @@ export function PropertiesPanel() {
                 />
               </label>
             </>
+          ) : null}
+          {isTextFeature ? (
+            <div className="properties-actions" style={{ marginTop: '12px', borderTop: '1px solid #ddd', paddingTop: '12px' }}>
+              <label className="properties-check" style={{ marginBottom: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={removeOriginalOnExpand}
+                  onChange={(e) => setRemoveOriginalOnExpand(e.target.checked)}
+                />
+                <span>Remove original after expansion</span>
+              </label>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => {
+                  expandTextFeature(selectedFeature.id, removeOriginalOnExpand)
+                  setRemoveOriginalOnExpand(false)
+                  closeExpanded()
+                }}
+              >
+                Expand Text to Features
+              </button>
+              <div className="properties-note" style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+                {textFeature?.style === 'outline'
+                  ? 'Note: Outline text may produce multiple rows per letter due to holes and secondary contours.'
+                  : 'Expands each glyph stroke into a separate feature organized by letter.'}
+              </div>
+            </div>
           ) : null}
           {selectedFeature.operation === 'region' ? (
             <div className="properties-region-note">

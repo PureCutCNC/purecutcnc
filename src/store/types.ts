@@ -357,6 +357,7 @@ export interface ProjectStore {
   mergeSelectedFeatures: (keepOriginals?: boolean) => string[]
   cutSelectedFeatures: (keepOriginals?: boolean) => string[]
   offsetSelectedFeatures: (distance: number) => string[]
+  expandTextFeature: (textFeatureId: string, removeOriginal?: boolean) => void
   reorderFeatures: (ids: string[]) => void
   alignFeatures: (ids: string[], alignment: FeatureAlignment) => void
   distributeFeatures: (ids: string[], distribution: FeatureDistribution) => void

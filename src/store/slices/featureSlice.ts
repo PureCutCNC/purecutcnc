@@ -60,6 +60,7 @@ import {
 } from '../helpers/derivedFeatures'
 import { createDefinitionForFeature, gcOrphanedDefinitions, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
+import { expandTextFeature } from '../helpers/textExpansion'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -106,6 +107,7 @@ export type FeatureSlice = Pick<
   | 'mergeSelectedFeatures'
   | 'cutSelectedFeatures'
   | 'offsetSelectedFeatures'
+  | 'expandTextFeature'
 >
 
 export function createFeatureSlice(
@@ -1212,6 +1214,118 @@ export function createFeatureSlice(
 
     addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
+    },
+
+    expandTextFeature: (textFeatureId, removeOriginal = false) => {
+      const state = get()
+      const textFeature = state.project.features.find((f) => f.id === textFeatureId)
+
+      if (!textFeature || !textFeature.text) {
+        return
+      }
+
+      const { folders, features } = expandTextFeature(state.project, textFeature)
+
+      if (features.length === 0) {
+        return
+      }
+
+      // Build feature definitions for all exploded features
+      const definitionsMap: Record<string, FeatureDefinition> = {}
+      for (const feature of features) {
+        const featureWithRefs = feature as SketchFeature & {
+          definitionId?: string
+          transform?: Matrix2D
+        }
+        if (featureWithRefs.definitionId) {
+          definitionsMap[featureWithRefs.definitionId] = {
+            id: featureWithRefs.definitionId,
+            kind: feature.kind,
+            profile: feature.sketch.profile,
+            text: null,
+            stl: null,
+            dimensions: [],
+            operation: feature.operation,
+          }
+        }
+      }
+
+      set((s) => {
+        // Add new folders
+        const nextFeatureFolders = [...s.project.featureFolders, ...folders]
+
+        // Add feature definitions to the project
+        const nextFeatureDefinitions = {
+          ...s.project.featureDefinitions,
+          ...definitionsMap,
+        }
+
+        // Find the position of the original text feature in the feature tree
+        const textFeatureTreeIndex = s.project.featureTree.findIndex(
+          (entry) => entry.type === 'feature' && entry.featureId === textFeatureId,
+        )
+
+        // Build new feature tree entries: insert folder entries right after the original text feature
+        const newTreeEntries: FeatureTreeEntry[] = folders.map((folder) => ({
+          type: 'folder' as const,
+          folderId: folder.id,
+        }))
+
+        let nextFeatureTree: FeatureTreeEntry[]
+        if (textFeatureTreeIndex >= 0) {
+          // Insert after the text feature (or remove it if removeOriginal is true)
+          if (removeOriginal) {
+            nextFeatureTree = [
+              ...s.project.featureTree.slice(0, textFeatureTreeIndex),
+              ...newTreeEntries,
+              ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
+            ]
+          } else {
+            nextFeatureTree = [
+              ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
+              ...newTreeEntries,
+              ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
+            ]
+          }
+        } else {
+          // Feature not in tree (shouldn't happen), just append
+          nextFeatureTree = [...s.project.featureTree, ...newTreeEntries]
+        }
+
+        // Add new features
+        let nextFeatures = [...s.project.features, ...features]
+
+        // Remove original text feature if requested
+        if (removeOriginal) {
+          nextFeatures = nextFeatures.filter((f) => f.id !== textFeatureId)
+        }
+
+        const nextProject = syncFeatureTreeProject({
+          ...s.project,
+          featureFolders: nextFeatureFolders,
+          featureDefinitions: nextFeatureDefinitions,
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        })
+
+        return {
+          project: nextProject,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedNode: null,
+            mode: 'feature',
+            activeControl: null,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      })
     },
   }
 }
