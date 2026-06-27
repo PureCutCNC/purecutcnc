@@ -15,7 +15,9 @@
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
+import type { Project } from '../../types/project'
 import { useProjectStore } from '../projectStore'
+import type { ProjectStore } from '../types'
 import {
   slugFromName,
   allocateMachineId,
@@ -114,7 +116,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
     tabs: [],
     clamps: [],
     ai_history: [],
-  } as any
+  } as unknown as Project
 }
 
 // ── slugFromName / allocateMachineId ───────────────────────────
@@ -145,7 +147,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   const defA = makeDef('alpha', 'Alpha')
   const defB = makeDef('beta', 'Beta')
   const project = makeMockProject([defA, defB], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   // Update name in place.
   const state = useProjectStore.getState()
@@ -163,9 +165,9 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // Rejects invalid definition (patch with bad motion.arcFormat)
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
-  const badDef = { ...defA, motion: { ...defA.motion, arcFormat: 'INVALID' } } as any
+  const badDef: MachineDefinition = { ...defA, motion: { ...defA.motion, arcFormat: 'INVALID' as unknown as MachineDefinition['motion']['arcFormat'] } }
   const state = useProjectStore.getState()
   // Should throw from Zod validation; the state should remain unchanged.
   let threw = false
@@ -184,7 +186,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // No-op on builtin definitions.
   const defA = makeDef('builtin-alpha', 'Builtin Alpha', true)
   const project = makeMockProject([defA], 'builtin-alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.updateMachineDefinition('builtin-alpha', { ...defA, name: 'Renamed Builtin' })
@@ -197,7 +199,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // No-op on non-existent id.
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.updateMachineDefinition('nonexistent', defA)
@@ -210,7 +212,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // Id change in patch is ignored (id locked).
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.updateMachineDefinition('alpha', { ...defA, id: 'hijacked' })
@@ -225,7 +227,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // Duplicate a custom definition.
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.duplicateMachineDefinition('alpha')
@@ -243,7 +245,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // Duplicate a bundled definition (should also work).
   const defA = makeDef('bundled', 'GRBL', true)
   const project = makeMockProject([defA], 'bundled')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.duplicateMachineDefinition('bundled')
@@ -261,7 +263,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // Duplicate twice yields distinct ids.
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.duplicateMachineDefinition('alpha')
@@ -279,7 +281,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // No-op on non-existent id.
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   state.duplicateMachineDefinition('nonexistent')
@@ -292,7 +294,7 @@ function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string |
   // History is pushed on duplicate.
   const defA = makeDef('alpha', 'Alpha')
   const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as any)
+  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
 
   const state = useProjectStore.getState()
   const pastLenBefore = state.history.past.length

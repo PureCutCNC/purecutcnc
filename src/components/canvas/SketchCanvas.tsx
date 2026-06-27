@@ -84,6 +84,7 @@ import {
 } from './hitTest'
 import { drawStlTopViewImage } from './stlTopViewRenderer'
 import { triggerDimensionEdit as triggerDimensionEditFn } from './triggerDimensionEdit'
+import { DepthLegend } from './DepthLegend'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import {
   HANDLE_HIT_RADIUS,
@@ -626,9 +627,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setClipboardPlacementPreviewPoint(null)
   })
 
-  function sameControl(a: SketchControlRef | null, b: SketchControlRef | null): boolean {
-    return a?.kind === b?.kind && a?.index === b?.index && a?.t === b?.t
-  }
+  function sameControl(a: SketchControlRef | null, b: SketchControlRef | null): boolean { return a?.kind === b?.kind && a?.index === b?.index && a?.t === b?.t }
 
   const setHoveredEditControl = useStableEvent((nextControl: SketchControlRef | null) => {
     if (sameControl(hoveredEditControlRef.current, nextControl)) {
@@ -639,15 +638,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     scheduleDraw()
   })
 
-  function clearTransientCanvasState() {
-    suppressClickRef.current = false
-    didPanRef.current = false
-    gestures.stopPan()
-    marqueeStartRef.current = null
-    marqueeCurrentRef.current = null
-    touchDragPendingRef.current = null
-    livePointerWorldRef.current = null
-  }
+  function clearTransientCanvasState() { suppressClickRef.current = false; didPanRef.current = false; gestures.stopPan(); marqueeStartRef.current = null; marqueeCurrentRef.current = null; touchDragPendingRef.current = null; livePointerWorldRef.current = null }
 
   const move = useMoveWorkflow({
     projectRef,
@@ -700,73 +691,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
-  function confirmCutCuttersFromTabletPanel() {
-    confirmCutCutters()
-    cutWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function completeCutFromTabletPanel() {
-    completePendingShapeAction()
-    cutWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelCutFromTabletPanel() {
-    cancelPendingShapeAction()
-    cutWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function completeJoinFromPanel() {
-    completePendingShapeAction()
-    joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelJoinFromPanel() {
-    cancelPendingShapeAction()
-    joinWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function applyEditFromPanel() {
-    gestures.stopNodeDrag()
-    resetLock()
-    applySketchEdit()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelEditFromPanel() {
-    gestures.stopNodeDrag()
-    resetLock()
-    cancelSketchEdit()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitEditDimensionFromPanel() {
-    dimEdit.commitEditDimension()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelEditDimensionFromPanel() {
-    dimEdit.cancelEditDimension()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function commitFilletFromPanel() {
-    fillet.commitFilletDimension()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
-  function cancelFilletFromPanel() {
-    fillet.cancelFilletDimension()
-    editWorkflowPanel.focusCanvasAfterAction()
-  }
-
+  function confirmCutCuttersFromTabletPanel() { confirmCutCutters(); cutWorkflowPanel.focusCanvasAfterAction() }
+  function completeCutFromTabletPanel() { completePendingShapeAction(); cutWorkflowPanel.focusCanvasAfterAction() }
+  function cancelCutFromTabletPanel() { cancelPendingShapeAction(); cutWorkflowPanel.focusCanvasAfterAction() }
+  function completeJoinFromPanel() { completePendingShapeAction(); joinWorkflowPanel.focusCanvasAfterAction() }
+  function cancelJoinFromPanel() { cancelPendingShapeAction(); joinWorkflowPanel.focusCanvasAfterAction() }
+  function applyEditFromPanel() { gestures.stopNodeDrag(); resetLock(); applySketchEdit(); editWorkflowPanel.focusCanvasAfterAction() }
+  function cancelEditFromPanel() { gestures.stopNodeDrag(); resetLock(); cancelSketchEdit(); editWorkflowPanel.focusCanvasAfterAction() }
+  function commitEditDimensionFromPanel() { dimEdit.commitEditDimension(); editWorkflowPanel.focusCanvasAfterAction() }
+  function cancelEditDimensionFromPanel() { dimEdit.cancelEditDimension(); editWorkflowPanel.focusCanvasAfterAction() }
+  function commitFilletFromPanel() { fillet.commitFilletDimension(); editWorkflowPanel.focusCanvasAfterAction() }
+  function cancelFilletFromPanel() { fillet.cancelFilletDimension(); editWorkflowPanel.focusCanvasAfterAction() }
   useEffect(() => {
-    function handleClipboardPlacement(event: Event) {
-      if (!(event instanceof CustomEvent)) {
-        return
-      }
-      beginClipboardPlacement(event.detail as FeatureClipboardPayload)
-    }
-
+    function handleClipboardPlacement(event: Event) { if (event instanceof CustomEvent) beginClipboardPlacement(event.detail as FeatureClipboardPayload) }
     window.addEventListener(FEATURE_CLIPBOARD_PLACEMENT_EVENT, handleClipboardPlacement)
     return () => window.removeEventListener(FEATURE_CLIPBOARD_PLACEMENT_EVENT, handleClipboardPlacement)
   }, [beginClipboardPlacement])
@@ -1842,27 +1779,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selection.mode !== 'sketch_edit' || (selection.sketchEditTool !== 'fillet' && selection.sketchEditTool !== 'chamfer')) {
       fillet.setFilletDimensionEdit(null)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilletDimensionEdit is a stable useState setter; the hook return object is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setter
   }, [selection.mode, selection.sketchEditTool])
-
-  useEffect(() => {
-    if (!pendingAdd && selection.mode !== 'sketch_edit') {
-      dimEdit.setDimensionEdit(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDimensionEdit is a stable useState setter; the hook return object is recreated each render
-  }, [pendingAdd, selection.mode])
-
-  useEffect(() => {
-    if (!pendingMove) setOperationDimEdit(null)
-  }, [pendingMove])
-
-  useEffect(() => {
-    if (!pendingTransform) setOperationDimEdit(null)
-  }, [pendingTransform])
-
-  useEffect(() => {
-    if (!pendingOffset) setOperationDimEdit(null)
-  }, [pendingOffset])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setter
+  useEffect(() => { if (!pendingAdd && selection.mode !== 'sketch_edit') dimEdit.setDimensionEdit(null) }, [pendingAdd, selection.mode])
+  useEffect(() => { if (!pendingMove && !pendingTransform && !pendingOffset) setOperationDimEdit(null) }, [pendingMove, pendingTransform, pendingOffset])
 
   const operationDimEditKind = operationDimEdit?.kind ?? null
   useEffect(() => {
@@ -1966,32 +1887,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     minZoom: MIN_SKETCH_ZOOM,
   })
 
-
   function editableFeature(): SketchFeature | null {
     const selection = selectionRef.current
     const project = projectRef.current
     if (selection.mode !== 'sketch_edit') return null
     if (selection.selectedFeatureIds.length !== 1) return null
     if (!selection.selectedFeatureId) return null
-    // Check features array first, then stock source feature
-    return (
-      project.features.find((feature) => feature.id === selection.selectedFeatureId) ??
-      (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature
-        ? project.stock.sourceFeature
-        : null)
-    )
+    return project.features.find((feature) => feature.id === selection.selectedFeatureId)
+      ?? (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature ? project.stock.sourceFeature : null)
   }
 
-  function openEndpointAnchor(feature: SketchFeature, endpoint: OpenProfileEndpoint): Point {
-    return endpoint === 'start'
-      ? feature.sketch.profile.start
-      : anchorPointForIndex(feature.sketch.profile, feature.sketch.profile.segments.length)
-  }
-
-  function endpointFromSketchExtension(kind: PendingSketchExtension['kind']): OpenProfileEndpoint {
-    return kind === 'extend_start' ? 'start' : 'end'
-  }
-
+  function openEndpointAnchor(feature: SketchFeature, endpoint: OpenProfileEndpoint): Point { return endpoint === 'start' ? feature.sketch.profile.start : anchorPointForIndex(feature.sketch.profile, feature.sketch.profile.segments.length) }
+  function endpointFromSketchExtension(kind: PendingSketchExtension['kind']): OpenProfileEndpoint { return kind === 'extend_start' ? 'start' : 'end' }
 
   function findOpenEndpointHit(
     rawPoint: Point,
@@ -2063,23 +1970,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function editableClamp(): Clamp | null {
-    const selection = selectionRef.current
-    const project = projectRef.current
-    if (selection.mode !== 'sketch_edit') return null
-    const selectedNode = selection.selectedNode
-    if (selectedNode?.type !== 'clamp') return null
-    return project.clamps.find((clamp) => clamp.id === selectedNode.clampId) ?? null
+    const s = selectionRef.current; const p = projectRef.current
+    if (s.mode !== 'sketch_edit') return null
+    const node = s.selectedNode
+    if (node?.type !== 'clamp') return null
+    return p.clamps.find((c) => c.id === node.clampId) ?? null
   }
 
   function editableTab(): Tab | null {
-    const selection = selectionRef.current
-    const project = projectRef.current
-    if (selection.mode !== 'sketch_edit') return null
-    const selectedNode = selection.selectedNode
-    if (selectedNode?.type !== 'tab') return null
-    return project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
+    const s = selectionRef.current; const p = projectRef.current
+    if (s.mode !== 'sketch_edit') return null
+    const node = s.selectedNode
+    if (node?.type !== 'tab') return null
+    return p.tabs.find((t) => t.id === node.tabId) ?? null
   }
-
 
   function hitEditableControl(point: CanvasPoint, options?: { includeSegments?: boolean }): SketchControlRef | null {
     const feature = editableFeature()
@@ -2854,48 +2758,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
       />
-      {!depthLegendCollapsed ? (
-        <div className="sketch-depth-legend">
-          <div className="sketch-depth-legend__header">
-            <span>Feature Colors</span>
-            <button
-              className="sketch-depth-legend__toggle tree-action-btn"
-              type="button"
-              onClick={onToggleDepthLegend}
-              aria-label="Collapse feature color legend"
-              title="Collapse legend"
-            >
-              ▾
-            </button>
-          </div>
-          <div className="sketch-depth-legend__items">
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
-              <span>Subtract shallow</span>
-            </div>
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
-              <span>Subtract deep</span>
-            </div>
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
-              <span>Add feature</span>
-            </div>
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
-              <span>Region</span>
-            </div>
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
-              <span>Imported model</span>
-            </div>
-            <div className="sketch-depth-legend__item">
-              <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
-              <span>Selected</span>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {!depthLegendCollapsed ? <DepthLegend onToggleDepthLegend={onToggleDepthLegend} /> : null}
       {(toolpaths && toolpaths.some((tp) => tp.moves.length > 0)) && toolpathVisibility && onToolpathVisibilityChange && (
         <ToolpathVisibilityPanel
           visibility={toolpathVisibility}
