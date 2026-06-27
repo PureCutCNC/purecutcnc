@@ -23,6 +23,7 @@
 import { newProject, type FeatureFolder, type Project } from '../types/project'
 import { projectsEqual, syncFeatureTreeProject } from './helpers/normalize'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 
 // ── Assertion helpers ──────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ function resetStore(project?: Project): void {
     pendingConstraint: null,
     pendingTransform: null,
     pendingOffset: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 // ── Test runner ────────────────────────────────────────────────────

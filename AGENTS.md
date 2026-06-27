@@ -26,15 +26,15 @@ Abandoned work: close the issue with a short reason; the board moves it to `Done
 ## Build & Verify
 
 ```bash
-npm run build          # Full build (icon generation + tsc + tests + vite). Run this before committing.
+npm run build          # Full build (lint + icon generation + tsc + tests + vite). Run this before committing.
 npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
-npm run dev            # Vite dev server (do NOT start this — the user runs it themselves)
+npm run dev            # Vite dev server (do NOT start this unless asked — the user runs it themselves)
 npm run lint           # ESLint over supported source only: src, vite.config.ts, and build/test scripts
 npm run lint:scripts   # Optional: lint the one-off diagnostic scripts in scripts/ (not a quality gate)
 npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons/*.svg
 ```
 
-Always run `npm run build` from the project root to verify changes compile before committing. `npm test` runs automatically as part of the build, so a failing structural test will fail the build. Do not start the dev/preview server.
+Always run `npm run build` from the project root to verify changes compile before committing. `npm run lint` and `npm test` run automatically as part of the build, so a lint failure or failing structural test will fail the build. Do not start the dev/preview server unless asked.
 
 ## Git & Branching
 

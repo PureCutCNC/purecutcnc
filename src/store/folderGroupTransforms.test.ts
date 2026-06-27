@@ -27,6 +27,7 @@
 
 import { newProject, type Matrix2D, type SketchFeature } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { multiplyMatrix, rotateDelta } from './helpers/instanceTransforms'
 import { isIdentityMatrix } from './helpers/resolveFeatures'
 
@@ -67,7 +68,7 @@ function resetStore(): void {
     pendingShapeAction: null,
     pendingAdd: null,
     creationTarget: 'feature',
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 /**

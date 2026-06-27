@@ -238,7 +238,7 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
 {
   // Bad enum value
   const def = makeTestDef()
-  ;(def as any).motion.arcFormat = 'INVALID'
+  ;(def as unknown as Record<string, unknown>).motion = { ...def.motion, arcFormat: 'INVALID' }
   const result = validateDef(def)
   assert(result.ok === undefined, 'validateDef: bad arcFormat rejected')
   assert(

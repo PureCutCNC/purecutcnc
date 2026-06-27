@@ -448,7 +448,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
                     collapsed={folder.collapsed}
                     onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}
@@ -536,7 +536,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
 
                     visible={folderVisible}
-                    onClick={() => { folder.grouped ? selectFolderFeatures(folder.id) : selectFeatureFolder(folder.id) }}
+                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
                     collapsed={folder.collapsed}
                     onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
                     onMouseEnter={() => hoverFeature(null)}

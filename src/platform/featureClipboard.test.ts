@@ -191,6 +191,7 @@ function testEditableShortcutTargetGuard(): void {
       this.closestMatch = closestMatch
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- must match HTMLElement.closest signature
     closest(_selector: string): MockElement | null {
       return this.closestMatch
     }

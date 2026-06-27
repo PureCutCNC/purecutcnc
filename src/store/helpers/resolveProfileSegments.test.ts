@@ -17,7 +17,7 @@
 import { resolveProfileSegments } from './resolveProfileSegments'
 import { segmentIntersections, type LineSeg, type ArcSeg } from './segmentIntersection'
 import { segmentHitTest } from '../../components/canvas/hitTest'
-import type { SketchProfile, Point, Project } from '../../types/project'
+import type { SketchProfile, Point, Project, ProjectMeta, GridSettings, Stock, MachineOrigin, SketchFeature } from '../../types/project'
 import type { ViewTransform } from '../../components/canvas/viewTransform'
 
 const ε = 1e-6
@@ -312,10 +312,10 @@ function makeMockProject(profiles: Array<{ id: string; profile: SketchProfile; v
   // featureDefinition).
   return {
     version: '1.0',
-    meta: { name: 'test', unit: 'mm' } as any,
-    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as any,
-    stock: { x: 0, y: 0, w: 100, h: 100, thickness: 10 } as any,
-    origin: { x: 0, y: 0 } as any,
+    meta: { name: 'test', unit: 'mm' } as unknown as ProjectMeta,
+    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as unknown as GridSettings,
+    stock: { x: 0, y: 0, w: 100, h: 100, thickness: 10 } as unknown as Stock,
+    origin: { x: 0, y: 0 } as unknown as MachineOrigin,
     backdrop: null,
     dimensions: {},
     annotations: [],
@@ -338,7 +338,7 @@ function makeMockProject(profiles: Array<{ id: string; profile: SketchProfile; v
       z_bottom: -5,
       visible: p.visible,
       locked: false,
-    }) as any),
+    }) as unknown as SketchFeature[]),
     featureFolders: [],
     featureTree: [],
     global_constraints: [],
@@ -347,7 +347,7 @@ function makeMockProject(profiles: Array<{ id: string; profile: SketchProfile; v
     tabs: [],
     clamps: [],
     ai_history: [],
-  } as any as Project
+  } as unknown as Project
 }
 
 function testSegmentHitTestArcIndex() {

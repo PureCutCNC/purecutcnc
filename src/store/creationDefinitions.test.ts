@@ -38,6 +38,7 @@ import {
   type STLFeatureData,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import {
   createDefinitionForFeature,
 } from './helpers/featureDefinitions'
@@ -54,7 +55,7 @@ function resetStore(project?: Project): void {
     project: project ?? newProject(),
     selection: { selectedFeatureIds: [] },
     history: { past: [], future: [], transactionStart: null },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function getProject(): Project {
@@ -161,7 +162,7 @@ function test_addFeature_idempotent_when_definitionId_present(): void {
       ...project,
       featureDefinitions: { 'def-existing': preDef },
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   const store = useProjectStore.getState()
 

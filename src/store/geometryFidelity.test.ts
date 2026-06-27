@@ -41,6 +41,7 @@ import {
   type TextFeatureData,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { resolveProfile, applyMatrixToPoint } from './helpers/resolveFeatures'
 import {
   mirrorDelta,
@@ -87,7 +88,7 @@ function resetStore(project?: Project): void {
     pendingConstraint: null,
     pendingTransform: null,
     pendingOffset: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function getProject(): Project {

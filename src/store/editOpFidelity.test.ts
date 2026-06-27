@@ -36,6 +36,7 @@ import {
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { resolveProfile } from './helpers/resolveFeatures'
 import { translateMatrix } from './helpers/instanceTransforms'
 
@@ -70,7 +71,7 @@ function resetStore(project?: Project): void {
     pendingConstraint: null,
     pendingTransform: null,
     pendingOffset: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function addRectFeature(
@@ -129,7 +130,7 @@ function addRectFeature(
         [`def-${id}`]: definition,
       },
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   return { feature: feature as SketchFeature, definition }
 }
@@ -171,7 +172,7 @@ function addLinkedInstance(
       ...state.project,
       features: [...state.project.features, feature as SketchFeature],
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   return feature as SketchFeature
 }
@@ -436,7 +437,7 @@ test('move arc handle: segment stays arc, linked sibling updated', () => {
         'def-comp': definition,
       },
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   // Add linked instance
   const t = translateMatrix(80, 40)
