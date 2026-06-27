@@ -58,7 +58,7 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
-import { createDefinitionForFeature, gcOrphanedDefinitions, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
+import { createDefinitionForFeature, gcOrphanedDefinitions, getDefinitionId, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
 import { expandTextFeature } from '../helpers/textExpansion'
 import {
@@ -573,18 +573,45 @@ export function createFeatureSlice(
           safePatch.operation !== undefined && safePatch.operation !== existingFeature?.operation
         const shouldPropagateOp = opExplicitlyChanged && defId !== undefined
 
-        const nextDefinitions = shouldPropagateOp
-          ? {
-              ...s.project.featureDefinitions,
-              [defId!]: {
-                ...s.project.featureDefinitions[defId!],
-                operation: safeOperation as FeatureOperation,
-              },
-            } as Record<string, FeatureDefinition>
-          : s.project.featureDefinitions
+        // P1b-text: when a text feature's `text` changes, propagate it to the
+        // shared definition and every linked instance. Text geometry is
+        // rendered from the raw per-instance `feature.text`, so without this a
+        // linked copy edited in isolation would diverge from its siblings
+        // (issue #228). The frame profile is left unchanged. `getDefinitionId`
+        // also covers migrated text features that resolve via the feature-id
+        // fallback rather than an explicit `definitionId`.
+        const textDefId = existingFeature ? getDefinitionId(existingFeature) : undefined
+        const shouldPropagateText =
+          safePatch.text !== undefined &&
+          existingFeature?.kind === 'text' &&
+          textDefId !== undefined &&
+          s.project.featureDefinitions[textDefId] !== undefined
+
+        let nextDefinitions: Record<string, FeatureDefinition> = s.project.featureDefinitions
+        if (shouldPropagateOp) {
+          nextDefinitions = {
+            ...nextDefinitions,
+            [defId!]: {
+              ...nextDefinitions[defId!],
+              operation: safeOperation as FeatureOperation,
+            },
+          }
+        }
+        if (shouldPropagateText) {
+          nextDefinitions = {
+            ...nextDefinitions,
+            [textDefId!]: {
+              ...nextDefinitions[textDefId!],
+              text: safePatch.text ? { ...safePatch.text } : null,
+            },
+          }
+        }
 
         const linkedSiblingIds: Set<string> | null = shouldPropagateOp
           ? new Set(getInstanceIdsForDefinition(s.project, defId!))
+          : null
+        const textSiblingIds: Set<string> | null = shouldPropagateText
+          ? new Set(getInstanceIdsForDefinition(s.project, textDefId!))
           : null
 
         let nextProject: Project = {
@@ -592,8 +619,6 @@ export function createFeatureSlice(
           featureDefinitions: nextDefinitions,
           features: features.map((f, fi) => {
             const isEdited = f.id === id
-            const isLinkedSibling =
-              shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id) && f.id !== id
 
             if (isEdited) {
               return normalizeFeatureZRange({
@@ -603,21 +628,36 @@ export function createFeatureSlice(
               })
             }
 
-            if (isLinkedSibling) {
+            const isOpSibling =
+              shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id)
+            const isTextSibling =
+              shouldPropagateText && textSiblingIds !== null && textSiblingIds.has(f.id)
+
+            if (!isOpSibling && !isTextSibling) {
+              return f
+            }
+
+            let sibling = f
+            if (isOpSibling) {
               // Apply the same operation to the sibling, with its own isFirst
               // guard (first feature in the tree can't be subtract).
               const siblingIsFirst = fi === 0
               const op = safeOperation as FeatureOperation
               const siblingOp =
                 siblingIsFirst && op !== 'add' ? ('add' as const) : op
-              return normalizeFeatureZRange({
-                ...f,
+              sibling = normalizeFeatureZRange({
+                ...sibling,
                 operation: siblingOp,
-                folderId: folderIdForOperation(s.project, f.folderId, siblingOp),
+                folderId: folderIdForOperation(s.project, sibling.folderId, siblingOp),
               })
             }
-
-            return f
+            if (isTextSibling) {
+              sibling = {
+                ...sibling,
+                text: safePatch.text ? { ...safePatch.text } : null,
+              }
+            }
+            return sibling
           }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

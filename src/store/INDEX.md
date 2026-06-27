@@ -67,6 +67,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `projectStoreTransform.test.ts` — project transform actions
 - `second_cut_test.ts` — multi-pass cutting behavior
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
+- `textReference.test.ts` — issue #228: text-feature creation mints a definition, reference copies resolve (selectable), text edits propagate to definition + siblings, 16-char name truncation
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
 
 ## Gotchas
