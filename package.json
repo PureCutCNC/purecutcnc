@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npx tsx scripts/build-icon-sprite.ts && tsc -b && npm test && vite build",
+    "build": "npm run lint && npx tsx scripts/build-icon-sprite.ts && tsc -b && npm test && vite build",
     "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/check-license-headers.ts",
     "lint:scripts": "eslint scripts",
     "preview": "vite preview",

@@ -32,6 +32,7 @@ import {
   type Stock,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { getProfileBounds } from '../types/project'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ function resetStore(project?: Project): void {
     pendingAdd: null,
     pendingMove: null,
     pendingShapeAction: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function getProject(): Project {
@@ -234,7 +235,7 @@ test('autoPlaceTabsForOperation creates tabs for edge_route_outside', () => {
   const tool = { ...defaultTool('mm', 1), id: 't1', name: '6mm endmill', diameter: 6 }
   useProjectStore.setState({
     project: { ...getProject(), tools: [tool] },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   // Create an edge_route_outside operation
   const opId = store.addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [feat.id] })
@@ -261,7 +262,7 @@ test('updateTab modifies tab geometry', () => {
   const tool = { ...defaultTool('mm', 1), id: 't1', name: '6mm endmill', diameter: 6 }
   useProjectStore.setState({
     project: { ...getProject(), tools: [tool] },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   const opId = store.addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [feat.id] })
   store.autoPlaceTabsForOperation(opId!)
@@ -287,7 +288,7 @@ test('deleteTab removes tab', () => {
   const tool = { ...defaultTool('mm', 1), id: 't1', name: '6mm endmill', diameter: 6 }
   useProjectStore.setState({
     project: { ...getProject(), tools: [tool] },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   const opId = store.addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [feat.id] })
   store.autoPlaceTabsForOperation(opId!)
@@ -311,7 +312,7 @@ test('enterTabEdit + moveTabControl repositions tab', () => {
   const tool = { ...defaultTool('mm', 1), id: 't1', name: '6mm endmill', diameter: 6 }
   useProjectStore.setState({
     project: { ...getProject(), tools: [tool] },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   const opId = store.addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [feat.id] })
   store.autoPlaceTabsForOperation(opId!)

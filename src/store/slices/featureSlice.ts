@@ -48,6 +48,7 @@ import {
 import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
+import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -1175,231 +1176,42 @@ export function createFeatureSlice(
         }
       }),
 
-    // ── Convenience constructors ─────────────────────────────
+    // ── Convenience constructors ── delegate to buildShapeFeature ─
 
     addRectFeature: (name, x, y, w, h, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'rect',
-        folderId: null,
-        sketch: {
-          profile: rectProfile(x, y, w, h),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'rect', rectProfile(x, y, w, h), name, depth))
     },
 
     addCircleFeature: (name, cx, cy, r, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'circle',
-        folderId: null,
-        sketch: {
-          profile: circleProfile(cx, cy, r),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'circle', circleProfile(cx, cy, r), name, depth))
     },
 
     addEllipseFeature: (name, cx, cy, rx, ry, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'ellipse',
-        folderId: null,
-        sketch: {
-          profile: ellipseProfile(cx, cy, rx, ry),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'ellipse', ellipseProfile(cx, cy, rx, ry), name, depth))
     },
 
     addPolygonFeature: (name, points, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'polygon',
-        folderId: null,
-        sketch: {
-          profile: polygonProfile(points),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', polygonProfile(points), name, depth))
     },
 
     addSplineFeature: (name, points, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'spline',
-        folderId: null,
-        sketch: {
-          profile: splineProfile(points),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'spline', splineProfile(points), name, depth))
     },
 
     addSlotFeature: (name, p1, p2, width, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'composite',
-        folderId: null,
-        sketch: {
-          profile: slotProfile(p1, p2, width),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', slotProfile(p1, p2, width), name, depth))
     },
 
     addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'polygon',
-        folderId: null,
-        sketch: {
-          profile: ngonProfile(cx, cy, sides, circumradius, firstVertexAngle),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth))
     },
 
     addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'composite',
-        folderId: null,
-        sketch: {
-          profile: roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
     },
 
     addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
-      const operation = get().creationTarget === 'region' ? 'region' : 'subtract'
-      const baseName = operation === 'region' ? `Region ${get().project.features.filter((feature) => feature.operation === 'region').length + 1}` : name
-      const id = nextUniqueGeneratedId(get().project, 'f')
-      const feature: SketchFeature = {
-        id,
-        name: baseName,
-        kind: 'composite',
-        folderId: null,
-        sketch: {
-          profile: chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
-      get().addFeature(feature)
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
     },
   }
 }

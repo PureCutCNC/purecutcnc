@@ -28,6 +28,7 @@ import {
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ function resetStore(project?: Project): void {
     pendingConstraint: null,
     pendingTransform: null,
     pendingOffset: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function addLinkedPair(): { featureA: SketchFeature; featureB: SketchFeature; defId: string } {

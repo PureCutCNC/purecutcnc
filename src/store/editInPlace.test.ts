@@ -31,6 +31,7 @@ import {
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { getDefinitionId } from './helpers/featureDefinitions'
 import { resolveProfile, applyMatrixToPoint } from './helpers/resolveFeatures'
 import {
@@ -73,7 +74,7 @@ function resetStore(project?: Project): void {
     pendingConstraint: null,
     pendingTransform: null,
     pendingOffset: null,
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 /** Add a rect feature with a definition to the store via direct state mutation. */
@@ -133,7 +134,7 @@ function addRectFeature(
         [`def-${id}`]: definition,
       },
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   return { feature: feature as SketchFeature, definition }
 }
@@ -176,7 +177,7 @@ function addLinkedInstance(
       ...state.project,
       features: [...state.project.features, feature as SketchFeature],
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   return feature as SketchFeature
 }

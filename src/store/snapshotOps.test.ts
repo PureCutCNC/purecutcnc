@@ -30,6 +30,7 @@ import {
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { getDefinitionId } from './helpers/featureDefinitions'
 import { resolveProfile, resolveFeatureInstance } from './helpers/resolveFeatures'
 import { translateMatrix } from './helpers/instanceTransforms'
@@ -46,7 +47,7 @@ function resetStore(project?: Project): void {
     project: project ?? newProject(),
     selection: { selectedFeatureIds: [] },
     history: { past: [], future: [], transactionStart: null },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 /** Add a rect feature with a definition to the project via direct state mutation. */
@@ -104,7 +105,7 @@ function addRectFeature(
         [`def-${id}`]: definition,
       },
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   return { feature: feature as SketchFeature, definition }
 }
@@ -120,7 +121,7 @@ function selectFeatures(ids: string[]): void {
       mode: 'feature',
       activeControl: null,
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 /** Get the current project from the store. */
@@ -150,7 +151,7 @@ function undo(): void {
         future: [state.project, ...state.history.future],
         transactionStart: null,
       },
-    } as any)
+    } as unknown as Partial<ProjectStore>)
   }
 }
 
@@ -358,7 +359,7 @@ test('GC preserves definition when sibling instance still exists', () => {
       ...state.project,
       features: [...state.project.features, sibling as SketchFeature],
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   addRectFeature('f-0002', 'Third', 25, 10, 20, 20)
   selectFeatures(['f-0001', 'f-0002'])
@@ -406,7 +407,7 @@ test('snapshotting one instance does not alter sibling of shared definition', ()
       ...state.project,
       features: [...state.project.features, sibling as SketchFeature],
     },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 
   // Snapshot the sibling definition's features and profile for later comparison
   const siblingResolvedBefore = resolveFeatureInstance(getProject(), 'f-0001b')

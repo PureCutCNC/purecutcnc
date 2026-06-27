@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { SketchProfile, Point, Project } from '../../types/project'
+import type { SketchProfile, Point, Project, ProjectMeta, GridSettings, Stock, MachineOrigin, SketchFeature } from '../../types/project'
 import { useProjectStore } from '../projectStore'
 
 const ε = 1e-6
@@ -37,10 +37,10 @@ function makeMockProject(
 ): Project {
   return {
     version: '1.0',
-    meta: { name: 'test', unit: 'mm', modified: new Date().toISOString() } as any,
-    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as any,
-    stock: { x: 0, y: 0, w: 500, h: 500, thickness: 10 } as any,
-    origin: { x: 0, y: 0 } as any,
+    meta: { name: 'test', unit: 'mm', modified: new Date().toISOString() } as unknown as ProjectMeta,
+    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as unknown as GridSettings,
+    stock: { x: 0, y: 0, w: 500, h: 500, thickness: 10 } as unknown as Stock,
+    origin: { x: 0, y: 0 } as unknown as MachineOrigin,
     backdrop: null,
     dimensions: {},
     annotations: [],
@@ -63,7 +63,7 @@ function makeMockProject(
       z_bottom: -5,
       visible: f.visible ?? true,
       locked: f.locked ?? false,
-    }) as any),
+    }) as unknown as SketchFeature[]),
     featureFolders: [],
     featureTree: [
       ...features.map((f) => ({ type: 'feature' as const, featureId: f.id })),
@@ -74,7 +74,7 @@ function makeMockProject(
     tabs: [],
     clamps: [],
     ai_history: [],
-  } as any as Project
+  } as unknown as Project
 }
 
 function makeProfile(
@@ -111,7 +111,7 @@ function testTrimLineRightOverhang() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   assert(updatedFeature !== undefined, 'subject feature should exist')
 
   const updatedProfile = updatedFeature!.sketch.profile
@@ -158,7 +158,7 @@ function testTrimLineLeftOverhang() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // Start should move to (8,10)
@@ -203,7 +203,7 @@ function testTrimNoOpOnClosedProfile() {
 
   // Profile should be unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   assert(updatedFeature!.sketch.profile.closed === true, 'closed profile should remain closed')
   assert(
     hints.some((h) => h.toLowerCase().includes('closed')),
@@ -238,7 +238,7 @@ function testTrimNoIntersection() {
 
   // Profile should be unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const seg = updatedFeature!.sketch.profile.segments[0]
   assert(Math.abs(seg.to.x - 10) < ε, 'endpoint x should be unchanged')
   assert(
@@ -278,7 +278,7 @@ function testTrimArcEndToLine() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   const updatedSeg = updatedProfile.segments[0]
 
@@ -335,7 +335,7 @@ function testTrimArcStartToLine() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   const updatedSeg = updatedProfile.segments[0]
 
@@ -387,7 +387,7 @@ function testTrimMultiSegmentEnd() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // Last segment endpoint should be at (8,10)
@@ -438,7 +438,7 @@ function testTrimMultiSegmentStart() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // Profile.start should move to (2,0)
@@ -485,7 +485,7 @@ function testTrimConnectedSideEndWalk() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // Tail removed: only s0 remains, shortened to (2,0)
@@ -535,7 +535,7 @@ function testTrimNoOpOnInterior() {
 
   // Profile should be unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   assert(updatedFeature!.sketch.profile.segments.length === 5, 'profile should be unchanged')
   assert(
     hints.some((h) => h.toLowerCase().includes('interior') || h.toLowerCase().includes('break')),
@@ -576,7 +576,7 @@ function testTrimMultiSegmentTail() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // s3 should be gone, s2 trimmed to (7,10)
@@ -635,7 +635,7 @@ function testTrimMultiSegmentTailFromStart() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // s0,s1,s2 dropped; s3 trimmed from start; s4 kept
@@ -687,7 +687,7 @@ function testTrimSelfIntersection() {
   useProjectStore.getState().trimFeatureSegment(subject, cutter)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: any) => f.id === 'subj')
+  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   // End-end walk: s2 (no self-cross), s1 (endpoint hit → skip), s0 crosses at t=0.5

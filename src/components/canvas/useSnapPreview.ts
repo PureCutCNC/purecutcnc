@@ -80,6 +80,21 @@ export function useSnapPreview(ctx: SnapPreviewCtx): UseSnapPreviewReturn {
     }
   }, [])
 
+  function clearSnapLabelTimeout(): void {
+    if (labelTimeoutRef.current !== null) {
+      clearTimeout(labelTimeoutRef.current)
+      labelTimeoutRef.current = null
+    }
+  }
+
+  function scheduleSnapLabelExpiry(labelVisibleUntil: number): void {
+    clearSnapLabelTimeout()
+    labelTimeoutRef.current = setTimeout(() => {
+      labelTimeoutRef.current = null
+      scheduleDraw()
+    }, Math.max(0, labelVisibleUntil - Date.now()) + 16)
+  }
+
   const updateActiveSnap = useStableEvent((nextSnap: ResolvedSnap | null) => {
     const previousSnap = activeSnapRef.current
     if (!nextSnap?.mode) {
@@ -102,21 +117,6 @@ export function useSnapPreview(ctx: SnapPreviewCtx): UseSnapPreviewReturn {
     onActiveSnapModeChange(nextSnap?.mode ?? null)
     scheduleDraw()
   })
-
-  function clearSnapLabelTimeout(): void {
-    if (labelTimeoutRef.current !== null) {
-      clearTimeout(labelTimeoutRef.current)
-      labelTimeoutRef.current = null
-    }
-  }
-
-  function scheduleSnapLabelExpiry(labelVisibleUntil: number): void {
-    clearSnapLabelTimeout()
-    labelTimeoutRef.current = setTimeout(() => {
-      labelTimeoutRef.current = null
-      scheduleDraw()
-    }, Math.max(0, labelVisibleUntil - Date.now()) + 16)
-  }
 
   function currentSnapReferencePoint(): Point | null {
     const pendingMove = pendingMoveRef.current

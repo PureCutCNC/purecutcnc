@@ -42,6 +42,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — resolves definition and instance rows into world-space feature geometry for read paths
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
+  - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)

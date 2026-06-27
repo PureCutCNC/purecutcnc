@@ -34,7 +34,12 @@ import {
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import type { ProjectStore } from './types'
 import { normalizeProject } from './projectStore'
+
+/** Feature with optional temporary _clonedDefinition set by copy helpers. */
+type FeatureWithClonedDef = SketchFeature & { _clonedDefinition?: unknown }
+
 import {
   buildCopiedFeatures,
   extractClonedDefinitions,
@@ -55,7 +60,7 @@ function resetStore(project?: Project): void {
     project: project ?? newProject(),
     selection: { selectedFeatureIds: [] },
     history: { past: [], future: [], transactionStart: null },
-  } as any)
+  } as unknown as Partial<ProjectStore>)
 }
 
 function getProject(): Project {
@@ -112,11 +117,11 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
 {
   // Default for legacy (no copyMode field)
   const base = newProject()
+  const { copyMode: _unusedCopyMode, ...metaWithoutCopyMode } = base.meta
   const legacyProject = {
     ...base,
-    meta: { ...base.meta },
+    meta: metaWithoutCopyMode as typeof base.meta,
   }
-  delete (legacyProject.meta as any).copyMode
   const normalized = normalizeProject(legacyProject)
   assert(
     normalized.meta.copyMode === 'reference',
@@ -216,7 +221,7 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
   const fullProject: Project = {
     ...project,
     features: [...features, ...copies.map((c) => {
-      const { _clonedDefinition, ...clean } = c as any
+      const { _clonedDefinition, ...clean } = c as FeatureWithClonedDef
       return clean as SketchFeature
     })],
     featureDefinitions: { ...definitions, ...extractClonedDefinitions(copies) },
@@ -413,7 +418,7 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
   const fullProject: Project = {
     ...project,
     features: [...features, ...copies.map((c) => {
-      const { _clonedDefinition, ...clean } = c as any
+      const { _clonedDefinition, ...clean } = c as FeatureWithClonedDef
       return clean as SketchFeature
     })],
     featureDefinitions: { ...definitions, ...clonedDefs },
@@ -464,7 +469,7 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
     'reference',
   )
   const allSoFar = [...project.features, ...copies1.map((c) => {
-    const { _clonedDefinition, ...clean } = c as any
+    const { _clonedDefinition, ...clean } = c as FeatureWithClonedDef
     return clean as SketchFeature
   })]
   const copies2 = buildCopiedFeatures(
@@ -476,7 +481,7 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
   )
 
   const allFeatures = [...allSoFar, ...copies2.map((c) => {
-    const { _clonedDefinition, ...clean } = c as any
+    const { _clonedDefinition, ...clean } = c as FeatureWithClonedDef
     return clean as SketchFeature
   })]
   const fullProject: Project = {
@@ -501,7 +506,7 @@ function makeSingleRectProject(): { project: Project; rect: SketchFeature } {
   const indDefId = getDefinitionId(indCopy)
 
   const finalFeatures = [...allFeatures, ...indCopies.map((c) => {
-    const { _clonedDefinition, ...clean } = c as any
+    const { _clonedDefinition, ...clean } = c as FeatureWithClonedDef
     return clean as SketchFeature
   })]
   const finalProject: Project = {
