@@ -60,6 +60,7 @@ import {
 } from '../helpers/derivedFeatures'
 import { createDefinitionForFeature, gcOrphanedDefinitions, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
+import { expandTextFeature } from '../helpers/textExpansion'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -106,6 +107,7 @@ export type FeatureSlice = Pick<
   | 'mergeSelectedFeatures'
   | 'cutSelectedFeatures'
   | 'offsetSelectedFeatures'
+  | 'expandTextFeature'
 >
 
 export function createFeatureSlice(
@@ -1212,6 +1214,85 @@ export function createFeatureSlice(
 
     addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
+    },
+
+    expandTextFeature: (textFeatureId) => {
+      const state = get()
+      const textFeature = state.project.features.find((f) => f.id === textFeatureId)
+
+      if (!textFeature || !textFeature.text) {
+        return
+      }
+
+      const { folders, features, definitions } = expandTextFeature(state.project, textFeature)
+
+      if (features.length === 0) {
+        return
+      }
+
+      set((s) => {
+        // Add new folders
+        const nextFeatureFolders = [...s.project.featureFolders, ...folders]
+
+        // Add feature definitions to the project
+        const nextFeatureDefinitions = {
+          ...s.project.featureDefinitions,
+          ...definitions,
+        }
+
+        // Find the position of the original text feature in the feature tree
+        const textFeatureTreeIndex = s.project.featureTree.findIndex(
+          (entry) => entry.type === 'feature' && entry.featureId === textFeatureId,
+        )
+
+        // Build new feature tree entries: insert folder entries right after the original text feature
+        const newTreeEntries: FeatureTreeEntry[] = folders.map((folder) => ({
+          type: 'folder' as const,
+          folderId: folder.id,
+        }))
+
+        let nextFeatureTree: FeatureTreeEntry[]
+        if (textFeatureTreeIndex >= 0) {
+          // Always keep the original text feature; insert new folders after it
+          nextFeatureTree = [
+            ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
+            ...newTreeEntries,
+            ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
+          ]
+        } else {
+          // Feature not in tree (shouldn't happen), just append
+          nextFeatureTree = [...s.project.featureTree, ...newTreeEntries]
+        }
+
+        // Add new features
+        const nextFeatures = [...s.project.features, ...features]
+
+        const nextProject = syncFeatureTreeProject({
+          ...s.project,
+          featureFolders: nextFeatureFolders,
+          featureDefinitions: nextFeatureDefinitions,
+          features: nextFeatures,
+          featureTree: nextFeatureTree,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        })
+
+        return {
+          project: nextProject,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedNode: null,
+            mode: 'feature',
+            activeControl: null,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      })
     },
   }
 }

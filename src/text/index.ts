@@ -50,6 +50,10 @@ export interface GeneratedTextShape {
   name: string
   profile: SketchProfile
   operation: FeatureOperation
+  /** 1-based glyph position in the text string */
+  glyphIndex?: number
+  /** The character for this glyph (e.g. "A", "B") */
+  glyphChar?: string
 }
 
 interface GlyphDefinition {
@@ -320,54 +324,47 @@ function applyFontVariantToProfile(profile: SketchProfile, font: TextFontDefinit
   }))
 }
 
-function normalizeProfileSet(profiles: Array<{ profile: SketchProfile; depth: number }>): Array<{ profile: SketchProfile; depth: number }> {
-  if (profiles.length === 0) {
-    return []
-  }
-
-  const bounds = profiles
-    .map(({ profile }) => getProfileBounds(profile))
-    .reduce(
-      (acc, next) => ({
-        minX: Math.min(acc.minX, next.minX),
-        maxX: Math.max(acc.maxX, next.maxX),
-        minY: Math.min(acc.minY, next.minY),
-        maxY: Math.max(acc.maxY, next.maxY),
-      }),
-      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
-    )
-
-  return profiles.map(({ profile, depth }) => ({
-    profile: translateProfile(profile, -bounds.minX, -bounds.minY),
-    depth,
-  }))
-}
-
-function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId): Array<{ profile: SketchProfile; depth: number }> {
+function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId): Array<{ profile: SketchProfile; depth: number; glyphIndex: number; glyphChar: string }> {
   const fontDefinition = fontDefinitionFor(fontId, 'outline')
   const font = OUTLINE_FONTS[fontDefinition.baseId as OutlineFontBaseId] ?? OUTLINE_FONTS.helvetiker_bold
-  const shapes = font.generateShapes(normalizeText(text), size)
-  const rawProfiles: Array<{ profile: SketchProfile; depth: number }> = []
+  const normalized = normalizeText(text)
+  const resolution = (font.data as { resolution?: number }).resolution ?? 1000
+  const scale = size / resolution
+  const letterSpacing = size * LETTER_SPACING_RATIO
 
-  for (const shape of shapes) {
-    const extracted = shape.extractPoints(20)
-    const outerProfile = shapePointsToProfile(extracted.shape)
-    if (outerProfile) {
-      rawProfiles.push({ profile: outerProfile, depth: 0 })
-    }
-    for (const hole of extracted.holes) {
-      const holeProfile = shapePointsToProfile(hole)
-      if (holeProfile) {
-        rawProfiles.push({ profile: holeProfile, depth: 1 })
+  // Process each character separately to track glyph indices and manual positioning
+  const allRawProfiles: Array<{ profile: SketchProfile; depth: number; glyphIndex: number; glyphChar: string }> = []
+  let glyphIndex = 1
+  let cursorX = 0
+
+  for (const char of normalized) {
+    const glyph = font.data.glyphs[char]
+    const shapes = font.generateShapes(char, size)
+
+    for (const shape of shapes) {
+      const extracted = shape.extractPoints(20)
+      const outerProfile = shapePointsToProfile(extracted.shape)
+      if (outerProfile) {
+        allRawProfiles.push({ profile: translateProfile(outerProfile, cursorX, 0), depth: 0, glyphIndex, glyphChar: char })
+      }
+      for (const hole of extracted.holes) {
+        const holeProfile = shapePointsToProfile(hole)
+        if (holeProfile) {
+          allRawProfiles.push({ profile: translateProfile(holeProfile, cursorX, 0), depth: 1, glyphIndex, glyphChar: char })
+        }
       }
     }
+
+    // Advance cursor by this glyph's horizontal advance + letter spacing
+    cursorX += (glyph?.ha ?? 0) * scale + letterSpacing
+    glyphIndex += 1
   }
 
-  if (rawProfiles.length === 0) {
+  if (allRawProfiles.length === 0) {
     return []
   }
 
-  const sourceBounds = rawProfiles
+  const sourceBounds = allRawProfiles
     .map(({ profile }) => getProfileBounds(profile))
     .reduce(
       (acc, next) => ({
@@ -379,9 +376,11 @@ function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId)
       { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
     )
 
-  const flippedProfiles = rawProfiles.map(({ profile, depth }) => ({
+  const flippedProfiles = allRawProfiles.map(({ profile, depth, glyphIndex: gIdx, glyphChar }) => ({
     profile: flipProfileY(profile, sourceBounds.maxY),
     depth,
+    glyphIndex: gIdx,
+    glyphChar,
   }))
 
   const flippedBounds = flippedProfiles
@@ -396,17 +395,19 @@ function outlineProfilesFromFont(text: string, size: number, fontId: TextFontId)
       { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
     )
 
-  return normalizeProfileSet(
-    flippedProfiles
-      .map(({ profile, depth }) => ({
-        profile: translateProfile(profile, -flippedBounds.minX, -flippedBounds.minY),
-        depth,
-      }))
-      .map(({ profile, depth }) => ({
-        profile: applyFontVariantToProfile(profile, fontDefinition),
-        depth,
-      })),
-  )
+  return flippedProfiles
+    .map(({ profile, depth, glyphIndex: gIdx, glyphChar }) => ({
+      profile: translateProfile(profile, -flippedBounds.minX, -flippedBounds.minY),
+      depth,
+      glyphIndex: gIdx,
+      glyphChar,
+    }))
+    .map(({ profile, depth, glyphIndex: gIdx, glyphChar }) => ({
+      profile: applyFontVariantToProfile(profile, fontDefinition),
+      depth,
+      glyphIndex: gIdx,
+      glyphChar,
+    }))
     .filter(({ profile }) => Math.abs(signedArea(profileVertices(profile))) > size * size * 0.001)
 }
 
@@ -533,28 +534,41 @@ function buildTextTemplate(config: TextToolConfig): TextTemplate {
   const baseLabel = displayLabelForText(config.text)
   const fontDefinition = fontDefinitionFor(config.fontId, config.style)
 
-  const shapes =
+  const shapes: GeneratedTextShape[] =
     config.style === 'skeleton'
       ? glyphs.flatMap((glyph) =>
       glyph.polylines
-        .map((polyline, strokeIndex) => {
+        .map((polyline, strokeIndex): GeneratedTextShape | null => {
           const profile = lineProfile(polyline)
           if (!profile) {
             return null
           }
           return {
-            name: `${baseLabel} ${glyph.index}${glyph.polylines.length > 1 ? String.fromCharCode(97 + strokeIndex) : ''}`,
+            name: `${baseLabel} ${glyph.char}${glyph.polylines.length > 1 ? String.fromCharCode(97 + strokeIndex) : ''}`,
             profile: applyFontVariantToProfile(profile, fontDefinition),
             operation: config.operation,
+            glyphIndex: glyph.index,
+            glyphChar: glyph.char,
           }
         })
         .filter((shape): shape is GeneratedTextShape => shape !== null)
     )
-      : outlineProfilesFromFont(config.text, config.size, config.fontId).map(({ profile, depth }, contourIndex) => ({
-        name: `${baseLabel} ${contourIndex + 1}`,
-        profile,
-        operation: depth % 2 === 0 ? config.operation : invertOperation(config.operation),
-      }))
+      : (() => {
+          const outlineProfiles = outlineProfilesFromFont(config.text, config.size, config.fontId)
+          const glyphContourCounts = new Map<number, number>()
+          return outlineProfiles.map(({ profile, depth, glyphIndex, glyphChar }): GeneratedTextShape => {
+            const count = glyphContourCounts.get(glyphIndex) ?? 0
+            glyphContourCounts.set(glyphIndex, count + 1)
+            const suffix = count > 0 ? String.fromCharCode(97 + (count - 1) % 26) : ''
+            return {
+              name: `${baseLabel} ${glyphChar}${suffix}`,
+              profile,
+              operation: depth % 2 === 0 ? config.operation : invertOperation(config.operation),
+              glyphIndex,
+              glyphChar,
+            }
+          })
+        })()
 
   const profiles = shapes.map((shape) => shape.profile)
   const bounds =

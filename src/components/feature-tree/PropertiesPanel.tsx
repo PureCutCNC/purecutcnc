@@ -195,6 +195,7 @@ export function PropertiesPanel() {
     enterClampEdit,
     deleteConstraint,
     makeUnique,
+    expandTextFeature,
   } = useProjectStore()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
   const expandedPanelCtx = useContext(ExpandedPanelContext)
@@ -1343,6 +1344,20 @@ export function PropertiesPanel() {
                 />
               </label>
             </>
+          ) : null}
+          {isTextFeature ? (
+            <div className="properties-actions" style={{ marginTop: '12px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => {
+                  expandTextFeature(selectedFeature.id)
+                  closeExpanded()
+                }}
+              >
+                Expand Text to Features
+              </button>
+            </div>
           ) : null}
           {selectedFeature.operation === 'region' ? (
             <div className="properties-region-note">
