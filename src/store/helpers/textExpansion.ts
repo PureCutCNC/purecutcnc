@@ -33,6 +33,8 @@ interface TextExpansionResult {
   folders: FeatureFolder[]
   /** Exploded child features (with definitionId + identity transform) */
   features: SketchFeature[]
+  /** Feature definitions keyed by definition id */
+  definitions: Record<string, FeatureDefinition>
 }
 
 /**
@@ -57,12 +59,13 @@ export function expandTextFeature(
   const shapes = resolveTextFeatureShapes(textFeature)
 
   if (shapes.length === 0) {
-    return { folders: [], features: [] }
+    return { folders: [], features: [], definitions: {} }
   }
 
   const textString = textFeature.text?.text || 'TEXT'
   const folders: FeatureFolder[] = []
   const features: SketchFeature[] = []
+  const definitions: Record<string, FeatureDefinition> = {}
 
   // Group shapes by glyph index (letter position)
   const shapesByGlyph = new Map<number, typeof shapes>()
@@ -97,8 +100,9 @@ export function expandTextFeature(
     // Create a feature for each shape (handles outline fonts with holes/secondary contours)
     for (const shape of glyphShapes) {
       // Create a fresh definition for each exploded feature (no linking)
-      const definition: FeatureDefinition = {
-        id: nextUniqueGeneratedId(project, 'def'),
+      const definitionId = nextUniqueGeneratedId(project, 'def')
+      definitions[definitionId] = {
+        id: definitionId,
         kind: 'composite',
         profile: shape.profile,
         text: null,
@@ -128,17 +132,17 @@ export function expandTextFeature(
         locked: textFeature.locked,
       }
 
-      // Add definition refs (for now, features will have definitionId + identity transform)
+      // Attach definition ref (definitionId + identity transform)
       const featureWithRefs = feature as SketchFeature & {
         definitionId?: string
         transform?: typeof IDENTITY_MATRIX
       }
-      featureWithRefs.definitionId = definition.id
+      featureWithRefs.definitionId = definitionId
       featureWithRefs.transform = IDENTITY_MATRIX
 
       features.push(feature)
     }
   }
 
-  return { folders, features }
+  return { folders, features, definitions }
 }

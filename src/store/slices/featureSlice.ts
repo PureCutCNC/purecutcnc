@@ -1224,30 +1224,10 @@ export function createFeatureSlice(
         return
       }
 
-      const { folders, features } = expandTextFeature(state.project, textFeature)
+      const { folders, features, definitions } = expandTextFeature(state.project, textFeature)
 
       if (features.length === 0) {
         return
-      }
-
-      // Build feature definitions for all exploded features
-      const definitionsMap: Record<string, FeatureDefinition> = {}
-      for (const feature of features) {
-        const featureWithRefs = feature as SketchFeature & {
-          definitionId?: string
-          transform?: Matrix2D
-        }
-        if (featureWithRefs.definitionId) {
-          definitionsMap[featureWithRefs.definitionId] = {
-            id: featureWithRefs.definitionId,
-            kind: feature.kind,
-            profile: feature.sketch.profile,
-            text: null,
-            stl: null,
-            dimensions: [],
-            operation: feature.operation,
-          }
-        }
       }
 
       set((s) => {
@@ -1257,7 +1237,7 @@ export function createFeatureSlice(
         // Add feature definitions to the project
         const nextFeatureDefinitions = {
           ...s.project.featureDefinitions,
-          ...definitionsMap,
+          ...definitions,
         }
 
         // Find the position of the original text feature in the feature tree
