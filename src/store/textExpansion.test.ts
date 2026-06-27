@@ -130,7 +130,7 @@ function runTests() {
     for (const folder of result.folders) {
       assertTrue(folder.grouped === true, 'folder should be grouped')
       assertTrue(!!folder.id && folder.id.length > 0, 'folder should have id')
-      assertTrue(!!folder.name && folder.name.includes('AB'), 'folder name should include text')
+      assertTrue(!!folder.name && /^[A-Z]$/.test(folder.name), 'folder name should be a single letter')
     }
 
     // Check that features inherit properties from source
@@ -141,8 +141,8 @@ function runTests() {
       assertTrue(feature.visible === true, 'should be visible')
       assertTrue(feature.locked === false, 'should not be locked')
       assertTrue(!!feature.folderId && feature.folderId.length > 0, 'should have folderId')
-      // Features should be composite, not text
-      assertEqual(feature.kind, 'composite', 'kind should be composite')
+      // Skeleton fonts should have open profiles (line features)
+      assertEqual(feature.sketch.profile.closed, false, 'skeleton font features should have open profiles')
       assertTrue(feature.text === null, 'text should be null')
     }
   })
@@ -287,7 +287,7 @@ function runTests() {
     const result = expandTextFeature(project, textFeature)
 
     for (const folder of result.folders) {
-      assertTrue(/^AB \d+/.test(folder.name), `folder name should match pattern: ${folder.name}`)
+      assertTrue(/^[A-Z]$/.test(folder.name), `folder name should be a single letter, got: ${folder.name}`)
     }
   })
 

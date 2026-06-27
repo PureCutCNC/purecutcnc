@@ -1216,7 +1216,7 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
     },
 
-    expandTextFeature: (textFeatureId, removeOriginal = false) => {
+    expandTextFeature: (textFeatureId) => {
       const state = get()
       const textFeature = state.project.features.find((f) => f.id === textFeatureId)
 
@@ -1273,32 +1273,19 @@ export function createFeatureSlice(
 
         let nextFeatureTree: FeatureTreeEntry[]
         if (textFeatureTreeIndex >= 0) {
-          // Insert after the text feature (or remove it if removeOriginal is true)
-          if (removeOriginal) {
-            nextFeatureTree = [
-              ...s.project.featureTree.slice(0, textFeatureTreeIndex),
-              ...newTreeEntries,
-              ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
-            ]
-          } else {
-            nextFeatureTree = [
-              ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
-              ...newTreeEntries,
-              ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
-            ]
-          }
+          // Always keep the original text feature; insert new folders after it
+          nextFeatureTree = [
+            ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
+            ...newTreeEntries,
+            ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
+          ]
         } else {
           // Feature not in tree (shouldn't happen), just append
           nextFeatureTree = [...s.project.featureTree, ...newTreeEntries]
         }
 
         // Add new features
-        let nextFeatures = [...s.project.features, ...features]
-
-        // Remove original text feature if requested
-        if (removeOriginal) {
-          nextFeatures = nextFeatures.filter((f) => f.id !== textFeatureId)
-        }
+        const nextFeatures = [...s.project.features, ...features]
 
         const nextProject = syncFeatureTreeProject({
           ...s.project,

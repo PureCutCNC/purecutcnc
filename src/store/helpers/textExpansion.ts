@@ -16,10 +16,11 @@
 
 /**
  * Text Feature Expansion — convert a text feature into exploded child features
- * organized per letter/glyph, with optional source feature removal.
+ * organized per letter/glyph, with each letter becoming a group folder.
  *
  * Each letter becomes a group folder containing one or more contour features
  * (outline fonts can produce multiple contours per letter due to holes).
+ * Skeleton fonts always produce open profiles (line features).
  */
 
 import type { FeatureDefinition, FeatureFolder, SketchFeature, Project } from '../../types/project'
@@ -43,10 +44,11 @@ interface TextExpansionResult {
  *
  * Algorithm:
  * 1. Resolve the text feature's glyph shapes (skeleton strokes or outline contours).
- * 2. Group shapes by letter index (extracting the numeric index from shape name).
- * 3. For each letter, create a group folder with the letter as name.
+ * 2. Group shapes by glyph letter index.
+ * 3. For each letter, create a group folder with the letter character appended.
  * 4. For each shape, create a new feature with a fresh definition (no linking).
- * 5. Preserve operation, z_range, visibility, and lock state from the source text feature.
+ * 5. Skeleton fonts always produce open profiles (line features).
+ * 6. Preserve operation, z_range, visibility, and lock state from the source text feature.
  */
 export function expandTextFeature(
   project: Project,
@@ -58,39 +60,42 @@ export function expandTextFeature(
     return { folders: [], features: [] }
   }
 
+  const textString = textFeature.text?.text || 'TEXT'
   const folders: FeatureFolder[] = []
   const features: SketchFeature[] = []
 
-  // Group shapes by letter index. Names are typically "TEXT 1", "TEXT 2", etc.
-  // For outline fonts with holes, there can be multiple shapes per letter.
-  const shapesByLetter = new Map<number, typeof shapes>()
-  for (const shape of shapes) {
-    // Extract the glyph index from the shape name (e.g., "TEXT 1" → 1, "TEXT 1a" → 1)
-    const letterMatch = shape.name.match(/\s(\d+)/)
-    const letterIndex = letterMatch ? parseInt(letterMatch[1], 10) : 0
+  // Group shapes by glyph index (letter position)
+  const shapesByGlyph = new Map<number, typeof shapes>()
+  const glyphCharMap = new Map<number, string>()
 
-    if (!shapesByLetter.has(letterIndex)) {
-      shapesByLetter.set(letterIndex, [])
+  for (const shape of shapes) {
+    const glyphIndex = shape.glyphIndex ?? 0
+    const glyphChar = shape.glyphChar ?? (textString[glyphIndex - 1] || '?')
+
+    if (!shapesByGlyph.has(glyphIndex)) {
+      shapesByGlyph.set(glyphIndex, [])
     }
-    shapesByLetter.get(letterIndex)!.push(shape)
+    shapesByGlyph.get(glyphIndex)!.push(shape)
+    glyphCharMap.set(glyphIndex, glyphChar)
   }
 
-  // Create one group folder per unique letter and explode features into it
-  for (const [letterIndex, letterShapes] of shapesByLetter) {
+  // Create one group folder per unique glyph and explode features into it
+  for (const [glyphIndex, glyphShapes] of shapesByGlyph) {
     const folderId = nextUniqueGeneratedId(project, 'fg')
-    const letterName = `${textFeature.text?.text || 'TEXT'} ${letterIndex}`
+    const glyphChar = glyphCharMap.get(glyphIndex) || '?'
+    const folderName = glyphChar
 
-    // Create the letter group folder
+    // Create the glyph group folder
     const folder: FeatureFolder = {
       id: folderId,
-      name: letterName,
+      name: folderName,
       collapsed: false,
       grouped: true, // Mark as a grouped folder so the UI knows it's an expansion result
     }
     folders.push(folder)
 
     // Create a feature for each shape (handles outline fonts with holes/secondary contours)
-    for (const shape of letterShapes) {
+    for (const shape of glyphShapes) {
       // Create a fresh definition for each exploded feature (no linking)
       const definition: FeatureDefinition = {
         id: nextUniqueGeneratedId(project, 'def'),
