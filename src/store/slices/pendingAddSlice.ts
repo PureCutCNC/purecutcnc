@@ -19,6 +19,8 @@ import { convertLength } from '../../utils/units'
 import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
+import { createDefinitionForFeature } from '../helpers/featureDefinitions'
+import { IDENTITY_MATRIX } from '../../types/project'
 import { createTextFeatureAt } from '../helpers/naming'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
 import {
@@ -365,15 +367,27 @@ export function createPendingAddSlice(
         return []
       }
 
-      const createdFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
-      if (!createdFeature) {
+      const baseFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
+      if (!baseFeature) {
         return []
       }
+
+      // Mint a FeatureDefinition so the text feature is a proper reference
+      // instance (definitionId + identity transform), like every other
+      // creation path. Without this, reference copies point at a missing
+      // definition and become un-resolvable / un-selectable (issue #228).
+      const minted = createDefinitionForFeature(state.project, baseFeature)
+      const createdFeature: SketchFeature = {
+        ...baseFeature,
+        definitionId: minted.definitionId,
+        transform: IDENTITY_MATRIX,
+      } as SketchFeature & { definitionId: string; transform: typeof IDENTITY_MATRIX }
 
       set((s) => {
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: [...s.project.features, createdFeature],
+          featureDefinitions: { ...s.project.featureDefinitions, [minted.definitionId]: minted.definition },
           featureTree: [...s.project.featureTree, { type: 'feature', featureId: createdFeature.id }],
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })

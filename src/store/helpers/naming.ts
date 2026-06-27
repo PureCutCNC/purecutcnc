@@ -47,7 +47,7 @@ export function textFolderBaseName(text: string): string {
   if (!normalized) {
     return 'Text'
   }
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized
+  return normalized.length > 16 ? `${normalized.slice(0, 16)}…` : normalized
 }
 
 export function createTextFeatureAt(project: Project, config: TextToolConfig, anchor: Point): SketchFeature | null {
