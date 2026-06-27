@@ -47,6 +47,8 @@ Always run `npm run build` from the project root to verify changes compile befor
 
 The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs one non-interactive Claude Code session against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded slice** — it is not a general-purpose autonomous command. The management session dispatches it directly (filling the prompt template, piping it in, reading the worker's completion block back) so the user is not a copy/paste middleman.
 
+The full manager loop (plan → dispatch → review → merge) is packaged as the **`manager-delegate` skill** (`.agents/skills/manager-delegate/SKILL.md`, symlinked into `.claude/skills/`; both Claude Code and Codex read it). It wraps the leaf launcher with two orchestrators: `scripts/dispatch-task.sh` (create worktree+branch, run the worker, run an independent `npm run build` gate, report — never merges) and `scripts/finish-task.sh` (merge an approved slice `--no-ff` into the integration branch and tear down the worktree). The skill spells out the elevated permissions dispatch needs (credential read, network, bypass worker) and requires explicit approval before dispatching.
+
 ### How to run it (integration manager workflow)
 
 1. **Create the task worktree first.** Each slice runs in its own git worktree under `/Users/frankp/Projects/worktrees/purecutcnc/`, never in the primary checkout or on `main`:
