@@ -27,6 +27,7 @@ const REPO_URL = 'https://github.com/PureCutCNC/purecutcnc'
 const RELEASES_URL = 'https://github.com/PureCutCNC/purecutcnc/releases'
 const SITE_URL = 'https://purecutcnc.github.io'
 const LICENSE_URL = 'https://github.com/PureCutCNC/purecutcnc/blob/main/LICENSE'
+const SPONSOR_URL = 'https://buymeacoffee.com/purecutcnc'
 
 function formatDate(iso?: string): string | null {
   if (!iso) return null
@@ -104,6 +105,9 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
           )}
 
           <div className="about-links">
+            <a className="about-link" href={SPONSOR_URL} target="_blank" rel="noopener noreferrer">
+              Buy me a coffee
+            </a>
             <a className="about-link" href={SITE_URL} target="_blank" rel="noopener noreferrer">
               Website
             </a>
