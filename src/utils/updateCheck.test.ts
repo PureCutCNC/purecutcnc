@@ -199,7 +199,7 @@ function testChannelPersistence() {
   ;(globalThis as { window?: unknown }).window = fakeWindow
   try {
     // Default when nothing is stored.
-    assert(loadChannel() === 'snapshot', 'missing key -> DEFAULT_CHANNEL (snapshot)')
+    assert(loadChannel() === 'stable', 'missing key -> DEFAULT_CHANNEL (stable)')
 
     // Round-trip both valid channels.
     saveChannel('stable')
@@ -209,13 +209,13 @@ function testChannelPersistence() {
 
     // Any non-stable/snapshot stored value falls back to the default.
     map.set('purecutcnc.updateChannel', 'nightly')
-    assert(loadChannel() === 'snapshot', 'invalid stored value -> DEFAULT_CHANNEL')
+    assert(loadChannel() === 'stable', 'invalid stored value -> DEFAULT_CHANNEL')
   } finally {
     delete (globalThis as { window?: unknown }).window
   }
 
   // With no window (SSR / non-browser), load returns the default and save is a no-op.
-  assert(loadChannel() === 'snapshot', 'no window -> DEFAULT_CHANNEL')
+  assert(loadChannel() === 'stable', 'no window -> DEFAULT_CHANNEL')
   saveChannel('stable') // must not throw without a window
   console.log('testChannelPersistence PASS')
 }
