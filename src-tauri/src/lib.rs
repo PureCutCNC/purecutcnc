@@ -9,11 +9,13 @@ struct ExitCoordinator {
 /// Handles to the two "Update Channel" check items so their checked state can be
 /// driven as a radio group. The channel preference itself is persisted by the
 /// frontend (localStorage); Rust only mirrors it onto the native menu.
+#[cfg(desktop)]
 struct ChannelMenuItems {
   stable: tauri::menu::CheckMenuItem<tauri::Wry>,
   snapshot: tauri::menu::CheckMenuItem<tauri::Wry>,
 }
 
+#[cfg(desktop)]
 impl ChannelMenuItems {
   fn apply(&self, channel: &str) {
     let _ = self.stable.set_checked(channel == "stable");
@@ -23,6 +25,7 @@ impl ChannelMenuItems {
 
 /// Mirror the frontend's persisted update channel onto the native menu.
 /// Called once on startup so the checkmark reflects a previously saved choice.
+#[cfg(desktop)]
 #[tauri::command]
 fn set_update_channel(channel: String, items: tauri::State<ChannelMenuItems>) {
   items.apply(&channel);
@@ -42,7 +45,7 @@ fn cancel_app_exit_request(exit_coordinator: tauri::State<ExitCoordinator>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let app = tauri::Builder::default()
+  let builder = tauri::Builder::default()
     .manage(ExitCoordinator::default())
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -54,8 +57,11 @@ pub fn run() {
       }
 
       // -----------------------------------------------------------------------
-      // Native menu
+      // Native menu (desktop only — mobile has no native menu bar; these
+      // actions are surfaced through the in-app tablet UI instead)
       // -----------------------------------------------------------------------
+      #[cfg(desktop)]
+      {
       use tauri::Manager;
       use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu, PredefinedMenuItem};
 
@@ -129,10 +135,14 @@ pub fn run() {
 
       let menu = Menu::with_id_and_items(app, "main_menu", &[&app_menu, &file_menu, &edit_menu])?;
       app.set_menu(menu)?;
+      }
 
       Ok(())
-    })
-    .on_menu_event(|app, event| {
+    });
+
+  // Menu events are desktop-only (mobile has no menu bar).
+  #[cfg(desktop)]
+  let builder = builder.on_menu_event(|app, event| {
       // Forward menu item ID to the frontend as a "menu" event.
       use tauri::{Emitter, Manager};
       let id = event.id().0.as_str();
@@ -146,8 +156,17 @@ pub fn run() {
       if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("menu", id.to_string());
       }
-    })
-    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request, set_update_channel])
+    });
+
+  // `set_update_channel` mirrors state onto the native menu, so it is desktop-only.
+  #[cfg(desktop)]
+  let builder = builder
+    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request, set_update_channel]);
+  #[cfg(not(desktop))]
+  let builder = builder
+    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request]);
+
+  let app = builder
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())
