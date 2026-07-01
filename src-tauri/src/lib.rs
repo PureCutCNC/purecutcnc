@@ -71,8 +71,13 @@ pub fn run() {
       let paste_i      = MenuItem::with_id(app, "paste",       "Paste",            true, Some("CmdOrCtrl+V"))?;
       let quit_i       = MenuItem::with_id(app, "quit",        "Quit PureCutCNC",  true, Some("CmdOrCtrl+Q"))?;
 
-      // Update items. The native "About" panel is left untouched; "Check for
-      // Updates…" is a separate, user-initiated action handled by the frontend.
+      // App menu "About" opens the in-app dialog via a "menu" event (not the OS
+      // about panel) so it can show the same rich content as the web build:
+      // description, links, license, and a support section.
+      let about_i = MenuItem::with_id(app, "about", "About PureCutCNC", true, None::<&str>)?;
+
+      // Update items. "Check for Updates…" is a separate, user-initiated action
+      // handled by the frontend.
       // The channel check state defaults to "snapshot" (the only published
       // desktop channel today); the frontend re-syncs both checkmarks on mount
       // from the persisted preference.
@@ -92,7 +97,7 @@ pub fn run() {
       // macOS app menu — must be the FIRST submenu; macOS replaces its label
       // with the running app name automatically.
       let app_menu = Submenu::with_id_and_items(app, "app", "PureCutCNC", true, &[
-        &PredefinedMenuItem::about(app, None, None)?,
+        &about_i,
         &check_updates_i,
         &channel_menu,
         &PredefinedMenuItem::separator(app)?,

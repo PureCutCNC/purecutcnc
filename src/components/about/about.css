@@ -80,6 +80,43 @@
   text-decoration: underline;
 }
 
+.about-support {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(240, 162, 74, 0.28);
+  border-radius: 10px;
+  background: rgba(240, 162, 74, 0.07);
+}
+
+.about-support-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.about-coffee-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px solid #f0a24a;
+  border-radius: 8px;
+  color: #f0a24a;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.about-coffee-btn:hover {
+  background: #f0a24a;
+  color: #1c1206;
+}
+
 .about-copyright {
   font-size: 11px;
   color: var(--text-dim);

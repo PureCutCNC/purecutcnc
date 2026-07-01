@@ -94,6 +94,8 @@ function getSetWindowTitle(): Promise<(title: string) => void> {
 interface DesktopIntegrationOptions {
   /** Called when the native "Export G-code" menu item is triggered. */
   onExportGcode: () => void
+  /** Called when the native "About PureCutCNC" menu item is triggered. */
+  onShowAbout: () => void
 }
 
 type FeatureClipboardCommand = 'copy' | 'cut' | 'paste'
@@ -141,13 +143,15 @@ function runFeatureClipboardCommand(
  * Safe to call in the browser — all Tauri-specific listeners are guarded by
  * `platform.isDesktop` and loaded lazily so the web bundle is not affected.
  */
-export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptions) {
+export function useDesktopIntegration({ onExportGcode, onShowAbout }: DesktopIntegrationOptions) {
   // Keep a ref so event handlers always call the latest version without
   // needing to be re-registered when the callback identity changes.
   const onExportGcodeRef = useRef(onExportGcode)
+  const onShowAboutRef = useRef(onShowAbout)
   const featureClipboardRef = useRef<FeatureClipboardPayload>([])
   useEffect(() => {
     onExportGcodeRef.current = onExportGcode
+    onShowAboutRef.current = onShowAbout
   })
 
   // -------------------------------------------------------------------------
@@ -325,6 +329,9 @@ export function useDesktopIntegration({ onExportGcode }: DesktopIntegrationOptio
           }
           case 'export_gcode':
             onExportGcodeRef.current()
+            break
+          case 'about':
+            onShowAboutRef.current()
             break
           case 'quit':
             await handleAppExitRequest()
