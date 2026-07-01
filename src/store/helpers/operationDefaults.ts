@@ -285,6 +285,7 @@ export function defaultOperationForTarget(
     rpm: tool.defaultRpm,
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
+    pocketSlotFeedPercent: 100,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,

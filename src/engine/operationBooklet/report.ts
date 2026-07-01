@@ -240,6 +240,10 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
     )
   }
 
+  if (operation.kind === 'pocket' && (operation.pocketSlotFeedPercent ?? 100) < 100) {
+    rows.push({ label: 'Slot Feed', value: `${formatNumber(operation.pocketSlotFeedPercent ?? 100, 0)} % of feed` })
+  }
+
   if (operation.kind === 'drilling') {
     rows.push(
       { label: 'Drill Type', value: operation.drillType ?? 'simple' },

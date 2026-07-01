@@ -38,7 +38,7 @@ import {
 } from './geometry'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { resolvePocketRegions } from './resolver'
-import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitCutMoveAtContours, splitFeatureTargets } from './regions'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -220,6 +220,117 @@ export type SafeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint) => boolean
 type OffsetTraversalMode = 'outer-first' | 'inner-first'
 
 const XY_ALIGN_EPS = 1e-6
+
+/**
+ * A cut is "adjacent to cleared material" when it runs within one stepover of
+ * an already-cleared child offset region. The factor adds tolerance for the
+ * Clipper round-trip (inset by stepover, expand back by stepover) not being a
+ * perfect identity at corners.
+ */
+const SLOT_FEED_ADJACENCY_FACTOR = 1.05
+
+export interface SlotFeedOptions {
+  /** Multiplier (0..1) applied to fully engaged cut moves. */
+  scale: number
+  /** Distance treated as "adjacent to cleared material": one stepover plus tolerance. */
+  adjacency: number
+}
+
+/**
+ * Resolve the operation's slot-feed percentage into a cut-feed multiplier.
+ * Returns null when the reduction is disabled (non-pocket kinds, undefined,
+ * out-of-range, or 100%), which callers use to skip all slot-feed work so the
+ * generated move stream is byte-identical to the pre-feature output.
+ */
+export function resolveSlotFeedScale(operation: Operation): number | null {
+  if (operation.kind !== 'pocket') return null
+  const percent = operation.pocketSlotFeedPercent
+  if (percent === undefined || !(percent > 0) || percent >= 100) return null
+  return percent / 100
+}
+
+interface EngagementMask {
+  contours: Point[][]
+  contains(point: Point): boolean
+}
+
+function pointInContour(point: Point, contour: Point[]): boolean {
+  let inside = false
+  for (let index = 0, previous = contour.length - 1; index < contour.length; previous = index, index += 1) {
+    const a = contour[index]
+    const b = contour[previous]
+    const crosses = (a.y > point.y) !== (b.y > point.y)
+      && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
+/**
+ * Build the cleared-adjacency mask from the regions already machined at this
+ * level (the current node's child offset regions, expanded by the adjacency
+ * distance). A point inside the mask is within one stepover of cleared
+ * material, so a cut through it has normal stepover engagement; a point
+ * outside is virgin material, so a cut through it is fully engaged.
+ */
+function buildEngagementMask(clearedRegions: ResolvedPocketRegion[]): EngagementMask {
+  const contours: Point[][] = []
+  for (const region of clearedRegions) {
+    if (region.outer.length >= 3) contours.push(region.outer)
+    for (const island of region.islands) {
+      if (island.length >= 3) contours.push(island)
+    }
+  }
+  return {
+    contours,
+    contains: (point) => clearedRegions.some((region) =>
+      region.outer.length >= 3
+      && pointInContour(point, region.outer)
+      && !region.islands.some((island) => island.length >= 3 && pointInContour(point, island))),
+  }
+}
+
+/**
+ * Re-stamp the cut moves appended since startIndex: fragments outside the
+ * cleared-adjacency mask are fully engaged and get the reduced slot feed;
+ * fragments inside keep the normal feed. Moves spanning both zones are split
+ * at the mask boundary. With no mask (or an empty one) everything is virgin
+ * material and every cut move in the range is stamped. Rapids and plunges
+ * are left untouched.
+ */
+function applySlotFeedScale(
+  moves: ToolpathMove[],
+  startIndex: number,
+  scale: number,
+  mask: EngagementMask | null,
+): void {
+  if (startIndex >= moves.length) return
+
+  const stamped: ToolpathMove[] = []
+  for (let index = startIndex; index < moves.length; index += 1) {
+    const move = moves[index]
+    if (move.kind !== 'cut') {
+      stamped.push(move)
+      continue
+    }
+
+    if (!mask || mask.contours.length === 0) {
+      stamped.push({ ...move, feedScale: scale })
+      continue
+    }
+
+    for (const fragment of splitCutMoveAtContours(move, mask.contours, mask.contains)) {
+      stamped.push(fragment.inside
+        ? { ...move, from: fragment.from, to: fragment.to }
+        : { ...move, from: fragment.from, to: fragment.to, feedScale: scale })
+    }
+  }
+
+  moves.length = startIndex
+  for (const move of stamped) {
+    moves.push(move)
+  }
+}
 
 export function transitionToCutEntry(
   moves: ToolpathMove[],
@@ -682,15 +793,21 @@ function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start:
   return ordered
 }
 
-export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
+export interface TaggedOpenSegment {
+  points: Point[]
+  /** Index of the source region within the regions array the segments were built from. */
+  regionIndex: number
+}
+
+function orderTaggedOpenSegmentsGreedy(segments: TaggedOpenSegment[], start: Point | null): TaggedOpenSegment[] {
   if (segments.length <= 1 || start === null) {
     return segments
   }
 
   const remaining = segments
-    .filter((segment) => segment.length >= 2)
-    .map((segment) => [...segment])
-  const ordered: Point[][] = []
+    .filter((segment) => segment.points.length >= 2)
+    .map((segment) => ({ ...segment, points: [...segment.points] }))
+  const ordered: TaggedOpenSegment[] = []
   let current = start
 
   while (remaining.length > 0) {
@@ -699,7 +816,7 @@ export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null
     let bestDistance = Number.POSITIVE_INFINITY
 
     for (let index = 0; index < remaining.length; index += 1) {
-      const segment = remaining[index]
+      const segment = remaining[index].points
       const first = segment[0]
       const last = segment[segment.length - 1]
       const forwardDistance = distanceSquared(current, first)
@@ -718,20 +835,33 @@ export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null
     }
 
     const [nextSegment] = remaining.splice(bestIndex, 1)
-    const orderedSegment = bestReverse ? [...nextSegment].reverse() : nextSegment
+    const orderedSegment = bestReverse
+      ? { ...nextSegment, points: [...nextSegment.points].reverse() }
+      : nextSegment
     ordered.push(orderedSegment)
-    current = orderedSegment[orderedSegment.length - 1]
+    current = orderedSegment.points[orderedSegment.points.length - 1]
   }
 
   return ordered
 }
 
-export function buildPocketParallelSegments(
+export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null): Point[][] {
+  if (segments.length <= 1 || start === null) {
+    return segments
+  }
+
+  return orderTaggedOpenSegmentsGreedy(
+    segments.map((points) => ({ points, regionIndex: 0 })),
+    start,
+  ).map((segment) => segment.points)
+}
+
+export function buildPocketParallelSegmentsTagged(
   regions: ResolvedPocketRegion[],
   stepoverDistance: number,
   angleDeg: number,
-): Point[][] {
-  const segments: Point[][] = []
+): TaggedOpenSegment[] {
+  const segments: TaggedOpenSegment[] = []
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const step = Math.max(stepoverDistance, minStepover)
   const angleRad = (angleDeg * Math.PI) / 180
@@ -763,7 +893,7 @@ export function buildPocketParallelSegments(
         const left = rotatePoint({ x: startX, y }, cosForward, sinForward)
         const right = rotatePoint({ x: endX, y }, cosForward, sinForward)
         const reverse = (regionIndex + scanIndex) % 2 === 1
-        segments.push(reverse ? [right, left] : [left, right])
+        segments.push({ points: reverse ? [right, left] : [left, right], regionIndex })
       }
 
       scanIndex += 1
@@ -771,6 +901,15 @@ export function buildPocketParallelSegments(
   })
 
   return segments
+}
+
+export function buildPocketParallelSegments(
+  regions: ResolvedPocketRegion[],
+  stepoverDistance: number,
+  angleDeg: number,
+): Point[][] {
+  return buildPocketParallelSegmentsTagged(regions, stepoverDistance, angleDeg)
+    .map((segment) => segment.points)
 }
 
 export function cutClosedContours(
@@ -813,6 +952,7 @@ export function cutOffsetRegionRecursive(
   direction: CutDirection = 'conventional',
   safeLinkCheck?: SafeLinkCheck,
   traversalMode: OffsetTraversalMode = 'outer-first',
+  slotFeed?: SlotFeedOptions,
 ): ToolpathPoint | null {
   const childRegions = buildInsetRegions(region, stepoverDistance)
 
@@ -829,7 +969,8 @@ export function cutOffsetRegionRecursive(
       childAnchors,
     ))
 
-    return cutClosedContours(
+    const startIndex = moves.length
+    const endPosition = cutClosedContours(
       moves,
       preparedContours,
       z,
@@ -840,6 +981,18 @@ export function cutOffsetRegionRecursive(
       direction,
       safeLinkCheck,
     )
+
+    if (slotFeed && traversalMode === 'inner-first') {
+      // In inner-first traversal the children were cut before this region's
+      // own loops, so material within one stepover of a child region is
+      // already cleared. Everything else this loop touches is virgin: the
+      // whole loop for leaf regions (no children), and pinch corridors of
+      // parent rings where the inset split into disjoint children.
+      const clearedAdjacent = childRegions.flatMap((child) => buildInsetRegions(child, -slotFeed.adjacency))
+      applySlotFeedScale(moves, startIndex, slotFeed.scale, buildEngagementMask(clearedAdjacent))
+    }
+
+    return endPosition
   }
 
   let nextPosition = currentPosition
@@ -864,6 +1017,7 @@ export function cutOffsetRegionRecursive(
       direction,
       safeLinkCheck,
       traversalMode,
+      slotFeed,
     )
   }
 
@@ -917,6 +1071,7 @@ function generateRoughBandMoves(
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
+  const slotScale = resolveSlotFeedScale(operation)
   let currentPosition: ToolpathPoint | null = null
 
   if (operation.kind === 'pocket' && operation.pocketPattern === 'parallel') {
@@ -930,7 +1085,7 @@ function generateRoughBandMoves(
     }
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
-    const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
+    const segments = buildPocketParallelSegmentsTagged(roughRegions, effectiveStepover, operation.pocketAngle)
     if (segments.length === 0) {
       return {
         moves,
@@ -940,6 +1095,9 @@ function generateRoughBandMoves(
     }
 
     for (const z of stepLevels) {
+      // The boundary pass is cut before anything is cleared at this level, so
+      // every boundary loop is a full-slot cut.
+      const boundaryStartIndex = moves.length
       for (const contour of boundaryContours) {
         const entryPoint = contourStartPoint(contour, z)
         currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
@@ -947,18 +1105,29 @@ function generateRoughBandMoves(
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
+      if (slotScale !== null) {
+        applySlotFeedScale(moves, boundaryStartIndex, slotScale, null)
+      }
 
-      const orderedSegments = orderOpenSegmentsGreedy(
+      const orderedSegments = orderTaggedOpenSegmentsGreedy(
         segments,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
       )
 
-      for (const segment of orderedSegments) {
+      // The first fill line cut in each region is a full-slot cut; later
+      // lines overlap the previously cleared band by the stepover.
+      const slottedRegions = new Set<number>()
+      for (const { points: segment, regionIndex } of orderedSegments) {
+        const segmentStartIndex = moves.length
         const entryPoint = contourStartPoint(segment, z)
         currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
         const cutMoves = toOpenCutMoves(segment, z)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        if (slotScale !== null && !slottedRegions.has(regionIndex)) {
+          slottedRegions.add(regionIndex)
+          applySlotFeedScale(moves, segmentStartIndex, slotScale, null)
+        }
       }
 
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
@@ -966,6 +1135,10 @@ function generateRoughBandMoves(
 
     return { moves, stepLevels, warnings }
   }
+
+  const slotFeed = slotScale !== null
+    ? { scale: slotScale, adjacency: effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR }
+    : undefined
 
   for (const z of stepLevels) {
     const currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
@@ -992,6 +1165,7 @@ function generateRoughBandMoves(
         direction,
         undefined,
         'inner-first',
+        slotFeed,
       )
     }
 
@@ -1033,12 +1207,23 @@ function generateFinishBandMoves(
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const finishDelta = toolRadius + radialLeave
   const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+  const slotScale = resolveSlotFeedScale(operation)
+  const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
   const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
-  const floorContours = operation.finishFloor && !(operation.kind === 'pocket' && operation.pocketPattern === 'parallel')
-    ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
-    : []
-  const floorSegments = operation.finishFloor && operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
-    ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
+  // Per-region floor groups are built only when the slot feed is active; the
+  // disabled path keeps today's single global greedy ordering untouched.
+  const floorContourGroups = slotScale !== null && operation.finishFloor && !isParallelPocket
+    ? finishRegions
+      .map((region) => buildPocketFloorContours([region], 0, stepoverDistance))
+      .filter((group) => group.length > 0)
+    : null
+  const floorContours = floorContourGroups !== null
+    ? floorContourGroups.flat()
+    : operation.finishFloor && !isParallelPocket
+      ? buildPocketFloorContours(finishRegions, 0, stepoverDistance)
+      : []
+  const floorSegments = operation.finishFloor && isParallelPocket
+    ? buildPocketParallelSegmentsTagged(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
   if (wallContours.length === 0 && floorContours.length === 0 && floorSegments.length === 0) {
     return {
@@ -1059,19 +1244,61 @@ function generateFinishBandMoves(
   }
 
   for (const z of floorStepLevels) {
-    currentPosition = cutClosedContours(moves, floorContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
+    if (floorContourGroups !== null && slotScale !== null) {
+      // Visit floor regions nearest-first; the first floor loop cut in each
+      // region crosses the full remaining skin width (fully engaged), later
+      // loops overlap the cleared band by the stepover.
+      const remainingGroups = [...floorContourGroups]
+      while (remainingGroups.length > 0) {
+        const anchor = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
+        let bestIndex = 0
+        if (anchor !== null) {
+          let bestDistance = Number.POSITIVE_INFINITY
+          for (let index = 0; index < remainingGroups.length; index += 1) {
+            const distance = Math.min(
+              ...remainingGroups[index].map((contour) => contourEntryDistanceSquared(contour, anchor)),
+            )
+            if (distance < bestDistance) {
+              bestIndex = index
+              bestDistance = distance
+            }
+          }
+        }
+        const [group] = remainingGroups.splice(bestIndex, 1)
+        const orderedGroup = orderClosedContoursGreedy(group, anchor)
+        if (orderedGroup.length === 0) {
+          continue
+        }
+        const startIndex = moves.length
+        currentPosition = cutClosedContours(moves, [orderedGroup[0]], z, safeZ, maxLinkDistance, currentPosition, false, direction)
+        applySlotFeedScale(moves, startIndex, slotScale, null)
+        if (orderedGroup.length > 1) {
+          currentPosition = cutClosedContours(moves, orderedGroup.slice(1), z, safeZ, maxLinkDistance, currentPosition, false, direction)
+        }
+      }
+    } else {
+      currentPosition = cutClosedContours(moves, floorContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
+    }
 
-    const orderedFloorSegments = orderOpenSegmentsGreedy(
+    const orderedFloorSegments = orderTaggedOpenSegmentsGreedy(
       floorSegments,
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
-    for (const segment of orderedFloorSegments) {
+    // The first floor fill line cut in each region crosses the full skin
+    // width; later lines overlap the cleared band by the stepover.
+    const slottedRegions = new Set<number>()
+    for (const { points: segment, regionIndex } of orderedFloorSegments) {
+      const segmentStartIndex = moves.length
       const entryPoint = contourStartPoint(segment, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toOpenCutMoves(segment, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      if (slotScale !== null && !slottedRegions.has(regionIndex)) {
+        slottedRegions.add(regionIndex)
+        applySlotFeedScale(moves, segmentStartIndex, slotScale, null)
+      }
     }
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)

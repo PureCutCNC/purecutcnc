@@ -1468,6 +1468,24 @@ export function CAMPanel({
                       onCommit={(value) => updateOperation(selectedOperation.id, { plungeFeed: value })}
                     />
                   </label>
+                  {selectedOperation.kind === 'pocket'
+                    && (selectedOperation.pass === 'rough'
+                      || (selectedOperation.pass === 'finish' && selectedOperation.finishFloor)) ? (
+                    <label
+                      className="properties-field"
+                      title="Feed percentage for fully engaged (slotting) cuts: each section's innermost loop, uncleared crossings, the parallel boundary pass, and the first fill line. 100 disables the reduction."
+                    >
+                      <span>Slot Feed (%)</span>
+                      <DraftNumberInput
+                        value={selectedOperation.pocketSlotFeedPercent ?? 100}
+                        min={1}
+                        max={100}
+                        onCommit={(value) => updateOperation(selectedOperation.id, {
+                          pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
+                        })}
+                      />
+                    </label>
+                  ) : null}
                   <label className="properties-field">
                     <span>RPM</span>
                     <DraftNumberInput

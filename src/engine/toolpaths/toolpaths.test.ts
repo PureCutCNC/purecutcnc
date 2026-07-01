@@ -1513,6 +1513,281 @@ function testFinishSurfaceCleanupRejectsRegionOnlyTarget() {
 }
 
 // ---------------------------------------------------------------------------
+// Pocket slot feed (pocketSlotFeedPercent) tests
+// ---------------------------------------------------------------------------
+
+function makeIslandFeature(
+  id: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  zTop: number,
+  zBottom: number,
+): SketchFeature {
+  return { ...makePocketFeature(id, x, y, w, h, zTop, zBottom), operation: 'add' }
+}
+
+function stampedCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
+  return cutMoves(moves).filter((move) => move.feedScale !== undefined)
+}
+
+function unstampedCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
+  return cutMoves(moves).filter((move) => move.feedScale === undefined)
+}
+
+/** Horizontal cut moves longer than minLength (parallel fill lines at angle 0). */
+function horizontalFillMoves(moves: ToolpathMove[], boundaryYs: number[], minLength = 1): ToolpathMove[] {
+  return cutMoves(moves).filter((move) =>
+    approx(move.from.y, move.to.y)
+    && Math.abs(move.to.x - move.from.x) > minLength
+    && !boundaryYs.some((y) => approx(move.from.y, y)))
+}
+
+function testPocketOffsetSlotFeedSimple() {
+  console.log('Testing pocket offset slot feed marks only the innermost loop...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 20, 20, 2, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const stamped = stampedCutMoves(result.moves)
+  const unstamped = unstampedCutMoves(result.moves)
+
+  assert(stamped.length >= 3, `expected a stamped innermost loop, got ${stamped.length} stamped moves`)
+  assert(unstamped.length > 0, 'expected outer loops at normal feed')
+  assert(stamped.every((move) => approx(move.feedScale ?? 0, 0.5)), 'stamped moves should carry feedScale 0.5')
+
+  // 20x20 pocket, 4mm tool, 1.6 stepover: the only fully engaged loop is the
+  // innermost ring near the centre; every other ring runs one stepover from
+  // its cleared child.
+  for (const move of stamped) {
+    for (const value of [move.from.x, move.from.y, move.to.x, move.to.y]) {
+      assert(value > 6.5 && value < 13.5, `stamped move coordinate ${value} should be near the pocket centre`)
+    }
+  }
+
+  const allCuts = cutMoves(result.moves)
+  assert(allCuts[0].feedScale !== undefined, 'first cut at the level (innermost loop) should be stamped')
+  assert(allCuts[allCuts.length - 1].feedScale === undefined, 'last cut (wall-adjacent loop) should be unstamped')
+  console.log('pocket offset slot feed simple: PASSED')
+}
+
+function testPocketOffsetSlotFeedIslandSections() {
+  console.log('Testing pocket offset slot feed with island-split sections and pinch corridors...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 2, 0)
+  const island = makeIslandFeature('i1', 12, 6, 16, 12, 2, 0)
+  const project = baseProject([tool], [pocket, island])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const stamped = stampedCutMoves(result.moves)
+  assert(stamped.length > 0, 'expected stamped moves')
+
+  // The island splits the first inset into left and right sections; each
+  // section's own innermost start must run at slot feed.
+  const stampedLeft = stamped.filter((move) => (move.from.x + move.to.x) / 2 < 10)
+  const stampedRight = stamped.filter((move) => (move.from.x + move.to.x) / 2 > 30)
+  assert(stampedLeft.length >= 3, 'left section innermost loop should be stamped')
+  assert(stampedRight.length >= 3, 'right section innermost loop should be stamped')
+
+  // The outermost ring's top edge (y=22) crosses the pinch corridors above
+  // the island where nothing is cleared: its middle fragment must be
+  // stamped, its ends (adjacent to the cleared sections) must not.
+  const topEdgeMoves = cutMoves(result.moves).filter((move) => approx(move.from.y, 22, 1e-3) && approx(move.to.y, 22, 1e-3))
+  assert(topEdgeMoves.length >= 2, `outer top edge should be split at the corridor boundary, got ${topEdgeMoves.length} moves`)
+  const containsX = (move: ToolpathMove, x: number) =>
+    Math.min(move.from.x, move.to.x) <= x && Math.max(move.from.x, move.to.x) >= x
+  assert(
+    topEdgeMoves.some((move) => move.feedScale !== undefined && containsX(move, 20)),
+    'outer top edge fragment over the corridor (x≈20) should be stamped',
+  )
+  assert(
+    topEdgeMoves.some((move) => move.feedScale === undefined && (containsX(move, 5) || containsX(move, 35))),
+    'outer top edge fragments next to the cleared sections should be unstamped',
+  )
+
+  // The island ring's top edge (y=20) also runs through virgin corridor material.
+  const islandTopMoves = cutMoves(result.moves).filter((move) => approx(move.from.y, 20, 1e-3) && approx(move.to.y, 20, 1e-3))
+  assert(
+    islandTopMoves.some((move) => move.feedScale !== undefined && containsX(move, 20)),
+    'island ring top edge over the corridor should be stamped',
+  )
+  console.log('pocket offset slot feed island sections: PASSED')
+}
+
+function testPocketOffsetSlotFeedPerLevel() {
+  console.log('Testing pocket offset slot feed applies at every Z level...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 20, 20, 2, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    stepdown: 1,
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const stamped = stampedCutMoves(result.moves)
+  assert(stamped.some((move) => approx(move.to.z, 1)), 'first level should have stamped moves')
+  assert(stamped.some((move) => approx(move.to.z, 0)), 'second level should have stamped moves')
+  console.log('pocket offset slot feed per level: PASSED')
+}
+
+function testPocketParallelSlotFeed() {
+  console.log('Testing pocket parallel slot feed marks boundary and first fill line per region...')
+  const tool = makeFlatEndmill('t1')
+  const left = makePocketFeature('p1', 0, 0, 20, 20, 2, 0)
+  const right = makePocketFeature('p2', 40, 0, 20, 20, 2, 0)
+  const project = baseProject([tool], [left, right])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1', 'p2'] },
+    toolRef: 't1',
+    pocketPattern: 'parallel',
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const allCuts = cutMoves(result.moves)
+  assert(allCuts[0].feedScale !== undefined, 'first boundary cut should be stamped')
+  assert(allCuts[allCuts.length - 1].feedScale === undefined, 'last fill line should be unstamped')
+
+  // Boundary rings sit at the tool-radius inset: y=2 and y=18 for both rects.
+  const boundaryYs = [2, 18]
+  const fills = horizontalFillMoves(result.moves, boundaryYs)
+  assert(fills.length > 4, 'expected parallel fill lines')
+
+  for (const [regionName, minX, maxX] of [['left', 0, 20], ['right', 40, 60]] as const) {
+    const regionFills = fills.filter((move) => move.from.x >= minX && move.from.x <= maxX)
+    const stampedYs = new Set(regionFills.filter((move) => move.feedScale !== undefined).map((move) => move.from.y.toFixed(4)))
+    assert(stampedYs.size === 1, `${regionName} region should have exactly one stamped fill line, got ${stampedYs.size}`)
+    assert(regionFills.some((move) => move.feedScale === undefined), `${regionName} region should have unstamped fill lines`)
+  }
+
+  // Every boundary-ring cut is a full-slot cut and must be stamped.
+  const boundaryMoves = cutMoves(result.moves).filter((move) =>
+    boundaryYs.some((y) => approx(move.from.y, y) && approx(move.to.y, y)) && Math.abs(move.to.x - move.from.x) > 1)
+  assert(boundaryMoves.length > 0, 'expected boundary ring moves')
+  assert(boundaryMoves.every((move) => move.feedScale !== undefined), 'all boundary ring moves should be stamped')
+  console.log('pocket parallel slot feed: PASSED')
+}
+
+function testPocketFinishFloorSlotFeedOffset() {
+  console.log('Testing pocket finish floor slot feed (offset): first floor loop only, walls untouched...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 30, 30, 2, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const stamped = stampedCutMoves(result.moves)
+  assert(stamped.length >= 3, 'expected the first floor loop to be stamped')
+
+  // Wall contour runs at the tool-radius inset (x/y = 2 or 28) and must stay
+  // at normal feed; floor loops start one stepover further in.
+  for (const move of stamped) {
+    for (const value of [move.from.x, move.from.y, move.to.x, move.to.y]) {
+      assert(value > 3 && value < 27, `stamped floor move coordinate ${value} should be inside the wall contour`)
+    }
+  }
+
+  // Later floor loops run at normal feed.
+  const unstampedFloor = unstampedCutMoves(result.moves).filter((move) =>
+    [move.from.x, move.from.y, move.to.x, move.to.y].every((value) => value > 3 && value < 27))
+  assert(unstampedFloor.length > 0, 'expected later floor loops at normal feed')
+
+  // Walls only + slot feed => nothing stamped.
+  const wallsOnly = generatePocketToolpath(project, { ...op, finishFloor: false })
+  assert(stampedCutMoves(wallsOnly.moves).length === 0, 'walls-only finish should have no stamped moves')
+  console.log('pocket finish floor slot feed offset: PASSED')
+}
+
+function testPocketFinishFloorSlotFeedParallel() {
+  console.log('Testing pocket finish floor slot feed (parallel): first fill line only...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 20, 20, 2, 0)
+  const project = baseProject([tool], [pocket])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    pocketPattern: 'parallel',
+    finishWalls: false,
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const allCuts = cutMoves(result.moves)
+  assert(allCuts.length > 2, 'expected floor fill lines')
+  assert(allCuts[0].feedScale !== undefined, 'first floor fill line should be stamped')
+  assert(allCuts[allCuts.length - 1].feedScale === undefined, 'last floor fill line should be unstamped')
+
+  const stampedYs = new Set(stampedCutMoves(result.moves)
+    .filter((move) => approx(move.from.y, move.to.y))
+    .map((move) => move.from.y.toFixed(4)))
+  assert(stampedYs.size === 1, `exactly one floor fill line should be stamped, got ${stampedYs.size}`)
+  console.log('pocket finish floor slot feed parallel: PASSED')
+}
+
+function testPocketSlotFeedDisabledParity() {
+  console.log('Testing pocket slot feed disabled (undefined / 100) leaves moves untouched...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 20, 20, 2, 0)
+  const island = makeIslandFeature('i1', 6, 6, 8, 8, 2, 0)
+  const project = baseProject([tool], [pocket, island])
+
+  for (const pattern of ['offset', 'parallel'] as const) {
+    for (const pass of ['rough', 'finish'] as const) {
+      const base = makePocketOp({
+        kind: 'pocket',
+        pass,
+        target: { source: 'features', featureIds: ['p1'] },
+        toolRef: 't1',
+        pocketPattern: pattern,
+      })
+      const legacy = generatePocketToolpath(project, base)
+      const explicit100 = generatePocketToolpath(project, { ...base, pocketSlotFeedPercent: 100 })
+
+      assert(
+        legacy.moves.every((move) => move.feedScale === undefined),
+        `${pattern}/${pass}: legacy operation should have no feedScale`,
+      )
+      assert(
+        explicit100.moves.every((move) => move.feedScale === undefined),
+        `${pattern}/${pass}: percent=100 should have no feedScale`,
+      )
+      assert(
+        movesEqual(legacy.moves, explicit100.moves),
+        `${pattern}/${pass}: percent=100 must not change the move stream`,
+      )
+    }
+  }
+  console.log('pocket slot feed disabled parity: PASSED')
+}
+
+// ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
 
@@ -1546,6 +1821,13 @@ try {
   testDrillingTieBreaksByOriginalOrder()
   testDrillingMinimizesSafeZTravelDistance()
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()
+  testPocketOffsetSlotFeedSimple()
+  testPocketOffsetSlotFeedIslandSections()
+  testPocketOffsetSlotFeedPerLevel()
+  testPocketParallelSlotFeed()
+  testPocketFinishFloorSlotFeedOffset()
+  testPocketFinishFloorSlotFeedParallel()
+  testPocketSlotFeedDisabledParity()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
   console.error(e)
