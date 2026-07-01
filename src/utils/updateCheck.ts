@@ -34,8 +34,8 @@ export type UpdateChannel = 'stable' | 'snapshot'
 /** Manifest platform key, matching the deploy workflows' output filenames. */
 export type UpdatePlatform = 'macos' | 'windows' | 'linux'
 
-/** Default channel — snapshot, since only snapshot desktop builds ship today. */
-export const DEFAULT_CHANNEL: UpdateChannel = 'snapshot'
+/** Default channel — stable; snapshot is opt-in for testers (via the update channel menu). */
+export const DEFAULT_CHANNEL: UpdateChannel = 'stable'
 
 const CHANNEL_STORAGE_KEY = 'purecutcnc.updateChannel'
 

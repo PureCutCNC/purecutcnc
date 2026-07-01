@@ -82,7 +82,10 @@ function App() {
   }, [])
 
   const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
-  useDesktopIntegration({ onExportGcode: handleExportGcode })
+  useDesktopIntegration({
+    onExportGcode: handleExportGcode,
+    onShowAbout: () => setShowAboutDialog(true),
+  })
   const { snapSettings, activeSnapMode, setActiveSnapMode, onToggleSnapEnabled, onToggleSnapMode } = useSnapSettings()
   const { zoomWindowActive, onZoomWindow, onZoomWindowComplete } = useZoomWindow()
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
