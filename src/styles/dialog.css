@@ -561,11 +561,20 @@
   column-gap: 24px;
 }
 
-/* Let .properties-group split across columns so its children flow.
-   Individual .properties-field / .disclosure-section rows still avoid
-   internal breaks (label + control stay together). */
+/* Let .properties-group's children flow across the columns. The group must be
+   a plain block here, for the same reason .properties-panel is (above): its
+   default display:grid makes it a single grid fragment that WebKit cannot split
+   across CSS columns, so a field straddling the break balloons and clips in the
+   desktop webview (Blink tolerates it). As a block, each .properties-field is a
+   clean block the columns break between, and break-inside:avoid (below) keeps
+   every label+control pair intact. `> * + *` restores the group's 6px gap. */
 .dialog--panel-expand .properties-group {
+  display: block;
   margin-bottom: 10px;
+}
+
+.dialog--panel-expand .properties-group > * + * {
+  margin-top: 6px;
 }
 
 .dialog--panel-expand .properties-field {
