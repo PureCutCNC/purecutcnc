@@ -1850,6 +1850,42 @@ function testPocketOffsetSlotFeedPartialDepthIsland() {
   console.log('pocket offset slot feed partial-depth island: PASSED')
 }
 
+function testSurfaceCleanFinishCutsFloorBeforeWalls() {
+  console.log('Testing surface_clean finish cuts the floor before the walls...')
+  const tool = makeFlatEndmill('t1')
+  const boss = { ...makePocketFeature('b1', 10, 10, 10, 10, 5, 0), operation: 'add' as const }
+  const project = baseProject([tool], [boss])
+  project.stock = { ...project.stock, thickness: 8 }
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['b1'] },
+    toolRef: 't1',
+  })
+
+  const combined = generateSurfaceCleanToolpath(project, op)
+  const floorOnly = generateSurfaceCleanToolpath(project, { ...op, finishWalls: false })
+  const wallsOnly = generateSurfaceCleanToolpath(project, { ...op, finishFloor: false })
+  const combinedCuts = cutMoves(combined.moves)
+  const floorCuts = cutMoves(floorOnly.moves)
+  const wallCuts = cutMoves(wallsOnly.moves)
+  assert(combinedCuts.length > 0 && floorCuts.length > 0 && wallCuts.length > 0, 'expected cuts in all three variants')
+
+  // Floors first: the combined pass starts exactly like the floor-only pass.
+  assert(
+    pointEquals(combinedCuts[0].from, floorCuts[0].from) && pointEquals(combinedCuts[0].to, floorCuts[0].to),
+    'combined finish should start with the floor pass',
+  )
+
+  // Walls last: the final cut lies on a wall contour (its vertices appear in
+  // the walls-only pass) and not on any floor contour.
+  const lastCutTo = combinedCuts[combinedCuts.length - 1].to
+  const matchesVertex = (cuts: ToolpathMove[]) => cuts.some((move) => pointEquals(move.to, lastCutTo))
+  assert(matchesVertex(wallCuts), 'combined finish should end on a wall contour')
+  assert(!matchesVertex(floorCuts), 'combined finish should not end on a floor contour')
+  console.log('surface_clean finish floor-before-walls: PASSED')
+}
+
 function testPocketSlotFeedDisabledParity() {
   console.log('Testing pocket slot feed disabled (undefined / 100) leaves moves untouched...')
   const tool = makeFlatEndmill('t1')
@@ -1927,6 +1963,7 @@ try {
   testPocketParallelSlotFeed()
   testPocketFinishFloorSlotFeedOffset()
   testPocketFinishFloorSlotFeedParallel()
+  testSurfaceCleanFinishCutsFloorBeforeWalls()
   testPocketSlotFeedDisabledParity()
   console.log('\nAll toolpath tests PASSED.')
 } catch (e) {
