@@ -1751,6 +1751,53 @@ function testPocketFinishFloorSlotFeedParallel() {
   console.log('pocket finish floor slot feed parallel: PASSED')
 }
 
+function testPocketOffsetSlotFeedPartialDepthIsland() {
+  console.log('Testing pocket offset slot feed with an island whose top Z is below the pocket top (two bands)...')
+  const tool = makeFlatEndmill('t1')
+  // Pocket 4 -> 0, island only rises to z=2: the upper band has no island,
+  // the lower band is split into left/right sections by the island.
+  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 4, 0)
+  const island = makeIslandFeature('i1', 12, 6, 16, 12, 2, 0)
+  const project = baseProject([tool], [pocket, island])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    pocketSlotFeedPercent: 50,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const cutsAt = (z: number) => cutMoves(result.moves).filter((move) => approx(move.to.z, z) && approx(move.from.z, z))
+
+  // Upper band (z=2, island absent): behaves like a plain pocket — one
+  // stamped innermost loop near the centre, nothing near the walls.
+  const upperStamped = cutsAt(2).filter((move) => move.feedScale !== undefined)
+  assert(upperStamped.length >= 3, 'upper band should stamp its innermost loop')
+  for (const move of upperStamped) {
+    for (const value of [move.from.y, move.to.y]) {
+      assert(value > 4 && value < 20, `upper band stamped y ${value} should be near the pocket centre`)
+    }
+  }
+
+  // Lower band (z=0, island present): each section's innermost start is
+  // stamped, and the outer ring is split over the pinch corridors.
+  const lowerStamped = cutsAt(0).filter((move) => move.feedScale !== undefined)
+  assert(lowerStamped.some((move) => (move.from.x + move.to.x) / 2 < 10), 'lower band left section should be stamped')
+  assert(lowerStamped.some((move) => (move.from.x + move.to.x) / 2 > 30), 'lower band right section should be stamped')
+  const lowerTopEdge = cutsAt(0).filter((move) => approx(move.from.y, 22, 1e-3) && approx(move.to.y, 22, 1e-3))
+  assert(
+    lowerTopEdge.some((move) => move.feedScale !== undefined) && lowerTopEdge.some((move) => move.feedScale === undefined),
+    'lower band outer top edge should be split into stamped corridor and unstamped section-adjacent fragments',
+  )
+
+  // Disabled parity holds across bands too.
+  const legacy = generatePocketToolpath(project, { ...op, pocketSlotFeedPercent: undefined })
+  const explicit100 = generatePocketToolpath(project, { ...op, pocketSlotFeedPercent: 100 })
+  assert(legacy.moves.every((move) => move.feedScale === undefined), 'disabled two-band pocket should have no feedScale')
+  assert(movesEqual(legacy.moves, explicit100.moves), 'percent=100 must not change the two-band move stream')
+  console.log('pocket offset slot feed partial-depth island: PASSED')
+}
+
 function testPocketSlotFeedDisabledParity() {
   console.log('Testing pocket slot feed disabled (undefined / 100) leaves moves untouched...')
   const tool = makeFlatEndmill('t1')
@@ -1824,6 +1871,7 @@ try {
   testPocketOffsetSlotFeedSimple()
   testPocketOffsetSlotFeedIslandSections()
   testPocketOffsetSlotFeedPerLevel()
+  testPocketOffsetSlotFeedPartialDepthIsland()
   testPocketParallelSlotFeed()
   testPocketFinishFloorSlotFeedOffset()
   testPocketFinishFloorSlotFeedParallel()
