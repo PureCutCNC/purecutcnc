@@ -40,6 +40,9 @@ export interface PlaybackPose {
   y: number
   z: number
   moveKind: ToolpathMove['kind'] | null
+  /** feedScale of the current move (undefined when the move has none, i.e. 1×).
+   *  Lets the readout show the reduced feed on slotting pocket cuts. */
+  feedScale: number | undefined
 }
 
 export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
@@ -175,17 +178,17 @@ export class PlaybackController {
 
   getPose(): PlaybackPose {
     if (this.moves.length === 0) {
-      return { x: 0, y: 0, z: 0, moveKind: null }
+      return { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
     }
 
     if (this.finished) {
       const last = this.moves[this.moves.length - 1]
-      return { x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind }
+      return { x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind, feedScale: last.feedScale }
     }
 
     const move = this.moves[this.moveIndex]
     const p = interpolatePoint(move, this.moveFraction)
-    return { x: p.x, y: p.y, z: p.z, moveKind: move.kind }
+    return { x: p.x, y: p.y, z: p.z, moveKind: move.kind, feedScale: move.feedScale }
   }
 
   /**

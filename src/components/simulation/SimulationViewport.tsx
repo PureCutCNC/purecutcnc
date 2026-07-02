@@ -27,7 +27,7 @@ import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 
-const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null }
+const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
 const DEFAULT_CAMERA_SPHERICAL = {
   theta: Math.PI / 4,
@@ -99,6 +99,9 @@ export interface SimulationPlaybackInput {
    * fall back to the generic per-unit default.
    */
   feedPerSecond?: number
+  /** Operation plunge feed in project-units-per-second, for the live feed readout
+   *  during plunge moves. Omit when unavailable. */
+  plungeFeedPerSecond?: number
 }
 
 interface SimulationViewportProps {
@@ -283,6 +286,29 @@ function formatSpeedLabel(perSecond: number, units: 'mm' | 'in'): string {
   const digits = units === 'in' ? 1 : 0
   const rounded = Number(perMinute.toFixed(digits))
   return `${rounded} ${units}/min`
+}
+
+/**
+ * The real cutting feed of the current move (project-units-per-second), used for
+ * the live feed readout. Unlike playback speed this ignores the speed multiplier
+ * — it reports the authored feed so the reduced slot feed is visible on slotting
+ * cuts. Returns null for rapids (no feed) and when the feed isn't known.
+ */
+function currentFeedPerSecond(
+  pose: PlaybackPose,
+  feedPerSecond: number | undefined,
+  plungeFeedPerSecond: number | undefined,
+): number | null {
+  switch (pose.moveKind) {
+    case 'cut':
+    case 'lead_in':
+    case 'lead_out':
+      return feedPerSecond && feedPerSecond > 0 ? feedPerSecond * (pose.feedScale ?? 1) : null
+    case 'plunge':
+      return plungeFeedPerSecond && plungeFeedPerSecond > 0 ? plungeFeedPerSecond : null
+    default:
+      return null
+  }
 }
 
 function createOrbitControls(
@@ -1107,6 +1133,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     y: origin.y - pose.y,
     z: pose.z - origin.z,
     moveKind: pose.moveKind,
+    feedScale: pose.feedScale,
   }), [origin.x, origin.y, origin.z])
 
   // Throttled state update: pose + progress are written to refs every RAF frame,
@@ -1483,6 +1510,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               className={`simulation-playback-bar__move-kind simulation-playback-bar__move-kind--${displayPose.moveKind ?? 'none'}`}
               title={displayPose.moveKind ?? 'Idle'}
             />
+          </div>
+          <div
+            className="simulation-playback-bar__feed"
+            title="Cutting feed of the current move. Reduced slotting pocket cuts show their scaled feed here; rapids show no feed."
+          >
+            <span className="simulation-playback-bar__xyz-label">Feed</span>
+            <span className="simulation-playback-bar__feed-value">
+              {(() => {
+                const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
+                if (feed !== null) return formatSpeedLabel(feed, playbackUnits)
+                return displayPose.moveKind === 'rapid' ? 'rapid' : '—'
+              })()}
+            </span>
           </div>
         </div>
       )}
