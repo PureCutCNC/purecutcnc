@@ -1560,16 +1560,31 @@ function testPocketOffsetSlotFeedSimple() {
   const stamped = stampedCutMoves(result.moves)
   const unstamped = unstampedCutMoves(result.moves)
 
-  assert(stamped.length >= 3, `expected a stamped innermost loop, got ${stamped.length} stamped moves`)
+  assert(stamped.length > 0, 'expected a stamped innermost loop')
   assert(unstamped.length > 0, 'expected outer loops at normal feed')
   assert(stamped.every((move) => approx(move.feedScale ?? 0, 0.5)), 'stamped moves should carry feedScale 0.5')
 
-  // 20x20 pocket, 4mm tool, 1.6 stepover: the only fully engaged loop is the
-  // innermost ring near the centre; every other ring runs one stepover from
-  // its cleared child.
+  // 20x20 pocket, 4mm tool, 1.6 stepover: the innermost ring sits at
+  // 8.4..11.6. It is the only fully engaged loop — every other ring runs one
+  // stepover from its already-cut child, so any stamped move outside the
+  // innermost box can only be a short link fragment plowing into virgin
+  // material, never a ring edge.
+  const moveLen = (move: ToolpathMove) => Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
   for (const move of stamped) {
-    for (const value of [move.from.x, move.from.y, move.to.x, move.to.y]) {
-      assert(value > 6.5 && value < 13.5, `stamped move coordinate ${value} should be near the pocket centre`)
+    const inInnermostBox = [move.from.x, move.from.y, move.to.x, move.to.y]
+      .every((value) => value > 8 && value < 12)
+    assert(
+      inInnermostBox || moveLen(move) < 2.4,
+      `stamped move outside the innermost ring should only be a short link fragment (len=${moveLen(move).toFixed(2)})`,
+    )
+  }
+  // Ring edges of the outer loops (long moves outside the innermost box) all
+  // run at normal feed.
+  for (const move of unstamped.concat(stamped)) {
+    const outsideInnermost = [move.from.x, move.from.y, move.to.x, move.to.y]
+      .some((value) => value < 8 || value > 12)
+    if (outsideInnermost && moveLen(move) > 3) {
+      assert(move.feedScale === undefined, `long outer ring edge should be unstamped (len=${moveLen(move).toFixed(2)})`)
     }
   }
 
@@ -1597,33 +1612,38 @@ function testPocketOffsetSlotFeedIslandSections() {
   assert(stamped.length > 0, 'expected stamped moves')
 
   // The island splits the first inset into left and right sections; each
-  // section's own innermost start must run at slot feed.
+  // section's own innermost start must run at slot feed. (With self-clearing
+  // awareness only the sliver's first pass is stamped — the back pass runs
+  // one stepover from its own kerf — so expect at least one per section.)
   const stampedLeft = stamped.filter((move) => (move.from.x + move.to.x) / 2 < 10)
   const stampedRight = stamped.filter((move) => (move.from.x + move.to.x) / 2 > 30)
-  assert(stampedLeft.length >= 3, 'left section innermost loop should be stamped')
-  assert(stampedRight.length >= 3, 'right section innermost loop should be stamped')
+  assert(stampedLeft.length >= 1, 'left section innermost start should be stamped')
+  assert(stampedRight.length >= 1, 'right section innermost start should be stamped')
 
-  // The outermost ring's top edge (y=22) crosses the pinch corridors above
-  // the island where nothing is cleared: its middle fragment must be
-  // stamped, its ends (adjacent to the cleared sections) must not.
-  const topEdgeMoves = cutMoves(result.moves).filter((move) => approx(move.from.y, 22, 1e-3) && approx(move.to.y, 22, 1e-3))
-  assert(topEdgeMoves.length >= 2, `outer top edge should be split at the corridor boundary, got ${topEdgeMoves.length} moves`)
+  // The island ring's top edge (y=20) is the first pass through the virgin
+  // pinch corridor above the island — a true slot cut. Its middle fragment
+  // must be stamped and split from the ends that run within a tool width of
+  // the already-cleared left/right sections.
   const containsX = (move: ToolpathMove, x: number) =>
     Math.min(move.from.x, move.to.x) <= x && Math.max(move.from.x, move.to.x) >= x
-  assert(
-    topEdgeMoves.some((move) => move.feedScale !== undefined && containsX(move, 20)),
-    'outer top edge fragment over the corridor (x≈20) should be stamped',
-  )
-  assert(
-    topEdgeMoves.some((move) => move.feedScale === undefined && (containsX(move, 5) || containsX(move, 35))),
-    'outer top edge fragments next to the cleared sections should be unstamped',
-  )
-
-  // The island ring's top edge (y=20) also runs through virgin corridor material.
   const islandTopMoves = cutMoves(result.moves).filter((move) => approx(move.from.y, 20, 1e-3) && approx(move.to.y, 20, 1e-3))
   assert(
     islandTopMoves.some((move) => move.feedScale !== undefined && containsX(move, 20)),
     'island ring top edge over the corridor should be stamped',
+  )
+  assert(
+    islandTopMoves.some((move) => move.feedScale === undefined),
+    'island ring top edge next to the cleared sections should be unstamped',
+  )
+
+  // The outermost ring's top edge (y=22) is cut after the island ring already
+  // slotted the corridor: it runs within a kerf's reach of that pass (and of
+  // the sections at its ends), so none of it is fully engaged.
+  const topEdgeMoves = cutMoves(result.moves).filter((move) => approx(move.from.y, 22, 1e-3) && approx(move.to.y, 22, 1e-3))
+  assert(topEdgeMoves.length > 0, 'expected the outer ring top edge')
+  assert(
+    topEdgeMoves.every((move) => move.feedScale === undefined),
+    'outer top edge should run at normal feed once the island ring cleared the corridor',
   )
   console.log('pocket offset slot feed island sections: PASSED')
 }
@@ -1672,18 +1692,25 @@ function testPocketParallelSlotFeed() {
   const fills = horizontalFillMoves(result.moves, boundaryYs)
   assert(fills.length > 4, 'expected parallel fill lines')
 
-  for (const [regionName, minX, maxX] of [['left', 0, 20], ['right', 40, 60]] as const) {
-    const regionFills = fills.filter((move) => move.from.x >= minX && move.from.x <= maxX)
-    const stampedYs = new Set(regionFills.filter((move) => move.feedScale !== undefined).map((move) => move.from.y.toFixed(4)))
-    assert(stampedYs.size === 1, `${regionName} region should have exactly one stamped fill line, got ${stampedYs.size}`)
-    assert(regionFills.some((move) => move.feedScale === undefined), `${regionName} region should have unstamped fill lines`)
-  }
+  // For this geometry every fill line runs within one stepover of an earlier
+  // kerf (the first line is 0.8 from the boundary pass, later lines 1.6 from
+  // their neighbour), so no fill line is fully engaged.
+  assert(fills.every((move) => move.feedScale === undefined), 'fill lines adjacent to cleared kerf should be unstamped')
 
-  // Every boundary-ring cut is a full-slot cut and must be stamped.
-  const boundaryMoves = cutMoves(result.moves).filter((move) =>
-    boundaryYs.some((y) => approx(move.from.y, y) && approx(move.to.y, y)) && Math.abs(move.to.x - move.from.x) > 1)
-  assert(boundaryMoves.length > 0, 'expected boundary ring moves')
-  assert(boundaryMoves.every((move) => move.feedScale !== undefined), 'all boundary ring moves should be stamped')
+  // The boundary pass slots into virgin material — each region's boundary
+  // ring must carry stamped moves (the closing stretch next to the ring's own
+  // start may legitimately run at normal feed).
+  for (const [regionName, minX, maxX] of [['left', 0, 20], ['right', 40, 60]] as const) {
+    const regionBoundary = cutMoves(result.moves).filter((move) =>
+      boundaryYs.some((y) => approx(move.from.y, y) && approx(move.to.y, y))
+      && Math.abs(move.to.x - move.from.x) > 1
+      && move.from.x >= minX && move.from.x <= maxX)
+    assert(regionBoundary.length > 0, `expected ${regionName} boundary ring moves`)
+    assert(
+      regionBoundary.some((move) => move.feedScale !== undefined),
+      `${regionName} boundary ring should carry stamped slotting moves`,
+    )
+  }
   console.log('pocket parallel slot feed: PASSED')
 }
 
@@ -1702,7 +1729,15 @@ function testPocketFinishFloorSlotFeedOffset() {
 
   const result = generatePocketToolpath(project, op)
   const stamped = stampedCutMoves(result.moves)
-  assert(stamped.length >= 3, 'expected the first floor loop to be stamped')
+  assert(stamped.length >= 1, 'expected the floor entry to be stamped')
+
+  // The floor is cut inner-first like the rough pass: the very first floor
+  // cut is the innermost loop near the pocket centre.
+  const firstCut = cutMoves(result.moves)[0]
+  for (const value of [firstCut.from.x, firstCut.from.y, firstCut.to.x, firstCut.to.y]) {
+    assert(value > 13 && value < 17, `first floor cut coordinate ${value} should be at the innermost loop near the centre`)
+  }
+  assert(firstCut.feedScale !== undefined, 'the innermost floor loop should be stamped')
 
   // Wall contour runs at the tool-radius inset (x/y = 2 or 28) and must stay
   // at normal feed; floor loops start one stepover further in.
@@ -1779,25 +1814,32 @@ function testPocketOffsetSlotFeedPartialDepthIsland() {
   const result = generatePocketToolpath(project, op)
   const cutsAt = (z: number) => cutMoves(result.moves).filter((move) => approx(move.to.z, z) && approx(move.from.z, z))
 
-  // Upper band (z=2, island absent): behaves like a plain pocket — one
-  // stamped innermost loop near the centre, nothing near the walls.
+  // Upper band (z=2, island absent): behaves like a plain pocket — the
+  // stamped innermost loop sits near the centre; any stamped move elsewhere
+  // can only be a short link fragment, never a ring edge.
   const upperStamped = cutsAt(2).filter((move) => move.feedScale !== undefined)
-  assert(upperStamped.length >= 3, 'upper band should stamp its innermost loop')
+  assert(upperStamped.length >= 1, 'upper band should stamp its innermost loop')
   for (const move of upperStamped) {
-    for (const value of [move.from.y, move.to.y]) {
-      assert(value > 4 && value < 20, `upper band stamped y ${value} should be near the pocket centre`)
+    const isLong = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) > 3
+    if (isLong) {
+      for (const value of [move.from.y, move.to.y]) {
+        assert(value > 4 && value < 20, `upper band stamped ring edge y ${value} should be near the pocket centre`)
+      }
     }
   }
 
   // Lower band (z=0, island present): each section's innermost start is
-  // stamped, and the outer ring is split over the pinch corridors.
+  // stamped, and the island ring's first pass through the virgin pinch
+  // corridor (y=20) is a stamped slot cut.
   const lowerStamped = cutsAt(0).filter((move) => move.feedScale !== undefined)
   assert(lowerStamped.some((move) => (move.from.x + move.to.x) / 2 < 10), 'lower band left section should be stamped')
   assert(lowerStamped.some((move) => (move.from.x + move.to.x) / 2 > 30), 'lower band right section should be stamped')
-  const lowerTopEdge = cutsAt(0).filter((move) => approx(move.from.y, 22, 1e-3) && approx(move.to.y, 22, 1e-3))
+  const lowerIslandTop = cutsAt(0).filter((move) => approx(move.from.y, 20, 1e-3) && approx(move.to.y, 20, 1e-3))
   assert(
-    lowerTopEdge.some((move) => move.feedScale !== undefined) && lowerTopEdge.some((move) => move.feedScale === undefined),
-    'lower band outer top edge should be split into stamped corridor and unstamped section-adjacent fragments',
+    lowerIslandTop.some((move) =>
+      move.feedScale !== undefined
+      && Math.min(move.from.x, move.to.x) <= 20 && Math.max(move.from.x, move.to.x) >= 20),
+    'lower band island ring should be stamped over the corridor',
   )
 
   // Disabled parity holds across bands too.

@@ -239,58 +239,6 @@ function clipCutMoveToRegion(move: ToolpathMove, mask: RegionMask): LineFragment
   return fragments
 }
 
-export interface CutMoveFragment {
-  from: ToolpathPoint
-  to: ToolpathPoint
-  inside: boolean
-}
-
-/**
- * Split a straight cut move wherever it crosses the given closed contours
- * (project-unit points, implicitly closed) and classify each fragment with
- * the supplied containment test, sampled at the fragment midpoint. Z is
- * interpolated linearly along the move. Consecutive fragments with the same
- * classification are merged, so a move that never crosses a contour comes
- * back as a single fragment.
- */
-export function splitCutMoveAtContours(
-  move: ToolpathMove,
-  contours: Point[][],
-  containsPoint: (point: Point) => boolean,
-): CutMoveFragment[] {
-  const tValues = [0, 1]
-  for (const contour of contours) {
-    for (let index = 0; index < contour.length; index += 1) {
-      const t = segmentIntersectionT(move.from, move.to, contour[index], contour[(index + 1) % contour.length])
-      if (t !== null) tValues.push(t)
-    }
-  }
-
-  const sorted = [...new Set(tValues.map((value) => Number(value.toFixed(12))))]
-    .sort((left, right) => left - right)
-  const fragments: CutMoveFragment[] = []
-
-  for (let index = 0; index + 1 < sorted.length; index += 1) {
-    const startT = sorted[index]
-    const endT = sorted[index + 1]
-    if (endT - startT <= 1e-9) continue
-    const mid = interpolatePoint(move.from, move.to, (startT + endT) / 2)
-    const inside = containsPoint(mid)
-    const previous = fragments[fragments.length - 1]
-    if (previous && previous.inside === inside) {
-      previous.to = interpolatePoint(move.from, move.to, endT)
-    } else {
-      fragments.push({
-        from: interpolatePoint(move.from, move.to, startT),
-        to: interpolatePoint(move.from, move.to, endT),
-        inside,
-      })
-    }
-  }
-
-  return fragments
-}
-
 function pointsEqual(a: ToolpathPoint | null, b: ToolpathPoint): boolean {
   return !!a
     && Math.abs(a.x - b.x) < 1e-9
