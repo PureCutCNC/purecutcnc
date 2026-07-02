@@ -251,7 +251,7 @@ const SLOT_FEED_OWN_TRAIL_FACTOR = 0.45
  * out-of-range, or 100%), which callers use to skip all slot-feed work so the
  * generated move stream is byte-identical to the pre-feature output.
  */
-export function resolveSlotFeedScale(operation: Operation): number | null {
+function resolveSlotFeedScale(operation: Operation): number | null {
   if (operation.kind !== 'pocket') return null
   const percent = operation.pocketSlotFeedPercent
   if (percent === undefined || !(percent > 0) || percent >= 100) return null
