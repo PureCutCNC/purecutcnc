@@ -1506,21 +1506,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.y, playbackUnits)}</span>
             <span className="simulation-playback-bar__xyz-label">Z</span>
             <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+          </div>
+          <div
+            className="simulation-playback-bar__feed"
+            title="Cutting feed of the current move. Reduced slotting pocket cuts show their scaled feed here; the dot colour marks the move kind (rapids have no feed)."
+          >
             <span
               className={`simulation-playback-bar__move-kind simulation-playback-bar__move-kind--${displayPose.moveKind ?? 'none'}`}
               title={displayPose.moveKind ?? 'Idle'}
             />
-          </div>
-          <div
-            className="simulation-playback-bar__feed"
-            title="Cutting feed of the current move. Reduced slotting pocket cuts show their scaled feed here; rapids show no feed."
-          >
             <span className="simulation-playback-bar__xyz-label">Feed</span>
             <span className="simulation-playback-bar__feed-value">
               {(() => {
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
-                if (feed !== null) return formatSpeedLabel(feed, playbackUnits)
-                return displayPose.moveKind === 'rapid' ? 'rapid' : '—'
+                return feed !== null ? formatSpeedLabel(feed, playbackUnits) : '—'
               })()}
             </span>
           </div>

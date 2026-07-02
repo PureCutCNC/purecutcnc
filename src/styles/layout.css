@@ -986,7 +986,8 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-left: 6px;
+  /* Sits at the start of the feed group; the flex gap handles spacing. */
+  flex: none;
 }
 
 .simulation-playback-bar__feed {
