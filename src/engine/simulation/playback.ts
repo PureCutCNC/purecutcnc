@@ -33,6 +33,21 @@ export interface PlaybackOptions {
    * Pass 0 or a negative value to disable subdivision.
    */
   maxSegmentLength?: number
+  /**
+   * Reference cut feed (project-units-per-second) that maps to the caller's "1×"
+   * pace. When set, `advance`'s distance argument is treated as a reference-feed
+   * budget: moves whose real feed is below the reference (reduced slot-feed cuts,
+   * slower plunges) consume the budget faster than they cover geometry, so the
+   * tool visibly slows on them. Omit (or pass 0) for legacy constant-speed
+   * playback where every move advances at the caller's pace.
+   */
+  referenceFeedPerSecond?: number
+  /**
+   * Plunge feed (project-units-per-second), used only when referenceFeedPerSecond
+   * is set, so plunge moves play at their real (usually slower) feed. Omit to play
+   * plunges at the reference pace.
+   */
+  plungeFeedPerSecond?: number
 }
 
 export interface PlaybackPose {
@@ -115,6 +130,8 @@ export class PlaybackController {
   private finished = false
   private lastMoveApplied = -1
   private frameDirtyRegion: DirtyRegion | null = null
+  private readonly referenceFeedPerSecond: number
+  private readonly plungeFeedPerSecond: number
 
   constructor(
     baseGrid: SimulationGrid,
@@ -128,10 +145,42 @@ export class PlaybackController {
     this.moves = subdivideMoves(moves, maxSegmentLength)
     this.tool = tool
     this.totalPathLength = this.moves.reduce((sum, move) => sum + moveLength(move), 0)
+    this.referenceFeedPerSecond = options.referenceFeedPerSecond && options.referenceFeedPerSecond > 0
+      ? options.referenceFeedPerSecond
+      : 0
+    this.plungeFeedPerSecond = options.plungeFeedPerSecond && options.plungeFeedPerSecond > 0
+      ? options.plungeFeedPerSecond
+      : 0
 
     if (this.moves.length === 0) {
       this.finished = true
     }
+  }
+
+  /**
+   * Feed of `move` relative to the reference cut feed, in (0, 1]-ish units.
+   * The tool covers `ratio × budget` geometric distance per unit of the
+   * advance budget, so a lower ratio means slower on-screen motion. Returns 1
+   * (no scaling) when no reference feed was supplied or for rapids. Cut moves
+   * fold their slot-feed reduction straight in via feedScale; plunges use the
+   * plunge/reference ratio. Clamped to a small floor to avoid div-by-zero.
+   */
+  private feedRatioForMove(move: ToolpathMove): number {
+    if (this.referenceFeedPerSecond <= 0) return 1
+    let ratio: number
+    switch (move.kind) {
+      case 'cut':
+      case 'lead_in':
+      case 'lead_out':
+        ratio = move.feedScale ?? 1
+        break
+      case 'plunge':
+        ratio = this.plungeFeedPerSecond > 0 ? this.plungeFeedPerSecond / this.referenceFeedPerSecond : 1
+        break
+      default:
+        ratio = 1
+    }
+    return ratio > 1e-3 ? ratio : 1e-3
   }
 
   reset(): void {
@@ -195,19 +244,36 @@ export class PlaybackController {
   }
 
   /**
-   * Advance the tool by `distance` along the path, applying cuts as we go.
-   * `distance` is interpreted in project units — the caller is responsible for
-   * throttling it (e.g., `min(speed * dt, maxStepPerFrame)`) before each call.
-   * Whether that distance spans one long move partially or many short moves
-   * fully is opaque to the caller; either way the cumulative cut is correct.
+   * Advance the tool along the path, applying cuts as we go.
+   *
+   * `budget` is a reference-feed distance — the geometry the tool would cover
+   * this frame at the reference cut feed (the caller passes `min(speed * dt,
+   * maxStepPerFrame)`). Each move consumes the budget scaled by its feed ratio,
+   * so a move at half the reference feed covers half the geometry per unit of
+   * budget and takes twice as long on screen. With no reference feed every
+   * ratio is 1 and this reduces to the legacy "advance by geometric distance".
+   * Whether that budget spans one long move partially or many short moves fully
+   * is opaque to the caller; either way the cumulative cut is correct.
    */
-  advance(distance: number): boolean {
-    if (this.finished || distance <= 0) {
+  advance(budget: number): boolean {
+    return this.step(budget, true)
+  }
+
+  /**
+   * Shared stepping primitive. When `feedScaled` is true the amount is a
+   * reference-feed budget scaled per move by its feed ratio (used by playback,
+   * so slow moves take longer). When false the amount is plain geometric
+   * distance with every ratio treated as 1 (used by seeking, which places the
+   * tool at a path distance instantly and must stay linear in geometry so the
+   * progress bar maps 1:1).
+   */
+  private step(amount: number, feedScaled: boolean): boolean {
+    if (this.finished || amount <= 0) {
       return false
     }
 
     this.frameDirtyRegion = null
-    let remaining = distance
+    let remaining = amount
     let gridChanged = false
 
     while (remaining > 0 && !this.finished) {
@@ -233,10 +299,14 @@ export class PlaybackController {
         continue
       }
 
+      const ratio = feedScaled ? this.feedRatioForMove(move) : 1
       const traveled = length * this.moveFraction
       const available = length - traveled
+      // Reference-feed budget needed to finish the remaining geometry of this
+      // move: slower moves (ratio < 1) cost more budget per unit of geometry.
+      const budgetToFinish = available / ratio
 
-      if (remaining >= available) {
+      if (remaining >= budgetToFinish) {
         if (isCuttingMove(move) && this.lastMoveApplied !== this.moveIndex) {
           const result = applyMoveToGrid(
             this.liveGrid,
@@ -252,11 +322,12 @@ export class PlaybackController {
           this.lastMoveApplied = this.moveIndex
         }
         this.distanceTraveled += available
-        remaining -= available
+        remaining -= budgetToFinish
         this.advanceToNextMove()
       } else {
+        const geometricProgress = remaining * ratio
         const prevFraction = this.moveFraction
-        const nextFraction = prevFraction + remaining / length
+        const nextFraction = prevFraction + geometricProgress / length
 
         if (isCuttingMove(move)) {
           const prevPoint = interpolatePoint(move, prevFraction)
@@ -280,7 +351,7 @@ export class PlaybackController {
         }
 
         this.moveFraction = nextFraction
-        this.distanceTraveled += remaining
+        this.distanceTraveled += geometricProgress
         remaining = 0
       }
     }
@@ -294,7 +365,10 @@ export class PlaybackController {
     if (clampedTarget <= 0) {
       return false
     }
-    return this.advance(clampedTarget)
+    // Seeking is instantaneous positioning by path distance — step
+    // geometrically so distanceTraveled lands exactly on the target and the
+    // progress bar stays linear regardless of per-move feed.
+    return this.step(clampedTarget, false)
   }
 
   seekToFraction(fraction: number): boolean {

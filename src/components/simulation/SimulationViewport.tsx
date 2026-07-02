@@ -983,7 +983,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           toolRadius: playbackInput.toolRadius,
           vBitAngle: playbackInput.vBitAngle,
         },
-        { maxSegmentLength: playbackInput.maxSegmentLength },
+        {
+          maxSegmentLength: playbackInput.maxSegmentLength,
+          // Anchor the tool's motion to the operation's cut feed so reduced
+          // slot-feed cuts (and slower plunges) visibly slow down, matching the
+          // feed readout instead of playing every move at one constant pace.
+          referenceFeedPerSecond: playbackInput.feedPerSecond,
+          plungeFeedPerSecond: playbackInput.plungeFeedPerSecond,
+        },
       )
       playbackControllerRef.current = controller
 

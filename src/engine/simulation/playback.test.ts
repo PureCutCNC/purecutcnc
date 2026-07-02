@@ -20,7 +20,9 @@
  * Run with: npx tsx src/engine/simulation/playback.test.ts
  */
 
-import { subdivideMoves } from './playback'
+import { PlaybackController, subdivideMoves } from './playback'
+import type { PlaybackToolInfo } from './playback'
+import type { SimulationGrid } from './types'
 import type { ToolpathMove } from '../toolpaths/types'
 
 function assert(condition: boolean, message: string): void {
@@ -30,6 +32,23 @@ function assert(condition: boolean, message: string): void {
 function approx(a: number, b: number, epsilon = 1e-9): boolean {
   return Math.abs(a - b) < epsilon
 }
+
+function flatGrid(): SimulationGrid {
+  const cols = 40
+  const rows = 4
+  return {
+    cols,
+    rows,
+    cellSize: 1,
+    originX: 0,
+    originY: 0,
+    stockTopZ: 0,
+    stockBottomZ: -10,
+    topZ: new Float32Array(cols * rows).fill(0),
+  }
+}
+
+const FLAT_TOOL: PlaybackToolInfo = { toolType: 'flat_endmill', toolRadius: 1, vBitAngle: null }
 
 function testSubdividePreservesMoveMetadata(): void {
   console.log('Testing subdivideMoves preserves feedScale and source on sub-segments...')
@@ -59,9 +78,67 @@ function testSubdivideLeavesShortMovesUntouched(): void {
   console.log('subdivideMoves short-move passthrough: PASSED')
 }
 
+function testReducedFeedMoveAdvancesSlower(): void {
+  console.log('Testing feed-scaled advance covers less geometry on reduced-feed cuts...')
+  // Two equal-length cuts: the first at full feed, the second at 10% feed.
+  // The subdivision cap is disabled so each cut stays a single move.
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 10, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 }, feedScale: 0.1 },
+  ]
+  const controller = new PlaybackController(flatGrid(), moves, FLAT_TOOL, {
+    maxSegmentLength: 0,
+    referenceFeedPerSecond: 5,
+  })
+
+  // Budget of 10 finishes the full-feed cut exactly (ratio 1 → 10 geometry).
+  controller.advance(10)
+  assert(approx(controller.getDistanceTraveled(), 10), `full-feed cut should consume budget 1:1, got ${controller.getDistanceTraveled()}`)
+  assert(controller.getMoveIndex() === 1, 'should now be on the reduced-feed cut')
+
+  // A further budget of 10 only covers 10 × 0.1 = 1 unit of the reduced cut.
+  controller.advance(10)
+  assert(approx(controller.getDistanceTraveled(), 11), `reduced cut should cover 0.1× the budget, got total ${controller.getDistanceTraveled()}`)
+  assert(!controller.isFinished(), 'reduced cut should not be finished after only 1 of 10 units')
+  console.log('reduced-feed advance is slower: PASSED')
+}
+
+function testDisabledReferenceFeedIsConstantSpeed(): void {
+  console.log('Testing advance is constant-speed geometric when no reference feed is set...')
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 }, feedScale: 0.1 },
+  ]
+  const controller = new PlaybackController(flatGrid(), moves, FLAT_TOOL, { maxSegmentLength: 0 })
+  // No referenceFeedPerSecond → feedScale ignored for motion, budget == geometry.
+  controller.advance(5)
+  assert(approx(controller.getDistanceTraveled(), 5), `legacy advance should be 1:1 geometric, got ${controller.getDistanceTraveled()}`)
+  console.log('disabled reference feed is constant-speed: PASSED')
+}
+
+function testSeekIsGeometricDespiteFeedScaling(): void {
+  console.log('Testing seek lands on the geometric target even with reduced-feed moves...')
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 10, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 }, feedScale: 0.1 },
+  ]
+  const controller = new PlaybackController(flatGrid(), moves, FLAT_TOOL, {
+    maxSegmentLength: 0,
+    referenceFeedPerSecond: 5,
+  })
+  assert(approx(controller.totalPathLength, 20), `path length should be 20, got ${controller.totalPathLength}`)
+  // Seeking to 75% must land at geometric distance 15, not be slowed by the
+  // reduced-feed second half.
+  controller.seekToFraction(0.75)
+  assert(approx(controller.getDistanceTraveled(), 15), `seek to 0.75 should land at geometric 15, got ${controller.getDistanceTraveled()}`)
+  console.log('seek stays geometric: PASSED')
+}
+
 try {
   testSubdividePreservesMoveMetadata()
   testSubdivideLeavesShortMovesUntouched()
+  testReducedFeedMoveAdvancesSlower()
+  testDisabledReferenceFeedIsConstantSpeed()
+  testSeekIsGeometricDespiteFeedScaling()
   console.log('\nAll playback tests PASSED.')
 } catch (e) {
   console.error(e)
