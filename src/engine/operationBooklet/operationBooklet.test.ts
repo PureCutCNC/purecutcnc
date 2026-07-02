@@ -158,6 +158,39 @@ async function testPdfSmoke(): Promise<void> {
   assert(header === '%PDF-', `expected PDF header, got ${header}`)
 }
 
+function testFeedTimeUsesScaledSlotFeed(): void {
+  console.log('Testing estimated feed time prices slot-feed fragments at the scaled feed...')
+  const { project, operation } = fixture()
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [
+      // 20 mm at the full 800 mm/min = 1.5 s, plus 20 mm slotting at 10%
+      // (80 mm/min) = 15 s. Pricing both at the full feed would report 3 s.
+      { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 } },
+      { kind: 'cut', from: { x: 20, y: 0, z: 0 }, to: { x: 40, y: 0, z: 0 }, feedScale: 0.1 },
+    ],
+  }
+  const report = buildOperationBookletReport({
+    project,
+    operation: { ...operation, pocketSlotFeedPercent: 10 },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  assert(
+    report.toolpathStats.some((row) => row.label === 'Estimated Feed Time' && row.value === '16.5 s (excludes G0 rapid time)'),
+    'feed time should price feedScale fragments at the scaled feed',
+  )
+  assert(
+    report.settingRows.some((row) => row.label === 'Slot Feed' && row.value === '10 % of feed'),
+    'slot feed setting should be reported',
+  )
+}
+
 testReportContent()
+testFeedTimeUsesScaledSlotFeed()
 await testPdfSmoke()
 console.log('operation booklet tests passed')
