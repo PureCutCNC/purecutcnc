@@ -1720,6 +1720,16 @@ function testPocketFinishFloorSlotFeedOffset() {
   // Walls only + slot feed => nothing stamped.
   const wallsOnly = generatePocketToolpath(project, { ...op, finishFloor: false })
   assert(stampedCutMoves(wallsOnly.moves).length === 0, 'walls-only finish should have no stamped moves')
+
+  // Floor cuts before walls: if roughing left axial stock, a wall pass at
+  // final depth would slot through the uncleared floor skin at full feed, so
+  // the floor (whose first pass runs at slot feed) must clear it first.
+  const allCuts = cutMoves(result.moves)
+  const isWallMove = (move: ToolpathMove) =>
+    [move.from.x, move.from.y, move.to.x, move.to.y].some((value) => approx(value, 2) || approx(value, 28))
+  const firstWallIndex = allCuts.findIndex(isWallMove)
+  const lastFloorIndex = allCuts.reduce((last, move, index) => (!isWallMove(move) ? index : last), -1)
+  assert(firstWallIndex > lastFloorIndex, 'wall contour should be cut after all floor cuts')
   console.log('pocket finish floor slot feed offset: PASSED')
 }
 

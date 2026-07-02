@@ -1301,12 +1301,11 @@ function generateFinishBandMoves(
   const floorStepLevels = operation.finishFloor ? [effectiveBottom] : []
   let currentPosition: ToolpathPoint | null = null
 
-  for (const z of wallStepLevels) {
-    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
-
-    currentPosition = retractToSafe(moves, currentPosition, safeZ)
-  }
-
+  // Floor before walls: when roughing left axial stock, a wall pass at final
+  // depth would slot through the uncleared floor skin at full feed. Cutting
+  // the floor first removes that skin (with its first pass at the reduced
+  // slot feed), so the wall pass only shaves the radial stock — and cutting
+  // walls last leaves the cleanest final wall surface.
   for (const z of floorStepLevels) {
     if (floorContourGroups !== null && slotScale !== null) {
       // Visit floor regions nearest-first; the first floor loop cut in each
@@ -1364,6 +1363,12 @@ function generateFinishBandMoves(
         applySlotFeedScale(moves, segmentStartIndex, slotScale, null)
       }
     }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
+  }
+
+  for (const z of wallStepLevels) {
+    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
