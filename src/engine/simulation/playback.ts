@@ -89,8 +89,11 @@ export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number):
     for (let i = 0; i < subdivisions; i += 1) {
       const t0 = i / subdivisions
       const t1 = (i + 1) / subdivisions
+      // Spread the source move so per-move metadata (feedScale, source) rides
+      // along to each sub-segment — otherwise the live feed readout loses the
+      // reduced slot feed on subdivided cuts.
       out.push({
-        kind: move.kind,
+        ...move,
         from: interpolatePoint(move, t0),
         to: interpolatePoint(move, t1),
       })

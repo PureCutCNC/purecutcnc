@@ -1515,7 +1515,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               className={`simulation-playback-bar__move-kind simulation-playback-bar__move-kind--${displayPose.moveKind ?? 'none'}`}
               title={displayPose.moveKind ?? 'Idle'}
             />
-            <span className="simulation-playback-bar__xyz-label">Feed</span>
             <span className="simulation-playback-bar__feed-value">
               {(() => {
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
