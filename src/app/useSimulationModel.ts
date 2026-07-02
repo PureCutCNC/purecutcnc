@@ -191,6 +191,7 @@ export function useSimulationModel({
     // units-per-second, so divide by 60. This becomes the "1×" playback speed so
     // users can intuitively speed up or slow down relative to the real feed rate.
     const feedPerSecond = selectedOperation.feed > 0 ? selectedOperation.feed / 60 : undefined
+    const plungeFeedPerSecond = selectedOperation.plungeFeed > 0 ? selectedOperation.plungeFeed / 60 : undefined
     // `project.meta.units` uses 'inch'; the playback UI shows the short label 'in'.
     const units: 'mm' | 'in' = project.meta.units === 'inch' ? 'in' : 'mm'
 
@@ -205,6 +206,7 @@ export function useSimulationModel({
       maxSegmentLength,
       units,
       feedPerSecond,
+      plungeFeedPerSecond,
     }
   }, [centerTab, generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 

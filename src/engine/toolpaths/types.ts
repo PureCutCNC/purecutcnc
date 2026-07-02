@@ -33,6 +33,11 @@ export interface ToolpathMove {
    *  Populated when operation.debugToolpath is active. Used in the 3D viewport
    *  to render shape markers that help visualise toolpath provenance. */
   source?: string
+  /** Multiplier applied to the operation's cut feed at G-code export time.
+   *  Set on fully engaged (slotting) pocket cuts when the operation's
+   *  pocketSlotFeedPercent is below 100. Absent means 1 (normal feed).
+   *  Never set on plunge moves (those use the plunge feed). */
+  feedScale?: number
 }
 
 export interface ToolpathBounds {

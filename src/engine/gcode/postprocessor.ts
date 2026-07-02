@@ -389,9 +389,13 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         moveCount++
         const mPoint = projectToMachinePoint(move.to, project.origin, definition)
 
+        // feedScale marks fully engaged (slotting) pocket cuts; the modal
+        // feed logic in emitMotionLine re-emits the F word whenever the
+        // effective feed changes, so scaled and unscaled fragments alternate
+        // cleanly. Plunges always use the plunge feed unscaled.
         const feed = (move.kind === 'plunge')
           ? (operation.plungeFeed || tool.defaultPlungeFeed)
-          : (operation.feed || tool.defaultFeed)
+          : (operation.feed || tool.defaultFeed) * (move.feedScale ?? 1)
 
         if (move.kind === 'rapid') {
           const current = state.currentPosition
