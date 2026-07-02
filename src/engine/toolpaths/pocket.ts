@@ -941,29 +941,69 @@ export function cutClosedContours(
   return nextPosition
 }
 
-export function cutOffsetRegionRecursive(
-  moves: ToolpathMove[],
+interface OffsetRegionNode {
+  region: ResolvedPocketRegion
+  children: OffsetRegionNode[]
+  /** Cleared-adjacency mask for slot-feed classification; null when slot feed is off. */
+  engagementMask: EngagementMask | null
+}
+
+/**
+ * Precompute the offset ring tree for a region. The tree (successive insets
+ * and, when slot feed is active, the per-node engagement masks) depends only
+ * on the region geometry and stepover — not on Z — so callers cutting several
+ * step levels build it once and traverse it per level instead of redoing the
+ * Clipper offsets at every level.
+ */
+function buildOffsetRegionTree(
   region: ResolvedPocketRegion,
+  stepoverDistance: number,
+  slotFeed?: SlotFeedOptions,
+): OffsetRegionNode {
+  const childRegions = buildInsetRegions(region, stepoverDistance)
+  return {
+    region,
+    children: childRegions.map((child) => buildOffsetRegionTree(child, stepoverDistance, slotFeed)),
+    // In inner-first traversal the children are cut before this region's own
+    // loops, so material within one stepover of a child region is already
+    // cleared. Everything else this node's loops touch is virgin: the whole
+    // loop for leaf regions (no children), and pinch corridors of parent
+    // rings where the inset split into disjoint children.
+    engagementMask: slotFeed
+      ? buildEngagementMask(childRegions.flatMap((child) => buildInsetRegions(child, -slotFeed.adjacency)))
+      : null,
+  }
+}
+
+function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): OffsetRegionNode[] {
+  if (nodes.length <= 1 || start === null) {
+    return nodes
+  }
+  const byRegion = new Map(nodes.map((node) => [node.region, node]))
+  return orderRegionsGreedy(nodes.map((node) => node.region), start)
+    .map((region) => byRegion.get(region) as OffsetRegionNode)
+}
+
+function cutOffsetRegionNode(
+  moves: ToolpathMove[],
+  node: OffsetRegionNode,
   z: number,
   safeZ: number,
-  stepoverDistance: number,
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
-  direction: CutDirection = 'conventional',
-  safeLinkCheck?: SafeLinkCheck,
-  traversalMode: OffsetTraversalMode = 'outer-first',
-  slotFeed?: SlotFeedOptions,
+  direction: CutDirection,
+  safeLinkCheck: SafeLinkCheck | undefined,
+  traversalMode: OffsetTraversalMode,
+  slotScale: number | null,
 ): ToolpathPoint | null {
-  const childRegions = buildInsetRegions(region, stepoverDistance)
-
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
-      ? childRegions
-        .map((child) => child.outer)
+      ? node.children
+        .map((child) => child.region.outer)
         .filter((contour) => contour.length > 0)
         .map((contour) => contour[0])
       : []
-    const preparedContours = buildContourLoops([region]).map((contour) => rotateContourToBestEntry(
+    const preparedContours = buildContourLoops([node.region]).map((contour) => rotateContourToBestEntry(
       contour,
       fromPosition ? { x: fromPosition.x, y: fromPosition.y } : null,
       childAnchors,
@@ -982,14 +1022,8 @@ export function cutOffsetRegionRecursive(
       safeLinkCheck,
     )
 
-    if (slotFeed && traversalMode === 'inner-first') {
-      // In inner-first traversal the children were cut before this region's
-      // own loops, so material within one stepover of a child region is
-      // already cleared. Everything else this loop touches is virgin: the
-      // whole loop for leaf regions (no children), and pinch corridors of
-      // parent rings where the inset split into disjoint children.
-      const clearedAdjacent = childRegions.flatMap((child) => buildInsetRegions(child, -slotFeed.adjacency))
-      applySlotFeedScale(moves, startIndex, slotFeed.scale, buildEngagementMask(clearedAdjacent))
+    if (slotScale !== null && traversalMode === 'inner-first') {
+      applySlotFeedScale(moves, startIndex, slotScale, node.engagementMask)
     }
 
     return endPosition
@@ -1000,24 +1034,23 @@ export function cutOffsetRegionRecursive(
     nextPosition = cutCurrentRegion(nextPosition)
   }
 
-  const orderedChildren = orderRegionsGreedy(
-    childRegions,
+  const orderedChildren = orderNodesGreedy(
+    node.children,
     nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
   )
 
-  for (const childRegion of orderedChildren) {
-    nextPosition = cutOffsetRegionRecursive(
+  for (const childNode of orderedChildren) {
+    nextPosition = cutOffsetRegionNode(
       moves,
-      childRegion,
+      childNode,
       z,
       safeZ,
-      stepoverDistance,
       maxLinkDistance,
       nextPosition,
       direction,
       safeLinkCheck,
       traversalMode,
-      slotFeed,
+      slotScale,
     )
   }
 
@@ -1026,6 +1059,33 @@ export function cutOffsetRegionRecursive(
   }
 
   return nextPosition
+}
+
+export function cutOffsetRegionRecursive(
+  moves: ToolpathMove[],
+  region: ResolvedPocketRegion,
+  z: number,
+  safeZ: number,
+  stepoverDistance: number,
+  maxLinkDistance: number,
+  currentPosition: ToolpathPoint | null,
+  direction: CutDirection = 'conventional',
+  safeLinkCheck?: SafeLinkCheck,
+  traversalMode: OffsetTraversalMode = 'outer-first',
+  slotFeed?: SlotFeedOptions,
+): ToolpathPoint | null {
+  return cutOffsetRegionNode(
+    moves,
+    buildOffsetRegionTree(region, stepoverDistance, slotFeed),
+    z,
+    safeZ,
+    maxLinkDistance,
+    currentPosition,
+    direction,
+    safeLinkCheck,
+    traversalMode,
+    slotFeed ? slotFeed.scale : null,
+  )
 }
 
 export function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
@@ -1140,32 +1200,36 @@ function generateRoughBandMoves(
     ? { scale: slotScale, adjacency: effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR }
     : undefined
 
+  // The offset ring tree is identical at every step level — build it (and
+  // the slot-feed engagement masks) once and traverse it per level.
+  const regionTrees = band.regions
+    .flatMap((region) => buildInsetRegions(region, initialInset))
+    .map((region) => buildOffsetRegionTree(region, effectiveStepover, slotFeed))
+
   for (const z of stepLevels) {
-    const currentRegions = band.regions.flatMap((region) => buildInsetRegions(region, initialInset))
-    if (currentRegions.length === 0) {
+    if (regionTrees.length === 0) {
       warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
       continue
     }
 
-    const orderedRegions = orderRegionsGreedy(
-      currentRegions,
+    const orderedTrees = orderNodesGreedy(
+      regionTrees,
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
-    for (const region of orderedRegions) {
-      currentPosition = cutOffsetRegionRecursive(
+    for (const tree of orderedTrees) {
+      currentPosition = cutOffsetRegionNode(
         moves,
-        region,
+        tree,
         z,
         safeZ,
-        effectiveStepover,
         maxLinkDistance,
         currentPosition,
         direction,
         undefined,
         'inner-first',
-        slotFeed,
+        slotScale,
       )
     }
 
