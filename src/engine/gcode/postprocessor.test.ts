@@ -205,10 +205,43 @@ function testLegacyDefinitionFallback(): void {
   assert(gcode.includes('; Operation: Boss Pocket'), 'legacy fallback should emit operation comment')
 }
 
+function testSlotFeedScaleEmitsReducedThenFullFeed(): void {
+  console.log('Testing feedScale cut moves emit reduced F then restore the full feed...')
+  const { operation, tool } = fixture('')
+  const project = newProject('Post Test', 'mm')
+  project.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Test End Mill' }]
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [
+      { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 1, y: 1, z: 5 } },
+      { kind: 'plunge', from: { x: 1, y: 1, z: 5 }, to: { x: 1, y: 1, z: 0 } },
+      { kind: 'cut', from: { x: 1, y: 1, z: 0 }, to: { x: 2, y: 1, z: 0 }, feedScale: 0.5 },
+      { kind: 'cut', from: { x: 2, y: 1, z: 0 }, to: { x: 3, y: 1, z: 0 }, feedScale: 0.5 },
+      { kind: 'cut', from: { x: 3, y: 1, z: 0 }, to: { x: 4, y: 1, z: 0 } },
+    ],
+  }
+  const gcode = runPostProcessor({
+    project,
+    definition: testDefinition(),
+    operations: [{ operation, tool, toolpath }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  }).gcode
+
+  // operation.feed = 600, plungeFeed = 180: plunge F180, scaled cuts F300, restore F600.
+  assert(gcode.includes('F180'), 'plunge should use the unscaled plunge feed')
+  const f300Count = (gcode.match(/F300\b/g) ?? []).length
+  assert(f300Count === 1, `reduced feed should be emitted once (modal), got ${f300Count}`)
+  assert(gcode.includes('F600'), 'full feed should be re-emitted after the scaled cuts')
+  assert(gcode.indexOf('F300') < gcode.indexOf('F600'), 'reduced feed should come before the restored full feed')
+}
+
 testOperationHeaderDescription()
 testEmptyDescriptionIsSkipped()
 testMultilineDescription()
 testLegacyDefinitionFallback()
+testSlotFeedScaleEmitsReducedThenFullFeed()
 
 // ── Canned cycle tests ────────────────────────────────────────────────
 

@@ -476,6 +476,11 @@ export interface Operation {
   rpm: number
   pocketPattern: PocketPattern
   pocketAngle: number
+  /** Feed percentage (1-100) applied to fully engaged (slotting) pocket cuts:
+   *  each section's innermost offset loop, ring segments crossing uncleared
+   *  pinch corridors, the parallel boundary pass and first fill line, and the
+   *  first finish-floor cut. Undefined or 100 disables the reduction. */
+  pocketSlotFeedPercent?: number
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

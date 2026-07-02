@@ -150,14 +150,19 @@ function feedControlledTimeSeconds(
     switch (move.kind) {
       case 'cut':
       case 'lead_in':
-      case 'lead_out':
+      case 'lead_out': {
         feedDistance += distance
-        if (operation.feed > 0) {
-          seconds += (distance / operation.feed) * 60
+        // Slot-feed pocket fragments carry a feedScale multiplier and run
+        // slower than the operation feed — price them at the effective feed
+        // the postprocessor emits.
+        const effectiveFeed = operation.feed * (move.feedScale ?? 1)
+        if (effectiveFeed > 0) {
+          seconds += (distance / effectiveFeed) * 60
         } else {
           hasInvalidFeed = true
         }
         break
+      }
       case 'plunge':
         feedDistance += distance
         if (operation.plungeFeed > 0) {
@@ -238,6 +243,10 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
       { label: 'Pattern', value: operation.pocketPattern },
       { label: 'Pocket Angle', value: `${formatNumber(operation.pocketAngle, 2)} deg` },
     )
+  }
+
+  if (operation.kind === 'pocket' && (operation.pocketSlotFeedPercent ?? 100) < 100) {
+    rows.push({ label: 'Slot Feed', value: `${formatNumber(operation.pocketSlotFeedPercent ?? 100, 0)} % of feed` })
   }
 
   if (operation.kind === 'drilling') {

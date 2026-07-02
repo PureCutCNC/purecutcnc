@@ -460,23 +460,11 @@ function generateFinishBandMoves(
   const floorStepLevels = operation.finishFloor ? [effectiveBottom] : []
   let currentPosition: ToolpathPoint | null = null
 
-  for (const z of wallStepLevels) {
-    const orderedWallContours = orderClosedContoursGreedy(
-      wallContours,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-
-    for (const contour of orderedWallContours) {
-      const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
-      const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
-      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-    }
-
-    currentPosition = retractToSafe(moves, currentPosition, safeZ)
-  }
-
+  // Floor before walls: when roughing left axial stock, a wall pass at final
+  // depth would slot through the uncleared floor skin at full feed. Cutting
+  // the floor first removes that skin, so the wall pass only shaves the
+  // radial stock — and cutting walls last leaves the cleanest wall surface.
+  // Mirrors the same ordering in pocket.ts generateFinishBandMoves.
   for (const z of floorStepLevels) {
     const orderedFloorContours = orderClosedContoursGreedy(
       floorContours,
@@ -500,6 +488,23 @@ function generateFinishBandMoves(
       const entryPoint = contourStartPoint(segment, z)
       currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
       const cutMoves = toOpenCutMoves(segment, z)
+      moves.push(...cutMoves)
+      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+    }
+
+    currentPosition = retractToSafe(moves, currentPosition, safeZ)
+  }
+
+  for (const z of wallStepLevels) {
+    const orderedWallContours = orderClosedContoursGreedy(
+      wallContours,
+      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    )
+
+    for (const contour of orderedWallContours) {
+      const entryPoint = contourStartPoint(contour, z)
+      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }

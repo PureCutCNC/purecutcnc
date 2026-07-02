@@ -942,7 +942,7 @@
 }
 
 .simulation-playback-bar__speed--slider input[type='range'] {
-  width: 130px;
+  width: 90px;
   accent-color: var(--accent);
 }
 
@@ -986,7 +986,24 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-left: 6px;
+  /* Sits at the start of the feed group; the flex gap handles spacing. */
+  flex: none;
+}
+
+.simulation-playback-bar__feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-left: 1px solid var(--line-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-bar__feed-value {
+  color: var(--text);
+  min-width: 7em;
+  text-align: right;
 }
 
 /* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
