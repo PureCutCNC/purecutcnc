@@ -120,6 +120,7 @@ function executeClipPaths(
 export function splitFeatureTargets(project: Project, featureIds: string[]): SplitFeatureTargets {
   const features: SketchFeature[] = []
   const missingFeatureIds: string[] = []
+  const featureOrder = new Map(project.features.map((feature, index) => [feature.id, index]))
 
   for (const featureId of featureIds) {
     const feature = project.features.find((entry) => entry.id === featureId) ?? null
@@ -133,7 +134,10 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
   return {
     features,
     machiningFeatures: features.filter((feature) => feature.operation !== 'region'),
-    regionFeatures: features.filter((feature) => feature.operation === 'region'),
+    regionFeatures: features
+      .filter((feature) => feature.operation === 'region')
+      .sort((left, right) => (featureOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (featureOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)),
     missingFeatureIds,
   }
 }

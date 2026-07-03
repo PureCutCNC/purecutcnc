@@ -35,7 +35,12 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath } from './drilling'
 import { generatePocketRestRegionDrafts } from './restRegions'
-import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToRegionMask } from './regions'
+import {
+  buildMaskFromClipperPaths,
+  buildRegionMask,
+  clipToolpathResultToRegionMask,
+  splitFeatureTargets,
+} from './regions'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import type { ClipperPath } from './types'
 
@@ -895,6 +900,49 @@ function testRegionMaskLeadingExcludeCanBeReincluded() {
   assert(!mask.containsPoint({ x: 2, y: 2 }), 'leading exclude should remove the excluded region')
   assert(mask.containsPoint({ x: 5, y: 5 }), 'later include should add an island back inside the excluded region')
   console.log('leading exclude region re-include: PASSED')
+}
+
+function testSplitFeatureTargetsOrdersRegionsByProjectSequence() {
+  console.log('Testing selected region targets follow project order...')
+  const tool = makeFlatEndmill('t1', 2)
+  const pocket = makePocketFeature('pocket', 0, 0, 24, 12, 4, 0)
+  const outerInclude = makeRegionFeature('outer-include', 0, 0, 24, 12, 'include')
+  const middleExclude = makeRegionFeature('middle-exclude', 4, 2, 16, 8, 'exclude')
+  const innerInclude = makeRegionFeature('inner-include', 8, 4, 8, 4, 'include')
+  const finalExclude = makeRegionFeature('final-exclude', 10, 5, 4, 2, 'exclude')
+  const project = baseProject([tool], [
+    pocket,
+    outerInclude,
+    middleExclude,
+    innerInclude,
+    finalExclude,
+  ])
+  const split = splitFeatureTargets(project, [
+    'pocket',
+    'middle-exclude',
+    'inner-include',
+    'final-exclude',
+    'outer-include',
+  ])
+
+  assert(
+    split.machiningFeatures.map((feature) => feature.id).join(',') === 'pocket',
+    'machining targets should stay in selected target order',
+  )
+  assert(
+    split.regionFeatures.map((feature) => feature.id).join(',')
+      === 'outer-include,middle-exclude,inner-include,final-exclude',
+    `region targets should follow project order, got ${split.regionFeatures.map((feature) => feature.id).join(',')}`,
+  )
+
+  const mask = buildRegionMask(split.regionFeatures)
+  assert(mask !== null, 'expected project-ordered region mask')
+  if (!mask) throw new Error('expected project-ordered region mask')
+  assert(mask.containsPoint({ x: 2, y: 2 }), 'outer include should keep the corner area')
+  assert(!mask.containsPoint({ x: 5, y: 5 }), 'middle exclude should remove its area')
+  assert(mask.containsPoint({ x: 9, y: 5 }), 'inner include should add its area back')
+  assert(!mask.containsPoint({ x: 11, y: 6 }), 'final exclude should cut the nested area again')
+  console.log('selected region target project ordering: PASSED')
 }
 
 function pointInsideRect(point: { x: number; y: number }, x: number, y: number, w: number, h: number): boolean {
@@ -2278,6 +2326,7 @@ try {
   testRegionMaskHonorsOrderedIncludeExcludeNesting()
   testRegionMaskExcludeOnlyPreservesOutsideArea()
   testRegionMaskLeadingExcludeCanBeReincluded()
+  testSplitFeatureTargetsOrdersRegionsByProjectSequence()
   testPocketFinishExcludeOnlyRegionRemovesMachiningArea()
   testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath()
   testPocketOffsetFinishLeadingExcludeWithInnerInclude()
