@@ -580,7 +580,10 @@ export function generateFinishSurfaceParallel(
   }
 
   const modelBbox = computeXYBounds(transformedPos)
-  const regionBounds = computeRegionFeatureBounds(regionFeatures)
+  const regionMask = buildRegionMask(regionFeatures)
+  const regionBounds = regionMask && !regionMask.baseIncludesSubject
+    ? computeRegionFeatureBounds(regionFeatures)
+    : null
   const heightMapBbox = regionBounds
     ? clampExpandedBoundsToModel(regionBounds, modelBbox, tool.radius)
     : modelBbox
@@ -722,7 +725,6 @@ export function generateFinishSurfaceParallel(
 
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
-  let currentPosition: ToolpathPoint | null = null
   const scanIndex = 0
   const baseContours = modelSilhouetteContours(modelFeature)
   const baseCoveragePaths = unionClipperPaths(coverageContoursToClipperPaths(baseContours))
@@ -744,25 +746,17 @@ export function generateFinishSurfaceParallel(
     return { moves: allMoves, stepLevels: allStepLevels }
   }
 
-  if (regionFeatures.length === 0) {
-    const clippedContours = subtractProtectedContours(baseContours, protectedPaths)
-    const clippedBounds = computeContourBounds([clippedContours])
-    if (clippedBounds) {
-      currentPosition = emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
-    } else if (operation.debugToolpath) {
-      warnings.push('Debug: protected footprints remove all finish surface coverage')
-    }
-  } else {
-    const regionMask = buildRegionMask(regionFeatures)
-    const regionContours = clipTupleContoursToRegionMask(baseContours, regionMask)
-    const clippedContours = subtractProtectedContours(regionContours, protectedPaths)
-
-    const clippedBounds = computeContourBounds([clippedContours])
-    if (clippedBounds) {
-      emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
-    } else if (operation.debugToolpath) {
-      warnings.push('Debug: region mask does not intersect the model silhouette')
-    }
+  const coverageContours = regionMask && !regionMask.baseIncludesSubject
+    ? clipTupleContoursToRegionMask(baseContours, regionMask)
+    : baseContours
+  const clippedContours = subtractProtectedContours(coverageContours, protectedPaths)
+  const clippedBounds = computeContourBounds([clippedContours])
+  if (clippedBounds) {
+    emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, null)
+  } else if (operation.debugToolpath && regionMask && !regionMask.baseIncludesSubject) {
+    warnings.push('Debug: region mask does not intersect the model silhouette')
+  } else if (operation.debugToolpath) {
+    warnings.push('Debug: protected footprints remove all finish surface coverage')
   }
 
   return { moves: allMoves, stepLevels: allStepLevels }

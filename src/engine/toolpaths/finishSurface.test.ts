@@ -2422,8 +2422,50 @@ function testParallelFinishHonorsOrderedRegionMaskModes(): void {
   assert(hasInnerCut, 'expected parallel finish cuts in the later included inner region')
 }
 
+function testParallelFinishExcludeOnlyKeepsOuterCoverage(): void {
+  console.log('Testing parallel finish exclude-only mask keeps outer model coverage...')
+  const { project } = makeProject()
+  project.features = [
+    makePocketBlockModelFeature(),
+    makeRegionFeatureRect('exclude-region', 6.5, 3.5, 7, 3, 'exclude'),
+  ]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeOperation(),
+    target: { source: 'features', featureIds: ['model1', 'exclude-region'] },
+    pocketPattern: 'parallel',
+    stepover: 0.4,
+    stockToLeaveAxial: 0,
+    stockToLeaveRadial: 0,
+  }
+  project.operations = [op]
+
+  const result = generateFinishSurfaceToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  let hasLeftCoverage = false
+  let hasRightCoverage = false
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected parallel finish cuts outside the excluded region')
+  for (const move of cuts) {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    hasLeftCoverage ||= samples.some((point) => pointInsideRect(point, { x: 1, y: 3.5, w: 4, h: 3 }))
+    hasRightCoverage ||= samples.some((point) => pointInsideRect(point, { x: 15, y: 3.5, w: 4, h: 3 }))
+    assert(
+      samples.every((point) => !pointInsideRect(point, { x: 6.5, y: 3.5, w: 7, h: 3 })),
+      `parallel finish exclude-only mask should remove the excluded rectangle, got move ${JSON.stringify(move)}`,
+    )
+  }
+  assert(hasLeftCoverage, 'expected cuts on the left side outside the excluded region')
+  assert(hasRightCoverage, 'expected cuts on the right side outside the excluded region')
+}
+
 testParallelFinishCutsOverDeepTab()
 testParallelFinishPreservesTabWhenSurfaceDipsIntoIt()
 testParallelFinishHonorsOrderedRegionMaskModes()
+testParallelFinishExcludeOnlyKeepsOuterCoverage()
 
 console.log('finishSurface tests passed')
