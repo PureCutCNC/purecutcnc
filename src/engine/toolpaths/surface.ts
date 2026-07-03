@@ -56,7 +56,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
-import { applyRegionMaskToPaths, buildRegionMask, splitFeatureTargets } from './regions'
+import { applyRegionMaskToPaths, buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 
 interface PolyTreeNode {
@@ -75,6 +75,7 @@ interface SurfaceCleanResult {
   operationId: string
   units: ResolvedPocketResult['units']
   bands: SurfaceCleanBand[]
+  regionMask: ReturnType<typeof buildRegionMask>
   warnings: string[]
 }
 
@@ -179,6 +180,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask: null,
       warnings: ['Only surface-clean operations can be resolved by the surface-clean resolver'],
     }
   }
@@ -188,6 +190,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask: null,
       warnings: ['Surface-clean operation has no feature targets'],
     }
   }
@@ -220,6 +223,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask,
       warnings: [...warnings, 'No valid add features were found for this surface-clean operation'],
     }
   }
@@ -290,6 +294,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     operationId: operation.id,
     units: project.meta.units,
     bands,
+    regionMask,
     warnings,
   }
 }
@@ -604,11 +609,12 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     bounds = updateBounds(bounds, move.to)
   }
 
-  return {
+  const result: PocketToolpathResult = {
     operationId: operation.id,
     moves: allMoves,
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
+  return clipToolpathResultToRegionMask(project, result, resolved.regionMask) as PocketToolpathResult
 }

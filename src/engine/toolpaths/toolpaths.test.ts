@@ -1632,6 +1632,10 @@ function testSurfaceCleanHonorsOrderedRegionMaskModes() {
     }))
     hasOuterCut ||= samples.some((point) => point.x < 4 && point.y < 4)
     hasInnerCut ||= samples.some((point) => pointInsideRect(point, 10, 5, 4, 2))
+    assert(
+      samples.every((point) => !pointInsideRect(point, 4, 2, 16, 8) || pointInsideRect(point, 10, 5, 4, 2)),
+      `surface_clean should remove excluded cut fragments except the later include, got move ${JSON.stringify(move)}`,
+    )
   }
   assert(hasOuterCut, 'expected surface_clean cuts outside the leading excluded region')
   assert(hasInnerCut, 'expected surface_clean cuts in the later included inner region')
