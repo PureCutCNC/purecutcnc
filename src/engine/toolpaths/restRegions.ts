@@ -33,7 +33,7 @@ import {
 } from './geometry'
 import { buildInsetRegions } from './pocket'
 import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
-import { buildRegionMask, splitFeatureTargets } from './regions'
+import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './types'
@@ -441,7 +441,7 @@ function generateAreaRestRegionDrafts(
   resolved: ResolvedPocketResult,
   operation: Operation,
   toolRadius: number,
-  sourceMaskPaths: ClipperPath[] | null = null,
+  sourceMask: RegionMask | null = null,
 ): RestRegionDraft[] {
   const sourceAreaPaths: ClipperPath[] = []
   const reachableAreaPaths: ClipperPath[] = []
@@ -459,14 +459,14 @@ function generateAreaRestRegionDrafts(
   }
 
   let sourceUnion = unionClipperPaths(sourceAreaPaths)
-  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
-    sourceUnion = intersectClipperPaths(sourceUnion, sourceMaskPaths)
+  if (sourceMask) {
+    sourceUnion = applyRegionMaskToPaths(sourceUnion, sourceMask)
   }
   if (sourceUnion.length === 0) return []
 
   let reachableUnion = unionClipperPaths(reachableAreaPaths)
-  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
-    reachableUnion = intersectClipperPaths(reachableUnion, sourceMaskPaths)
+  if (sourceMask) {
+    reachableUnion = applyRegionMaskToPaths(reachableUnion, sourceMask)
   }
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
   if (restPaths.length === 0) return []
@@ -590,8 +590,8 @@ function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operat
   let reachableBand = differenceClipperPaths(sweptOuter, sweptInner)
 
   if (regionMask) {
-    sourceBand = intersectClipperPaths(sourceBand, regionMask.paths)
-    reachableBand = intersectClipperPaths(reachableBand, regionMask.paths)
+    sourceBand = applyRegionMaskToPaths(sourceBand, regionMask)
+    reachableBand = applyRegionMaskToPaths(reachableBand, regionMask)
   }
 
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceBand, reachableBand))
@@ -637,7 +637,7 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
     ? splitFeatureTargets(project, operation.target.featureIds)
     : null
   const regionMask = splitTargets ? buildRegionMask(splitTargets.regionFeatures) : null
-  const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask?.paths ?? null)
+  const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask)
 
   return {
     drafts,

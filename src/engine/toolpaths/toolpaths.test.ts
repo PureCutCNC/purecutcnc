@@ -1603,6 +1603,41 @@ function testSurfaceCleanMultiTargetProtectsTallerTarget() {
   console.log('surface_clean multi-target protects taller target: PASSED')
 }
 
+function testSurfaceCleanHonorsOrderedRegionMaskModes() {
+  console.log('Testing surface_clean honors ordered include/exclude region masks...')
+  const tool = makeFlatEndmill('t1', 2)
+  const boss = makeAddFeature('boss', 0, 0, 24, 12, 4, 0)
+  const excludeMiddle = makeRegionFeature('middle-exclude', 4, 2, 16, 8, 'exclude')
+  const includeInner = makeRegionFeature('inner-include', 10, 5, 4, 2, 'include')
+  const project = baseProject([tool], [boss, excludeMiddle, includeInner])
+  project.stock = { ...project.stock, thickness: 6 }
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['boss', 'middle-exclude', 'inner-include'] },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+  })
+
+  const result = generateSurfaceCleanToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  let hasOuterCut = false
+  let hasInnerCut = false
+
+  assert(cuts.length > 0, `expected surface_clean cuts, warnings: ${result.warnings.join(', ')}`)
+  for (const move of cuts) {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    hasOuterCut ||= samples.some((point) => point.x < 4 && point.y < 4)
+    hasInnerCut ||= samples.some((point) => pointInsideRect(point, 10, 5, 4, 2))
+  }
+  assert(hasOuterCut, 'expected surface_clean cuts outside the leading excluded region')
+  assert(hasInnerCut, 'expected surface_clean cuts in the later included inner region')
+  console.log('surface_clean ordered region mask modes: PASSED')
+}
+
 function testFollowLineRegionClipsOpenPath() {
   console.log('Testing follow_line region clips open path...')
   const tool = makeFlatEndmill('t1', 1)
@@ -2212,6 +2247,7 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
+  testSurfaceCleanHonorsOrderedRegionMaskModes()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
   testDrillingOrdersByNearestNeighbor()

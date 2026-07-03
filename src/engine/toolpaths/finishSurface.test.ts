@@ -21,7 +21,7 @@
  */
 
 import { readFileSync } from 'fs'
-import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
+import { defaultTool, newProject, rectProfile, type Operation, type Project, type RegionMaskMode, type SketchFeature, type Tool } from '../../types/project'
 import { normalizeProject, useProjectStore } from '../../store/projectStore'
 import { convertProjectUnits } from '../../utils/units'
 import { generateFinishSurfaceToolpath, maxContourGap } from './finishSurface'
@@ -672,6 +672,7 @@ function makeRegionFeatureRect(
   y: number,
   w: number,
   h: number,
+  regionMaskMode: RegionMaskMode = 'include',
 ): SketchFeature {
   return {
     id,
@@ -686,6 +687,7 @@ function makeRegionFeatureRect(
       constraints: [],
     },
     operation: 'region',
+    regionMaskMode,
     z_top: 0,
     z_bottom: 0,
     visible: true,
@@ -2376,7 +2378,52 @@ function testParallelFinishPreservesTabWhenSurfaceDipsIntoIt(): void {
     `expected some cut moves inside tab footprint (clamped to z=${tabTopZ}), got none`)
 }
 
+function testParallelFinishHonorsOrderedRegionMaskModes(): void {
+  console.log('Testing parallel finish honors ordered include/exclude region masks...')
+  const { project } = makeProject()
+  project.features = [
+    makePocketBlockModelFeature(),
+    makeRegionFeatureRect('outer-region', 6.5, 3.5, 7, 3, 'include'),
+    makeRegionFeatureRect('exclude-region', 8, 4, 4, 2, 'exclude'),
+    makeRegionFeatureRect('inner-region', 9.25, 4.6, 1.5, 0.8, 'include'),
+  ]
+  normalizeProjectFeatures(project)
+  const op: Operation = {
+    ...makeOperation(),
+    target: { source: 'features', featureIds: ['model1', 'outer-region', 'exclude-region', 'inner-region'] },
+    pocketPattern: 'parallel',
+    stepover: 0.4,
+    stockToLeaveAxial: 0,
+    stockToLeaveRadial: 0,
+  }
+  project.operations = [op]
+
+  const result = generateFinishSurfaceToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  let hasOuterCut = false
+  let hasInnerCut = false
+
+  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  assert(cuts.length > 0, 'expected parallel finish cuts inside the ordered region mask')
+  for (const move of cuts) {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    hasOuterCut ||= samples.some((point) => pointInsideRect(point, { x: 6.5, y: 3.5, w: 1, h: 1 }))
+    hasInnerCut ||= samples.some((point) => pointInsideRect(point, { x: 9.25, y: 4.6, w: 1.5, h: 0.8 }))
+    assert(
+      samples.every((point) => !pointInsideRect(point, { x: 8, y: 4, w: 4, h: 2 })
+        || pointInsideRect(point, { x: 9.25, y: 4.6, w: 1.5, h: 0.8 })),
+      `parallel finish should remove excluded area except the later include, got move ${JSON.stringify(move)}`,
+    )
+  }
+  assert(hasOuterCut, 'expected parallel finish cuts in the outer included area')
+  assert(hasInnerCut, 'expected parallel finish cuts in the later included inner region')
+}
+
 testParallelFinishCutsOverDeepTab()
 testParallelFinishPreservesTabWhenSurfaceDipsIntoIt()
+testParallelFinishHonorsOrderedRegionMaskModes()
 
 console.log('finishSurface tests passed')

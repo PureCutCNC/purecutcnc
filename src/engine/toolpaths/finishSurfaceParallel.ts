@@ -17,7 +17,7 @@
 import { getProfileBounds, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, flattenProfile, normalizeWinding, toClipperPath } from './geometry'
-import { retractToSafe, transitionToCutEntry } from './pocket'
+import { transitionToCutEntry } from './pocket'
 import { buildRegionMask, clipTupleContoursToRegionMask } from './regions'
 import { significantSilhouettePaths } from './silhouette'
 import { buildProtectedFootprintPaths, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
@@ -753,21 +753,15 @@ export function generateFinishSurfaceParallel(
       warnings.push('Debug: protected footprints remove all finish surface coverage')
     }
   } else {
-    for (let ri = 0; ri < regionFeatures.length; ri++) {
-      const region = regionFeatures[ri]
-      const regionContours = clipTupleContoursToRegionMask(baseContours, buildRegionMask([region]))
-      const clippedContours = subtractProtectedContours(regionContours, protectedPaths)
+    const regionMask = buildRegionMask(regionFeatures)
+    const regionContours = clipTupleContoursToRegionMask(baseContours, regionMask)
+    const clippedContours = subtractProtectedContours(regionContours, protectedPaths)
 
-      const clippedBounds = computeContourBounds([clippedContours])
-      if (clippedBounds) {
-        currentPosition = emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
-      } else if (operation.debugToolpath) {
-        warnings.push(`Debug: region ${region.name} does not intersect the model silhouette`)
-      }
-
-      if (ri < regionFeatures.length - 1) {
-        currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
-      }
+    const clippedBounds = computeContourBounds([clippedContours])
+    if (clippedBounds) {
+      emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, currentPosition)
+    } else if (operation.debugToolpath) {
+      warnings.push('Debug: region mask does not intersect the model silhouette')
     }
   }
 

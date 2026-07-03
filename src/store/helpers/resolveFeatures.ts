@@ -435,7 +435,7 @@ export function resolveFeatureInstance(
     folderId: feature.folderId,
     sketch,
     operation: definition.operation,
-    regionMaskMode: definition.regionMaskMode,
+    regionMaskMode: definition.operation === 'region' ? (definition.regionMaskMode ?? 'include') : undefined,
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
     visible: feature.visible,
