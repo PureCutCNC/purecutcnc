@@ -30,6 +30,7 @@ interface UseCanvasWorkflowPanelOptions {
   containerRef: RefObject<HTMLElement | null>
   canvasRef: RefObject<HTMLElement | null>
   clearTransientCanvasState: () => void
+  focusCanvasOnOpen?: boolean
   margin?: number
 }
 
@@ -51,6 +52,7 @@ export function useCanvasWorkflowPanel({
   containerRef,
   canvasRef,
   clearTransientCanvasState,
+  focusCanvasOnOpen = true,
   margin = DEFAULT_WORKFLOW_PANEL_MARGIN,
 }: UseCanvasWorkflowPanelOptions) {
   const [position, setPosition] = useState<CanvasWorkflowPanelPosition>({ x: margin, y: margin })
@@ -74,11 +76,11 @@ export function useCanvasWorkflowPanel({
 
   useEffect(() => {
     const wasOpen = wasOpenRef.current
-    if (open || wasOpen) {
+    if ((open && focusCanvasOnOpen) || (!open && wasOpen)) {
       focusCanvasAfterAction()
     }
     wasOpenRef.current = open
-  }, [open, phaseKey])
+  }, [open, phaseKey, focusCanvasOnOpen])
 
   function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {

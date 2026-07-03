@@ -270,6 +270,15 @@ export function drawGrid(
 const STOCK_LABEL_MIN_WIDTH_PX = 200
 const STOCK_EXCEEDED_STROKE = 'rgba(240, 160, 40, 0.9)'
 
+/** A hit-testable rectangle for a stock dimension label. */
+export interface StockLabelRect {
+  axis: 'width' | 'height'
+  cx: number
+  cy: number
+  halfW: number
+  halfH: number
+}
+
 function drawStockDimensionLabel(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -294,6 +303,7 @@ export function drawStockOutline(
   vt: ViewTransform,
   units: Units,
   exceeded: boolean,
+  stockLabelRects?: StockLabelRect[],
 ): void {
   traceProfilePath(ctx, stock.profile, vt)
   ctx.strokeStyle = exceeded ? STOCK_EXCEEDED_STROKE : hexToRgba(stock.color, 0.7)
@@ -322,19 +332,47 @@ export function drawStockOutline(
   const unitSuffix = units === 'inch' ? 'in' : 'mm'
 
   ctx.save()
+  const widthLabelText = `${formatLength(widthWorld, units)} ${unitSuffix}`
+  const heightLabelText = `${formatLength(heightWorld, units)} ${unitSuffix}`
+  const widthCx = (minCx + maxCx) / 2
+  const widthCy = minCy - 12
   drawStockDimensionLabel(
     ctx,
-    `${formatLength(widthWorld, units)} ${unitSuffix}`,
-    (minCx + maxCx) / 2,
-    minCy - 12,
+    widthLabelText,
+    widthCx,
+    widthCy,
   )
+  const heightCx = maxCx + 8 + ctx.measureText(heightLabelText).width / 2
+  const heightCy = (minCy + maxCy) / 2
   drawStockDimensionLabel(
     ctx,
-    `${formatLength(heightWorld, units)} ${unitSuffix}`,
-    maxCx + 8 + ctx.measureText(`${formatLength(heightWorld, units)} ${unitSuffix}`).width / 2,
-    (minCy + maxCy) / 2,
+    heightLabelText,
+    heightCx,
+    heightCy,
   )
   ctx.restore()
+
+  // Record hit rects for click-to-edit
+  if (stockLabelRects) {
+    const labelFont = '11px sans-serif'
+    ctx.font = labelFont
+    const wMetrics = ctx.measureText(widthLabelText)
+    const hMetrics = ctx.measureText(heightLabelText)
+    stockLabelRects.push({
+      axis: 'width',
+      cx: widthCx,
+      cy: widthCy,
+      halfW: wMetrics.width / 2 + 4,
+      halfH: 9,
+    })
+    stockLabelRects.push({
+      axis: 'height',
+      cx: heightCx,
+      cy: heightCy,
+      halfW: hMetrics.width / 2 + 4,
+      halfH: 9,
+    })
+  }
 }
 
 export function drawClampFootprint(

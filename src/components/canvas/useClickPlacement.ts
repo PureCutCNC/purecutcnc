@@ -53,11 +53,15 @@ import {
   segmentHitTest,
 } from './hitTest'
 import { hitBackdrop } from './scenePrimitives'
+import type { StockLabelRect } from './scenePrimitives'
+import { resolveDrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
+import { isDimensionDangling } from '../../sketch/dimensions'
 import { anchorPointForIndex } from './profilePrimitives'
-import { pickDimensionAt } from './dimensionRendering'
+import { pickDimensionAt, pickDimensionLabelAt } from './dimensionRendering'
 import { circleEdgeAnchorFromPoint, offsetForCursor } from '../../sketch/dimensions'
 import type { ResolvedSnap } from './snappingHelpers'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
+import type { DrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
 import type { ConstraintWorkflow } from './useConstraintWorkflow'
 import type { MoveWorkflow } from './useMoveWorkflow'
 import type { TransformExactWorkflow } from './useTransformExactWorkflow'
@@ -119,10 +123,12 @@ export interface ClickPlacementCtx {
   originPreviewPointRef: MutableRefObject<PendingPreviewPoint | null>
   tapeMeasureRef: MutableRefObject<TapeMeasureState | null>
   constraintLabelRectsRef: MutableRefObject<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>
+  stockLabelRectsRef: MutableRefObject<StockLabelRect[]>
   canvasRef: RefObject<HTMLCanvasElement | null>
 
   snap: UseSnapPreviewReturn
   dimEdit: DimensionEditWorkflow
+  drivingWf: DrivingDimensionWorkflow
   move: MoveWorkflow
   transformExact: TransformExactWorkflow
   fillet: FilletWorkflow
@@ -249,9 +255,11 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     originPreviewPointRef,
     tapeMeasureRef,
     constraintLabelRectsRef,
+    stockLabelRectsRef,
     canvasRef,
     snap,
     dimEdit,
+    drivingWf,
     move,
     transformExact,
     fillet,
@@ -450,6 +458,26 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
+    // ── Driving dimension: click a dimension label to edit the underlying geometry ──
+    if (selection.mode === 'feature' && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset && !pendingShapeAction && !pendingConstraint && !dimensionDeleteArmedRef.current && !tapeMeasureRef.current && !pendingDimensionRef.current && project.meta.showDimensions) {
+      const hitLabel = pickDimensionLabelAt(project, vt, point, 10)
+      if (hitLabel) {
+        const dim = project.annotations.find((d) => d.id === hitLabel)
+        if (dim && !dim.locked && !isDimensionDangling(dim, project)) {
+          const resolved = resolveDrivingDimensionEdit(dim, project)
+          if (resolved && !('disabled' in resolved)) { drivingWf.beginDrivingEdit(resolved); return }
+        }
+      }
+      for (const rect of stockLabelRectsRef.current) {
+        if (point.cx >= rect.cx - rect.halfW && point.cx <= rect.cx + rect.halfW && point.cy >= rect.cy - rect.halfH && point.cy <= rect.cy + rect.halfH) {
+          const axis = rect.axis
+          const held = axis === 'width' ? 'left' : 'top'
+          const resolved = drivingWf.resolveStockLabelClick(axis, held)
+          if (resolved) { drivingWf.beginDrivingEdit(resolved); return }
+        }
+      }
+    }
+
     // ── Select an existing dimension annotation (plain select mode) ──
     if (
       selection.mode === 'feature'
@@ -459,10 +487,14 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     ) {
       const hitDim = pickDimensionAt(project, vt, point, 8)
       if (hitDim) {
-        selectAnnotation(hitDim)
+        // Don't select if a driving edit is active for this dimension
+        if (!drivingWf.drivingEditRef.current) {
+          selectAnnotation(hitDim)
+          return
+        }
         return
       }
-      if (selectedAnnotationIdRef.current) {
+      if (selectedAnnotationIdRef.current && !drivingWf.drivingEditRef.current) {
         selectAnnotation(null)
       }
     }

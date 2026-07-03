@@ -103,6 +103,7 @@ export function useConstraintWorkflow(ctx: ConstraintWorkflowCtx): ConstraintWor
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: constraintDistanceInput == null,
   })
 
   const constraintEditWorkflowPanel = useCanvasWorkflowPanel({
@@ -111,6 +112,7 @@ export function useConstraintWorkflow(ctx: ConstraintWorkflowCtx): ConstraintWor
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: false,
   })
 
   function commitConstraintFromPanel() {

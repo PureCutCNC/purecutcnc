@@ -108,6 +108,7 @@ export function useTransformExactWorkflow(ctx: TransformExactWorkflowCtx): Trans
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: !transformExactEditActive && !rotateCopyCountPromptActive,
   })
 
   function cancelTransformFromPanel() {
@@ -121,7 +122,6 @@ export function useTransformExactWorkflow(ctx: TransformExactWorkflowCtx): Trans
 
   function triggerDimensionFromTransformPanel() {
     triggerDimensionEdit()
-    transformWorkflowPanel.focusCanvasAfterAction()
   }
 
   function commitTransformExactEditFromPanel() {
