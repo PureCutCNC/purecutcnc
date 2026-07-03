@@ -21,7 +21,7 @@
  *
  * These tests verify at the source level that:
  *   1. The CSS classes for the badge / note elements are defined in the stylesheet.
- *   2. FeatureTree renders the "mask" badge only when operation is 'region'.
+ *   2. FeatureTree renders one include/exclude badge only when operation is 'region'.
  *   3. CAMPanel renders the region-filter note when operationTargetsRegion is true,
  *      and the copy matches the agreed wording.
  *   4. PropertiesPanel shows the Z-lock and region note for region features.
@@ -64,21 +64,19 @@ assert(css.includes('.properties-region-note'), 'layout.css must define .propert
 assert(css.includes('.properties-region-note__badge'), 'layout.css must define .properties-region-note__badge')
 assert(css.includes('.sketch-depth-legend__swatch--region-exclude'), 'layout.css must define the region exclude legend swatch')
 
-// ── FeatureTree: mask badge on region rows ───────────────────────
+// ── FeatureTree: include/exclude badge on region rows ────────────
 
 // Badge must be gated on operation === 'region' so non-region rows are unaffected.
 assert(
   featureTree.includes("operation === 'region'") && featureTree.includes('tree-region-badge'),
   'FeatureTree must render .tree-region-badge only when operation is "region"',
 )
-// Badge text is "mask" per REGION_FEATURE_SEMANTICS.md agreed copy.
-// The text is a JSX child node: >\n  mask\n< — match with a relaxed regex.
 assert(
-  /tree-region-badge[\s\S]{0,400}>\s*mask\s*</.test(featureTree),
-  'FeatureTree .tree-region-badge must display the text "mask"',
+  featureTree.includes("regionMaskMode === 'exclude' ? 'exclude' : 'include'"),
+  'FeatureTree .tree-region-badge must display include/exclude based on regionMaskMode',
 )
 assert(
-  featureTree.includes("regionMaskMode === 'exclude'") && /tree-region-badge--exclude[\s\S]{0,400}>\s*exclude\s*</.test(featureTree),
+  featureTree.includes("regionMaskMode === 'exclude'") && featureTree.includes('tree-region-badge--exclude'),
   'FeatureTree must display an "exclude" badge for exclude region masks',
 )
 

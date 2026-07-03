@@ -885,22 +885,16 @@ function TreeRow({
       <div className="tree-label-wrap">
         <span className="tree-label" title={label}>{label}</span>
         {kind === 'feature' && operation === 'region' ? (
-          <>
-            <span
-              className="tree-region-badge"
-              title="Region — limits where operations may cut. Not a shape to machine."
-            >
-              mask
-            </span>
-            {regionMaskMode === 'exclude' ? (
-              <span
-                className="tree-region-badge tree-region-badge--exclude"
-                title="Exclude region — subtracts this area from the active region mask."
-              >
-                exclude
-              </span>
-            ) : null}
-          </>
+          <span
+            className={`tree-region-badge${regionMaskMode === 'exclude' ? ' tree-region-badge--exclude' : ''}`}
+            title={
+              regionMaskMode === 'exclude'
+                ? 'Exclude region — subtracts this area from the active region mask.'
+                : 'Include region — adds this area to the active region mask.'
+            }
+          >
+            {regionMaskMode === 'exclude' ? 'exclude' : 'include'}
+          </span>
         ) : null}
         {kind === 'feature' && linkedCount && linkedCount > 1 ? (
           <span
