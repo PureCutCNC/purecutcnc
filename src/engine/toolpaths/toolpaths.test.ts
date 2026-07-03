@@ -874,6 +874,20 @@ function testRegionMaskExcludeOnlyPreservesOutsideArea() {
   console.log('exclude-only region mask: PASSED')
 }
 
+function testRegionMaskLeadingExcludeCanBeReincluded() {
+  console.log('Testing leading exclude region can be re-included...')
+  const mask = buildRegionMask([
+    makeRegionFeature('outer-exclude', 0, 0, 10, 10, 'exclude'),
+    makeRegionFeature('inner-include', 4, 4, 2, 2, 'include'),
+  ])
+  assert(mask !== null, 'expected leading exclude region mask')
+  if (!mask) throw new Error('expected leading exclude region mask')
+  assert(mask.containsPoint({ x: -1, y: -1 }), 'leading exclude should keep subject area outside the excluded region')
+  assert(!mask.containsPoint({ x: 2, y: 2 }), 'leading exclude should remove the excluded region')
+  assert(mask.containsPoint({ x: 5, y: 5 }), 'later include should add an island back inside the excluded region')
+  console.log('leading exclude region re-include: PASSED')
+}
+
 function pointInsideRect(point: { x: number; y: number }, x: number, y: number, w: number, h: number): boolean {
   return point.x > x && point.x < x + w && point.y > y && point.y < y + h
 }
@@ -964,6 +978,62 @@ function testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath() {
     )
   }
   console.log('pocket offset finish exclude-only region mask: PASSED')
+}
+
+function testPocketOffsetFinishLeadingExcludeWithInnerInclude() {
+  console.log('Testing pocket offset finish honors leading exclude with inner include...')
+  const tool = makeFlatEndmill('t1', 0.25)
+  const pocket = makePocketFeature('p1', 0.5, 0.5, 3, 2, 0.75, 0)
+  const excludePoints = [
+    { x: 0.5, y: 0.9 },
+    { x: 0.9, y: 0.5 },
+    { x: 3.1, y: 0.5 },
+    { x: 3.5, y: 0.9 },
+    { x: 3.5, y: 2.1 },
+    { x: 3.1, y: 2.5 },
+    { x: 0.9, y: 2.5 },
+    { x: 0.5, y: 2.1 },
+  ]
+  const includePoints = [
+    { x: 1.5, y: 1 },
+    { x: 2.5, y: 1 },
+    { x: 2.5, y: 1.875 },
+    { x: 1.5, y: 1.875 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoints, 'exclude')
+  const include = makePolygonRegionFeature('r-include', includePoints, 'include')
+  const project = baseProject([tool], [pocket, exclude, include])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1', 'r-exclude', 'r-include'] },
+    toolRef: 't1',
+    pocketPattern: 'offset',
+    stepdown: 0.125,
+    stepover: 0.32,
+    machiningOrder: 'feature_first',
+  })
+  const result = generatePocketToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  let hasCornerCut = false
+  let hasInnerCut = false
+
+  assert(cuts.length > 0, `expected offset finish cuts, warnings: ${result.warnings.join(', ')}`)
+  for (const move of cuts) {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    hasCornerCut ||= samples.some((point) => point.x < 0.9 && point.y < 0.9)
+    hasInnerCut ||= samples.some((point) => pointInsidePolygon(point, includePoints))
+    assert(
+      samples.every((point) => !pointInsidePolygon(point, excludePoints) || pointInsidePolygon(point, includePoints)),
+      `exclude/include region mask should keep only outside-exclude or inner-include cuts, got move ${JSON.stringify(move)}`,
+    )
+  }
+  assert(hasCornerCut, 'expected cuts in the corner area outside the excluded region')
+  assert(hasInnerCut, 'expected cuts inside the re-included inner region')
+  console.log('pocket offset finish leading exclude with inner include: PASSED')
 }
 
 function testPocketRestRegionsEmitHoleCapableMaskModes() {
@@ -2127,8 +2197,10 @@ try {
   testPocketRestRegionsUniformCorners()
   testRegionMaskHonorsOrderedIncludeExcludeNesting()
   testRegionMaskExcludeOnlyPreservesOutsideArea()
+  testRegionMaskLeadingExcludeCanBeReincluded()
   testPocketFinishExcludeOnlyRegionRemovesMachiningArea()
   testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath()
+  testPocketOffsetFinishLeadingExcludeWithInnerInclude()
   testPocketRestRegionsEmitHoleCapableMaskModes()
   testRegionMaskVisitsNearestRegionFirst()
   testEdgeInsideLevelFirstVsFeatureFirst()

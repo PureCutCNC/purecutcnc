@@ -36,7 +36,15 @@ export interface RegionMask {
   paths: ClipperPath[]
   hasIncludeRegions: boolean
   excludePaths: ClipperPath[]
+  boundaryPaths: ClipperPath[]
+  baseIncludesSubject: boolean
+  entries: RegionMaskEntry[]
   containsPoint(point: Point): boolean
+}
+
+interface RegionMaskEntry {
+  mode: 'include' | 'exclude'
+  paths: ClipperPath[]
 }
 
 interface LineFragment {
@@ -133,15 +141,26 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
 export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | null {
   let paths: ClipperPath[] = []
   let excludePaths: ClipperPath[] = []
+  let boundaryPaths: ClipperPath[] = []
+  const entries: RegionMaskEntry[] = []
   let hasIncludeRegions = false
+  let baseIncludesSubject = false
+  let sawValidRegion = false
 
   for (const feature of regionFeatures) {
     if (feature.operation !== 'region' || !feature.sketch.profile.closed) continue
     const flattened = flattenProfile(feature.sketch.profile)
     if (flattened.points.length < 3) continue
     const featurePaths = [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
+    const mode = feature.regionMaskMode ?? 'include'
+    if (!sawValidRegion) {
+      baseIncludesSubject = mode === 'exclude'
+      sawValidRegion = true
+    }
+    entries.push({ mode, paths: featurePaths })
+    boundaryPaths = [...boundaryPaths, ...featurePaths]
 
-    if ((feature.regionMaskMode ?? 'include') === 'exclude') {
+    if (mode === 'exclude') {
       paths = executeClipPaths(paths, featurePaths, ClipperLib.ClipType.ctDifference)
       excludePaths = unionPaths([...excludePaths, ...featurePaths])
     } else {
@@ -150,17 +169,23 @@ export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | n
     }
   }
 
-  if (!hasIncludeRegions && excludePaths.length === 0) return null
+  if (!sawValidRegion) return null
   const clipPaths = hasIncludeRegions ? paths : excludePaths
   return {
     paths: clipPaths,
     hasIncludeRegions,
     excludePaths,
-    containsPoint: (point) => (
-      hasIncludeRegions
-        ? pointInClipperPaths(point, paths)
-        : !pointInClipperPaths(point, excludePaths)
-    ),
+    boundaryPaths,
+    baseIncludesSubject,
+    entries,
+    containsPoint: (point) => {
+      let included = baseIncludesSubject
+      for (const entry of entries) {
+        if (!pointInClipperPaths(point, entry.paths)) continue
+        included = entry.mode === 'include'
+      }
+      return included
+    },
   }
 }
 
@@ -170,16 +195,25 @@ export function buildMaskFromClipperPaths(paths: ClipperPath[]): RegionMask | nu
     paths,
     hasIncludeRegions: true,
     excludePaths: [],
+    boundaryPaths: paths,
+    baseIncludesSubject: false,
+    entries: [{ mode: 'include', paths }],
     containsPoint: (point) => pointInClipperPaths(point, paths),
   }
 }
 
 export function applyRegionMaskToPaths(subjectPaths: ClipperPath[], mask: RegionMask | null): ClipperPath[] {
   if (subjectPaths.length === 0 || !mask) return subjectPaths
-  if (mask.hasIncludeRegions) {
-    return executeClipPaths(subjectPaths, mask.paths, ClipperLib.ClipType.ctIntersection)
+  let result = mask.baseIncludesSubject ? subjectPaths : []
+  for (const entry of mask.entries) {
+    if (entry.mode === 'include') {
+      const includedSubject = executeClipPaths(subjectPaths, entry.paths, ClipperLib.ClipType.ctIntersection)
+      result = unionPaths([...result, ...includedSubject])
+    } else {
+      result = executeClipPaths(result, entry.paths, ClipperLib.ClipType.ctDifference)
+    }
   }
-  return executeClipPaths(subjectPaths, mask.excludePaths, ClipperLib.ClipType.ctDifference)
+  return result
 }
 
 export function featurePathToClipper(feature: SketchFeature): ClipperPath | null {
@@ -258,7 +292,7 @@ function pathEdges(path: ClipperPath): Array<[Point, Point]> {
 
 function clipCutMoveToRegion(move: ToolpathMove, mask: RegionMask): LineFragment[] {
   const tValues = [0, 1]
-  for (const path of mask.paths) {
+  for (const path of mask.boundaryPaths) {
     for (const [a, b] of pathEdges(path)) {
       const t = segmentIntersectionT(move.from, move.to, a, b)
       if (t !== null) tValues.push(t)
@@ -370,6 +404,9 @@ export function clipToolpathResultToObstaclesByLevel(
       paths: mask.paths,
       hasIncludeRegions: false,
       excludePaths: mask.paths,
+      boundaryPaths: mask.paths,
+      baseIncludesSubject: true,
+      entries: [{ mode: 'exclude', paths: mask.paths }],
       containsPoint: (point) => !pointInClipperPaths(point, mask.paths),
     }
 
@@ -513,6 +550,9 @@ export function clipToolpathResultToRegionMask(
       paths: [path],
       hasIncludeRegions: true,
       excludePaths: [],
+      boundaryPaths: [path],
+      baseIncludesSubject: false,
+      entries: [{ mode: 'include', paths: [path] }],
       containsPoint: (point) => pointInClipperPaths(point, [path]),
     }
 
