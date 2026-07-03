@@ -777,6 +777,40 @@
   to { transform: rotate(360deg); }
 }
 
+.simulation-viewport__webgl-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 20, 28, 0.72);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.simulation-viewport__webgl-message {
+  max-width: 360px;
+  padding: 16px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(20, 28, 38, 0.95);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  text-align: center;
+}
+
+.simulation-viewport__webgl-message strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.simulation-viewport__webgl-message p {
+  margin: 0;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.65);
+}
+
 .simulation-detail-control {
   box-sizing: border-box;
   display: inline-flex;

@@ -22,6 +22,7 @@ import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProf
 import { createDynamicBoundaryMaterial, createHeightfieldMaterial, createShaderDrivenBoundaryMaterial } from '../../engine/simulation/heightfieldShader'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
+import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
 import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
@@ -628,6 +629,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // heavy heightfield + shader-driven boundary mesh is allocated.
   const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
   const [isPlaybackReady, setIsPlaybackReady] = useState(false)
+  // 'unavailable': WebGL2 context creation failed (old browser, GPU denylist,
+  // hardware acceleration off) — the 3D scene never initializes and a fallback
+  // message replaces the canvas. 'context-lost': the browser revoked the
+  // context (GPU memory pressure, driver reset); three restores GL state
+  // automatically when the browser returns it, we only pause playback and
+  // surface an overlay until then.
+  const [webglStatus, setWebglStatus] = useState<'ok' | 'context-lost' | 'unavailable'>('ok')
   // Mirror isActive into a ref so the render loop (raw RAF, not React-driven)
   // can read it without re-binding the closure each prop change.
   const isActiveRef = useRef(isActive)
@@ -776,7 +784,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+    } catch (error) {
+      // three r163+ requires WebGL2; the constructor throws when the browser
+      // can't create a context (old browser, GPU denylist, hardware
+      // acceleration off). Leave the refs null — every sibling effect guards
+      // on them — so the fallback message renders instead of the throw
+      // escaping the effect and taking down the whole app via the error
+      // boundary.
+      console.error('SimulationViewport: WebGL2 context creation failed', error)
+      setWebglStatus('unavailable')
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.setClearColor(0x141820, 1)
@@ -808,6 +829,24 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }, () => zoomWindowActiveRef.current)
     controlsRef.current = controls
 
+    const detachContextGuard = attachWebglContextGuard(renderer.domElement, {
+      onLost: () => {
+        // Left running, playback would keep simulating invisibly: the tick
+        // loop advances the cut while three no-ops render(). Pause it; the
+        // user resumes after restore. The ref stops the loop on its very next
+        // frame, ahead of the state update.
+        isPlayingRef.current = false
+        setIsPlaying(false)
+        setWebglStatus('context-lost')
+      },
+      onRestored: () => {
+        // three rebuilds its GL state itself and re-uploads textures/geometry
+        // from CPU-side data on the next animate() frame — only the overlay
+        // needs clearing.
+        setWebglStatus('ok')
+      },
+    })
+
     function animate() {
       frameRef.current = requestAnimationFrame(animate)
       // Skip the GPU draw when the simulation tab isn't visible. A tab switch
@@ -827,6 +866,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     return () => {
       cancelAnimationFrame(frameRef.current)
+      detachContextGuard()
       disposeCurrentMesh(scene)
       disposeClampMeshes(scene)
       controls.dispose()
@@ -1179,7 +1219,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     })
   }, [])
 
-  const playbackControlsDisabled = isPlaybackBuilding || !isPlaybackReady
+  const playbackControlsDisabled = isPlaybackBuilding || !isPlaybackReady || webglStatus !== 'ok'
 
   const handlePlayPause = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -1328,6 +1368,28 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           <div className="simulation-viewport__spinner" />
         </div>
       )}
+      {webglStatus === 'unavailable' && (
+        <div className="simulation-viewport__webgl-overlay">
+          <div className="simulation-viewport__webgl-message">
+            <strong>3D simulation isn&apos;t available</strong>
+            <p>
+              This view requires WebGL2, which your browser or graphics driver did not provide.
+              Try updating your browser or enabling hardware acceleration in its settings.
+            </p>
+          </div>
+        </div>
+      )}
+      {webglStatus === 'context-lost' && (
+        <div className="simulation-viewport__webgl-overlay">
+          <div className="simulation-viewport__webgl-message">
+            <strong>3D graphics context lost</strong>
+            <p>
+              Waiting for the browser to restore it — playback has been paused.
+              If this message persists, reload the app.
+            </p>
+          </div>
+        </div>
+      )}
       {zoomWindowActive && (
         <div
           className="viewport-zoom-select-overlay"
@@ -1412,7 +1474,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             className={`simulation-mode-toggle__btn simulation-playback-toggle ${playbackEnabled ? 'simulation-mode-toggle__btn--active' : ''}`}
             type="button"
             onClick={handlePlaybackToggle}
-            disabled={mode !== 'selected' || !playbackInput}
+            disabled={mode !== 'selected' || !playbackInput || webglStatus === 'unavailable'}
             title={mode !== 'selected'
               ? 'Switch to Selected mode to use Tool playback'
               : !playbackInput
