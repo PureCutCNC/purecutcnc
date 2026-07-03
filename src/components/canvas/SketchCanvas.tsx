@@ -42,6 +42,9 @@ import {
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
+import { ConstraintEditPanel } from './ConstraintEditPanel'
+import { DrivingDimensionPanel } from './DrivingDimensionPanel'
+import { useDrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
 import { useMoveWorkflow } from './useMoveWorkflow'
@@ -53,7 +56,7 @@ import { useClickPlacement } from './useClickPlacement'
 import { usePointerGestures } from './usePointerGestures'
 import { useSnapPreview } from './useSnapPreview'
 import { useCanvasContextMenu } from './useCanvasContextMenu'
-import { drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
+import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
   drawFeature,
   drawMoveGuide,
@@ -111,6 +114,7 @@ import {
   drawSketchEditPreviewPoint,
   drawStockOutline,
   drawTabFootprint,
+  type StockLabelRect,
 } from './scenePrimitives'
 import { generateTextShapes } from '../../text'
 import {
@@ -216,6 +220,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   operationDimEditRef.current = operationDimEdit
   // Stores label hit areas for click detection: { featureId, constraintId, cx, cy, halfW, halfH }
   const constraintLabelRectsRef = useRef<Array<{ featureId: string; constraintId: string; cx: number; cy: number; halfW: number; halfH: number }>>([])
+  const stockLabelRectsRef = useRef<StockLabelRect[]>([])
 
   const shellMode = useShellMode()
   const isTablet = isTabletMode(shellMode)
@@ -316,6 +321,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     updateConstraintValue,
     setPendingNgonSides,
     setPendingRectCorner,
+    setRectStockDimension,
   } = useProjectStore()
 
   const projectRef = useRef(project)
@@ -389,6 +395,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     updateConstraintValue,
   })
 
+  const drivingWf = useDrivingDimensionWorkflow({ projectRef, canvasRef, containerRef, moveFeatureControl, setRectStockDimension, beginHistoryTransaction, commitHistoryTransaction, cancelHistoryTransaction, clearTransientCanvasState, scheduleDraw })
+
   const fillet = useFilletWorkflow({
     projectRef,
     selectionRef,
@@ -429,6 +437,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: !editFilletActive && !editDimEditActive,
   })
 
   // ── Measure & dimension workflow panels (instruction popups) ──
@@ -882,13 +891,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       )
     }
 
+    stockLabelRectsRef.current = []
     if (project.stock.visible) {
       const anyFeatureExceedsStock = project.features.some(
         (feature) => feature.visible
           && feature.kind !== 'text'
           && profileExceedsStock(feature.sketch.profile, project.stock),
       )
-      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock)
+      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock, stockLabelRectsRef.current)
     }
 
     if (project.origin.visible) {
@@ -1707,6 +1717,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         selectedId: selectedAnnotationIdRef.current,
         deleteHoverId: dimensionDeleteArmedRef.current ? deleteHoverDimIdRef.current : null,
       })
+      drawDimensionAnchorDots(ctx, project, vt, { selectedId: selectedAnnotationIdRef.current, drivingEdit: drivingWf.drivingEditRef.current?.edit ?? null })
     }
 
     // Transient tape measure overlay.
@@ -2637,9 +2648,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     originPreviewPointRef,
     tapeMeasureRef,
     constraintLabelRectsRef,
+    stockLabelRectsRef,
     canvasRef,
     snap,
     dimEdit,
+    drivingWf,
     move,
     transformExact,
     fillet,
@@ -2766,57 +2779,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
         />
       )}
-      {constraint.constraintEdit && (
-        <CanvasWorkflowPanel
-          title="Edit Constraint"
-          step="Set distance"
-          position={constraint.constraintEditWorkflowPanel.position}
-          panelRef={constraint.constraintEditWorkflowPanel.panelRef}
-          handleProps={constraint.constraintEditWorkflowPanel.handleProps}
-          actionRowProps={constraint.constraintEditWorkflowPanel.actionRowProps}
-          className="canvas-workflow-panel--constraint-edit"
-          moveLabel="Move constraint edit controls"
-          actions={(
-            <>
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                onClick={constraint.commitConstraintEditFromPanel}
-              >Apply</button>
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={constraint.cancelConstraintEditFromPanel}
-              >Cancel</button>
-            </>
-          )}
-        >
-          <label className="canvas-workflow-panel__field">
-            <span>Distance</span>
-            <input
-              key={`constraint-edit-${constraint.constraintEdit.constraintId}`}
-              ref={constraint.constraintEditInputRef}
-              className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-              type="text"
-              inputMode="decimal"
-              value={constraint.constraintEdit.value}
-              onChange={(e) => constraint.setConstraintEdit((prev) => prev ? { ...prev, value: e.target.value } : null)}
-              onFocus={(e) => e.currentTarget.select()}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  constraint.commitConstraintEditFromPanel()
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  constraint.cancelConstraintEditFromPanel()
-                }
-              }}
-              autoFocus
-            />
-          </label>
-        </CanvasWorkflowPanel>
-      )}
+      <ConstraintEditPanel constraint={constraint} />
+      <DrivingDimensionPanel driving={drivingWf} />
       {pendingOffset && (
         <CanvasWorkflowPanel
           title="Offset"

@@ -52,8 +52,9 @@ import {
   findHitTabId,
 } from './hitTest'
 import { anchorPointForIndex } from './profilePrimitives'
-import { pickDimensionAt } from './dimensionRendering'
-import { offsetForCursor } from '../../sketch/dimensions'
+import { pickDimensionAt, pickDimensionLabelAt } from './dimensionRendering'
+import { offsetForCursor, isDimensionDangling } from '../../sketch/dimensions'
+import { resolveDrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
 import { useStableEvent } from '../../hooks/useStableEvent'
 import { useEventListener } from '../../hooks/useEventListener'
 import {
@@ -393,6 +394,30 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const world = canvasToWorld(point.cx, point.cy, vt)
 
     // ── Begin dragging a dimension annotation to reposition it ──
+    // First, check for label-only hits: if a drive-capable label was clicked,
+    // let the click handler open the driving edit (don't start a drag).
+    if (
+      event.button === 0 && selection.mode === 'feature'
+      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
+      && !pendingOffset && !pendingShapeAction && !pendingConstraintRef.current
+      && !tapeMeasureRef.current && !pendingDimensionRef.current
+      && !dimensionDeleteArmedRef.current
+      && project.meta.showDimensions
+    ) {
+      const hitLabel = pickDimensionLabelAt(project, vt, point, 10)
+      if (hitLabel) {
+        const dim = project.annotations.find((d) => d.id === hitLabel)
+        if (dim && !dim.locked && !isDimensionDangling(dim, project)) {
+          const resolved = resolveDrivingDimensionEdit(dim, project)
+          if (resolved && !('disabled' in resolved)) {
+            // Drive-capable label click — let the click handler open the edit
+            selectAnnotation(hitLabel)
+            return
+          }
+        }
+      }
+    }
+
     if (
       event.button === 0 && selection.mode === 'feature'
       && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current

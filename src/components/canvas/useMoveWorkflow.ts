@@ -97,6 +97,7 @@ export function useMoveWorkflow(ctx: MoveWorkflowCtx): MoveWorkflow {
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: !moveDistanceEditActive && !copyCountPromptActive,
   })
 
   function cancelMoveFromPanel() {
@@ -129,7 +130,6 @@ export function useMoveWorkflow(ctx: MoveWorkflowCtx): MoveWorkflow {
         ? pendingMovePreviewPointRef.current.point
         : pm.fromPoint
     beginMoveDistanceEntry(previewPoint)
-    moveWorkflowPanel.focusCanvasAfterAction()
   }
 
   function commitMoveDistanceEditFromPanel() {

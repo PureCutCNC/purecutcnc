@@ -76,6 +76,7 @@ export function useOffsetWorkflow(ctx: OffsetWorkflowCtx): OffsetWorkflow {
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: !offsetDistanceEditActive,
   })
 
   function cancelOffsetFromPanel() {
@@ -88,7 +89,6 @@ export function useOffsetWorkflow(ctx: OffsetWorkflowCtx): OffsetWorkflow {
 
   function triggerDimensionFromOffsetPanel() {
     triggerDimensionEdit()
-    offsetWorkflowPanel.focusCanvasAfterAction()
   }
 
   function commitOffsetDistanceEditFromPanel() {

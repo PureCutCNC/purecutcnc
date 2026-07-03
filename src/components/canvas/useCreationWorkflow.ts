@@ -125,6 +125,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    focusCanvasOnOpen: !creationDimEditActive,
   })
 
   const placementPanelActive = !!pendingAdd && !creationPanelShape

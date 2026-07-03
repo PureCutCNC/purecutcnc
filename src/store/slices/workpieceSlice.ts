@@ -32,6 +32,7 @@ export type WorkpieceSlice = Pick<
   | 'setStock'
   | 'setStockSourceFeature'
   | 'enterStockSketchEdit'
+  | 'setRectStockDimension'
   | 'setGrid'
   | 'setUnits'
   | 'setOrigin'
@@ -286,6 +287,76 @@ export function createWorkpieceSlice(
             pastLength: s.history.past.length,
           },
           pendingConstraint: null,
+        }
+      }),
+
+    /**
+     * Resize rectangular stock by changing one dimension while holding the
+     * opposite side fixed. Only valid when the stock has no sourceFeatureId
+     * and its profile is a simple axis-aligned rectangle (4 line segments).
+     * Non-positive values are rejected.
+     */
+    setRectStockDimension: (axis, value, heldSide) =>
+      set((s) => {
+        // Only rectangular stock without a source feature
+        if (s.project.stock.sourceFeatureId) return {}
+
+        const segs = s.project.stock.profile.segments
+        if (segs.length !== 4 || !segs.every((seg) => seg.type === 'line')) return {}
+
+        if (value <= 0) return {}
+
+        const bounds = getStockBounds(s.project.stock)
+        const currentWidth = bounds.maxX - bounds.minX
+        const currentHeight = bounds.maxY - bounds.minY
+
+        let newMinX = bounds.minX
+        let newMinY = bounds.minY
+        let newW = currentWidth
+        let newH = currentHeight
+
+        if (axis === 'width') {
+          newW = value
+          if (heldSide === 'left') {
+            // Keep left (minX) fixed, adjust maxX
+          } else {
+            // Hold right: keep maxX fixed, adjust minX
+            newMinX = bounds.maxX - value
+          }
+        } else {
+          newH = value
+          if (heldSide === 'top') {
+            // Keep top (minY) fixed, adjust maxY
+          } else {
+            // Hold bottom: keep maxY fixed, adjust minY
+            newMinY = bounds.maxY - value
+          }
+        }
+
+        const nextStock = {
+          ...s.project.stock,
+          profile: rectProfile(newMinX, newMinY, newW, newH),
+        }
+
+        const nextProject = {
+          ...s.project,
+          stock: nextStock,
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        if (s.history.transactionStart) {
+          return { project: nextProject }
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
         }
       }),
 

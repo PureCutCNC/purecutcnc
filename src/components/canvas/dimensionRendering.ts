@@ -36,6 +36,7 @@ import type { DimensionAnnotation, DimensionAnchor } from '../../types/project'
 import { drawMeasurementLabel } from './measurements'
 import { worldToCanvas } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
+import type { DrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
 
 const ACTIVE_COLOR = 'rgba(239, 188, 122, 0.95)'
 const LINE_COLOR = 'rgba(180, 200, 224, 0.85)'
@@ -159,6 +160,80 @@ export function drawDimensions(
       ? WARNING_COLOR
       : dim.id === selectedId ? SELECTED_COLOR : LINE_COLOR
     drawLayout(ctx, layout, vt, units, labelText, color)
+  }
+}
+
+// ── Anchor dots + driving-edit highlights ──
+
+const ANCHOR_DOT_RADIUS = 3
+const ANCHOR_HELD_COLOR = 'rgba(91, 216, 165, 0.92)'
+const ANCHOR_DRIVEN_COLOR = 'rgba(239, 188, 122, 0.92)'
+const ANCHOR_NORMAL_COLOR = 'rgba(180, 200, 224, 0.50)'
+
+function dimensionAnchorsEqual(a: DimensionAnchor, b: DimensionAnchor): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function drawDimensionAnchorDot(
+  ctx: CanvasRenderingContext2D,
+  point: Point,
+  vt: ViewTransform,
+  color: string,
+  emphasize: boolean,
+  ring: boolean,
+): void {
+  const c = worldToCanvas(point, vt)
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(c.cx, c.cy, emphasize ? ANCHOR_DOT_RADIUS + 1 : ANCHOR_DOT_RADIUS, 0, Math.PI * 2)
+  ctx.fill()
+  if (ring) {
+    ctx.strokeStyle = ANCHOR_DRIVEN_COLOR
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(c.cx, c.cy, ANCHOR_DOT_RADIUS + 3, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+}
+
+/** Draw subtle anchor-point dots for dimension annotations. */
+export function drawDimensionAnchorDots(
+  ctx: CanvasRenderingContext2D,
+  project: Project,
+  vt: ViewTransform,
+  opts?: {
+    selectedId?: string | null
+    drivingEdit?: DrivingDimensionEdit | null
+  },
+): void {
+  const selectedId = opts?.selectedId ?? null
+  const drivingEdit = opts?.drivingEdit ?? null
+
+  for (const dim of project.annotations) {
+    if (!dim.visible) continue
+    if (isDimensionDangling(dim, project)) continue
+
+    const isSelected = dim.id === selectedId
+    const isDriving = drivingEdit !== null && 'annotationId' in drivingEdit && drivingEdit.annotationId === dim.id
+    const defaultColor = isSelected ? 'rgba(200, 220, 240, 0.65)' : ANCHOR_NORMAL_COLOR
+
+    for (const anchor of [dim.a, dim.b, dim.c]) {
+      if (!anchor) continue
+      const pos = resolveAnchor(anchor, project)
+      if (!pos) continue
+      let color = defaultColor
+      const isHeld = isDriving && 'heldAnchor' in drivingEdit && dimensionAnchorsEqual(anchor, drivingEdit.heldAnchor)
+      const isDriven = isDriving && 'drivenAnchor' in drivingEdit && dimensionAnchorsEqual(anchor, drivingEdit.drivenAnchor)
+      const isAngleVertex = isDriving && 'vertexAnchor' in drivingEdit && dimensionAnchorsEqual(anchor, drivingEdit.vertexAnchor)
+      if (isHeld) {
+        color = ANCHOR_HELD_COLOR
+      } else if (isAngleVertex) {
+        color = SELECTED_COLOR
+      } else if (isDriven) {
+        color = ANCHOR_DRIVEN_COLOR
+      }
+      drawDimensionAnchorDot(ctx, pos, vt, color, isSelected || isDriving, isDriven)
+    }
   }
 }
 
@@ -299,6 +374,35 @@ export function pickDimensionAt(
     const labelC = worldToCanvas(layout.labelPos, vt)
     const dLabel = Math.hypot(point.cx - labelC.cx, point.cy - labelC.cy)
     const d = Math.min(dLine, dLabel)
+    if (d <= bestDist) {
+      bestDist = d
+      bestId = dim.id
+    }
+  }
+  return bestId
+}
+
+/**
+ * Hit-test only the label area of dimension annotations. Returns the id of the
+ * nearest dimension whose label (not line) is within `tolerancePx`, or null.
+ * Use this to distinguish label clicks (for driving edits) from line clicks
+ * (for drag-to-reposition and selection).
+ */
+export function pickDimensionLabelAt(
+  project: Project,
+  vt: ViewTransform,
+  point: CanvasPoint,
+  tolerancePx = 12,
+): string | null {
+  let bestId: string | null = null
+  let bestDist = tolerancePx
+
+  for (const dim of project.annotations) {
+    if (!dim.visible) continue
+    const layout = dimensionLayout(dim, project)
+    if (!layout) continue
+    const labelC = worldToCanvas(layout.labelPos, vt)
+    const d = Math.hypot(point.cx - labelC.cx, point.cy - labelC.cy)
     if (d <= bestDist) {
       bestDist = d
       bestId = dim.id

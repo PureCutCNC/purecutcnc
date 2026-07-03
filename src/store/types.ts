@@ -330,6 +330,8 @@ export interface ProjectStore {
   setStock: (stock: Stock) => void
   setStockSourceFeature: (featureId: string | null) => void
   enterStockSketchEdit: (featureId: string) => void
+  /** Resize rectangular stock by changing width or height while holding one side fixed. */
+  setRectStockDimension: (axis: 'width' | 'height', value: number, heldSide: 'left' | 'right' | 'top' | 'bottom') => void
   setGrid: (grid: GridSettings) => void
   setUnits: (units: Project['meta']['units']) => void
   setCreationTarget: (target: CreationTarget) => void
