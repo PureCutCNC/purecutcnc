@@ -349,7 +349,7 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       )
     }
 
-    if (resolvedPaths.length > 0 && regionMask && (operation.kind !== 'pocket' || !regionMask.hasIncludeRegions)) {
+    if (resolvedPaths.length > 0 && regionMask && operation.kind !== 'pocket') {
       resolvedPaths = applyRegionMaskToPaths(resolvedPaths, regionMask)
     }
 

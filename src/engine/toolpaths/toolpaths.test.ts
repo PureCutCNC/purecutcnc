@@ -150,6 +150,28 @@ function makeRegionFeature(
   }
 }
 
+function makePolygonRegionFeature(id: string, points: Array<{ x: number; y: number }>, regionMaskMode?: RegionMaskMode): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: polygonProfile(points),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    regionMaskMode,
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
 function makeLineFeature(id: string, x1: number, y1: number, x2: number, y2: number): SketchFeature {
   return {
     id,
@@ -856,6 +878,20 @@ function pointInsideRect(point: { x: number; y: number }, x: number, y: number, 
   return point.x > x && point.x < x + w && point.y > y && point.y < y + h
 }
 
+function pointInsidePolygon(point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>): boolean {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const currentPoint = polygon[index]
+    const previousPoint = polygon[previous]
+    if (((currentPoint.y > point.y) !== (previousPoint.y > point.y))
+      && point.x < ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y))
+        / (previousPoint.y - currentPoint.y) + currentPoint.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 function testPocketFinishExcludeOnlyRegionRemovesMachiningArea() {
   console.log('Testing pocket finish honors exclude-only region masks...')
   const tool = makeFlatEndmill('t1', 2)
@@ -885,6 +921,49 @@ function testPocketFinishExcludeOnlyRegionRemovesMachiningArea() {
     )
   }
   console.log('pocket finish exclude-only region mask: PASSED')
+}
+
+function testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath() {
+  console.log('Testing pocket offset finish honors exclude-only region masks...')
+  const tool = makeFlatEndmill('t1', 0.25)
+  const pocket = makePocketFeature('p1', 0.5, 0.5, 3, 2, 0.75, 0)
+  const excludePoints = [
+    { x: 0.5, y: 0.9 },
+    { x: 0.9, y: 0.5 },
+    { x: 3.1, y: 0.5 },
+    { x: 3.5, y: 0.9 },
+    { x: 3.5, y: 2.1 },
+    { x: 3.1, y: 2.5 },
+    { x: 0.9, y: 2.5 },
+    { x: 0.5, y: 2.1 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoints, 'exclude')
+  const project = baseProject([tool], [pocket, exclude])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1', 'r-exclude'] },
+    toolRef: 't1',
+    pocketPattern: 'offset',
+    stepdown: 0.125,
+    stepover: 0.32,
+    machiningOrder: 'feature_first',
+  })
+  const result = generatePocketToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+
+  assert(cuts.length > 0, `expected offset finish cuts outside excluded region, warnings: ${result.warnings.join(', ')}`)
+  for (const move of cuts) {
+    const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    assert(
+      samples.every((point) => !pointInsidePolygon(point, excludePoints)),
+      `exclude-only region should remove offset finish cuts inside the excluded area, got move ${JSON.stringify(move)}`,
+    )
+  }
+  console.log('pocket offset finish exclude-only region mask: PASSED')
 }
 
 function testPocketRestRegionsEmitHoleCapableMaskModes() {
@@ -2049,6 +2128,7 @@ try {
   testRegionMaskHonorsOrderedIncludeExcludeNesting()
   testRegionMaskExcludeOnlyPreservesOutsideArea()
   testPocketFinishExcludeOnlyRegionRemovesMachiningArea()
+  testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath()
   testPocketRestRegionsEmitHoleCapableMaskModes()
   testRegionMaskVisitsNearestRegionFirst()
   testEdgeInsideLevelFirstVsFeatureFirst()
