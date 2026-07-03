@@ -47,10 +47,15 @@ function pointInClipperPaths(point: Point, paths: ClipperPath[]): boolean {
     X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
     Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
   }
-  return paths.some((path) => (
-    (ClipperLib.Clipper as unknown as { PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number })
-      .PointInPolygon(clipperPoint, path) !== 0
-  ))
+  let crossings = 0
+  for (const path of paths) {
+    const result = (ClipperLib.Clipper as unknown as {
+      PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number
+    }).PointInPolygon(clipperPoint, path)
+    if (result < 0) return true
+    if (result > 0) crossings += 1
+  }
+  return crossings % 2 === 1
 }
 
 /**
@@ -81,6 +86,27 @@ function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   return solution as ClipperPath[]
 }
 
+function executeClipPaths(
+  subjectPaths: ClipperPath[],
+  clipPaths: ClipperPath[],
+  clipType: number,
+): ClipperPath[] {
+  if (subjectPaths.length === 0) return []
+  if (clipPaths.length === 0) return subjectPaths
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    clipType,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution as ClipperPath[]
+}
+
 export function splitFeatureTargets(project: Project, featureIds: string[]): SplitFeatureTargets {
   const features: SketchFeature[] = []
   const missingFeatureIds: string[] = []
@@ -103,12 +129,20 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
 }
 
 export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | null {
-  const paths = unionPaths(regionFeatures.flatMap((feature) => {
-    if (feature.operation !== 'region' || !feature.sketch.profile.closed) return []
+  let paths: ClipperPath[] = []
+
+  for (const feature of regionFeatures) {
+    if (feature.operation !== 'region' || !feature.sketch.profile.closed) continue
     const flattened = flattenProfile(feature.sketch.profile)
-    if (flattened.points.length < 3) return []
-    return [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
-  }))
+    if (flattened.points.length < 3) continue
+    const featurePaths = [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
+
+    if ((feature.regionMaskMode ?? 'include') === 'exclude') {
+      paths = executeClipPaths(paths, featurePaths, ClipperLib.ClipType.ctDifference)
+    } else {
+      paths = unionPaths([...paths, ...featurePaths])
+    }
+  }
 
   if (paths.length === 0) return null
   return {

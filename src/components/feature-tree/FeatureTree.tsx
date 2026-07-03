@@ -16,7 +16,7 @@
 
 import { useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { FeatureOperation } from '../../types/project'
+import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { Icon } from '../Icon'
@@ -298,6 +298,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
         visible={feature.visible}
         operation={feature.operation}
+        regionMaskMode={feature.regionMaskMode ?? 'include'}
         isFirstFeature={index === 0}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
@@ -685,6 +686,7 @@ interface TreeRowProps {
   isDragging: boolean
   visible?: boolean
   operation?: FeatureOperation
+  regionMaskMode?: RegionMaskMode
   isFirstFeature?: boolean
   linkedCount?: number
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
@@ -723,6 +725,7 @@ function TreeRow({
   isDragging,
   visible,
   operation,
+  regionMaskMode,
   isFirstFeature = false,
   linkedCount,
   onClick,
@@ -882,12 +885,22 @@ function TreeRow({
       <div className="tree-label-wrap">
         <span className="tree-label" title={label}>{label}</span>
         {kind === 'feature' && operation === 'region' ? (
-          <span
-            className="tree-region-badge"
-            title="Region — limits where operations may cut. Not a shape to machine."
-          >
-            mask
-          </span>
+          <>
+            <span
+              className="tree-region-badge"
+              title="Region — limits where operations may cut. Not a shape to machine."
+            >
+              mask
+            </span>
+            {regionMaskMode === 'exclude' ? (
+              <span
+                className="tree-region-badge tree-region-badge--exclude"
+                title="Exclude region — subtracts this area from the active region mask."
+              >
+                exclude
+              </span>
+            ) : null}
+          </>
         ) : null}
         {kind === 'feature' && linkedCount && linkedCount > 1 ? (
           <span
@@ -1070,10 +1083,10 @@ function TreeRow({
                       onToggleOperation('region')
                       setOperationMenuPos(null)
                     }}
-                    title="Region — feature filters machining operations"
+                    title="Region mask — feature filters machining operations"
                   >
                     <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
-                    <span>Region</span>
+                    <span>Region mask</span>
                   </button>
                 </div>
               </>

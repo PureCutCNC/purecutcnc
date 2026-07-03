@@ -23,7 +23,7 @@
  * Run with: npx tsx src/engine/toolpaths/toolpaths.test.ts
  */
 
-import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
+import type { Operation, Project, RegionMaskMode, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
@@ -35,7 +35,7 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath } from './drilling'
 import { generatePocketRestRegionDrafts } from './restRegions'
-import { buildMaskFromClipperPaths, clipToolpathResultToRegionMask } from './regions'
+import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToRegionMask } from './regions'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import type { ClipperPath } from './types'
 
@@ -121,7 +121,14 @@ function makeModelFeature(
   }
 }
 
-function makeRegionFeature(id: string, x: number, y: number, w: number, h: number): SketchFeature {
+function makeRegionFeature(
+  id: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  regionMaskMode?: RegionMaskMode,
+): SketchFeature {
   return {
     id,
     name: id,
@@ -135,6 +142,7 @@ function makeRegionFeature(id: string, x: number, y: number, w: number, h: numbe
       constraints: [],
     },
     operation: 'region',
+    regionMaskMode,
     z_top: 0,
     z_bottom: 0,
     visible: true,
@@ -814,6 +822,66 @@ function draftArea(draft: { profile: { start: { x: number; y: number }; segments
     area += current.x * next.y - next.x * current.y
   }
   return Math.abs(area / 2)
+}
+
+function testRegionMaskHonorsOrderedIncludeExcludeNesting() {
+  console.log('Testing ordered include/exclude region-mask nesting...')
+  const mask = buildRegionMask([
+    makeRegionFeature('outer-include', 0, 0, 10, 10, 'include'),
+    makeRegionFeature('middle-exclude', 2, 2, 6, 6, 'exclude'),
+    makeRegionFeature('inner-include', 4, 4, 2, 2, 'include'),
+  ])
+
+  assert(mask !== null, 'expected ordered region mask')
+  if (!mask) throw new Error('expected ordered region mask')
+  assert(mask.containsPoint({ x: 1, y: 1 }), 'outer include should be active')
+  assert(!mask.containsPoint({ x: 3, y: 3 }), 'exclude region should cut a hole')
+  assert(mask.containsPoint({ x: 5, y: 5 }), 'later include should add an island back inside the hole')
+  console.log('ordered include/exclude region-mask nesting: PASSED')
+}
+
+function testRegionMaskExcludeOnlyIsEmpty() {
+  console.log('Testing exclude-only region mask stays empty...')
+  const mask = buildRegionMask([
+    makeRegionFeature('exclude-only', 0, 0, 10, 10, 'exclude'),
+  ])
+  assert(mask === null, 'exclude-only region masks should not create an inverted/global mask')
+  console.log('exclude-only region mask: PASSED')
+}
+
+function testPocketRestRegionsEmitHoleCapableMaskModes() {
+  console.log('Testing pocket rest-region generation emits include/exclude mask modes...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 4, 0)
+  const island = makeIslandFeature('i1', 12, 6, 16, 12, 4, 0)
+  const project = baseProject([tool], [pocket, island])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: 100,
+  })
+  const result = generatePocketRestRegionDrafts(project, op)
+
+  assert(result.drafts.some((draft) => (draft.regionMaskMode ?? 'include') === 'include'), 'expected at least one include rest region')
+  assert(result.drafts.some((draft) => draft.regionMaskMode === 'exclude'), 'expected at least one exclude rest region for the island hole')
+
+  const regionFeatures = result.drafts.map((draft, index): SketchFeature => ({
+    ...makeRegionFeature(`rest-${index}`, 0, 0, 1, 1, draft.regionMaskMode ?? 'include'),
+    sketch: {
+      profile: draft.profile,
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  }))
+  const mask = buildRegionMask(regionFeatures)
+  assert(mask !== null, 'expected rest-region mask')
+  if (!mask) throw new Error('expected rest-region mask')
+  assert(mask.containsPoint({ x: 4, y: 4 }), 'rest mask should include pocket area')
+  assert(!mask.containsPoint({ x: 20, y: 12 }), 'rest mask should exclude the island hole')
+  console.log('pocket rest-region include/exclude mask modes: PASSED')
 }
 
 function testRegionMaskVisitsNearestRegionFirst() {
@@ -1940,6 +2008,9 @@ try {
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
   testPocketRestRegionsUniformCorners()
+  testRegionMaskHonorsOrderedIncludeExcludeNesting()
+  testRegionMaskExcludeOnlyIsEmpty()
+  testPocketRestRegionsEmitHoleCapableMaskModes()
   testRegionMaskVisitsNearestRegionFirst()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeInsideFeatureFirstNearestBlockOrder()

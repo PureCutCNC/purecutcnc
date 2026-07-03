@@ -27,6 +27,7 @@ import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helper
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
+import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 
 interface DraftTextInputProps {
   value: string
@@ -245,6 +246,14 @@ export function PropertiesPanel() {
     allSelectedFeatures.length > 0 &&
     allSelectedFeatures.every((feature) => feature.operation === allSelectedFeatures[0]?.operation)
       ? allSelectedFeatures[0]?.operation ?? null
+      : '__mixed__'
+  const selectedRegionFeatures = allSelectedFeatures.filter((feature) => feature.operation === 'region')
+  const commonSelectedRegionMaskMode =
+    selectedRegionFeatures.length > 0 &&
+    selectedRegionFeatures.every(
+      (feature) => (feature.regionMaskMode ?? 'include') === (selectedRegionFeatures[0]?.regionMaskMode ?? 'include'),
+    )
+      ? selectedRegionFeatures[0]?.regionMaskMode ?? 'include'
       : '__mixed__'
   const selectedZEditableFeatures = allSelectedFeatures.filter((feature) => feature.operation !== 'region')
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
@@ -1153,14 +1162,34 @@ export function PropertiesPanel() {
                     ...(commonSelectedOperation === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed operations' }] : []),
                     { value: 'subtract', label: 'Subtract' },
                     { value: 'add', label: 'Add' },
-                    { value: 'region', label: 'Region' },
+                    { value: 'region', label: 'Region mask' },
                   ]}
                   onChange={(value) => updateFeatures(selectedFeatureIds, {
-                    operation: value as import('../../types/project').FeatureOperation,
+                    operation: value as FeatureOperation,
                   })}
                 />
               )}
             </label>
+            {selectedRegionFeatures.length > 0 && selectedRegionFeatures.length === allSelectedFeatures.length ? (
+              <label className="properties-field">
+                <span>Mask mode</span>
+                <Select
+                  value={commonSelectedRegionMaskMode}
+                  options={[
+                    ...(commonSelectedRegionMaskMode === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed modes' }] : []),
+                    { value: 'include', label: 'Include' },
+                    { value: 'exclude', label: 'Exclude' },
+                  ]}
+                  onChange={(value) => {
+                    if (value === '__mixed__') return
+                    updateFeatures(
+                      selectedRegionFeatures.map((feature) => feature.id),
+                      { regionMaskMode: value as RegionMaskMode },
+                    )
+                  }}
+                />
+              </label>
+            ) : null}
             {selectedZEditableFeatures.length > 0 ? (
               <>
                 <label className="properties-field">
@@ -1292,14 +1321,29 @@ export function PropertiesPanel() {
                 options={[
                   { value: 'subtract', label: 'Subtract' },
                   { value: 'add', label: 'Add' },
-                  { value: 'region', label: 'Region' },
+                  { value: 'region', label: 'Region mask' },
                 ]}
                 onChange={(value) => updateFeature(selectedFeature.id, {
-                  operation: value as import('../../types/project').FeatureOperation,
+                  operation: value as FeatureOperation,
                 })}
               />
             )}
           </label>
+          {selectedFeature.operation === 'region' ? (
+            <label className="properties-field">
+              <span>Mask mode</span>
+              <Select
+                value={selectedFeature.regionMaskMode ?? 'include'}
+                options={[
+                  { value: 'include', label: 'Include' },
+                  { value: 'exclude', label: 'Exclude' },
+                ]}
+                onChange={(value) => updateFeature(selectedFeature.id, {
+                  regionMaskMode: value as RegionMaskMode,
+                })}
+              />
+            </label>
+          ) : null}
           {textFeature ? (
             <>
               <label className="properties-field">

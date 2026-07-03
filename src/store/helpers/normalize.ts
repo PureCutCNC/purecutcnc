@@ -21,7 +21,18 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { convertLength } from '../../utils/units'
 import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../../types/project'
-import type { Clamp, Operation, Point, Project, SketchFeature, Tab, Tool } from '../../types/project'
+import type {
+  Clamp,
+  FeatureDefinition,
+  FeatureOperation,
+  Operation,
+  Point,
+  Project,
+  RegionMaskMode,
+  SketchFeature,
+  Tab,
+  Tool,
+} from '../../types/project'
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isImportedModelFeature } from './modelAssets'
@@ -65,6 +76,16 @@ export function inferProfileOrientationAngle(profile: SketchFeature['sketch']['p
   return normalizeAngleDegrees(xAxisAngle + 90)
 }
 
+export function normalizeRegionMaskMode(
+  operation: FeatureOperation,
+  mode?: RegionMaskMode,
+): RegionMaskMode | undefined {
+  if (operation !== 'region') {
+    return undefined
+  }
+  return mode === 'exclude' ? 'exclude' : 'include'
+}
+
 export function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   const safeFeature = {
     ...feature,
@@ -87,6 +108,7 @@ export function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
     },
     kind: feature.kind ?? inferFeatureKind(feature.sketch.profile),
     folderId: feature.folderId ?? null,
+    regionMaskMode: normalizeRegionMaskMode(feature.operation, feature.regionMaskMode),
   }
   const { z_top, z_bottom } = safeFeature
   if (typeof z_top === 'number' && typeof z_bottom === 'number' && z_top < z_bottom) {
@@ -98,6 +120,13 @@ export function normalizeFeatureZRange(feature: SketchFeature): SketchFeature {
   }
 
   return safeFeature
+}
+
+export function normalizeFeatureDefinition(definition: FeatureDefinition): FeatureDefinition {
+  return {
+    ...definition,
+    regionMaskMode: normalizeRegionMaskMode(definition.operation, definition.regionMaskMode),
+  }
 }
 
 export function normalizeTool(tool: Tool, units: Project['meta']['units'], index: number): Tool {

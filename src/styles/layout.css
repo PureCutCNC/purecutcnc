@@ -1342,12 +1342,8 @@
   flex: 0 0 12px;
 }
 
-.sketch-depth-legend__swatch--subtract-shallow {
-  background: #5da5d8;
-}
-
-.sketch-depth-legend__swatch--subtract-deep {
-  background: #3f76b4;
+.sketch-depth-legend__swatch--subtract {
+  background: #4e8dbe;
 }
 
 .sketch-depth-legend__swatch--add {
@@ -1356,6 +1352,11 @@
 
 .sketch-depth-legend__swatch--region {
   background: #9966cc;
+}
+
+.sketch-depth-legend__swatch--region-exclude {
+  border: 1px dashed #b58adf;
+  background: rgba(153, 102, 204, 0.16);
 }
 
 .sketch-depth-legend__swatch--imported-model {
@@ -3245,6 +3246,12 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: default;
+}
+
+.tree-region-badge--exclude {
+  border-style: solid;
+  background: rgba(153, 102, 204, 0.08);
+  color: #d2b8ee;
 }
 
 /* Linked-instance marker: a quiet inline glyph, not a button. No box/border/fill

@@ -60,6 +60,7 @@ export interface ResolvedSketchFeature {
   /** World-space sketch — profile is the resolved definition profile. */
   sketch: Sketch
   operation: SketchFeature['operation']
+  regionMaskMode: SketchFeature['regionMaskMode']
   z_top: SketchFeature['z_top']
   z_bottom: SketchFeature['z_bottom']
   visible: SketchFeature['visible']
@@ -434,6 +435,7 @@ export function resolveFeatureInstance(
     folderId: feature.folderId,
     sketch,
     operation: definition.operation,
+    regionMaskMode: definition.regionMaskMode,
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
     visible: feature.visible,
@@ -476,6 +478,7 @@ function rawFeatureAdapter(feature: SketchFeature): ResolvedSketchFeature {
     ...feature,
     definitionId: feature.id,
     instanceId: feature.id,
+    regionMaskMode: feature.operation === 'region' ? (feature.regionMaskMode ?? 'include') : undefined,
     text: feature.text ?? null,
     stl: feature.stl ?? null,
     sketch: {

@@ -15,7 +15,14 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import { polygonProfile, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
+import {
+  polygonProfile,
+  type Operation,
+  type Point,
+  type Project,
+  type RegionMaskMode,
+  type SketchFeature,
+} from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -34,6 +41,7 @@ import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './
 export interface RestRegionDraft {
   profile: SketchFeature['sketch']['profile']
   sourceOperationId: string
+  regionMaskMode?: RegionMaskMode
 }
 
 export interface RestRegionDraftResult {
@@ -388,22 +396,44 @@ function signedContourArea(contour: Point[]): number {
   return area / 2
 }
 
+function pointInContour(point: Point, contour: Point[]): boolean {
+  const clipperPoint = {
+    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+  }
+  const clipperContour = toClipperPath(contour, DEFAULT_CLIPPER_SCALE)
+  return (ClipperLib.Clipper as unknown as {
+    PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number
+  }).PointInPolygon(clipperPoint, clipperContour) > 0
+}
+
 function areaPathsToDrafts(paths: ClipperPath[], toolRadius: number, operation: Operation): RestRegionDraft[] {
   const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolRadius * toolRadius * 0.0004)
   const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.04)
-  return clipperPathsToPointContours(paths)
+  const contours = clipperPathsToPointContours(paths)
     .filter((contour) => contour.length >= 3)
-    // Drop hole contours: a draft profile is a single loop, and emitting a hole
-    // as a positive region would carve out an already-cleared centre as its own
-    // "inside" region.
-    .filter((contour) => signedContourArea(contour) > 0)
-    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
     .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
     .map(cleanClosedContour)
     .filter((contour) => contour.length >= 3)
-    .map((contour) => ({
+    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
+
+  return contours
+    .map((contour, index) => {
+      const depth = contours.reduce((count, other, otherIndex) => (
+        otherIndex !== index && pointInContour(contour[0], other) ? count + 1 : count
+      ), 0)
+      return {
+        contour,
+        depth,
+        index,
+        area: Math.abs(signedContourArea(contour)),
+      }
+    })
+    .sort((a, b) => a.depth - b.depth || b.area - a.area || a.index - b.index)
+    .map(({ contour, depth }) => ({
       profile: polygonProfile(contour),
       sourceOperationId: operation.id,
+      regionMaskMode: depth % 2 === 0 ? 'include' : 'exclude',
     }))
 }
 
