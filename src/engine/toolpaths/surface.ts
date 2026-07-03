@@ -56,7 +56,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
-import { applyRegionMaskToPaths, buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 
 interface PolyTreeNode {
@@ -260,9 +260,6 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
     const protectedPaths = protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
     subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
-    if (regionMask) {
-      subjectPaths = applyRegionMaskToPaths(subjectPaths, regionMask)
-    }
     const polyTree = executeClip(subjectPaths, [], ClipperLib.ClipType.ctUnion)
     const regions = polyTreeToRegions(
       polyTree,

@@ -273,6 +273,15 @@ function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((m) => m.kind === 'cut')
 }
 
+function toolpathMoveSignature(moves: ToolpathMove[]): string[] {
+  const fmt = (value: number) => Number(value.toFixed(6))
+  return moves.map((move) => JSON.stringify({
+    kind: move.kind,
+    from: { x: fmt(move.from.x), y: fmt(move.from.y), z: fmt(move.from.z) },
+    to: { x: fmt(move.to.x), y: fmt(move.to.y), z: fmt(move.to.z) },
+  }))
+}
+
 /** Dedup consecutive equal Z values in the sequence of cut-move Zs. */
 function cutZTransitions(moves: ToolpathMove[]): number[] {
   const transitions: number[] = []
@@ -1603,6 +1612,38 @@ function testSurfaceCleanMultiTargetProtectsTallerTarget() {
   console.log('surface_clean multi-target protects taller target: PASSED')
 }
 
+function testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly() {
+  console.log('Testing surface_clean applies region mask after generating the base toolpath...')
+  const tool = makeFlatEndmill('t1', 2)
+  const boss = makeAddFeature('boss', 0, 0, 24, 12, 4, 0)
+  const include = makeRegionFeature('include-region', 8, 3, 8, 5, 'include')
+  const project = baseProject([tool], [boss, include])
+  project.stock = { ...project.stock, thickness: 6 }
+  const baseOp = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['boss'] },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+  })
+  const regionOp = {
+    ...baseOp,
+    target: { source: 'features' as const, featureIds: ['boss', 'include-region'] },
+  }
+  const fullResult = generateSurfaceCleanToolpath(project, baseOp)
+  const mask = buildRegionMask([include])
+  assert(mask !== null, 'expected include region mask')
+  const expected = clipToolpathResultToRegionMask(project, fullResult, mask)
+  const actual = generateSurfaceCleanToolpath(project, regionOp)
+
+  assert(cutMoves(actual.moves).length > 0, 'expected surface_clean cuts inside include region')
+  assert(
+    toolpathMoveSignature(actual.moves).join('\n') === toolpathMoveSignature(expected.moves).join('\n'),
+    'surface_clean region target should match clipping the generated full toolpath',
+  )
+  console.log('surface_clean post-generation region clipping: PASSED')
+}
+
 function testSurfaceCleanHonorsOrderedRegionMaskModes() {
   console.log('Testing surface_clean honors ordered include/exclude region masks...')
   const tool = makeFlatEndmill('t1', 2)
@@ -2251,6 +2292,7 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
+  testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly()
   testSurfaceCleanHonorsOrderedRegionMaskModes()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
