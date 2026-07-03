@@ -34,6 +34,8 @@ export interface SplitFeatureTargets {
 
 export interface RegionMask {
   paths: ClipperPath[]
+  hasIncludeRegions: boolean
+  excludePaths: ClipperPath[]
   containsPoint(point: Point): boolean
 }
 
@@ -130,6 +132,8 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
 
 export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | null {
   let paths: ClipperPath[] = []
+  let excludePaths: ClipperPath[] = []
+  let hasIncludeRegions = false
 
   for (const feature of regionFeatures) {
     if (feature.operation !== 'region' || !feature.sketch.profile.closed) continue
@@ -139,15 +143,24 @@ export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | n
 
     if ((feature.regionMaskMode ?? 'include') === 'exclude') {
       paths = executeClipPaths(paths, featurePaths, ClipperLib.ClipType.ctDifference)
+      excludePaths = unionPaths([...excludePaths, ...featurePaths])
     } else {
+      hasIncludeRegions = true
       paths = unionPaths([...paths, ...featurePaths])
     }
   }
 
-  if (paths.length === 0) return null
+  if (!hasIncludeRegions && excludePaths.length === 0) return null
+  const clipPaths = hasIncludeRegions ? paths : excludePaths
   return {
-    paths,
-    containsPoint: (point) => pointInClipperPaths(point, paths),
+    paths: clipPaths,
+    hasIncludeRegions,
+    excludePaths,
+    containsPoint: (point) => (
+      hasIncludeRegions
+        ? pointInClipperPaths(point, paths)
+        : !pointInClipperPaths(point, excludePaths)
+    ),
   }
 }
 
@@ -155,8 +168,18 @@ export function buildMaskFromClipperPaths(paths: ClipperPath[]): RegionMask | nu
   if (paths.length === 0) return null
   return {
     paths,
+    hasIncludeRegions: true,
+    excludePaths: [],
     containsPoint: (point) => pointInClipperPaths(point, paths),
   }
+}
+
+export function applyRegionMaskToPaths(subjectPaths: ClipperPath[], mask: RegionMask | null): ClipperPath[] {
+  if (subjectPaths.length === 0 || !mask) return subjectPaths
+  if (mask.hasIncludeRegions) {
+    return executeClipPaths(subjectPaths, mask.paths, ClipperLib.ClipType.ctIntersection)
+  }
+  return executeClipPaths(subjectPaths, mask.excludePaths, ClipperLib.ClipType.ctDifference)
 }
 
 export function featurePathToClipper(feature: SketchFeature): ClipperPath | null {
@@ -177,7 +200,7 @@ export function clipTupleContoursToRegionMask(
   contours: Array<Array<[number, number]>>,
   mask: RegionMask | null,
 ): Array<Array<[number, number]>> {
-  if (contours.length === 0 || !mask || mask.paths.length === 0) return []
+  if (contours.length === 0 || !mask) return []
 
   const subjectPaths = contours
     .filter((contour) => contour.length >= 3)
@@ -188,19 +211,7 @@ export function clipTupleContoursToRegionMask(
 
   if (subjectPaths.length === 0) return []
 
-  const clipper = new ClipperLib.Clipper()
-  clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
-  clipper.AddPaths(mask.paths, ClipperLib.PolyType.ptClip, true)
-
-  const solution = new ClipperLib.Paths()
-  clipper.Execute(
-    ClipperLib.ClipType.ctIntersection,
-    solution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-
-  return (solution as ClipperPath[])
+  return applyRegionMaskToPaths(subjectPaths, mask)
     .map((path) => path.map((point) => [
       point.X / DEFAULT_CLIPPER_SCALE,
       point.Y / DEFAULT_CLIPPER_SCALE,
@@ -357,6 +368,8 @@ export function clipToolpathResultToObstaclesByLevel(
 
     const inverseMask: RegionMask = {
       paths: mask.paths,
+      hasIncludeRegions: false,
+      excludePaths: mask.paths,
       containsPoint: (point) => !pointInClipperPaths(point, mask.paths),
     }
 
@@ -451,12 +464,55 @@ export function clipToolpathResultToRegionMask(
   let clippedCutCount = 0
   const cutMoves = result.moves.filter((move) => move.kind === 'cut')
 
+  if (!mask.hasIncludeRegions || mask.excludePaths.length > 0) {
+    for (const move of cutMoves) {
+      const fragments = clipCutMoveToRegion(move, mask)
+      if (fragments.length === 0) {
+        clippedCutCount += 1
+        continue
+      }
+
+      if (fragments.length !== 1
+        || Math.abs(fragments[0].from.x - move.from.x) > 1e-9
+        || Math.abs(fragments[0].from.y - move.from.y) > 1e-9
+        || Math.abs(fragments[0].to.x - move.to.x) > 1e-9
+        || Math.abs(fragments[0].to.y - move.to.y) > 1e-9) {
+        clippedCutCount += 1
+      }
+
+      for (const fragment of fragments) {
+        current = pushSafeTransition(clippedMoves, current, fragment.from, safeZ)
+        clippedMoves.push({ ...move, from: fragment.from, to: fragment.to })
+        current = fragment.to
+      }
+    }
+
+    if (current && Math.abs(current.z - safeZ) > 1e-9) {
+      clippedMoves.push({
+        kind: 'rapid',
+        from: current,
+        to: { x: current.x, y: current.y, z: safeZ },
+      })
+    }
+
+    return {
+      ...result,
+      moves: clippedMoves,
+      bounds: computeBounds(clippedMoves),
+      warnings: clippedCutCount > 0
+        ? [...result.warnings, `Region filter clipped ${clippedCutCount} cut move${clippedCutCount === 1 ? '' : 's'}.`]
+        : result.warnings,
+    }
+  }
+
   // Clip the toolpath to each region independently, keeping every region's
   // fragments in pass order, then visit the regions nearest-first.
   const groups: RegionCutGroup[] = []
   for (const path of mask.paths) {
     const pathMask: RegionMask = {
       paths: [path],
+      hasIncludeRegions: true,
+      excludePaths: [],
       containsPoint: (point) => pointInClipperPaths(point, [path]),
     }
 

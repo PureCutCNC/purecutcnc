@@ -840,13 +840,51 @@ function testRegionMaskHonorsOrderedIncludeExcludeNesting() {
   console.log('ordered include/exclude region-mask nesting: PASSED')
 }
 
-function testRegionMaskExcludeOnlyIsEmpty() {
-  console.log('Testing exclude-only region mask stays empty...')
+function testRegionMaskExcludeOnlyPreservesOutsideArea() {
+  console.log('Testing exclude-only region mask preserves outside area...')
   const mask = buildRegionMask([
     makeRegionFeature('exclude-only', 0, 0, 10, 10, 'exclude'),
   ])
-  assert(mask === null, 'exclude-only region masks should not create an inverted/global mask')
+  assert(mask !== null, 'exclude-only region masks should create an outside-area mask')
+  if (!mask) throw new Error('expected exclude-only region mask')
+  assert(mask.containsPoint({ x: 20, y: 20 }), 'exclude-only mask should keep points outside the excluded region')
+  assert(!mask.containsPoint({ x: 5, y: 5 }), 'exclude-only mask should reject points inside the excluded region')
   console.log('exclude-only region mask: PASSED')
+}
+
+function pointInsideRect(point: { x: number; y: number }, x: number, y: number, w: number, h: number): boolean {
+  return point.x > x && point.x < x + w && point.y > y && point.y < y + h
+}
+
+function testPocketFinishExcludeOnlyRegionRemovesMachiningArea() {
+  console.log('Testing pocket finish honors exclude-only region masks...')
+  const tool = makeFlatEndmill('t1', 2)
+  const pocket = makePocketFeature('p1', 0, 0, 30, 16, 4, 0)
+  const exclude = makeRegionFeature('r-exclude', 10, 5, 10, 6, 'exclude')
+  const project = baseProject([tool], [pocket, exclude])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1', 'r-exclude'] },
+    toolRef: 't1',
+    pocketPattern: 'parallel',
+    pocketAngle: 0,
+  })
+  const result = generatePocketToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+
+  assert(cuts.length > 0, 'expected pocket finish cuts')
+  for (const move of cuts) {
+    const samples = [0.25, 0.5, 0.75].map((t) => ({
+      x: move.from.x + (move.to.x - move.from.x) * t,
+      y: move.from.y + (move.to.y - move.from.y) * t,
+    }))
+    assert(
+      samples.every((point) => !pointInsideRect(point, 10, 5, 10, 6)),
+      `exclude-only region should remove pocket finish cuts inside the excluded area, got move ${JSON.stringify(move)}`,
+    )
+  }
+  console.log('pocket finish exclude-only region mask: PASSED')
 }
 
 function testPocketRestRegionsEmitHoleCapableMaskModes() {
@@ -2009,7 +2047,8 @@ try {
   testPocketRestRegionsFindCornerCusps()
   testPocketRestRegionsUniformCorners()
   testRegionMaskHonorsOrderedIncludeExcludeNesting()
-  testRegionMaskExcludeOnlyIsEmpty()
+  testRegionMaskExcludeOnlyPreservesOutsideArea()
+  testPocketFinishExcludeOnlyRegionRemovesMachiningArea()
   testPocketRestRegionsEmitHoleCapableMaskModes()
   testRegionMaskVisitsNearestRegionFirst()
   testEdgeInsideLevelFirstVsFeatureFirst()
