@@ -49,7 +49,7 @@ import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectP
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
-import { isMachinable, sectionForOperation } from '../helpers/featureRoles'
+import { commonSectionOfIds, isMachinable, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -71,7 +71,7 @@ import { unionClipperPaths, flattenFeatureToClipperPath } from '../helpers/clipp
 import { transformProfile } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import { isImportedModelFeature, normalizeImportedModelStorage, pruneUnusedModelAssets } from '../helpers/modelAssets'
-import { folderIdForOperation } from '../helpers/operationDefaults'
+import { folderIdForOperation, resolveFolderAssignments } from '../helpers/operationDefaults'
 import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
@@ -239,10 +239,7 @@ export function createFeatureSlice(
         }
         // A feature may only live in a folder of its own tree section — a
         // section-mismatched assignment falls back to that section's root.
-        const resolvedFolderIds = new Map(movableIds.map((id) => {
-          const feature = s.project.features.find((f) => f.id === id)
-          return [id, folderIdForOperation(s.project, folderId, feature?.operation)] as const
-        }))
+        const resolvedFolderIds = resolveFolderAssignments(s.project, movableIds, folderId)
         const rootAssignedIds = movableIds.filter((id) => (resolvedFolderIds.get(id) ?? null) === null)
         const nextProject = syncFeatureTreeProject({
           ...s.project,
@@ -378,15 +375,22 @@ export function createFeatureSlice(
       if (selectedIds.length < 2) {
         return ''
       }
+      // Groups are single-section: machining features, regions, and
+      // construction geometry each only group with their own kind (issue
+      // #199). A mixed-section selection is a no-op.
+      const section = commonSectionOfIds(state.project, selectedIds)
+      if (section === null) {
+        return ''
+      }
       const nextId = nextUniqueGeneratedId(state.project, 'fd')
       const existingSectionFolders = state.project.featureFolders.filter(
-        (folder) => (folder.section ?? 'features') === 'features',
+        (folder) => (folder.section ?? 'features') === section,
       )
       const folder: FeatureFolder = {
         id: nextId,
         name: `Group ${existingSectionFolders.length + 1}`,
         collapsed: false,
-        section: 'features',
+        section,
         grouped: true,
       }
 

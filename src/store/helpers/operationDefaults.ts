@@ -37,6 +37,18 @@ export function folderIdForOperation(project: Project, folderId: string | null, 
   return folderSection === sectionForOperation(operation) ? folderId : null
 }
 
+/**
+ * Per-feature folder assignment for a bulk "move these features to folder X"
+ * — each feature keeps the folder only when it matches its own tree section,
+ * otherwise it falls back to that section's root (null).
+ */
+export function resolveFolderAssignments(project: Project, featureIds: string[], folderId: string | null): Map<string, string | null> {
+  return new Map(featureIds.map((id) => {
+    const feature = project.features.find((entry) => entry.id === id)
+    return [id, folderIdForOperation(project, folderId, feature?.operation)] as const
+  }))
+}
+
 export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
   return (
     existingTool.name === candidate.name

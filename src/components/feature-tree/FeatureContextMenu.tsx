@@ -35,6 +35,7 @@ interface FeatureContextMenuProps {
   menuFeatureFolders: MenuFolderEntry[]
   addToFolderSubmenu: FolderSubmenuPosition | null
   menuSelectionInGroupedFolder: boolean
+  menuSelectionSectionsMixed: boolean
   menuSelectionIsGroup: boolean
   tabletShell: boolean
   primaryId: string | null
@@ -61,6 +62,7 @@ export function FeatureContextMenu({
   menuFeatureFolders,
   addToFolderSubmenu,
   menuSelectionInGroupedFolder,
+  menuSelectionSectionsMixed,
   menuSelectionIsGroup,
   tabletShell,
   primaryId,
@@ -216,15 +218,20 @@ export function FeatureContextMenu({
             <>
               <div
                 className="feature-context-menu__submenu-host"
-                onMouseEnter={tabletShell ? undefined : (event) => onOpenAddToFolderSubmenu(event.currentTarget)}
-                onMouseLeave={tabletShell ? undefined : onCloseAddToFolderSubmenu}
+                onMouseEnter={tabletShell || menuSelectionSectionsMixed ? undefined : (event) => onOpenAddToFolderSubmenu(event.currentTarget)}
+                onMouseLeave={tabletShell || menuSelectionSectionsMixed ? undefined : onCloseAddToFolderSubmenu}
               >
                 <button
                   className="feature-context-menu__item feature-context-menu__item--submenu"
                   type="button"
                   aria-haspopup="menu"
                   aria-expanded={addToFolderSubmenu !== null}
+                  disabled={menuSelectionSectionsMixed}
+                  title={menuSelectionSectionsMixed ? 'Features, regions, and construction geometry keep separate folders — select one kind' : undefined}
                   onClick={(event) => {
+                    if (menuSelectionSectionsMixed) {
+                      return
+                    }
                     if (tabletShell && addToFolderSubmenu) {
                       onCloseAddToFolderSubmenu()
                     } else {
@@ -269,8 +276,14 @@ export function FeatureContextMenu({
             className="feature-context-menu__item"
             type="button"
             onClick={() => actions.groupFeatures()}
-            disabled={!menuHasMultipleSelection}
-            title={!menuHasMultipleSelection ? 'Select two or more features to group' : undefined}
+            disabled={!menuHasMultipleSelection || menuSelectionSectionsMixed}
+            title={
+              !menuHasMultipleSelection
+                ? 'Select two or more features to group'
+                : menuSelectionSectionsMixed
+                  ? 'Features, regions, and construction geometry only group with their own kind'
+                  : undefined
+            }
           >
             Group
           </button>

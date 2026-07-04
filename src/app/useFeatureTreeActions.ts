@@ -19,6 +19,7 @@ import type { QuickOperation } from '../components/cam/operationValidity'
 import { useProjectStore } from '../store/projectStore'
 import type { ProjectStore } from '../store/types'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
+import { commonSectionOfIds } from '../store/helpers/featureRoles'
 import { loadBundledToolLibrary } from '../toolLibrary'
 
 type CenterTab = 'sketch' | 'preview3d' | 'simulation'
@@ -217,9 +218,14 @@ export function createFeatureTreeActions({
       closeTreeContextMenu()
     },
     createNewFolderAndAssign: (featureIds: string[]) => {
-      const folderId = addFeatureFolder('features')
-      if (folderId) {
-        assignFeaturesToFolder(featureIds, folderId)
+      // The new folder must live in the selection's own tree section
+      // (features / regions / construction); mixed selections get no folder.
+      const section = commonSectionOfIds(project, featureIds)
+      if (section !== null) {
+        const folderId = addFeatureFolder(section)
+        if (folderId) {
+          assignFeaturesToFolder(featureIds, folderId)
+        }
       }
       closeTreeContextMenu()
     },

@@ -156,6 +156,40 @@ function testSectionIntegrity(): void {
   assert(getFeature(constructionId).visible, 'setAllFeaturesVisible leaves construction alone')
 }
 
+// ── Grouping stays within one section ────────────────────────────
+
+function testGrouping(): void {
+  console.log('Testing grouping stays within one section...')
+  freshStore()
+  useProjectStore.getState().setCreationTarget('construction')
+  useProjectStore.getState().addRectFeature('C1', 0, 0, 5, 5, 5)
+  const c1 = lastFeature().id
+  useProjectStore.getState().addRectFeature('C2', 10, 0, 5, 5, 5)
+  const c2 = lastFeature().id
+  useProjectStore.getState().setCreationTarget('feature')
+  useProjectStore.getState().addRectFeature('F1', 0, 10, 5, 5, 5)
+  const f1 = lastFeature().id
+
+  // Same-kind: two construction features group into a construction-section
+  // grouped folder, and both land inside it.
+  useProjectStore.getState().selectFeatures([c1, c2])
+  const groupId = useProjectStore.getState().groupSelectedFeaturesIntoNewFolder()
+  assert(groupId !== '', 'construction features group with their own kind')
+  const groupFolder = useProjectStore.getState().project.featureFolders.find((f) => f.id === groupId)
+  assert(groupFolder?.section === 'construction', 'construction group folder lives in the construction section')
+  assert(groupFolder?.grouped === true, 'group folder is marked grouped')
+  assert(getFeature(c1).folderId === groupId && getFeature(c2).folderId === groupId, 'both construction features joined the group')
+
+  // Mixed sections: grouping construction with a machinable feature is a no-op.
+  useProjectStore.getState().toggleFolderGrouped(groupId) // ungroup so c1 can be reselected freely
+  useProjectStore.getState().selectFeatures([c1, f1])
+  const folderCountBefore = useProjectStore.getState().project.featureFolders.length
+  const mixedResult = useProjectStore.getState().groupSelectedFeaturesIntoNewFolder()
+  assert(mixedResult === '', 'mixed-section grouping is rejected')
+  assert(useProjectStore.getState().project.featureFolders.length === folderCountBefore, 'no folder is created for a mixed group')
+  assert(getFeature(f1).folderId === null, 'machinable feature stays put after rejected group')
+}
+
 // ── Constraints stay deferred on construction ────────────────────
 
 function testConstraintDeferred(): void {
@@ -230,6 +264,7 @@ function testSaveVersionStamping(): void {
 testConstructionCreation()
 testConversions()
 testSectionIntegrity()
+testGrouping()
 testConstraintDeferred()
 testSaveVersionStamping()
 

@@ -28,7 +28,7 @@
  * geometry leaks into a model/CAM input.
  */
 
-import type { FeatureOperation, SketchFeature } from '../../types/project'
+import type { FeatureOperation, Project, SketchFeature } from '../../types/project'
 
 /** Anything carrying an operation — SketchFeature or FeatureDefinition. */
 interface HasOperation {
@@ -70,4 +70,24 @@ export function sectionForOperation(operation: FeatureOperation | undefined): Fe
   if (operation === 'region') return 'regions'
   if (operation === 'construction') return 'construction'
   return 'features'
+}
+
+/**
+ * The shared tree section of a set of features, or null when the set is empty
+ * or spans sections. Folders and groups are single-section: machining
+ * features, regions, and construction geometry each only group with their own
+ * kind.
+ */
+export function commonSection(entities: HasOperation[]): FeatureTreeSection | null {
+  if (entities.length === 0) return null
+  const first = sectionForOperation(entities[0].operation)
+  return entities.every((entity) => sectionForOperation(entity.operation) === first) ? first : null
+}
+
+/** {@link commonSection} over feature ids; unknown ids are ignored. */
+export function commonSectionOfIds(project: Project, featureIds: string[]): FeatureTreeSection | null {
+  const features = featureIds
+    .map((id) => project.features.find((feature) => feature.id === id))
+    .filter((feature): feature is SketchFeature => feature !== undefined)
+  return commonSection(features)
 }
