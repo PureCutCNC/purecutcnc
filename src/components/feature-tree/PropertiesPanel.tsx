@@ -24,6 +24,8 @@ import { ZRangeSlider } from './ZRangeSlider'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
+import { isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
+import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
@@ -246,7 +248,7 @@ export function PropertiesPanel() {
     allSelectedFeatures.every((feature) => feature.operation === allSelectedFeatures[0]?.operation)
       ? allSelectedFeatures[0]?.operation ?? null
       : '__mixed__'
-  const selectedZEditableFeatures = allSelectedFeatures.filter((feature) => feature.operation !== 'region')
+  const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
   const selectedClosedEditableFeatures = selectedZEditableFeatures.filter((feature) => feature.sketch.profile.closed)
   const selectedOpenEditableFeatures = selectedZEditableFeatures.filter((feature) => !feature.sketch.profile.closed)
@@ -334,14 +336,17 @@ export function PropertiesPanel() {
 
   function renderContent() {
 
-  function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void, disabled?: boolean) {
+  function renderFolderSelect(value: string | '__mixed__' | null, onChange: (folderId: string | null) => void, disabled?: boolean, section?: FeatureTreeSection) {
+    const folders = section
+      ? project.featureFolders.filter((folder) => (folder.section ?? 'features') === section)
+      : project.featureFolders
     return (
       <Select
         value={value ?? ''}
         options={[
           ...(value === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed folders' }] : []),
           { value: '', label: 'Root' },
-          ...project.featureFolders.map((folder) => ({ value: folder.id, label: folder.name })),
+          ...folders.map((folder) => ({ value: folder.id, label: folder.name })),
         ]}
         onChange={(next) => onChange(next === '' || next === '__mixed__' ? null : next)}
         disabled={disabled}
@@ -1137,8 +1142,8 @@ export function PropertiesPanel() {
             <label className="properties-field">
               <span>Operation</span>
               {allSelectedFeatures.every((f) => !f.sketch.profile.closed || f.operation === 'line') && allSelectedFeatures.length > 0 ? (
-                <div className="properties-locked-field" title="All selected features are open profiles (Line)">
-                  <span>Line</span>
+                <div className="properties-locked-field" title="All selected features are open profiles — convert them individually in the tree">
+                  <span>Open profiles</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
               ) : allSelectedFeatures.some((f) => f.operation === 'model') ? (
@@ -1154,6 +1159,7 @@ export function PropertiesPanel() {
                     { value: 'subtract', label: 'Subtract' },
                     { value: 'add', label: 'Add' },
                     { value: 'region', label: 'Region' },
+                    { value: 'construction', label: 'Construction' },
                   ]}
                   onChange={(value) => updateFeatures(selectedFeatureIds, {
                     operation: value as import('../../types/project').FeatureOperation,
@@ -1365,6 +1371,12 @@ export function PropertiesPanel() {
               <span>A region is a filter: it limits where operations may cut, not a shape to machine.</span>
             </div>
           ) : null}
+          {selectedFeature.operation === 'construction' ? (
+            <div className="properties-construction-note">
+              <span className="properties-construction-note__badge">ref</span>
+              <span>Construction geometry is a sketch reference: snap, mirror, and dimension against it. It is never machined.</span>
+            </div>
+          ) : null}
           {hasLinkedInstances ? (
             <div className="properties-actions" style={{ marginTop: '8px' }}>
               <button
@@ -1392,6 +1404,16 @@ export function PropertiesPanel() {
                 <span>Z Range</span>
                 <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
                   <span>Follows stock ({formatLength(project.stock.thickness, units)} to 0)</span>
+                  <span className="properties-locked-hint" aria-hidden="true">🔒</span>
+                </div>
+              </label>
+            </>
+          ) : selectedFeature.operation === 'construction' ? (
+            <>
+              <label className="properties-field">
+                <span>Z Range</span>
+                <div className="properties-locked-field" title="Construction geometry is a sketch reference — it has no machining depth">
+                  <span>Not machined</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
               </label>
@@ -1460,7 +1482,7 @@ export function PropertiesPanel() {
             <span>Folder</span>
             {renderFolderSelect(selectedFeature.folderId, (folderId) => {
               assignFeaturesToFolder([selectedFeature.id], folderId)
-            }, project.featureFolders.find((f) => f.id === selectedFeature.folderId)?.grouped === true)}
+            }, project.featureFolders.find((f) => f.id === selectedFeature.folderId)?.grouped === true, sectionForOperation(selectedFeature.operation))}
           </label>
           <label className="properties-check">
             <input

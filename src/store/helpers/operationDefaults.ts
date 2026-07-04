@@ -17,6 +17,7 @@
 import { featureHasClosedGeometry } from '../../text'
 import { convertLength } from '../../utils/units'
 import { defaultTool } from '../../types/project'
+import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import type {
   FeatureOperation,
   Operation,
@@ -33,9 +34,7 @@ export function folderIdForOperation(project: Project, folderId: string | null, 
   const folder = project.featureFolders.find((entry) => entry.id === folderId) ?? null
   if (!folder) return null
   const folderSection = folder.section ?? 'features'
-  return operation === 'region'
-    ? folderSection === 'regions' ? folderId : null
-    : folderSection === 'regions' ? null : folderId
+  return folderSection === sectionForOperation(operation) ? folderId : null
 }
 
 export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
@@ -83,6 +82,15 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
+  // Construction geometry is sketch-only reference geometry — it can never be
+  // an operation target (issue #199). One guard covers every kind below.
+  if (target.source === 'features' && target.featureIds.some((featureId) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    return feature !== undefined && isConstruction(feature)
+  })) {
+    return false
+  }
+
   if (kind === 'drilling') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
@@ -96,8 +104,8 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
       return false
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.kind === 'circle')
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
@@ -112,8 +120,8 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is SketchFeature => feature !== null)
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return features.length === target.featureIds.length
       && machiningFeatures.length > 0
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
@@ -132,8 +140,8 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
       return false
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
@@ -176,8 +184,8 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
       return false
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.some((feature) => feature.operation === 'model' && feature.kind === 'stl')
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
   }
@@ -195,8 +203,8 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
       return false
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -215,15 +223,15 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
   }
 
   if (kind === 'pocket' || kind === 'edge_route_inside') {
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
   }
 
-  const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-  const regionFeatures = features.filter((feature) => feature.operation === 'region')
+  const machiningFeatures = features.filter(isMachinable)
+  const regionFeatures = features.filter(isRegion)
   return machiningFeatures.length > 0
     && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
     && regionFeatures.every((feature) => feature.sketch.profile.closed)
@@ -317,7 +325,7 @@ export function fallbackOperationTarget(project: Project, kind: OperationKind): 
   }
 
   if (kind === 'follow_line') {
-    const firstFeature = project.features[0]
+    const firstFeature = project.features.find(isMachinable)
     return firstFeature
       ? { source: 'features', featureIds: [firstFeature.id] }
       : { source: 'stock' }
@@ -369,7 +377,7 @@ export function fallbackOperationTarget(project: Project, kind: OperationKind): 
     }
   }
 
-  const firstFeature = project.features.find((feature) => feature.sketch.profile.closed)
+  const firstFeature = project.features.find((feature) => isMachinable(feature) && feature.sketch.profile.closed)
   return firstFeature
     ? { source: 'features', featureIds: [firstFeature.id] }
     : { source: 'stock' }

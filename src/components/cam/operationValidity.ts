@@ -26,6 +26,7 @@
 
 import type { SelectionState } from '../../store/types'
 import type { Operation, OperationKind, OperationPass, Project } from '../../types/project'
+import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { featureHasClosedGeometry } from '../../text'
 
 export function operationKindLabel(kind: OperationKind): string {
@@ -62,6 +63,16 @@ export function operationRequiresClosedProfiles(kind: OperationKind): boolean {
 }
 
 export function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
+  // Construction geometry is sketch-only reference geometry — it can never be
+  // an operation target, so any selection containing it is rejected up front
+  // with one clear message (issue #199).
+  if (selection.selectedFeatureIds.some((featureId) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    return feature !== undefined && isConstruction(feature)
+  })) {
+    return 'Construction geometry is never machined — deselect construction features first'
+  }
+
   if (kind === 'drilling') {
     if (selection.selectedFeatureIds.length === 0) {
       return 'Select one or more circle features first'
@@ -71,8 +82,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.kind === 'circle')
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -87,8 +98,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     const features = selection.selectedFeatureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0 && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? null
       : 'Engrave requires at least one path feature; closed regions are optional filters'
@@ -103,8 +114,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     if (machiningFeatures.length === 0) {
       return 'Surface clean requires at least one add/model feature; regions are only filters'
     }
@@ -129,8 +140,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     if (machiningFeatures.length === 0) {
       return `${operationKindLabel(kind)} requires at least one subtract feature; regions are only filters`
     }
@@ -159,8 +170,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       return 'One or more selected features not found'
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
 
     if (!hasModel) {
@@ -219,8 +230,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     feature.operation === expectedOperation
     || (kind === 'edge_route_outside' && feature.operation === 'model')
   )
-  const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-  const regionFeatures = features.filter((feature) => feature.operation === 'region')
+  const machiningFeatures = features.filter(isMachinable)
+  const regionFeatures = features.filter(isRegion)
   if (machiningFeatures.length === 0) {
     return wantsSubtract
       ? 'Select at least one subtract feature; closed regions are optional filters'

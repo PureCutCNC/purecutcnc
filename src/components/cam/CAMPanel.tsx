@@ -39,6 +39,7 @@ import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
+import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { featureHasClosedGeometry } from '../../text'
 import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
@@ -353,10 +354,10 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
     .filter((feature): feature is Project['features'][number] => feature !== null)
   const names = features
-    .filter((feature) => feature.operation !== 'region')
+    .filter(isMachinable)
     .map((feature) => feature.name)
   const regionNames = features
-    .filter((feature) => feature.operation === 'region')
+    .filter(isRegion)
     .map((feature) => feature.name)
 
   if (names.length === 0 && regionNames.length === 0) {
@@ -396,6 +397,14 @@ function showStepdown(operation: Project['operations'][number]): boolean {
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
+  // Construction geometry can never be part of an operation target (issue #199).
+  if (selection.selectedFeatureIds.some((featureId) => {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    return feature !== undefined && isConstruction(feature)
+  })) {
+    return null
+  }
+
   if (kind === 'drilling') {
     if (selection.selectedFeatureIds.length === 0) {
       return null
@@ -409,8 +418,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.kind === 'circle')
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -427,8 +436,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
       .filter((feature): feature is Project['features'][number] => feature !== null)
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return features.length === selection.selectedFeatureIds.length
       && machiningFeatures.length > 0
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -449,8 +458,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -471,8 +480,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
       && machiningFeatures.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -493,8 +502,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-    const regionFeatures = features.filter((feature) => feature.operation === 'region')
+    const machiningFeatures = features.filter(isMachinable)
+    const regionFeatures = features.filter(isRegion)
     const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
     return hasModel && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((f) => f.id) }
@@ -538,8 +547,8 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  const machiningFeatures = features.filter((feature) => feature.operation !== 'region')
-  const regionFeatures = features.filter((feature) => feature.operation === 'region')
+  const machiningFeatures = features.filter(isMachinable)
+  const regionFeatures = features.filter(isRegion)
   if (machiningFeatures.length === 0) {
     return null
   }

@@ -22,6 +22,7 @@ import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { createDefinitionForFeature } from '../helpers/featureDefinitions'
 import { IDENTITY_MATRIX } from '../../types/project'
 import { createTextFeatureAt } from '../helpers/naming'
+import { isConstruction, isRegion } from '../helpers/featureRoles'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
 import {
   appendSplineDraftSegment,
@@ -463,6 +464,7 @@ export function createPendingAddSlice(
       if (state.creationTarget === 'region') return
 
       const depth = Math.min(state.project.stock.thickness, 10)
+      const openPathOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
       if (state.pendingAdd.shape === 'spline') {
         if (state.pendingAdd.points.length < 2) return
         const id = nextUniqueGeneratedId(state.project, 'f')
@@ -474,7 +476,9 @@ export function createPendingAddSlice(
 
         const feature: SketchFeature = {
           id,
-          name: `Spline ${state.project.features.length + 1}`,
+          name: openPathOperation === 'construction'
+            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+            : `Spline ${state.project.features.length + 1}`,
           kind: 'spline',
           folderId: null,
           sketch: {
@@ -488,7 +492,7 @@ export function createPendingAddSlice(
             dimensions: [],
             constraints: [],
           },
-          operation: 'line',
+          operation: openPathOperation,
           z_top: depth,
           z_bottom: 0,
           visible: true,
@@ -505,7 +509,9 @@ export function createPendingAddSlice(
         }))
         const feature: SketchFeature = {
           id,
-          name: `Polyline ${state.project.features.length + 1}`,
+          name: openPathOperation === 'construction'
+            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+            : `Polyline ${state.project.features.length + 1}`,
           kind: 'polygon',
           folderId: null,
           sketch: {
@@ -519,7 +525,7 @@ export function createPendingAddSlice(
             dimensions: [],
             constraints: [],
           },
-          operation: 'line',
+          operation: openPathOperation,
           z_top: depth,
           z_bottom: 0,
           visible: true,
@@ -694,12 +700,16 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const id = nextUniqueGeneratedId(state.project, 'f')
-      const operation = state.creationTarget === 'region' ? 'region' : 'subtract'
+      const operation = state.creationTarget === 'region' ? 'region'
+        : state.creationTarget === 'construction' ? 'construction'
+        : 'subtract'
       const feature: SketchFeature = {
         id,
         name: operation === 'region'
-          ? `Region ${state.project.features.filter((feature) => feature.operation === 'region').length + 1}`
-          : `Composite ${state.project.features.length + 1}`,
+          ? `Region ${state.project.features.filter(isRegion).length + 1}`
+          : operation === 'construction'
+            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+            : `Composite ${state.project.features.length + 1}`,
         kind: 'composite',
         folderId: null,
         sketch: {
@@ -738,9 +748,12 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const id = nextUniqueGeneratedId(state.project, 'f')
+      const openCompositeOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
       const feature: SketchFeature = {
         id,
-        name: `Composite ${state.project.features.length + 1}`,
+        name: openCompositeOperation === 'construction'
+          ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+          : `Composite ${state.project.features.length + 1}`,
         kind: 'composite',
         folderId: null,
         sketch: {
@@ -754,7 +767,7 @@ export function createPendingAddSlice(
           dimensions: [],
           constraints: [],
         },
-        operation: 'line',
+        operation: openCompositeOperation,
         z_top: depth,
         z_bottom: 0,
         visible: true,

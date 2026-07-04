@@ -5,7 +5,8 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 ## Top-level files
 - `clipperOpenPaths.ts` — typed seam for clipper-lib's open-path API (`addOpenSubject`, `openPathsFromPolyTree`); confines the casts the local clipper-lib typings force
 - `clipperOpenPaths.test.ts` — tests for the above
-- `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache
+- `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache. Feature input is gated through `store/helpers/featureRoles.modelFeatures()` — construction geometry never reaches the model (issue #199).
+- `constructionExclusion.test.ts` — guard test: construction geometry can never become a machining target, region mask, or CSG input; fails the build if the exclusion regresses
 - `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, silhouette extraction, serialization
 - `importedMesh.test.ts` — tests for the above
 

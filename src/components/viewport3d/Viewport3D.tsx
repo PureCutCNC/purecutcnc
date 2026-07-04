@@ -21,6 +21,7 @@ import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
+import { modelFeatures } from '../../store/helpers/featureRoles'
 import { buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
@@ -944,7 +945,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
           const controls = controlsRef.current
         if (controls) {
-          const visibleFeatures = project.features.filter((feature) => feature.visible)
+          // Construction geometry is absent from the 3D scene — keep it out of
+          // the camera-fit bounds as well (issue #199).
+          const visibleFeatures = modelFeatures(project.features).filter((feature) => feature.visible)
           const visibleTabs = project.tabs.filter((tab) => tab.visible)
           const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =

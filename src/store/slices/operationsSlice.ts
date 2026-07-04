@@ -26,6 +26,7 @@ import type {
   SketchFeature,
   Tool,
 } from '../../types/project'
+import { isMachinable } from '../helpers/featureRoles'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
@@ -178,7 +179,7 @@ export function createOperationsSlice(
           .map((featureId) => state.project.features.find((item) => item.id === featureId) ?? null)
           .filter((feature): feature is SketchFeature => feature !== null)
         const machiningTargetIds = targetFeatures
-          .filter((feature) => feature.operation !== 'region')
+          .filter(isMachinable)
           .map((feature) => feature.id)
         const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
         const restFolder: FeatureFolder = {
@@ -307,7 +308,7 @@ export function createOperationsSlice(
       const createdIds = createdFeatures.map((feature) => feature.id)
       const machiningTargetIds = operation.target.featureIds.filter((featureId) => {
         const feature = state.project.features.find((item) => item.id === featureId)
-        return feature?.operation !== 'region'
+        return feature !== undefined && isMachinable(feature)
       })
       const restTarget: OperationTarget = {
         source: 'features',

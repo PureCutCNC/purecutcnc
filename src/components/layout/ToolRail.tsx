@@ -192,6 +192,15 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             >
               <Icon id="pocket" />
             </button>
+            <button
+              className={`tool-rail__target-btn tool-rail__target-btn--construction ${creationCommands.creationTarget === 'construction' ? 'tool-rail__target-btn--active' : ''}`}
+              type="button"
+              aria-label="Create construction geometry"
+              aria-pressed={creationCommands.creationTarget === 'construction'}
+              onClick={() => creationCommands.setCreationTarget('construction')}
+            >
+              <Icon id="construction" />
+            </button>
           </div>
         </div>
 

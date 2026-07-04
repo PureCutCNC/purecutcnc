@@ -19,6 +19,7 @@ import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel }
 import { bezierPoint, rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry, getFeatureGeometryProfiles } from '../text'
+import { modelFeatures } from '../store/helpers/featureRoles'
 import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
@@ -948,7 +949,10 @@ export async function buildScene(
   selectedTabId: string | null = null,
   collidingClampIds: string[] = [],
 ): Promise<SceneObjects> {
-  const visibleFeatures = project.features.filter((feature) => feature.visible)
+  // Construction geometry is sketch-only — it never reaches the 3D model,
+  // feature meshes, or open-feature lines (issue #199). Regions stay: they
+  // render display-only walls below.
+  const visibleFeatures = modelFeatures(project.features).filter((feature) => feature.visible)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const collidingClampIdSet = new Set(collidingClampIds)

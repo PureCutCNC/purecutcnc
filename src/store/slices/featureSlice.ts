@@ -49,6 +49,7 @@ import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectP
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
+import { isMachinable, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -124,7 +125,7 @@ export function createFeatureSlice(
       const existingSectionFolders = state.project.featureFolders.filter((folder) => (folder.section ?? 'features') === section)
       const folder: FeatureFolder = {
         id: nextId,
-        name: `${section === 'regions' ? 'Region Folder' : 'Folder'} ${existingSectionFolders.length + 1}`,
+        name: `${section === 'regions' ? 'Region Folder' : section === 'construction' ? 'Construction Folder' : 'Folder'} ${existingSectionFolders.length + 1}`,
         collapsed: false,
         section,
       }
@@ -236,14 +237,21 @@ export function createFeatureSlice(
         if (movableIds.length === 0) {
           return {}
         }
+        // A feature may only live in a folder of its own tree section — a
+        // section-mismatched assignment falls back to that section's root.
+        const resolvedFolderIds = new Map(movableIds.map((id) => {
+          const feature = s.project.features.find((f) => f.id === id)
+          return [id, folderIdForOperation(s.project, folderId, feature?.operation)] as const
+        }))
+        const rootAssignedIds = movableIds.filter((id) => (resolvedFolderIds.get(id) ?? null) === null)
         const nextProject = syncFeatureTreeProject({
           ...s.project,
           features: s.project.features.map((feature) => (
-            movableIds.includes(feature.id) ? { ...feature, folderId } : feature
+            movableIds.includes(feature.id) ? { ...feature, folderId: resolvedFolderIds.get(feature.id) ?? null } : feature
           )),
           featureTree: [
             ...s.project.featureTree.filter((entry) => !(entry.type === 'feature' && movableIds.includes(entry.featureId))),
-            ...(folderId === null ? movableIds.map((featureId) => ({ type: 'feature', featureId } as FeatureTreeEntry)) : []),
+            ...rootAssignedIds.map((featureId) => ({ type: 'feature', featureId } as FeatureTreeEntry)),
           ],
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })
@@ -265,6 +273,14 @@ export function createFeatureSlice(
         }
         if (folderId !== null && !s.project.featureFolders.some((folder) => folder.id === folderId)) {
           return {}
+        }
+        // Features can only live in folders of their own tree section
+        // (features / regions / construction) — reject cross-section moves.
+        if (folderId !== null) {
+          const targetFolder = s.project.featureFolders.find((folder) => folder.id === folderId)
+          if ((targetFolder?.section ?? 'features') !== sectionForOperation(sourceFeature.operation)) {
+            return {}
+          }
         }
 
         // P2-1: features in a grouped folder cannot be moved to a different folder or root.
@@ -416,7 +432,7 @@ export function createFeatureSlice(
         const nextProject = {
           ...s.project,
           features: s.project.features.map((feature) => (
-            feature.operation === 'region' ? feature : { ...feature, visible }
+            isMachinable(feature) ? { ...feature, visible } : feature
           )),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
@@ -442,8 +458,8 @@ export function createFeatureSlice(
         const safeId = s.project.features.some((existing) => existing.id === featureForInsert.id)
           ? nextUniqueGeneratedId(s.project, 'f')
           : featureForInsert.id
-        const isFirstMachiningFeature = featureForInsert.operation !== 'region'
-          && !s.project.features.some((existing) => existing.operation !== 'region')
+        const isFirstMachiningFeature = isMachinable(featureForInsert)
+          && !s.project.features.some(isMachinable)
         const preserveImportedModelOperation = isFirstMachiningFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
         let effectiveFolderId: string | null = featureForInsert.folderId ?? null
@@ -459,10 +475,7 @@ export function createFeatureSlice(
           ? s.project.featureFolders.find((folder) => folder.id === effectiveFolderId) ?? null
           : null
         const effectiveFolderSection = effectiveFolder?.section ?? 'features'
-        if (featureForInsert.operation === 'region' && effectiveFolderSection !== 'regions') {
-          effectiveFolderId = null
-        }
-        if (featureForInsert.operation !== 'region' && effectiveFolderSection === 'regions') {
+        if (effectiveFolderSection !== sectionForOperation(featureForInsert.operation)) {
           effectiveFolderId = null
         }
         const safeFeatureBase: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
@@ -556,11 +569,13 @@ export function createFeatureSlice(
         const nextOperation = patch.operation ?? existingFeature?.operation
         const nextKind = patch.kind ?? existingFeature?.kind
         const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
-        const zSafePatch = nextOperation === 'region'
+        const zSafePatch = nextOperation === 'region' || nextOperation === 'construction'
           ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'z_top' && key !== 'z_bottom')) as Partial<SketchFeature>
           : patch
+        // The first-row "must be add" guard only applies when the row stays
+        // machinable — converting it to construction takes it out of the model.
         const safePatch: Partial<SketchFeature> =
-          isFirst && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add'
+          isFirst && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add' && zSafePatch.operation !== 'construction'
             ? { ...zSafePatch, operation: 'add' }
             : zSafePatch
         const safeOperation = safePatch.operation ?? existingFeature?.operation
@@ -644,7 +659,7 @@ export function createFeatureSlice(
               const siblingIsFirst = fi === 0
               const op = safeOperation as FeatureOperation
               const siblingOp =
-                siblingIsFirst && op !== 'add' ? ('add' as const) : op
+                siblingIsFirst && op !== 'add' && op !== 'construction' ? ('add' as const) : op
               sibling = normalizeFeatureZRange({
                 ...sibling,
                 operation: siblingOp,
@@ -696,11 +711,11 @@ export function createFeatureSlice(
             const nextOperation = patch.operation ?? feature.operation
             const nextKind = patch.kind ?? feature.kind
             const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
-            const zSafePatch = nextOperation === 'region'
+            const zSafePatch = nextOperation === 'region' || nextOperation === 'construction'
               ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'z_top' && key !== 'z_bottom')) as Partial<SketchFeature>
               : patch
             const safePatch: Partial<SketchFeature> =
-              index === 0 && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add'
+              index === 0 && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add' && zSafePatch.operation !== 'construction'
                 ? { ...zSafePatch, operation: 'add' }
                 : zSafePatch
             const safeOperation = safePatch.operation ?? feature.operation
@@ -1000,7 +1015,7 @@ export function createFeatureSlice(
       set((s) => {
         const map = new Map(s.project.features.map((f) => [f.id, f]))
         const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
-        const firstMachiningIndex = reordered.findIndex((feature) => feature.operation !== 'region')
+        const firstMachiningIndex = reordered.findIndex(isMachinable)
         if (
           firstMachiningIndex !== -1
           && reordered[firstMachiningIndex].operation !== 'add'

@@ -115,8 +115,9 @@ export function normalizeProject(project: Project): Project {
       }
     }
     // Migration: convert open profiles from 'subtract'/'add' to 'line' operation
-    // (projects saved before the 'line' type was introduced)
-    if (!feature.sketch.profile.closed && upgradedFeature.operation !== 'line' && upgradedFeature.operation !== 'model' && upgradedFeature.operation !== 'region') {
+    // (projects saved before the 'line' type was introduced). Construction
+    // geometry may legitimately be open — leave it untouched.
+    if (!feature.sketch.profile.closed && upgradedFeature.operation !== 'line' && upgradedFeature.operation !== 'model' && upgradedFeature.operation !== 'region' && upgradedFeature.operation !== 'construction') {
       upgradedFeature = {
         ...upgradedFeature,
         operation: 'line',

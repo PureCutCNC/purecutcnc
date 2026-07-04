@@ -24,6 +24,7 @@ import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../.
 import type { Clamp, Operation, Point, Project, SketchFeature, Tab, Tool } from '../../types/project'
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
+import { isMachinable } from './featureRoles'
 import { isImportedModelFeature } from './modelAssets'
 import { fallbackOperationTarget, defaultOperationForTarget, isOperationTargetValid } from './operationDefaults'
 
@@ -484,7 +485,7 @@ export function projectsEqual(a: Project, b: Project): boolean {
 }
 
 export function isFirstFeatureValid(features: SketchFeature[]): boolean {
-  const firstMachiningFeature = features.find((feature) => feature.operation !== 'region')
+  const firstMachiningFeature = features.find(isMachinable)
   if (!firstMachiningFeature) return true
   return firstMachiningFeature.operation === 'add' || isImportedModelFeature(firstMachiningFeature)
 }

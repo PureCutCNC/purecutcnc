@@ -30,6 +30,7 @@ import {
   instantiateProjectTemplate,
   projectsEqual,
 } from '../helpers/normalize'
+import { isConstruction } from '../helpers/featureRoles'
 import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 
@@ -252,8 +253,14 @@ export function createProjectLifecycleSlice(
 
     saveProject: () => {
       const p = pruneUnusedModelAssets(get().project)
+      // Stamp the schema version by content: '2.1' only when the file actually
+      // carries construction geometry, so pre-construction builds warn on
+      // exactly the files they could silently machine wrong (issue #199).
+      const hasConstruction = p.features.some(isConstruction)
+        || Object.values(p.featureDefinitions).some((definition) => definition.operation === 'construction')
       const updated = {
         ...p,
+        version: (hasConstruction ? LATEST_PROJECT_VERSION : '2.0') as Project['version'],
         meta: { ...p.meta, modified: new Date().toISOString() },
       }
       return JSON.stringify(updated, null, 2)

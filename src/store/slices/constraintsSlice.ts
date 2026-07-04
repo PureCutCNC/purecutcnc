@@ -112,6 +112,12 @@ export function createConstraintsSlice(
       if (!feature || feature.locked) {
         return {}
       }
+      // Construction features don't carry their own constraints (deferred for
+      // issue #199) — they can still be the *reference* of another feature's
+      // constraint.
+      if (feature.operation === 'construction') {
+        return {}
+      }
       return {
         pendingConstraint: {
           featureId,

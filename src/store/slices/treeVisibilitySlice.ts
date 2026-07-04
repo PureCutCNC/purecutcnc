@@ -16,13 +16,16 @@
 
 import type { StateCreator } from 'zustand'
 import type { ProjectStore } from '../types'
+import { isConstruction } from '../helpers/featureRoles'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 
 export type TreeVisibilitySlice = Pick<
   ProjectStore,
   | 'setAllRegionsVisible'
+  | 'setAllConstructionVisible'
   | 'toggleFolderVisible'
   | 'toggleRegionFolderVisible'
+  | 'toggleConstructionFolderVisible'
   | 'selectFolderFeatures'
   | 'toggleFolderGrouped'
 >
@@ -38,6 +41,28 @@ export function createTreeVisibilitySlice(
         ...s.project,
         features: s.project.features.map((feature) => (
           feature.operation === 'region' ? { ...feature, visible } : feature
+        )),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  setAllConstructionVisible: (visible) =>
+    set((s) => {
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((feature) => (
+          isConstruction(feature) ? { ...feature, visible } : feature
         )),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -88,6 +113,31 @@ export function createTreeVisibilitySlice(
         ...s.project,
         features: s.project.features.map((f) =>
           f.folderId === folderId && f.operation === 'region' ? { ...f, visible: nextVisible } : f
+        ),
+        meta: { ...s.project.meta, modified: new Date().toISOString() },
+      }
+      if (projectsEqual(nextProject, s.project)) {
+        return {}
+      }
+      return {
+        project: nextProject,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    }),
+
+  toggleConstructionFolderVisible: (folderId) =>
+    set((s) => {
+      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId && isConstruction(f))
+      const anyVisible = folderFeatures.some((f) => f.visible)
+      const nextVisible = !anyVisible
+      const nextProject = {
+        ...s.project,
+        features: s.project.features.map((f) =>
+          f.folderId === folderId && isConstruction(f) ? { ...f, visible: nextVisible } : f
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }

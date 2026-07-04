@@ -92,6 +92,7 @@ export type SelectedNode =
   | { type: 'backdrop' }
   | { type: 'features_root' }
   | { type: 'regions_root' }
+  | { type: 'construction_root' }
   | { type: 'tabs_root' }
   | { type: 'clamps_root' }
   | { type: 'folder'; folderId: string }
@@ -126,7 +127,7 @@ export type PendingAddTool =
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
-export type CreationTarget = 'feature' | 'region'
+export type CreationTarget = 'feature' | 'region' | 'construction'
 
 /**
  * Transient tape-measure state. Not persisted, not in undo history.
@@ -336,7 +337,7 @@ export interface ProjectStore {
   setUnits: (units: Project['meta']['units']) => void
   setCreationTarget: (target: CreationTarget) => void
 
-  addFeatureFolder: (section?: 'features' | 'regions') => string
+  addFeatureFolder: (section?: 'features' | 'regions' | 'construction') => string
   updateFeatureFolder: (id: string, patch: Partial<FeatureFolder>) => void
   deleteFeatureFolder: (id: string) => void
   assignFeaturesToFolder: (featureIds: string[], folderId: string | null) => void
@@ -344,8 +345,10 @@ export interface ProjectStore {
   reorderFeatureTreeEntries: (entries: FeatureTreeEntry[]) => void
   setAllFeaturesVisible: (visible: boolean) => void
   setAllRegionsVisible: (visible: boolean) => void
+  setAllConstructionVisible: (visible: boolean) => void
   toggleFolderVisible: (folderId: string) => void
   toggleRegionFolderVisible: (folderId: string) => void
+  toggleConstructionFolderVisible: (folderId: string) => void
   selectFolderFeatures: (folderId: string) => void
   toggleFolderGrouped: (folderId: string) => void
   groupSelectedFeaturesIntoNewFolder: () => string
@@ -411,6 +414,7 @@ export interface ProjectStore {
   selectBackdrop: () => void
   selectFeaturesRoot: () => void
   selectRegionsRoot: () => void
+  selectConstructionRoot: () => void
   selectTabsRoot: () => void
   selectClampsRoot: () => void
   selectFeatureFolder: (id: string) => void

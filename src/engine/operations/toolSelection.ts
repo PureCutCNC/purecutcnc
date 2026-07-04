@@ -33,6 +33,7 @@
 
 import type { OperationKind, OperationTarget, Project, SketchFeature, Tool, ToolType } from '../../types/project'
 import { getStockBounds } from '../../types/project'
+import { isMachinable } from '../../store/helpers/featureRoles'
 import { getFeatureGeometryBounds } from '../../text'
 import { convertToolUnits } from '../../utils/units'
 import type { ToolLibraryEntry } from '../../toolLibrary'
@@ -82,7 +83,7 @@ export function targetFeatureSize(project: Project, target: OperationTarget): nu
 
   const features = target.featureIds
     .map((id) => project.features.find((feature) => feature.id === id) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null && feature.operation !== 'region')
+    .filter((feature): feature is SketchFeature => feature !== null && isMachinable(feature))
 
   if (features.length === 0) {
     return null
