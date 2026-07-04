@@ -159,9 +159,11 @@ export function createPendingCompletionSlice(
               })
             : []
 
-          // Detect group copy: all source features share the same folderId
-          // and that folder has grouped === true. If so, create a new
-          // grouped folder for the copies instead of appending root entries.
+          // Detect group copy: the sources are the ENTIRE membership of one
+          // grouped folder. Only then do the copies get their own new grouped
+          // folder. Copying a subset (e.g. a single member) keeps the copies
+          // in the original's folder instead — buildCopiedFeatures already
+          // preserves each source's folderId.
           let finalCreatedFeatures: SketchFeature[] = cleanedCreatedFeatures
           let groupCopyFolder: FeatureFolder | null = null
 
@@ -174,7 +176,11 @@ export function createPendingCompletionSlice(
               const sourceFolder = s.project.featureFolders.find(
                 (f) => f.id === firstFolderId,
               )
-              if (sourceFolder?.grouped === true) {
+              const sourceIdSet = new Set(sourceFeatures.map((f) => f.id))
+              const copiesWholeGroup = s.project.features
+                .filter((f) => f.folderId === firstFolderId)
+                .every((f) => sourceIdSet.has(f.id))
+              if (sourceFolder?.grouped === true && copiesWholeGroup) {
                 const newFolderId = nextUniqueGeneratedId(s.project, 'fd')
                 const newFolderName = uniqueFolderName(
                   `${sourceFolder.name} Copy`,
@@ -254,7 +260,12 @@ export function createPendingCompletionSlice(
                 : mode === 'copy'
                   ? [
                       ...s.project.featureTree,
-                      ...finalCreatedFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+                      // Foldered copies get no root entry — folder children
+                      // render from the features array, and a stray root
+                      // entry would double-list them.
+                      ...finalCreatedFeatures
+                        .filter((feature) => feature.folderId === null)
+                        .map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
                     ]
                   : s.project.featureTree,
             meta: { ...s.project.meta, modified: new Date().toISOString() },
@@ -472,7 +483,11 @@ export function createPendingCompletionSlice(
             features: [...s.project.features, ...createdFeatures],
             featureTree: [
               ...s.project.featureTree,
-              ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+              // Copies keep their source's folderId; only root copies get a
+              // tree entry (folder children render from the features array).
+              ...createdFeatures
+                .filter((feature) => feature.folderId === null)
+                .map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
             ],
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }
@@ -511,7 +526,11 @@ export function createPendingCompletionSlice(
             features: [...s.project.features, ...createdFeatures],
             featureTree: [
               ...s.project.featureTree,
-              ...createdFeatures.map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
+              // Copies keep their source's folderId; only root copies get a
+              // tree entry (folder children render from the features array).
+              ...createdFeatures
+                .filter((feature) => feature.folderId === null)
+                .map((feature) => ({ type: 'feature' as const, featureId: feature.id })),
             ],
             meta: { ...s.project.meta, modified: new Date().toISOString() },
           }

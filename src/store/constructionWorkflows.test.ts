@@ -190,6 +190,64 @@ function testGrouping(): void {
   assert(getFeature(f1).folderId === null, 'machinable feature stays put after rejected group')
 }
 
+// ── Copying group members joins the original group ───────────────
+
+function copyByMove(featureIds: string[]): string[] {
+  const before = new Set(useProjectStore.getState().project.features.map((f) => f.id))
+  useProjectStore.setState({
+    pendingMove: {
+      mode: 'copy',
+      entityType: 'feature',
+      entityIds: featureIds,
+      fromPoint: { x: 0, y: 0 },
+      toPoint: null,
+      session: 1,
+    },
+  })
+  useProjectStore.getState().completePendingMove({ x: 40, y: 0 })
+  return useProjectStore.getState().project.features
+    .filter((f) => !before.has(f.id))
+    .map((f) => f.id)
+}
+
+function testCopyIntoGroup(): void {
+  console.log('Testing copies of group members join the original group...')
+  freshStore()
+  useProjectStore.getState().setCreationTarget('construction')
+  useProjectStore.getState().addRectFeature('C1', 0, 0, 5, 5, 5)
+  const c1 = lastFeature().id
+  useProjectStore.getState().addRectFeature('C2', 10, 0, 5, 5, 5)
+  const c2 = lastFeature().id
+  useProjectStore.getState().selectFeatures([c1, c2])
+  const groupId = useProjectStore.getState().groupSelectedFeaturesIntoNewFolder()
+  assert(groupId !== '', 'group created')
+
+  // Copying a SINGLE member joins the original group — no new folder.
+  const foldersBefore = useProjectStore.getState().project.featureFolders.length
+  const [memberCopyId] = copyByMove([c1])
+  assert(memberCopyId !== undefined, 'member copy created')
+  assert(getFeature(memberCopyId).folderId === groupId, 'member copy joined the original group')
+  assert(useProjectStore.getState().project.featureFolders.length === foldersBefore, 'no new folder for a member copy')
+  assert(
+    !useProjectStore.getState().project.featureTree.some((entry) => entry.type === 'feature' && entry.featureId === memberCopyId),
+    'foldered copy gets no root tree entry',
+  )
+
+  // Copying the WHOLE group still clones the group into a new grouped folder.
+  const memberIds = useProjectStore.getState().project.features
+    .filter((f) => f.folderId === groupId)
+    .map((f) => f.id)
+  const wholeCopyIds = copyByMove(memberIds)
+  assert(wholeCopyIds.length === memberIds.length, 'whole-group copy created one copy per member')
+  const copyFolderIds = new Set(wholeCopyIds.map((id) => getFeature(id).folderId))
+  assert(copyFolderIds.size === 1, 'whole-group copies share one folder')
+  const [copyFolderId] = [...copyFolderIds]
+  assert(copyFolderId !== null && copyFolderId !== groupId, 'whole-group copy landed in a NEW folder')
+  const copyFolder = useProjectStore.getState().project.featureFolders.find((f) => f.id === copyFolderId)
+  assert(copyFolder?.grouped === true, 'copied group folder is grouped')
+  assert(copyFolder?.section === 'construction', 'copied group folder keeps the section')
+}
+
 // ── Constraints stay deferred on construction ────────────────────
 
 function testConstraintDeferred(): void {
@@ -265,6 +323,7 @@ testConstructionCreation()
 testConversions()
 testSectionIntegrity()
 testGrouping()
+testCopyIntoGroup()
 testConstraintDeferred()
 testSaveVersionStamping()
 
