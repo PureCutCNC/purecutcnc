@@ -590,6 +590,15 @@
   height: 20px;
 }
 
+/* On the narrowest tablet widths the print button is the first to yield so
+   the file group, tabs, and operations button never overlap. Printing stays
+   reachable via Cmd/Ctrl+P and the desktop menu. */
+@media (max-width: 1080px) {
+  .top-cmd-btn--print {
+    display: none;
+  }
+}
+
 .top-cmd-tab {
   display: inline-flex;
   align-items: center;

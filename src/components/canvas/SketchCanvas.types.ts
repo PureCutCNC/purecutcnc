@@ -18,7 +18,7 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import type { OpenProfileEndpoint, SketchEditTool } from '../../store/types'
-import type { OperationKind, Point } from '../../types/project'
+import type { Bounds2D, OperationKind, Point } from '../../types/project'
 
 export const NODE_HIT_RADIUS = 9
 export const HANDLE_HIT_RADIUS = 7
@@ -54,6 +54,12 @@ export interface SegmentHit {
 
 export interface SketchCanvasHandle {
   zoomToModel: () => void
+  /**
+   * World bounds of the current pan/zoom viewport, or null when the canvas
+   * is not laid out (e.g. the sketch tab is hidden). Read-only — used by
+   * the print dialog's "Current sketch view" print area.
+   */
+  getVisibleWorldBounds: () => Bounds2D | null
 }
 
 export interface SketchCanvasProps {

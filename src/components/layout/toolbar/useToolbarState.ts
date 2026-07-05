@@ -21,7 +21,12 @@ import { useSketchCommands } from '../../../commands/sketchCommands'
 import { useProjectStore } from '../../../store/projectStore'
 import type { TextToolConfig } from '../../../text'
 
-export function useToolbarState(onZoomToModel: () => void, onImportComplete?: () => void, onExportModel: () => void = () => undefined) {
+export function useToolbarState(
+  onZoomToModel: () => void,
+  onImportComplete?: () => void,
+  onExportModel: () => void = () => undefined,
+  onPrintDesign: () => void = () => undefined,
+) {
   void onImportComplete
   const {
     project,
@@ -49,6 +54,7 @@ export function useToolbarState(onZoomToModel: () => void, onImportComplete?: ()
     onNewProject: () => setShowNewProjectDialog(true),
     onImportGeometry: () => setShowImportDialog(true),
     onExportModel,
+    onPrintDesign,
   })
 
   // Keep the edit field in sync with the project name when it changes externally

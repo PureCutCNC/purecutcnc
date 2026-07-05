@@ -22,6 +22,7 @@ interface ToolbarProps {
   zoomWindowActive?: boolean
   onImportComplete?: () => void
   onExportModel: () => void
+  onPrintDesign?: () => void
 }
 
 interface SnapToolbarProps {

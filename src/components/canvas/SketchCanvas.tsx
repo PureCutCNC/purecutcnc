@@ -1814,6 +1814,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (!canvas) return
       setViewState(computeFitViewState(projectRef.current, canvas.width, canvas.height))
     },
+    getVisibleWorldBounds: () => {
+      const canvas = canvasRef.current
+      if (!canvas || canvas.width === 0 || canvas.height === 0) return null
+      const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+      const a = canvasToWorld(0, 0, vt)
+      const b = canvasToWorld(canvas.width, canvas.height, vt)
+      return {
+        minX: Math.min(a.x, b.x),
+        maxX: Math.max(a.x, b.x),
+        minY: Math.min(a.y, b.y),
+        maxY: Math.max(a.y, b.y),
+      }
+    },
   }), [])
 
   useEffect(() => {

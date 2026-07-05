@@ -23,6 +23,7 @@ function GlobalActions({
   onOpen,
   onImport,
   onExportModel,
+  onPrintDesign,
   onSave,
   onUndo,
   onRedo,
@@ -37,6 +38,7 @@ function GlobalActions({
   onOpen: () => void
   onImport: () => void
   onExportModel: () => void
+  onPrintDesign: () => void
   onSave: () => void
   onUndo: () => void
   onRedo: () => void
@@ -52,6 +54,7 @@ function GlobalActions({
         <ToolbarActionButton icon="open" label="Open project" onClick={onOpen} />
         <ToolbarActionButton icon="import" label="Import geometry" onClick={onImport} />
         <ToolbarActionButton icon="export" label="Export model" onClick={onExportModel} />
+        <ToolbarActionButton icon="print" label="Print design" onClick={onPrintDesign} />
         <ToolbarActionButton
           icon="save"
           label={projectDirty ? 'Save project with unsaved changes' : 'Save project'}

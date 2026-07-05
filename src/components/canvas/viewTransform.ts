@@ -14,9 +14,13 @@
  * limitations under the License.
  */
 
-import { getFeatureGeometryProfiles } from '../../text'
-import { getProfileBounds, rectProfile } from '../../types/project'
-import type { Point, Project, SketchProfile, Stock } from '../../types/project'
+import { getVisibleSceneBounds2D } from '../../sketch/sceneBounds'
+import { getProfileBounds } from '../../types/project'
+import type { Point, Project, Stock } from '../../types/project'
+
+// Re-exported for existing callers; the implementation moved to
+// sketch/sceneBounds.ts so the design-print engine can share it.
+export { getVisibleSceneBounds2D }
 
 const VIEW_PADDING = 42
 
@@ -80,67 +84,6 @@ export function computeViewTransform(
     offsetX: base.offsetX + viewState.panX,
     offsetY: base.offsetY + viewState.panY,
   }
-}
-
-export function getVisibleSceneBounds2D(project: Project) {
-  const profiles: SketchProfile[] = []
-
-  if (project.stock.visible) {
-    profiles.push(project.stock.profile)
-  }
-
-  for (const feature of project.features) {
-    if (feature.visible) {
-      profiles.push(...getFeatureGeometryProfiles(feature))
-    }
-  }
-
-  for (const tab of project.tabs) {
-    if (tab.visible) {
-      profiles.push(rectProfile(tab.x, tab.y, tab.w, tab.h))
-    }
-  }
-
-  for (const clamp of project.clamps) {
-    if (clamp.visible) {
-      profiles.push(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
-    }
-  }
-
-  if (profiles.length === 0) {
-    profiles.push(project.stock.profile)
-  }
-
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-
-  for (const profile of profiles) {
-    const bounds = getProfileBounds(profile)
-    minX = Math.min(minX, bounds.minX)
-    maxX = Math.max(maxX, bounds.maxX)
-    minY = Math.min(minY, bounds.minY)
-    maxY = Math.max(maxY, bounds.maxY)
-  }
-
-  if (project.origin.visible) {
-    minX = Math.min(minX, project.origin.x)
-    maxX = Math.max(maxX, project.origin.x)
-    minY = Math.min(minY, project.origin.y)
-    maxY = Math.max(maxY, project.origin.y)
-  }
-
-  if (project.backdrop?.visible) {
-    const halfW = project.backdrop.width / 2
-    const halfH = project.backdrop.height / 2
-    minX = Math.min(minX, project.backdrop.center.x - halfW)
-    maxX = Math.max(maxX, project.backdrop.center.x + halfW)
-    minY = Math.min(minY, project.backdrop.center.y - halfH)
-    maxY = Math.max(maxY, project.backdrop.center.y + halfH)
-  }
-
-  return { minX, maxX, minY, maxY }
 }
 
 export function computeFitViewState(

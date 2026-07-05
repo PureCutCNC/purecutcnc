@@ -34,6 +34,7 @@ interface TopCommandBarProps {
   onOpenRightDrawer: () => void
   onImportComplete?: () => void
   onExportModel: () => void
+  onPrintDesign?: () => void
   snapSettings: SnapSettings
   activeSnapMode?: SnapMode | null
   onToggleSnapEnabled: () => void
@@ -50,6 +51,7 @@ export function TopCommandBar({
   onOpenRightDrawer,
   onImportComplete,
   onExportModel,
+  onPrintDesign,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -69,6 +71,7 @@ export function TopCommandBar({
     onNewProject: () => setShowNewProjectDialog(true),
     onImportGeometry: () => setShowImportDialog(true),
     onExportModel,
+    onPrintDesign: onPrintDesign ?? (() => undefined),
   })
 
   // Sync the edit field with the project name when it changes externally
@@ -151,6 +154,9 @@ export function TopCommandBar({
             </button>
             <button className="top-cmd-btn" type="button" aria-label="Export model" onClick={fileCommands.commands.exportModel.onActivate}>
               <Icon id="export" />
+            </button>
+            <button className="top-cmd-btn top-cmd-btn--print" type="button" aria-label="Print design" onClick={fileCommands.commands.printDesign.onActivate}>
+              <Icon id="print" />
             </button>
             <button
               className={`top-cmd-btn ${dirty ? 'top-cmd-btn--emphasized' : ''}`}

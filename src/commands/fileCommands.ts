@@ -22,6 +22,7 @@ export type FileCommandId =
   | 'openProject'
   | 'importGeometry'
   | 'exportModel'
+  | 'printDesign'
   | 'saveProject'
   | 'undo'
   | 'redo'
@@ -39,12 +40,14 @@ interface UseFileCommandsArgs {
   onNewProject: () => void
   onImportGeometry: () => void
   onExportModel: () => void
+  onPrintDesign: () => void
 }
 
 export function useFileCommands({
   onNewProject,
   onImportGeometry,
   onExportModel,
+  onPrintDesign,
 }: UseFileCommandsArgs): {
   dirty: boolean
   historyPastLength: number
@@ -105,6 +108,14 @@ export function useFileCommands({
         enabled: true,
         active: false,
         onActivate: onExportModel,
+      },
+      printDesign: {
+        id: 'printDesign',
+        icon: 'print',
+        label: 'Print design',
+        enabled: true,
+        active: false,
+        onActivate: onPrintDesign,
       },
       saveProject: {
         id: 'saveProject',
