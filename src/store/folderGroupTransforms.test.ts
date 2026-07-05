@@ -804,7 +804,7 @@ test('non-group copy (feature not in any folder) still creates root featureTree 
     'should have 1 selected feature')
 })
 
-test('copy feature in non-grouped folder preserves existing behavior (root entry + same folderId)', () => {
+test('copy feature in non-grouped folder joins the same folder (no root entry)', () => {
   resetStore()
 
   // Create a non-grouped folder
@@ -837,13 +837,15 @@ test('copy feature in non-grouped folder preserves existing behavior (root entry
   assert(copyFeature.folderId === folderId,
     `copy should belong to same folder, got folderId=${copyFeature.folderId}`)
 
-  // featureTree should have a root entry for the copy (existing behavior)
+  // A foldered copy gets NO root featureTree entry — folder children render
+  // from the features array, and a stray root entry would double-list the
+  // copy (same sync-consistency invariant asserted for group copies above).
   const rootEntries = project.featureTree.filter((e) => e.type === 'feature')
   const rootCopyEntry = rootEntries.find(
     (e) => e.type === 'feature' && e.featureId === copyFeature.id,
   )
-  assert(rootCopyEntry !== undefined,
-    'copy feature should have a root featureTree entry (existing non-group behavior)')
+  assert(rootCopyEntry === undefined,
+    'foldered copy must not appear as a root featureTree entry')
 
   // Selection should NOT have groupFolderId
   const sel = useProjectStore.getState().selection

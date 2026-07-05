@@ -69,7 +69,7 @@ function CreationActions({
   const closeTimerRef = useRef<number | null>(null)
   const openModeRef = useRef<PopoverOpenMode | null>(null)
   const side = tooltipSide ?? 'bottom'
-  const availableShapeOptions = creationTarget === 'region'
+  const availableShapeOptions = creationTarget !== 'feature'
     ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
     : CREATION_SHAPE_OPTIONS
   const lastShapeOption = availableShapeOptions.find((option) => option.value === lastShape) ?? availableShapeOptions[0]
@@ -180,7 +180,7 @@ function CreationActions({
           className={[
             'toolbar-icon-btn',
             'toolbar-target-btn',
-            target === 'region' ? 'toolbar-target-btn--region' : '',
+            target !== 'feature' ? `toolbar-target-btn--${target}` : '',
             active ? 'toolbar-icon-btn--active toolbar-target-btn--active' : '',
           ].join(' ')}
           onClick={() => onCreationTargetChange(target)}
@@ -199,6 +199,7 @@ function CreationActions({
       <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
         {renderCreationTargetButton('feature', 'plus', 'Create features')}
         {renderCreationTargetButton('region', 'pocket', 'Create regions')}
+        {renderCreationTargetButton('construction', 'construction', 'Create construction geometry')}
       </div>
       <div
         className="toolbar-group toolbar-group--drawing toolbar-creation-picker"

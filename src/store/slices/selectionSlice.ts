@@ -38,6 +38,7 @@ export type SelectionSlice = Pick<
   | 'selectBackdrop'
   | 'selectFeaturesRoot'
   | 'selectRegionsRoot'
+  | 'selectConstructionRoot'
   | 'selectTabsRoot'
   | 'selectClampsRoot'
   | 'selectFeatureFolder'
@@ -528,6 +529,21 @@ export function createSelectionSlice(
           selectedFeatureId: null,
           selectedFeatureIds: [],
           selectedNode: { type: 'regions_root' },
+          mode: 'feature',
+          activeControl: null,
+          groupFolderId: null,
+        },
+        sketchEditSession: null,
+      })),
+
+    selectConstructionRoot: () =>
+      set((s) => ({
+        pendingOffset: null,
+        selection: {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedNode: { type: 'construction_root' },
           mode: 'feature',
           activeControl: null,
           groupFolderId: null,

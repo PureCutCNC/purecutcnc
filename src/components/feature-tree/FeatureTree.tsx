@@ -19,6 +19,7 @@ import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
+import { isConstruction, isMachinable, isRegion, sectionForOperation } from '../../store/helpers/featureRoles'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 
@@ -44,8 +45,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     reorderFeatureTreeEntries,
     setAllFeaturesVisible,
     setAllRegionsVisible,
+    setAllConstructionVisible,
     toggleFolderVisible,
     toggleRegionFolderVisible,
+    toggleConstructionFolderVisible,
     toggleFolderGrouped,
     selectFolderFeatures,
     selectFeatures,
@@ -62,6 +65,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     selectBackdrop,
     selectFeaturesRoot,
     selectRegionsRoot,
+    selectConstructionRoot,
     selectTabsRoot,
     selectClampsRoot,
     selectFeatureFolder,
@@ -78,6 +82,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   const [dragItem, setDragItem] = useState<{ kind: 'feature' | 'folder'; id: string } | null>(null)
   const [featuresCollapsed, setFeaturesCollapsed] = useState(false)
   const [regionsCollapsed, setRegionsCollapsed] = useState(false)
+  const [constructionCollapsed, setConstructionCollapsed] = useState(false)
   const [tabsCollapsed, setTabsCollapsed] = useState(false)
   const [clampsCollapsed, setClampsCollapsed] = useState(false)
   const dragOverTarget = useRef<{ kind: 'features' | 'folder' | 'feature'; id?: string } | null>(null)
@@ -176,17 +181,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     if (!feature) return
 
     if (feature.folderId === null) {
+      const featureSection = sectionForOperation(feature.operation)
       const sectionEntries = project.featureTree.filter((entry) => {
         if (entry.type === 'folder') {
           const folder = project.featureFolders.find((f) => f.id === entry.folderId)
-          return feature.operation === 'region'
-            ? (folder?.section ?? 'features') === 'regions'
-            : (folder?.section ?? 'features') !== 'regions'
+          return (folder?.section ?? 'features') === featureSection
         }
         const f = project.features.find((item) => item.id === entry.featureId)
-        return feature.operation === 'region'
-          ? f?.operation === 'region'
-          : f?.operation !== 'region'
+        return sectionForOperation(f?.operation) === featureSection
       })
       const entryIndex = sectionEntries.findIndex((e) => e.type === 'feature' && e.featureId === featureId)
       const swapIndex = entryIndex + direction
@@ -200,7 +202,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       reorderFeatureTreeEntries(fullTree)
     } else {
       const siblings = project.features.filter((f) =>
-        f.folderId === feature.folderId && (feature.operation === 'region' ? f.operation === 'region' : f.operation !== 'region')
+        f.folderId === feature.folderId && sectionForOperation(f.operation) === sectionForOperation(feature.operation)
       )
       const sibIndex = siblings.findIndex((f) => f.id === featureId)
       if (sibIndex === -1) return
@@ -228,7 +230,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         return (f?.section ?? 'features') === section
       }
       const f = project.features.find((item) => item.id === entry.featureId)
-      return section === 'regions' ? f?.operation === 'region' : f?.operation !== 'region'
+      return sectionForOperation(f?.operation) === section
     })
     const entryIndex = sectionEntries.findIndex((e) => e.type === 'folder' && e.folderId === folderId)
     const swapIndex = entryIndex + direction
@@ -244,10 +246,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
   // Warn if first 2.5D feature is not 'add' — imported STL models may be first.
   // since the store enforces it, but a loaded file could be malformed.
-  const machiningFeatures = project.features.filter((feature) => feature.operation !== 'region')
-  const regionFeatures = project.features.filter((feature) => feature.operation === 'region')
-  const featureFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') !== 'regions')
+  const machiningFeatures = project.features.filter(isMachinable)
+  const regionFeatures = project.features.filter(isRegion)
+  const constructionFeatures = project.features.filter(isConstruction)
+  const featureFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'features')
   const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
+  const constructionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'construction')
   const firstMachiningFeature = machiningFeatures[0] ?? null
   const firstFeatureInvalid =
     !!firstMachiningFeature
@@ -257,10 +261,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   const rootEntries = project.featureTree.filter((entry) => {
     if (entry.type === 'folder') {
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
-      return (folder?.section ?? 'features') !== 'regions'
+      return (folder?.section ?? 'features') === 'features'
     }
     const feature = project.features.find((item) => item.id === entry.featureId)
-    return feature?.operation !== 'region'
+    return feature !== undefined && isMachinable(feature)
   })
 
   const regionRootEntries = project.featureTree.filter((entry) => {
@@ -272,13 +276,21 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return feature?.operation === 'region' && feature.folderId === null
   })
 
+  const constructionRootEntries = project.featureTree.filter((entry) => {
+    if (entry.type === 'folder') {
+      const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+      return (folder?.section ?? 'features') === 'construction'
+    }
+    const feature = project.features.find((item) => item.id === entry.featureId)
+    return feature !== undefined && isConstruction(feature) && feature.folderId === null
+  })
+
   function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
     const feature = project.features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
     }
 
-    const index = project.features.findIndex((entry) => entry.id === feature.id)
     const defId = getDefinitionId(feature)
     const linkedCount = getInstanceIdsForDefinition(project, defId).length
     const canMoveUp = tabletShell && siblingIndex !== undefined && siblingIndex > 0
@@ -298,8 +310,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
         visible={feature.visible}
         operation={feature.operation}
+        profileClosed={feature.sketch.profile.closed}
         regionMaskMode={feature.regionMaskMode ?? 'include'}
-        isFirstFeature={index === 0}
+        isFirstFeature={feature.id === firstMachiningFeature?.id}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -435,7 +448,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && feature.operation !== 'region')
+              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && rootIdx > 0
               const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
@@ -584,6 +597,94 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           </div>
         )}
         <TreeRow
+          label="Construction"
+          kind="constructions"
+          depth={0}
+          isSelected={selection.selectedNode?.type === 'construction_root'}
+          isDragging={false}
+
+          onClick={() => { selectConstructionRoot(); setConstructionCollapsed((value) => !value) }}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onAddFolder={() => addFeatureFolder('construction')}
+          onShowAll={() => setAllConstructionVisible(true)}
+          onHideAll={() => setAllConstructionVisible(false)}
+        />
+        {constructionCollapsed ? null : constructionFeatures.length === 0 && constructionFolders.length === 0 ? (
+          <div className="feature-tree-empty">No construction geometry yet.</div>
+        ) : (
+          <div className="tree-children">
+            {constructionRootEntries.map((entry, constructionIdx) => {
+              if (entry.type === 'feature') {
+                return renderFeatureRow(entry.featureId, 1, constructionIdx, constructionRootEntries.length)
+              }
+
+              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+              if (!folder) {
+                return null
+              }
+
+              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isConstruction(feature))
+              const folderVisible = folderFeatures.some((f) => f.visible)
+              const canMoveFolderUp = tabletShell && constructionIdx > 0
+              const canMoveFolderDown = tabletShell && constructionIdx < constructionRootEntries.length - 1
+              return (
+                <div key={`construction-${folder.id}`}>
+                  <TreeRow
+                    label={folder.name}
+                    kind="folder"
+                    depth={1}
+                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
+                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
+
+                    visible={folderVisible}
+                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                    onMouseEnter={() => hoverFeature(null)}
+                    onMouseLeave={() => hoverFeature(null)}
+                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFeatures(folderFeatures.map((feature) => feature.id)) : undefined}
+                    onToggleVisible={folderFeatures.length > 0 ? () => toggleConstructionFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
+                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
+                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
+                    draggable
+                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragEnd={() => setDragItem(null)}
+                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
+                    onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
+                  />
+                  {!folder.collapsed ? (
+                    <div className="tree-children">
+                      {folderFeatures.length === 0 ? (
+                        <div className="feature-tree-empty">Empty folder.</div>
+                      ) : (
+                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <TreeRow
           label="Tabs"
           kind="tabs"
           depth={0}
@@ -680,12 +781,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
 
 interface TreeRowProps {
   label: string
-  kind: 'project' | 'grid' | 'stock' | 'origin' | 'backdrop' | 'features' | 'regions' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
+  kind: 'project' | 'grid' | 'stock' | 'origin' | 'backdrop' | 'features' | 'regions' | 'constructions' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
   isSelected: boolean
   isDragging: boolean
   visible?: boolean
   operation?: FeatureOperation
+  profileClosed?: boolean
   regionMaskMode?: RegionMaskMode
   isFirstFeature?: boolean
   linkedCount?: number
@@ -725,6 +827,7 @@ function TreeRow({
   isDragging,
   visible,
   operation,
+  profileClosed = true,
   regionMaskMode,
   isFirstFeature = false,
   linkedCount,
@@ -755,9 +858,11 @@ function TreeRow({
   onDragOver,
   onDrop,
 }: TreeRowProps) {
-  // First feature's operation toggle is locked to 'add' — disable it
-  // Line features (open profiles) are also locked
-  const operationLocked = (isFirstFeature && operation === 'add') || operation === 'line'
+  // First feature's operation toggle is locked to 'add' — disable it.
+  // Open profiles (line / open construction) get a reduced menu instead of a
+  // full lock so they can convert to/from construction geometry.
+  const operationLocked = isFirstFeature && operation === 'add'
+  const openProfileOperations = operation === 'line' || (operation === 'construction' && !profileClosed)
 
   // Popup menu state for operation selector — stores viewport position for fixed positioning
   const operationBtnRef = useRef<HTMLButtonElement>(null)
@@ -776,6 +881,7 @@ function TreeRow({
         isGroupSelected ? 'tree-row--group-selected' : '',
         isDragging ? 'tree-row--dragging' : '',
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
+        kind === 'feature' && operation === 'construction' ? 'tree-row--construction' : '',
       ].join(' ')}
       onClick={onClick}
       onMouseDown={(event) => {
@@ -824,6 +930,8 @@ function TreeRow({
                   ? 'feat'
                   : kind === 'regions'
                     ? 'regn'
+                  : kind === 'constructions'
+                    ? 'cnst'
                   : kind === 'tabs'
                     ? 'root'
                   : kind === 'clamps'
@@ -896,6 +1004,14 @@ function TreeRow({
             {regionMaskMode === 'exclude' ? 'exclude' : 'include'}
           </span>
         ) : null}
+        {kind === 'feature' && operation === 'construction' ? (
+          <span
+            className="tree-construction-badge"
+            title="Construction — sketch reference geometry. Snap, mirror, and dimension against it; never machined."
+          >
+            ref
+          </span>
+        ) : null}
         {kind === 'feature' && linkedCount && linkedCount > 1 ? (
           <span
             className="tree-linked-badge"
@@ -906,7 +1022,7 @@ function TreeRow({
         ) : null}
       </div>
       <div className="tree-row-actions">
-        {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
+        {(kind === 'features' || kind === 'regions' || kind === 'constructions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
           <button
             type="button"
             className="tree-action-btn"
@@ -914,13 +1030,13 @@ function TreeRow({
               event.stopPropagation()
               onShowAll()
             }}
-            title={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
-            aria-label={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
+            title={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'constructions' ? 'Show all construction geometry' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
+            aria-label={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'constructions' ? 'Show all construction geometry' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
           >
             <Icon id="eye" />
           </button>
         ) : null}
-        {(kind === 'features' || kind === 'regions' || kind === 'tabs' || kind === 'clamps') && onHideAll ? (
+        {(kind === 'features' || kind === 'regions' || kind === 'constructions' || kind === 'tabs' || kind === 'clamps') && onHideAll ? (
           <button
             type="button"
             className="tree-action-btn tree-action-btn--muted"
@@ -928,13 +1044,13 @@ function TreeRow({
               event.stopPropagation()
               onHideAll()
             }}
-            title={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
-            aria-label={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
+            title={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'constructions' ? 'Hide all construction geometry' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
+            aria-label={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'constructions' ? 'Hide all construction geometry' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
           >
             <Icon id="eye-off" />
           </button>
         ) : null}
-        {(kind === 'features' || kind === 'regions') && onAddFolder ? (
+        {(kind === 'features' || kind === 'regions' || kind === 'constructions') && onAddFolder ? (
           <button
             type="button"
             className="tree-action-btn"
@@ -942,8 +1058,8 @@ function TreeRow({
               event.stopPropagation()
               onAddFolder()
             }}
-            title={kind === 'regions' ? 'Add region folder' : 'Add folder'}
-            aria-label={kind === 'regions' ? 'Add region folder' : 'Add folder'}
+            title={kind === 'regions' ? 'Add region folder' : kind === 'constructions' ? 'Add construction folder' : 'Add folder'}
+            aria-label={kind === 'regions' ? 'Add region folder' : kind === 'constructions' ? 'Add construction folder' : 'Add folder'}
           >
             <Icon id="folder" />
           </button>
@@ -1004,18 +1120,19 @@ function TreeRow({
                 operationLocked && isFirstFeature
                   ? 'First 2.5D feature must be Add (base solid)'
                   : operation === 'line'
-                  ? 'Line — open profile (locked)'
+                  ? 'Line — open profile (convert to construction only)'
                   : operation === 'model'
                   ? 'Model — imported 3D object (locked)'
                   : operation === 'add'
                   ? 'Feature adds material'
                   : operation === 'subtract'
                   ? 'Feature subtracts material'
+                  : operation === 'construction'
+                  ? 'Construction — sketch reference geometry (never machined)'
                   : 'Region — limits where operations may cut (not machined)'
               }
               aria-label={
                 operationLocked && isFirstFeature ? 'Operation locked to Add'
-                : operation === 'line' ? 'Line — operation locked'
                 : operation === 'model' ? 'Model — operation locked'
                 : 'Change operation'
               }
@@ -1033,6 +1150,10 @@ function TreeRow({
                   <path d="M 2 7 L 12 12 L 12 22 L 2 17 L 2 7 Z" />
                   <path d="M 22 7 L 12 12 L 12 22 L 22 17 L 22 7 Z" />
                 </svg>
+              ) : operation === 'construction' ? (
+                <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
+                  <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="4 3.4" />
+                </svg>
               ) : operation === 'add' ? '+' : operation === 'subtract' ? '−' : (
                 <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
                   <path d="M 3 3 L 21 3 L 21 21 L 3 21 L 3 3 Z" />
@@ -1043,44 +1164,83 @@ function TreeRow({
               <>
                 <div className="tree-operation-overlay" onClick={() => setOperationMenuPos(null)} />
                 <div className="tree-operation-menu" style={{ top: operationMenuPos.top, left: operationMenuPos.left, transform: 'translateX(-50%)' }}>
+                  {openProfileOperations ? (
+                    <button
+                      type="button"
+                      className={['tree-operation-menu__item', operation === 'line' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onToggleOperation('line')
+                        setOperationMenuPos(null)
+                      }}
+                      title="Line — open path machined by engrave operations"
+                    >
+                      <span className="tree-operation-menu__icon">
+                        <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
+                          <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                        </svg>
+                      </span>
+                      <span>Line</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className={['tree-operation-menu__item', operation === 'add' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onToggleOperation('add')
+                          setOperationMenuPos(null)
+                        }}
+                        title="Add — feature adds material"
+                      >
+                        <span className="tree-operation-menu__icon">+</span>
+                        <span>Add</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={['tree-operation-menu__item', operation === 'subtract' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onToggleOperation('subtract')
+                          setOperationMenuPos(null)
+                        }}
+                        title="Subtract — feature removes material"
+                      >
+                        <span className="tree-operation-menu__icon">−</span>
+                        <span>Subtract</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={['tree-operation-menu__item', operation === 'region' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onToggleOperation('region')
+                          setOperationMenuPos(null)
+                        }}
+                        title="Region mask — feature filters machining operations"
+                      >
+                        <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
+                        <span>Region mask</span>
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
-                    className={['tree-operation-menu__item', operation === 'add' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                    className={['tree-operation-menu__item', operation === 'construction' ? 'tree-operation-menu__item--active' : ''].join(' ')}
                     onClick={(event) => {
                       event.stopPropagation()
-                      onToggleOperation('add')
+                      onToggleOperation('construction')
                       setOperationMenuPos(null)
                     }}
-                    title="Add — feature adds material"
+                    title="Construction — sketch reference geometry, never machined"
                   >
-                    <span className="tree-operation-menu__icon">+</span>
-                    <span>Add</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={['tree-operation-menu__item', operation === 'subtract' ? 'tree-operation-menu__item--active' : ''].join(' ')}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onToggleOperation('subtract')
-                      setOperationMenuPos(null)
-                    }}
-                    title="Subtract — feature removes material"
-                  >
-                    <span className="tree-operation-menu__icon">−</span>
-                    <span>Subtract</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={['tree-operation-menu__item', operation === 'region' ? 'tree-operation-menu__item--active' : ''].join(' ')}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onToggleOperation('region')
-                      setOperationMenuPos(null)
-                    }}
-                    title="Region mask — feature filters machining operations"
-                  >
-                    <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
-                    <span>Region mask</span>
+                    <span className="tree-operation-menu__icon tree-operation-menu__icon--construction">
+                      <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
+                        <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="4 3.4" />
+                      </svg>
+                    </span>
+                    <span>Construction</span>
                   </button>
                 </div>
               </>

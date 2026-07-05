@@ -217,7 +217,7 @@ export interface LocalDimension {
 // Feature — core building block
 // ============================================================
 
-export type FeatureOperation = 'add' | 'subtract' | 'region' | 'model' | 'line'
+export type FeatureOperation = 'add' | 'subtract' | 'region' | 'model' | 'line' | 'construction'
 export type RegionMaskMode = 'include' | 'exclude'
 export type TextFontStyle = 'skeleton' | 'outline'
 export type TextFontId =
@@ -376,7 +376,7 @@ export interface FeatureFolder {
   id: string
   name: string
   collapsed: boolean
-  section?: 'features' | 'regions'
+  section?: 'features' | 'regions' | 'construction'
   grouped?: boolean
 }
 
@@ -586,8 +586,8 @@ export interface MachineOrigin {
 }
 
 export interface Project {
-  /** Schema version. '1.0' = legacy (flat features). '2.0' = split definitions + instances. */
-  version: '1.0' | '2.0'
+  /** Schema version. '1.0' = legacy (flat features). '2.0' = split definitions + instances. '2.1' = adds construction geometry. */
+  version: '1.0' | '2.0' | '2.1'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -1269,7 +1269,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 }
 
 /** The newest project schema version this build understands. */
-export const LATEST_PROJECT_VERSION = '2.0'
+export const LATEST_PROJECT_VERSION = '2.1'
 
 /**
  * True when a loaded project's `version` is newer than this build supports

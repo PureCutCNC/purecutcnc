@@ -307,6 +307,7 @@ export function AppShell({
     setOrigin,
     updateBackdrop,
     setAllRegionsVisible,
+    setAllConstructionVisible,
     setAllTabsVisible,
     setAllClampsVisible,
   } = useProjectStore()
@@ -315,6 +316,8 @@ export function AppShell({
   const stockHeight = stockBounds.maxY - stockBounds.minY
   const regionCount = project.features.filter((feature) => feature.operation === 'region').length
   const anyRegionsVisible = project.features.some((feature) => feature.operation === 'region' && feature.visible)
+  const constructionCount = project.features.filter((feature) => feature.operation === 'construction').length
+  const anyConstructionVisible = project.features.some((feature) => feature.operation === 'construction' && feature.visible)
   const anyTabsVisible = project.tabs.some((tab) => tab.visible)
   const anyClampsVisible = project.clamps.some((clamp) => clamp.visible)
   const centerTabs = ['sketch', 'preview3d', 'simulation'] as const
@@ -737,6 +740,16 @@ export function AppShell({
             onClick={() => setAllRegionsVisible(!anyRegionsVisible)}
           >
             Regions
+          </button>
+          <button
+            className={`statusbar-toggle ${anyConstructionVisible ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={anyConstructionVisible}
+            disabled={constructionCount === 0}
+            title={constructionCount === 0 ? 'No construction geometry in project' : anyConstructionVisible ? 'Hide construction geometry' : 'Show construction geometry'}
+            onClick={() => setAllConstructionVisible(!anyConstructionVisible)}
+          >
+            Construction
           </button>
           <button
             className={`statusbar-toggle ${anyTabsVisible ? 'statusbar-toggle--active' : ''}`}

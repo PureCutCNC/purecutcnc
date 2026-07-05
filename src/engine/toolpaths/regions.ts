@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -133,9 +134,11 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
 
   return {
     features,
-    machiningFeatures: features.filter((feature) => feature.operation !== 'region'),
+    // Construction geometry lands in NEITHER list — it is not machinable and
+    // not a region mask, so it can never leak into a toolpath (issue #199).
+    machiningFeatures: features.filter(isMachinable),
     regionFeatures: features
-      .filter((feature) => feature.operation === 'region')
+      .filter(isRegion)
       .sort((left, right) => (featureOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
         - (featureOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)),
     missingFeatureIds,

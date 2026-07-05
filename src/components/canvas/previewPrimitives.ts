@@ -79,6 +79,9 @@ export function drawFeature(
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
   const depthWeight = Math.min(Math.max(Math.abs(zTop - zBottom) / 30, 0), 1)
+  // Construction geometry reads as reference marks: muted grey-blue, dashed,
+  // thinner, never filled — visibly "not material" next to regular features.
+  const construction = feature.operation === 'construction'
 
   let fill = 'rgba(78, 126, 170, 0.42)'
   let stroke = '#4e8dc1'
@@ -99,6 +102,10 @@ export function drawFeature(
     fill = excludeRegion ? 'rgba(153, 102, 204, 0.10)' : 'rgba(153, 102, 204, 0.30)'
     stroke = excludeRegion ? '#b58adf' : '#9966cc'
     lineDash = excludeRegion ? [7, 5] : []
+  }
+
+  if (construction) {
+    stroke = '#8a9aab'
   }
 
   if (groupSelected) {
@@ -130,14 +137,16 @@ export function drawFeature(
   const profiles = getFeatureGeometryProfiles(feature)
   for (const profile of profiles) {
     traceProfilePath(ctx, profile, vt)
-    if (profile.closed) {
+    if (profile.closed && !construction) {
       ctx.fillStyle = fill
       ctx.fill()
     }
 
     ctx.strokeStyle = stroke
-    ctx.lineWidth = editing || selected ? 2.5 : 1.8
-    ctx.setLineDash(lineDash)
+    ctx.lineWidth = construction
+      ? editing || selected ? 1.8 : 1.2
+      : editing || selected ? 2.5 : 1.8
+    ctx.setLineDash(construction ? [6, 4] : lineDash)
     ctx.stroke()
     ctx.setLineDash([])
   }
@@ -153,8 +162,10 @@ export function drawFeature(
     ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
     ctx.textAlign = 'center'
     ctx.fillText(feature.name, center.cx, center.cy - 5)
-    ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
-    ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
+    if (!construction) {
+      ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
+      ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
+    }
   }
 }
 

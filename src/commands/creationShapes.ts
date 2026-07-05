@@ -54,7 +54,9 @@ function isPlacementShape(shape: CreationShape): shape is PlacementShape {
 }
 
 export function shapeEnabledForTarget(shape: CreationShape, creationTarget: CreationTarget): boolean {
-  return creationTarget !== 'region' || shape !== 'text'
+  // Text is only a feature-target shape: regions must be closed masks and
+  // construction geometry is plain reference geometry (points/lines/shapes).
+  return creationTarget === 'feature' || shape !== 'text'
 }
 
 export function useCreationShapeCommands({

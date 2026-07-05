@@ -27,11 +27,12 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
   - `importMergeSlice.ts` — shape import and `.camj` folder merge actions
   - `constraintsSlice.ts` — persistent fixed-distance constraint placement, value updates, cancellation, and deletion
-  - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions, folders, region folders, and folder selection
+  - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions/construction, folders, region/construction folders, and folder selection
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived snapshot features from the feature tree; also previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `featureDefinitions.ts` — definition creation, orphan collection, instance rebaking, and make-unique support for feature references
+  - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks.
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
@@ -48,6 +49,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests
+- `constructionWorkflows.test.ts` — construction geometry (issue #199): creation target, conversions construction↔feature↔region, folder/section integrity, deferred constraints, save-version stamping, open-profile round trip
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior

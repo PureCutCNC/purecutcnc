@@ -23,6 +23,7 @@ import {
 import type { TextFeatureData } from '../../types/project'
 import type { Point, Project, SketchFeature, Clamp, Tab, FeatureFolder, FeatureOperation } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
+import { isMachinable } from './featureRoles'
 import { normalizeFeatureZRange } from './normalize'
 
 export function duplicateFeatureName(name: string, features: SketchFeature[], totalCount: number, step: number): string {
@@ -57,7 +58,7 @@ export function createTextFeatureAt(project: Project, config: TextToolConfig, an
   }
 
   const featureName = uniqueName(textFolderBaseName(config.text), project.features.map((feature) => feature.name))
-  const isFirstMachiningFeature = !project.features.some((feature) => feature.operation !== 'region')
+  const isFirstMachiningFeature = !project.features.some(isMachinable)
   const textData: TextFeatureData = {
     text: config.text,
     style: config.style,
