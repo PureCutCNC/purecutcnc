@@ -21,7 +21,7 @@
  *
  * These tests verify at the source level that:
  *   1. The CSS classes for the badge / note elements are defined in the stylesheet.
- *   2. FeatureTree renders the "mask" badge only when operation is 'region'.
+ *   2. FeatureTree renders one include/exclude badge only when operation is 'region'.
  *   3. CAMPanel renders the region-filter note when operationTargetsRegion is true,
  *      and the copy matches the agreed wording.
  *   4. PropertiesPanel shows the Z-lock and region note for region features.
@@ -52,27 +52,32 @@ const css = readSrc('src/styles/layout.css')
 const featureTree = readSrc('src/components/feature-tree/FeatureTree.tsx')
 const camPanel = readSrc('src/components/cam/CAMPanel.tsx')
 const propertiesPanel = readSrc('src/components/feature-tree/PropertiesPanel.tsx')
+const depthLegend = readSrc('src/components/canvas/DepthLegend.tsx')
 
 // ── CSS class definitions ────────────────────────────────────────
 
 assert(css.includes('.tree-region-badge'), 'layout.css must define .tree-region-badge')
+assert(css.includes('.tree-region-badge--exclude'), 'layout.css must define .tree-region-badge--exclude')
 assert(css.includes('.cam-region-note'), 'layout.css must define .cam-region-note')
 assert(css.includes('.cam-region-note__badge'), 'layout.css must define .cam-region-note__badge')
 assert(css.includes('.properties-region-note'), 'layout.css must define .properties-region-note')
 assert(css.includes('.properties-region-note__badge'), 'layout.css must define .properties-region-note__badge')
+assert(css.includes('.sketch-depth-legend__swatch--region-exclude'), 'layout.css must define the region exclude legend swatch')
 
-// ── FeatureTree: mask badge on region rows ───────────────────────
+// ── FeatureTree: include/exclude badge on region rows ────────────
 
 // Badge must be gated on operation === 'region' so non-region rows are unaffected.
 assert(
   featureTree.includes("operation === 'region'") && featureTree.includes('tree-region-badge'),
   'FeatureTree must render .tree-region-badge only when operation is "region"',
 )
-// Badge text is "mask" per REGION_FEATURE_SEMANTICS.md agreed copy.
-// The text is a JSX child node: >\n  mask\n< — match with a relaxed regex.
 assert(
-  /tree-region-badge[\s\S]{0,400}>\s*mask\s*</.test(featureTree),
-  'FeatureTree .tree-region-badge must display the text "mask"',
+  featureTree.includes("regionMaskMode === 'exclude' ? 'exclude' : 'include'"),
+  'FeatureTree .tree-region-badge must display include/exclude based on regionMaskMode',
+)
+assert(
+  featureTree.includes("regionMaskMode === 'exclude'") && featureTree.includes('tree-region-badge--exclude'),
+  'FeatureTree must display an "exclude" badge for exclude region masks',
 )
 
 // ── CAMPanel: region-filter note when operation targets a region ─
@@ -112,5 +117,17 @@ assert(
   propertiesPanel.includes('A region is a filter'),
   'PropertiesPanel region note must include the agreed filter explanation',
 )
+assert(
+  propertiesPanel.includes('Mask mode') && propertiesPanel.includes('Region mask') && propertiesPanel.includes('Exclude'),
+  'PropertiesPanel must expose Region mask operation and Include/Exclude mask mode controls',
+)
+
+// ── DepthLegend: merged subtract color and region include/exclude keys ──
+
+assert(depthLegend.includes('Subtract'), 'DepthLegend must include the merged Subtract color entry')
+assert(!depthLegend.includes('Subtract shallow'), 'DepthLegend must not keep the old Subtract shallow entry')
+assert(!depthLegend.includes('Subtract deep'), 'DepthLegend must not keep the old Subtract deep entry')
+assert(depthLegend.includes('Region include'), 'DepthLegend must include Region include')
+assert(depthLegend.includes('Region exclude'), 'DepthLegend must include Region exclude')
 
 console.log('regionPresentation.test.ts passed')

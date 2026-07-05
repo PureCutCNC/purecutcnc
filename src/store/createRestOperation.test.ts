@@ -192,6 +192,10 @@ function testEdgeRestCreatesGeneratedRegionFilters(): void {
     'expected rest region features to be region features',
   )
   assert(
+    restFeatures.every((feature) => feature?.regionMaskMode === 'include'),
+    'expected generated edge rest regions to default to include mask mode',
+  )
+  assert(
     restFeatures.every((feature) => !regionIds.includes(feature!.id)),
     'expected rest region IDs to differ from the source region IDs',
   )

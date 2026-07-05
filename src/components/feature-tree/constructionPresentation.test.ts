@@ -104,7 +104,7 @@ assert(
   'drawFeature must branch on construction',
 )
 assert(
-  previewPrimitives.includes('ctx.setLineDash([6, 4])'),
+  previewPrimitives.includes("ctx.setLineDash(construction ? [6, 4] : lineDash)"),
   'drawFeature must render construction with a dashed stroke',
 )
 assert(

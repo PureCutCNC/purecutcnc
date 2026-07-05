@@ -22,6 +22,7 @@ import type {
   FeatureTreeEntry,
   Matrix2D,
   Project,
+  RegionMaskMode,
   SketchFeature,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -575,14 +576,20 @@ export function createFeatureSlice(
         // z-strip for region/construction targets + force-add when the edited
         // row would be the first machinable feature after the patch.
         const { safePatch, safeOperation } = sanitizeOperationPatch(features, id, patch)
+        const safeRegionMaskMode: RegionMaskMode | undefined = safeOperation === 'region'
+          ? (safePatch.regionMaskMode ?? existingFeature?.regionMaskMode ?? 'include')
+          : undefined
 
-        // P1b: when operation changes on a linked instance, propagate to the
-        // definition and all siblings so the raw rows agree with the
-        // definition-owned operation (resolveFeatures.ts:436).
+        // P1b: when feature semantics change on a linked instance, propagate to
+        // the definition and all siblings so raw rows agree with the
+        // definition-owned operation/mask mode (resolveFeatures.ts).
         const defId = (existingFeature as SketchFeature & { definitionId?: string })?.definitionId
         const opExplicitlyChanged =
           safePatch.operation !== undefined && safePatch.operation !== existingFeature?.operation
         const shouldPropagateOp = opExplicitlyChanged && defId !== undefined
+        const regionMaskModeExplicitlyChanged =
+          safePatch.regionMaskMode !== undefined && safePatch.regionMaskMode !== existingFeature?.regionMaskMode
+        const shouldPropagateRegionMaskMode = regionMaskModeExplicitlyChanged && defId !== undefined
 
         // P1b-text: when a text feature's `text` changes, propagate it to the
         // shared definition and every linked instance. Text geometry is
@@ -599,12 +606,13 @@ export function createFeatureSlice(
           s.project.featureDefinitions[textDefId] !== undefined
 
         let nextDefinitions: Record<string, FeatureDefinition> = s.project.featureDefinitions
-        if (shouldPropagateOp) {
+        if (shouldPropagateOp || shouldPropagateRegionMaskMode) {
           nextDefinitions = {
             ...nextDefinitions,
             [defId!]: {
               ...nextDefinitions[defId!],
               operation: safeOperation as FeatureOperation,
+              regionMaskMode: safeRegionMaskMode,
             },
           }
         }
@@ -618,7 +626,7 @@ export function createFeatureSlice(
           }
         }
 
-        const linkedSiblingIds: Set<string> | null = shouldPropagateOp
+        const linkedSiblingIds: Set<string> | null = shouldPropagateOp || shouldPropagateRegionMaskMode
           ? new Set(getInstanceIdsForDefinition(s.project, defId!))
           : null
         const textSiblingIds: Set<string> | null = shouldPropagateText
@@ -636,21 +644,22 @@ export function createFeatureSlice(
             })
           }
 
-          const isOpSibling =
-            shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id)
+          const isSemanticSibling =
+            (shouldPropagateOp || shouldPropagateRegionMaskMode) && linkedSiblingIds !== null && linkedSiblingIds.has(f.id)
           const isTextSibling =
             shouldPropagateText && textSiblingIds !== null && textSiblingIds.has(f.id)
 
-          if (!isOpSibling && !isTextSibling) {
+          if (!isSemanticSibling && !isTextSibling) {
             return f
           }
 
           let sibling = f
-          if (isOpSibling) {
+          if (isSemanticSibling) {
             const op = safeOperation as FeatureOperation
             sibling = normalizeFeatureZRange({
               ...sibling,
               operation: op,
+              regionMaskMode: op === 'region' ? safeRegionMaskMode : undefined,
               folderId: folderIdForOperation(s.project, sibling.folderId, op),
             })
           }

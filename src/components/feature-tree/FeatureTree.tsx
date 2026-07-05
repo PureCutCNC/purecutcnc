@@ -16,7 +16,7 @@
 
 import { useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { FeatureOperation } from '../../types/project'
+import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -311,6 +311,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         visible={feature.visible}
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
+        regionMaskMode={feature.regionMaskMode ?? 'include'}
         isFirstFeature={feature.id === firstMachiningFeature?.id}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
@@ -787,6 +788,7 @@ interface TreeRowProps {
   visible?: boolean
   operation?: FeatureOperation
   profileClosed?: boolean
+  regionMaskMode?: RegionMaskMode
   isFirstFeature?: boolean
   linkedCount?: number
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
@@ -826,6 +828,7 @@ function TreeRow({
   visible,
   operation,
   profileClosed = true,
+  regionMaskMode,
   isFirstFeature = false,
   linkedCount,
   onClick,
@@ -991,10 +994,14 @@ function TreeRow({
         <span className="tree-label" title={label}>{label}</span>
         {kind === 'feature' && operation === 'region' ? (
           <span
-            className="tree-region-badge"
-            title="Region — limits where operations may cut. Not a shape to machine."
+            className={`tree-region-badge${regionMaskMode === 'exclude' ? ' tree-region-badge--exclude' : ''}`}
+            title={
+              regionMaskMode === 'exclude'
+                ? 'Exclude region — subtracts this area from the active region mask.'
+                : 'Include region — adds this area to the active region mask.'
+            }
           >
-            mask
+            {regionMaskMode === 'exclude' ? 'exclude' : 'include'}
           </span>
         ) : null}
         {kind === 'feature' && operation === 'construction' ? (
@@ -1211,10 +1218,10 @@ function TreeRow({
                           onToggleOperation('region')
                           setOperationMenuPos(null)
                         }}
-                        title="Region — feature filters machining operations"
+                        title="Region mask — feature filters machining operations"
                       >
                         <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
-                        <span>Region</span>
+                        <span>Region mask</span>
                       </button>
                     </>
                   )}

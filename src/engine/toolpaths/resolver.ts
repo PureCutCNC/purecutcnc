@@ -34,7 +34,7 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
-import { buildRegionMask } from './regions'
+import { applyRegionMaskToPaths, buildRegionMask } from './regions'
 
 interface FeatureWithSpan {
   feature: SketchFeature
@@ -349,8 +349,8 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       )
     }
 
-    if (operation.kind !== 'pocket' && resolvedPaths.length > 0 && regionMask) {
-      resolvedPaths = executeClipPaths(resolvedPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
+    if (resolvedPaths.length > 0 && regionMask && operation.kind !== 'pocket') {
+      resolvedPaths = applyRegionMaskToPaths(resolvedPaths, regionMask)
     }
 
     if (resolvedPaths.length === 0) {

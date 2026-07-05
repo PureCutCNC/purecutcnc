@@ -31,6 +31,7 @@ import type {
   Matrix2D,
   Point,
   Project,
+  RegionMaskMode,
   SketchFeature,
   SketchProfile,
 } from '../../types/project'
@@ -112,7 +113,11 @@ export function propagateOperationToLinkedInstances(
   for (const [defId, operation] of definitionOps) {
     nextDefinitions = {
       ...nextDefinitions,
-      [defId]: { ...nextDefinitions[defId], operation },
+      [defId]: {
+        ...nextDefinitions[defId],
+        operation,
+        regionMaskMode: operation === 'region' ? (nextDefinitions[defId].regionMaskMode ?? 'include') : undefined,
+      },
     }
   }
 
@@ -125,6 +130,7 @@ export function propagateOperationToLinkedInstances(
     return normalizeFeature({
       ...feature,
       operation,
+      regionMaskMode: operation === 'region' ? (feature.regionMaskMode ?? 'include') : undefined,
       folderId: reconcileFolderId(feature.folderId, operation),
     })
   })
@@ -140,6 +146,17 @@ export interface CreateSnapshotDefinitionParams {
   profile: SketchProfile
   kind: FeatureKind
   operation: FeatureOperation
+  regionMaskMode?: RegionMaskMode
+}
+
+function definitionRegionMaskMode(
+  operation: FeatureOperation,
+  mode?: RegionMaskMode,
+): RegionMaskMode | undefined {
+  if (operation !== 'region') {
+    return undefined
+  }
+  return mode === 'exclude' ? 'exclude' : 'include'
 }
 
 /**
@@ -164,6 +181,7 @@ export function createSnapshotDefinition(
     text: null,
     stl: null,
     operation: params.operation,
+    regionMaskMode: definitionRegionMaskMode(params.operation, params.regionMaskMode),
   }
   return { definitionId, definition }
 }
@@ -191,6 +209,7 @@ export function createDefinitionForFeature(
     text: feature.text ? { ...feature.text } : null,
     stl: feature.stl ? { ...feature.stl } : null,
     operation: feature.operation,
+    regionMaskMode: definitionRegionMaskMode(feature.operation, feature.regionMaskMode),
   }
   return { definitionId, definition }
 }
