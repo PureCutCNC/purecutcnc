@@ -10,6 +10,12 @@ Start every session by reading [`INDEX.md`](INDEX.md) at the repo root. It maps 
 
 **Maintenance rule:** when you add, rename, remove, or significantly change the purpose of a file, update the nearest `INDEX.md` in the same commit. If you create a new folder with non-trivial content, add an `INDEX.md` there and link it from the parent index.
 
+## Codebase memory (MCP)
+
+If the `codebase-memory-mcp` server is connected, prefer its graph tools (`search_graph`, `get_architecture`, `trace_path`, `get_code_snippet`, `search_code`) over blind grep for structural questions; fall back to Grep/Glob/Read for text content.
+
+**Every tool takes a `project` argument that is the project *name*, not a filesystem path.** Call `list_projects` first and pass back the exact `name` it returns (the repo path with `/` replaced by `-`, e.g. `Users-frankp-Projects-purecutcnc`). Passing a path yields `{"error":"project not found or not indexed"}` — a wrong-argument error, not a broken server; retry with the name. If the repo isn't listed yet, run `index_repository` once. If calls repeatedly fail with `Connection closed`, the local graph cache is bloated with stale project graphs — prune it and retry.
+
 ## Workflow: Issue → Plan → Approve → Implement → PR
 
 **Every task follows this loop. No exceptions — even a one-line bug fix gets an issue and a short plan.** The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable. Tasks are tracked on the GitHub Project board ([PureCutCNC project #1](https://github.com/orgs/PureCutCNC/projects/1)), **not** in checked-in plan files.
