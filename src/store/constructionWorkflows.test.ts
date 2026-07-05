@@ -248,6 +248,65 @@ function testCopyIntoGroup(): void {
   assert(copyFolder?.section === 'construction', 'copied group folder keeps the section')
 }
 
+// ── Base-solid rule tracks the first MACHINABLE feature ──────────
+
+function testFirstMachinableRule(): void {
+  console.log('Testing base-solid rule against the first machinable feature...')
+  freshStore()
+  useProjectStore.getState().setCreationTarget('construction')
+  useProjectStore.getState().addRectFeature('C1', 0, 0, 5, 5, 5)
+  useProjectStore.getState().setCreationTarget('feature')
+  useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
+  const baseId = lastFeature().id
+  assert(getFeature(baseId).operation === 'add', 'first machinable feature is forced to add')
+  useProjectStore.getState().addRectFeature('Pocket', 2, 2, 8, 8, 5)
+  const pocketId = lastFeature().id
+  assert(getFeature(pocketId).operation === 'subtract', 'later feature stays subtract')
+
+  // The first machinable feature is row 1 (construction sits at row 0) —
+  // changing it to subtract must still be forced back to add.
+  useProjectStore.getState().updateFeature(baseId, { operation: 'subtract' })
+  assert(getFeature(baseId).operation === 'add', 'first machinable feature cannot become subtract')
+
+  // Converting the base out of the model cascades the rule to the successor
+  // (mirrors reorderFeatures): the pocket becomes the new base and turns add.
+  useProjectStore.getState().updateFeature(baseId, { operation: 'construction' })
+  assert(getFeature(baseId).operation === 'construction', 'base may convert to construction')
+  assert(getFeature(pocketId).operation === 'add', 'successor is forced to add when the base leaves the model')
+}
+
+// ── Bulk operation changes propagate to definitions + linked siblings ──
+
+function testBulkLinkedPropagation(): void {
+  console.log('Testing updateFeatures propagates operation to definitions and linked siblings...')
+  freshStore()
+  useProjectStore.getState().addRectFeature('Base', 0, 0, 40, 40, 5)
+  useProjectStore.getState().addRectFeature('Pocket', 2, 2, 8, 8, 5)
+  const pocketId = lastFeature().id
+  const [copyId] = copyByMove([pocketId])
+  assert(copyId !== undefined, 'reference copy created')
+  const defId = (getFeature(copyId) as SketchFeature & { definitionId?: string }).definitionId
+  assert(defId !== undefined, 'reference copy is linked to a definition')
+
+  // Bulk-convert only the copy: the shared definition AND the linked sibling
+  // outside the selection must follow (same semantics as updateFeature).
+  useProjectStore.getState().updateFeatures([copyId], { operation: 'construction' })
+  assert(getFeature(copyId).operation === 'construction', 'selected instance converted')
+  assert(getFeature(pocketId).operation === 'construction', 'linked sibling outside the selection followed')
+  assert(
+    useProjectStore.getState().project.featureDefinitions[defId].operation === 'construction',
+    'shared definition operation followed',
+  )
+
+  useProjectStore.getState().updateFeatures([copyId], { operation: 'subtract' })
+  assert(getFeature(copyId).operation === 'subtract', 'bulk conversion back to subtract')
+  assert(getFeature(pocketId).operation === 'subtract', 'sibling follows back')
+  assert(
+    useProjectStore.getState().project.featureDefinitions[defId].operation === 'subtract',
+    'definition follows back',
+  )
+}
+
 // ── Constraints stay deferred on construction ────────────────────
 
 function testConstraintDeferred(): void {
@@ -324,6 +383,8 @@ testConversions()
 testSectionIntegrity()
 testGrouping()
 testCopyIntoGroup()
+testFirstMachinableRule()
+testBulkLinkedPropagation()
 testConstraintDeferred()
 testSaveVersionStamping()
 

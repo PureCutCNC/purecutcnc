@@ -126,6 +126,25 @@ assert(
   propertiesPanel.includes('Construction geometry is a sketch reference'),
   'PropertiesPanel construction note must include the agreed explanation',
 )
+// Single-feature AND multi-select operation controls both offer Construction.
+assert(
+  propertiesPanel.split("{ value: 'construction', label: 'Construction' }").length >= 3,
+  'PropertiesPanel must offer Construction in both operation selectors',
+)
+// Open profiles convert Line ↔ Construction (mirrors the tree menu).
+assert(
+  propertiesPanel.includes("{ value: 'line', label: 'Line' }"),
+  'PropertiesPanel open-profile operation control must offer Line ↔ Construction',
+)
+// The base-solid lock tracks the first MACHINABLE feature, not row 0.
+assert(
+  propertiesPanel.includes('project.features.find(isMachinable)'),
+  'PropertiesPanel first-machining lookup must use isMachinable',
+)
+assert(
+  featureTree.includes('feature.id === firstMachiningFeature?.id'),
+  'FeatureTree first-feature lock must track the first machinable feature',
+)
 
 // ── AppShell: statusbar visibility toggle ────────────────────────
 

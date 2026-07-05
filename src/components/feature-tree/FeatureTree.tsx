@@ -291,7 +291,6 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       return null
     }
 
-    const index = project.features.findIndex((entry) => entry.id === feature.id)
     const defId = getDefinitionId(feature)
     const linkedCount = getInstanceIdsForDefinition(project, defId).length
     const canMoveUp = tabletShell && siblingIndex !== undefined && siblingIndex > 0
@@ -312,7 +311,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         visible={feature.visible}
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
-        isFirstFeature={index === 0}
+        isFirstFeature={feature.id === firstMachiningFeature?.id}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}

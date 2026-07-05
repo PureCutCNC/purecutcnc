@@ -21,7 +21,7 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { convertLength } from '../../utils/units'
 import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../../types/project'
-import type { Clamp, Operation, Point, Project, SketchFeature, Tab, Tool } from '../../types/project'
+import type { Clamp, FeatureOperation, Operation, Point, Project, SketchFeature, Tab, Tool } from '../../types/project'
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isMachinable } from './featureRoles'
@@ -488,4 +488,48 @@ export function isFirstFeatureValid(features: SketchFeature[]): boolean {
   const firstMachiningFeature = features.find(isMachinable)
   if (!firstMachiningFeature) return true
   return firstMachiningFeature.operation === 'add' || isImportedModelFeature(firstMachiningFeature)
+}
+
+/**
+ * Sanitize an operation-bearing feature patch against the base-solid rule:
+ * z edits are stripped for region/construction targets, and if the edited row
+ * would be the FIRST MACHINABLE feature after the patch (row order, skipping
+ * regions/construction), a machinable operation other than 'add' is forced
+ * back to 'add'. Converting the row out of the model (region/construction) is
+ * allowed — `enforceFirstMachinableAdd` then protects the successor.
+ */
+export function sanitizeOperationPatch(
+  features: SketchFeature[],
+  targetId: string,
+  patch: Partial<SketchFeature>,
+): { safePatch: Partial<SketchFeature>; safeOperation: FeatureOperation | undefined } {
+  const existing = features.find((feature) => feature.id === targetId) ?? null
+  const nextOperation = patch.operation ?? existing?.operation
+  const nextKind = patch.kind ?? existing?.kind
+  const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
+  const zSafePatch = nextOperation === 'region' || nextOperation === 'construction'
+    ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'z_top' && key !== 'z_bottom')) as Partial<SketchFeature>
+    : patch
+  const firstMachinableAfter = features.find((feature) =>
+    isMachinable({ operation: (feature.id === targetId ? nextOperation ?? feature.operation : feature.operation) }))
+  const isFirstMachinableAfter = firstMachinableAfter?.id === targetId
+  const safePatch: Partial<SketchFeature> =
+    isFirstMachinableAfter && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add'
+      ? { ...zSafePatch, operation: 'add' }
+      : zSafePatch
+  return { safePatch, safeOperation: safePatch.operation ?? existing?.operation }
+}
+
+/**
+ * Post-edit cascade for the base-solid rule (mirrors reorderFeatures): if the
+ * first machinable feature in row order is not 'add' and not an imported
+ * model, force it to 'add'. Keeps operation edits from exposing a subtract as
+ * the base solid, e.g. after converting the previous base to construction.
+ */
+export function enforceFirstMachinableAdd(features: SketchFeature[]): SketchFeature[] {
+  const first = features.find(isMachinable)
+  if (!first || first.operation === 'add' || isImportedModelFeature(first)) {
+    return features
+  }
+  return features.map((feature) => (feature.id === first.id ? { ...feature, operation: 'add' } : feature))
 }

@@ -1258,8 +1258,9 @@ export function PropertiesPanel() {
   const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
-  // First 2.5D feature in the tree must be 'add'; imported STL models are locked as Model.
-  const firstMachiningFeature = project.features.find((feature) => feature.operation !== 'region') ?? null
+  // First MACHINABLE feature in the tree must be 'add' (regions/construction
+  // don't count); imported STL models are locked as Model.
+  const firstMachiningFeature = project.features.find(isMachinable) ?? null
   const isFirstFeature =
     firstMachiningFeature?.id === selectedFeature.id
   const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
@@ -1279,10 +1280,18 @@ export function PropertiesPanel() {
           <label className="properties-field">
             <span>Operation</span>
             {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
-              <div className="properties-locked-field" title="Line features are open profiles and cannot change operation type">
-                <span>Line</span>
-                <span className="properties-locked-hint" aria-hidden="true">🔒</span>
-              </div>
+              // Open profiles convert between Line (engraved path) and
+              // Construction (sketch reference) only — mirrors the tree menu.
+              <Select
+                value={selectedFeature.operation === 'construction' ? 'construction' : 'line'}
+                options={[
+                  { value: 'line', label: 'Line' },
+                  { value: 'construction', label: 'Construction' },
+                ]}
+                onChange={(value) => updateFeature(selectedFeature.id, {
+                  operation: value as import('../../types/project').FeatureOperation,
+                })}
+              />
             ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
               <div className="properties-locked-field" title={
                 selectedFeature.operation === 'model'
@@ -1299,6 +1308,7 @@ export function PropertiesPanel() {
                   { value: 'subtract', label: 'Subtract' },
                   { value: 'add', label: 'Add' },
                   { value: 'region', label: 'Region' },
+                  { value: 'construction', label: 'Construction' },
                 ]}
                 onChange={(value) => updateFeature(selectedFeature.id, {
                   operation: value as import('../../types/project').FeatureOperation,

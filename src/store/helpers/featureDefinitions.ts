@@ -80,6 +80,58 @@ export function getInstanceIdsForDefinition(
   return ids
 }
 
+/**
+ * P1b for bulk edits: after `changedIds` rows have new operations applied,
+ * write each row's operation to its shared definition and mirror it onto
+ * every linked sibling OUTSIDE the changed set (same semantics as
+ * updateFeature's single-row propagation, so resolver read paths that take
+ * `operation` from `definition.operation` stay consistent). Siblings get
+ * their folder reconciled to the new operation's tree section. Rows without
+ * an explicit `definitionId` are skipped, matching updateFeature.
+ */
+export function propagateOperationToLinkedInstances(
+  features: SketchFeature[],
+  definitions: Record<string, FeatureDefinition>,
+  changedIds: ReadonlySet<string>,
+  reconcileFolderId: (folderId: string | null, operation: FeatureOperation) => string | null,
+  normalizeFeature: (feature: SketchFeature) => SketchFeature,
+): { features: SketchFeature[]; definitions: Record<string, FeatureDefinition> } {
+  const definitionOps = new Map<string, FeatureOperation>()
+  for (const feature of features) {
+    if (!changedIds.has(feature.id)) continue
+    const defId = (feature as SketchFeature & { definitionId?: string }).definitionId
+    if (defId !== undefined && definitions[defId] !== undefined) {
+      definitionOps.set(defId, feature.operation)
+    }
+  }
+  if (definitionOps.size === 0) {
+    return { features, definitions }
+  }
+
+  let nextDefinitions = definitions
+  for (const [defId, operation] of definitionOps) {
+    nextDefinitions = {
+      ...nextDefinitions,
+      [defId]: { ...nextDefinitions[defId], operation },
+    }
+  }
+
+  const nextFeatures = features.map((feature) => {
+    if (changedIds.has(feature.id)) return feature
+    const defId = (feature as SketchFeature & { definitionId?: string }).definitionId
+    if (defId === undefined) return feature
+    const operation = definitionOps.get(defId)
+    if (operation === undefined || feature.operation === operation) return feature
+    return normalizeFeature({
+      ...feature,
+      operation,
+      folderId: reconcileFolderId(feature.folderId, operation),
+    })
+  })
+
+  return { features: nextFeatures, definitions: nextDefinitions }
+}
+
 // ============================================================================
 // Definition creation (snapshot + live-feature minting)
 // ============================================================================

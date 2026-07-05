@@ -28,8 +28,10 @@ import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
   cloneProject,
+  enforceFirstMachinableAdd,
   normalizeFeatureZRange,
   projectsEqual,
+  sanitizeOperationPatch,
   syncFeatureTreeProject,
   syncStockFromSourceFeature,
 } from '../helpers/normalize'
@@ -59,7 +61,7 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from '../helpers/derivedFeatures'
-import { createDefinitionForFeature, gcOrphanedDefinitions, getDefinitionId, getInstanceIdsForDefinition } from '../helpers/featureDefinitions'
+import { createDefinitionForFeature, gcOrphanedDefinitions, getDefinitionId, getInstanceIdsForDefinition, propagateOperationToLinkedInstances } from '../helpers/featureDefinitions'
 import { resolveFeatureInstances } from '../helpers/resolveFeatures'
 import { expandTextFeature } from '../helpers/textExpansion'
 import {
@@ -568,21 +570,11 @@ export function createFeatureSlice(
     updateFeature: (id, patch) =>
       set((s) => {
         const features = s.project.features
-        const isFirst = features.length > 0 && features[0].id === id
         const existingFeature = features.find((feature) => feature.id === id) ?? null
-        const nextOperation = patch.operation ?? existingFeature?.operation
-        const nextKind = patch.kind ?? existingFeature?.kind
-        const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
-        const zSafePatch = nextOperation === 'region' || nextOperation === 'construction'
-          ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'z_top' && key !== 'z_bottom')) as Partial<SketchFeature>
-          : patch
-        // The first-row "must be add" guard only applies when the row stays
-        // machinable — converting it to construction takes it out of the model.
-        const safePatch: Partial<SketchFeature> =
-          isFirst && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add' && zSafePatch.operation !== 'construction'
-            ? { ...zSafePatch, operation: 'add' }
-            : zSafePatch
-        const safeOperation = safePatch.operation ?? existingFeature?.operation
+        // Base-solid rule against the first MACHINABLE feature (not row 0):
+        // z-strip for region/construction targets + force-add when the edited
+        // row would be the first machinable feature after the patch.
+        const { safePatch, safeOperation } = sanitizeOperationPatch(features, id, patch)
 
         // P1b: when operation changes on a linked instance, propagate to the
         // definition and all siblings so the raw rows agree with the
@@ -633,51 +625,50 @@ export function createFeatureSlice(
           ? new Set(getInstanceIdsForDefinition(s.project, textDefId!))
           : null
 
+        const mappedFeatures = features.map((f) => {
+          const isEdited = f.id === id
+
+          if (isEdited) {
+            return normalizeFeatureZRange({
+              ...f,
+              ...safePatch,
+              folderId: folderIdForOperation(s.project, safePatch.folderId ?? f.folderId, safeOperation),
+            })
+          }
+
+          const isOpSibling =
+            shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id)
+          const isTextSibling =
+            shouldPropagateText && textSiblingIds !== null && textSiblingIds.has(f.id)
+
+          if (!isOpSibling && !isTextSibling) {
+            return f
+          }
+
+          let sibling = f
+          if (isOpSibling) {
+            const op = safeOperation as FeatureOperation
+            sibling = normalizeFeatureZRange({
+              ...sibling,
+              operation: op,
+              folderId: folderIdForOperation(s.project, sibling.folderId, op),
+            })
+          }
+          if (isTextSibling) {
+            sibling = {
+              ...sibling,
+              text: safePatch.text ? { ...safePatch.text } : null,
+            }
+          }
+          return sibling
+        })
+
         let nextProject: Project = {
           ...s.project,
           featureDefinitions: nextDefinitions,
-          features: features.map((f, fi) => {
-            const isEdited = f.id === id
-
-            if (isEdited) {
-              return normalizeFeatureZRange({
-                ...f,
-                ...safePatch,
-                folderId: folderIdForOperation(s.project, safePatch.folderId ?? f.folderId, safeOperation),
-              })
-            }
-
-            const isOpSibling =
-              shouldPropagateOp && linkedSiblingIds !== null && linkedSiblingIds.has(f.id)
-            const isTextSibling =
-              shouldPropagateText && textSiblingIds !== null && textSiblingIds.has(f.id)
-
-            if (!isOpSibling && !isTextSibling) {
-              return f
-            }
-
-            let sibling = f
-            if (isOpSibling) {
-              // Apply the same operation to the sibling, with its own isFirst
-              // guard (first feature in the tree can't be subtract).
-              const siblingIsFirst = fi === 0
-              const op = safeOperation as FeatureOperation
-              const siblingOp =
-                siblingIsFirst && op !== 'add' && op !== 'construction' ? ('add' as const) : op
-              sibling = normalizeFeatureZRange({
-                ...sibling,
-                operation: siblingOp,
-                folderId: folderIdForOperation(s.project, sibling.folderId, siblingOp),
-              })
-            }
-            if (isTextSibling) {
-              sibling = {
-                ...sibling,
-                text: safePatch.text ? { ...safePatch.text } : null,
-              }
-            }
-            return sibling
-          }),
+          // Cascade guard (mirrors reorderFeatures): an operation edit must
+          // not leave a non-add feature as the base solid.
+          features: opExplicitlyChanged ? enforceFirstMachinableAdd(mappedFeatures) : mappedFeatures,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncStockFromSourceFeature(nextProject, id)
@@ -705,31 +696,39 @@ export function createFeatureSlice(
 
         const selectedIds = new Set(ids)
         const features = s.project.features
+        let mappedFeatures = features.map((feature) => {
+          if (!selectedIds.has(feature.id)) {
+            return feature
+          }
+
+          const { safePatch, safeOperation } = sanitizeOperationPatch(features, feature.id, patch)
+          return normalizeFeatureZRange({
+            ...feature,
+            ...safePatch,
+            folderId: folderIdForOperation(s.project, safePatch.folderId ?? feature.folderId, safeOperation),
+          })
+        })
+
+        // P1b for bulk edits: mirror updateFeature's propagation so an
+        // operation change reaches the shared definitions and any linked
+        // siblings outside the selection, then re-assert the base-solid rule.
+        let nextDefinitions = s.project.featureDefinitions
+        if (patch.operation !== undefined) {
+          const propagated = propagateOperationToLinkedInstances(
+            mappedFeatures,
+            nextDefinitions,
+            selectedIds,
+            (folderId, operation) => folderIdForOperation(s.project, folderId, operation),
+            normalizeFeatureZRange,
+          )
+          mappedFeatures = enforceFirstMachinableAdd(propagated.features)
+          nextDefinitions = propagated.definitions
+        }
+
         const nextProject = {
           ...s.project,
-          features: features.map((feature, index) => {
-            if (!selectedIds.has(feature.id)) {
-              return feature
-            }
-
-            const nextOperation = patch.operation ?? feature.operation
-            const nextKind = patch.kind ?? feature.kind
-            const nextIsImportedModel = nextKind === 'stl' && nextOperation === 'model'
-            const zSafePatch = nextOperation === 'region' || nextOperation === 'construction'
-              ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'z_top' && key !== 'z_bottom')) as Partial<SketchFeature>
-              : patch
-            const safePatch: Partial<SketchFeature> =
-              index === 0 && !nextIsImportedModel && zSafePatch.operation !== undefined && zSafePatch.operation !== 'add' && zSafePatch.operation !== 'construction'
-                ? { ...zSafePatch, operation: 'add' }
-                : zSafePatch
-            const safeOperation = safePatch.operation ?? feature.operation
-
-            return normalizeFeatureZRange({
-              ...feature,
-              ...safePatch,
-              folderId: folderIdForOperation(s.project, safePatch.folderId ?? feature.folderId, safeOperation),
-            })
-          }),
+          features: mappedFeatures,
+          featureDefinitions: nextDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {
