@@ -218,6 +218,7 @@ export interface LocalDimension {
 // ============================================================
 
 export type FeatureOperation = 'add' | 'subtract' | 'region' | 'model' | 'line'
+export type RegionMaskMode = 'include' | 'exclude'
 export type TextFontStyle = 'skeleton' | 'outline'
 export type TextFontId =
   | 'simple_stroke'
@@ -309,6 +310,7 @@ export interface SketchFeature {
   folderId: string | null
   sketch: Sketch
   operation: FeatureOperation
+  regionMaskMode?: RegionMaskMode
   z_top: DimensionRef
   z_bottom: DimensionRef
   visible: boolean
@@ -351,6 +353,7 @@ export interface FeatureDefinition {
   text?: TextFeatureData | null
   stl?: STLFeatureData | null
   operation: FeatureOperation
+  regionMaskMode?: RegionMaskMode
 }
 
 /**

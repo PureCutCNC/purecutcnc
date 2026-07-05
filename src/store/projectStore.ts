@@ -49,6 +49,7 @@ import { syncIdCounter } from './helpers/ids'
 import {
   cloneProject,
   dedupeProjectIds,
+  normalizeFeatureDefinition,
   normalizeClamp,
   normalizeFeatureZRange,
   normalizeMachineDefinitions,
@@ -131,7 +132,9 @@ export function normalizeProject(project: Project): Project {
   const rawDefs = (project as unknown as Record<string, unknown>).featureDefinitions as
     | Record<string, FeatureDefinition>
     | undefined
-  const existingFeatureDefinitions: Record<string, FeatureDefinition> = rawDefs ?? {}
+  const existingFeatureDefinitions: Record<string, FeatureDefinition> = Object.fromEntries(
+    Object.entries(rawDefs ?? {}).map(([id, definition]) => [id, normalizeFeatureDefinition(definition)]),
+  )
   const needsFeatureReferenceMigration = Object.keys(existingFeatureDefinitions).length === 0
   const projectVersion: Project['version'] = needsFeatureReferenceMigration ? '2.0' : project.version
 
@@ -188,7 +191,7 @@ export function normalizeProject(project: Project): Project {
   if (needsFeatureReferenceMigration) {
     featureDefinitions = {}
     for (const feature of normalizedBase.features) {
-      featureDefinitions[feature.id] = {
+      featureDefinitions[feature.id] = normalizeFeatureDefinition({
         id: feature.id,
         kind: feature.kind,
         profile: feature.sketch.profile,
@@ -196,7 +199,8 @@ export function normalizeProject(project: Project): Project {
         text: feature.text ? { ...feature.text } : null,
         stl: feature.stl ? { ...feature.stl } : null,
         operation: feature.operation,
-      }
+        regionMaskMode: feature.regionMaskMode,
+      })
     }
   } else {
     featureDefinitions = { ...existingFeatureDefinitions }

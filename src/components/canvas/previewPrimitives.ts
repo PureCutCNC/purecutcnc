@@ -82,6 +82,7 @@ export function drawFeature(
 
   let fill = 'rgba(78, 126, 170, 0.42)'
   let stroke = '#4e8dc1'
+  let lineDash: number[] = []
 
   if (feature.operation === 'add') {
     fill = 'rgba(92, 165, 115, 0.43)'
@@ -94,8 +95,10 @@ export function drawFeature(
   }
 
   if (feature.operation === 'region') {
-    fill = 'rgba(153, 102, 204, 0.30)'
-    stroke = '#9966cc'
+    const excludeRegion = feature.regionMaskMode === 'exclude'
+    fill = excludeRegion ? 'rgba(153, 102, 204, 0.10)' : 'rgba(153, 102, 204, 0.30)'
+    stroke = excludeRegion ? '#b58adf' : '#9966cc'
+    lineDash = excludeRegion ? [7, 5] : []
   }
 
   if (groupSelected) {
@@ -134,7 +137,9 @@ export function drawFeature(
 
     ctx.strokeStyle = stroke
     ctx.lineWidth = editing || selected ? 2.5 : 1.8
+    ctx.setLineDash(lineDash)
     ctx.stroke()
+    ctx.setLineDash([])
   }
 
   if (showInfo) {

@@ -15,7 +15,14 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import { polygonProfile, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
+import {
+  polygonProfile,
+  type Operation,
+  type Point,
+  type Project,
+  type RegionMaskMode,
+  type SketchFeature,
+} from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -26,7 +33,7 @@ import {
 } from './geometry'
 import { buildInsetRegions } from './pocket'
 import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
-import { buildRegionMask, splitFeatureTargets } from './regions'
+import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './types'
@@ -34,6 +41,7 @@ import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './
 export interface RestRegionDraft {
   profile: SketchFeature['sketch']['profile']
   sourceOperationId: string
+  regionMaskMode?: RegionMaskMode
 }
 
 export interface RestRegionDraftResult {
@@ -388,22 +396,44 @@ function signedContourArea(contour: Point[]): number {
   return area / 2
 }
 
+function pointInContour(point: Point, contour: Point[]): boolean {
+  const clipperPoint = {
+    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
+  }
+  const clipperContour = toClipperPath(contour, DEFAULT_CLIPPER_SCALE)
+  return (ClipperLib.Clipper as unknown as {
+    PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number
+  }).PointInPolygon(clipperPoint, clipperContour) > 0
+}
+
 function areaPathsToDrafts(paths: ClipperPath[], toolRadius: number, operation: Operation): RestRegionDraft[] {
   const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolRadius * toolRadius * 0.0004)
   const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.04)
-  return clipperPathsToPointContours(paths)
+  const contours = clipperPathsToPointContours(paths)
     .filter((contour) => contour.length >= 3)
-    // Drop hole contours: a draft profile is a single loop, and emitting a hole
-    // as a positive region would carve out an already-cleared centre as its own
-    // "inside" region.
-    .filter((contour) => signedContourArea(contour) > 0)
-    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
     .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
     .map(cleanClosedContour)
     .filter((contour) => contour.length >= 3)
-    .map((contour) => ({
+    .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
+
+  return contours
+    .map((contour, index) => {
+      const depth = contours.reduce((count, other, otherIndex) => (
+        otherIndex !== index && pointInContour(contour[0], other) ? count + 1 : count
+      ), 0)
+      return {
+        contour,
+        depth,
+        index,
+        area: Math.abs(signedContourArea(contour)),
+      }
+    })
+    .sort((a, b) => a.depth - b.depth || b.area - a.area || a.index - b.index)
+    .map(({ contour, depth }) => ({
       profile: polygonProfile(contour),
       sourceOperationId: operation.id,
+      regionMaskMode: depth % 2 === 0 ? 'include' : 'exclude',
     }))
 }
 
@@ -411,7 +441,7 @@ function generateAreaRestRegionDrafts(
   resolved: ResolvedPocketResult,
   operation: Operation,
   toolRadius: number,
-  sourceMaskPaths: ClipperPath[] | null = null,
+  sourceMask: RegionMask | null = null,
 ): RestRegionDraft[] {
   const sourceAreaPaths: ClipperPath[] = []
   const reachableAreaPaths: ClipperPath[] = []
@@ -429,14 +459,14 @@ function generateAreaRestRegionDrafts(
   }
 
   let sourceUnion = unionClipperPaths(sourceAreaPaths)
-  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
-    sourceUnion = intersectClipperPaths(sourceUnion, sourceMaskPaths)
+  if (sourceMask) {
+    sourceUnion = applyRegionMaskToPaths(sourceUnion, sourceMask)
   }
   if (sourceUnion.length === 0) return []
 
   let reachableUnion = unionClipperPaths(reachableAreaPaths)
-  if (sourceMaskPaths && sourceMaskPaths.length > 0) {
-    reachableUnion = intersectClipperPaths(reachableUnion, sourceMaskPaths)
+  if (sourceMask) {
+    reachableUnion = applyRegionMaskToPaths(reachableUnion, sourceMask)
   }
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
   if (restPaths.length === 0) return []
@@ -560,8 +590,8 @@ function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operat
   let reachableBand = differenceClipperPaths(sweptOuter, sweptInner)
 
   if (regionMask) {
-    sourceBand = intersectClipperPaths(sourceBand, regionMask.paths)
-    reachableBand = intersectClipperPaths(reachableBand, regionMask.paths)
+    sourceBand = applyRegionMaskToPaths(sourceBand, regionMask)
+    reachableBand = applyRegionMaskToPaths(reachableBand, regionMask)
   }
 
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceBand, reachableBand))
@@ -607,7 +637,7 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
     ? splitFeatureTargets(project, operation.target.featureIds)
     : null
   const regionMask = splitTargets ? buildRegionMask(splitTargets.regionFeatures) : null
-  const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask?.paths ?? null)
+  const drafts = generateAreaRestRegionDrafts(resolved, operation, tool.radius, regionMask)
 
   return {
     drafts,

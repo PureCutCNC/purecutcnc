@@ -32,12 +32,8 @@ export function DepthLegend({ onToggleDepthLegend }: { onToggleDepthLegend?: () 
       </div>
       <div className="sketch-depth-legend__items">
         <div className="sketch-depth-legend__item">
-          <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
-          <span>Subtract shallow</span>
-        </div>
-        <div className="sketch-depth-legend__item">
-          <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
-          <span>Subtract deep</span>
+          <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract" />
+          <span>Subtract</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
@@ -45,7 +41,11 @@ export function DepthLegend({ onToggleDepthLegend }: { onToggleDepthLegend?: () 
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
-          <span>Region</span>
+          <span>Region include</span>
+        </div>
+        <div className="sketch-depth-legend__item">
+          <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region-exclude" />
+          <span>Region exclude</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />

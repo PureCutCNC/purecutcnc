@@ -56,7 +56,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
-import { buildRegionMask, splitFeatureTargets } from './regions'
+import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 
 interface PolyTreeNode {
@@ -75,6 +75,7 @@ interface SurfaceCleanResult {
   operationId: string
   units: ResolvedPocketResult['units']
   bands: SurfaceCleanBand[]
+  regionMask: ReturnType<typeof buildRegionMask>
   warnings: string[]
 }
 
@@ -179,6 +180,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask: null,
       warnings: ['Only surface-clean operations can be resolved by the surface-clean resolver'],
     }
   }
@@ -188,6 +190,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask: null,
       warnings: ['Surface-clean operation has no feature targets'],
     }
   }
@@ -220,6 +223,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
+      regionMask,
       warnings: [...warnings, 'No valid add features were found for this surface-clean operation'],
     }
   }
@@ -256,9 +260,6 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
     const protectedPaths = protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
     subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
-    if (regionMask) {
-      subjectPaths = executeClipPaths(subjectPaths, regionMask.paths, ClipperLib.ClipType.ctIntersection)
-    }
     const polyTree = executeClip(subjectPaths, [], ClipperLib.ClipType.ctUnion)
     const regions = polyTreeToRegions(
       polyTree,
@@ -290,6 +291,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     operationId: operation.id,
     units: project.meta.units,
     bands,
+    regionMask,
     warnings,
   }
 }
@@ -604,11 +606,12 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     bounds = updateBounds(bounds, move.to)
   }
 
-  return {
+  const result: PocketToolpathResult = {
     operationId: operation.id,
     moves: allMoves,
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
+  return clipToolpathResultToRegionMask(project, result, resolved.regionMask) as PocketToolpathResult
 }
