@@ -87,6 +87,7 @@ import {
 } from './hitTest'
 import { drawStlTopViewImage } from './stlTopViewRenderer'
 import { triggerDimensionEdit as triggerDimensionEditFn } from './triggerDimensionEdit'
+import { CreationTargetBadge } from './CreationTargetBadge'
 import { DepthLegend } from './DepthLegend'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import {
@@ -2771,6 +2772,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
       />
+      <CreationTargetBadge />
       {!depthLegendCollapsed ? <DepthLegend onToggleDepthLegend={onToggleDepthLegend} /> : null}
       {(toolpaths && toolpaths.some((tp) => tp.moves.length > 0)) && toolpathVisibility && onToolpathVisibilityChange && (
         <ToolpathVisibilityPanel

@@ -134,4 +134,26 @@ assert(
   'AppShell statusbar must include the construction visibility toggle',
 )
 
+// ── Sketch view: drawing-mode badge ──────────────────────────────
+
+const creationTargetBadge = readSrc('src/components/canvas/CreationTargetBadge.tsx')
+const sketchCanvas = readSrc('src/components/canvas/SketchCanvas.tsx')
+
+assert(
+  layoutCss.includes('.creation-target-badge') && layoutCss.includes('.creation-target-badge--construction'),
+  'layout.css must define the drawing-mode badge with a construction variant',
+)
+assert(
+  /\.creation-target-badge \{[^}]*pointer-events: none/s.test(layoutCss),
+  'the drawing-mode badge must not intercept canvas pointer events',
+)
+assert(
+  creationTargetBadge.includes("construction: { icon: 'construction', label: 'Drawing construction' }"),
+  'CreationTargetBadge must present the construction mode',
+)
+assert(
+  sketchCanvas.includes('<CreationTargetBadge />'),
+  'SketchCanvas must render the drawing-mode badge overlay',
+)
+
 console.log('constructionPresentation.test.ts passed')

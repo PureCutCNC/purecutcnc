@@ -1249,6 +1249,46 @@
   touch-action: none;
 }
 
+/* ── Drawing-mode badge: which creation target is active (issue #199) ─── */
+
+.creation-target-badge {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid rgba(91, 117, 138, 0.55);
+  border-radius: 999px;
+  background: rgba(16, 22, 30, 0.82);
+  color: rgba(203, 216, 227, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.creation-target-badge .icon-sprite {
+  flex: 0 0 auto;
+}
+
+.creation-target-badge--region {
+  border-color: rgba(153, 102, 204, 0.65);
+  background: rgba(41, 28, 56, 0.85);
+  color: #c4a6e0;
+}
+
+.creation-target-badge--construction {
+  border-color: rgba(138, 154, 171, 0.65);
+  background: rgba(31, 38, 46, 0.85);
+  color: #a9b6c4;
+}
+
 .axis-lock-chip {
   position: absolute;
   bottom: 8px;
