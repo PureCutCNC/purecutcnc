@@ -1254,8 +1254,7 @@
 .creation-target-badge {
   position: absolute;
   top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 12px;
   z-index: 4;
   display: inline-flex;
   align-items: center;
