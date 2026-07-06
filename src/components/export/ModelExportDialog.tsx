@@ -29,7 +29,16 @@ import {
   type CurveQuality,
   type ExportTriangleMesh,
   type STLExportOptions,
+  type SvgExportOptions,
 } from '../../engine/modelExport'
+import {
+  defaultDesignSvgExportOptions,
+  resolvePrintBounds,
+  type DesignSvgExportArea,
+  type DesignSvgExportContent,
+} from '../../engine/designPrint'
+import { formatLength } from '../../utils/units'
+import type { Project } from '../../types/project'
 
 interface ModelExportDialogProps {
   onClose: () => void
@@ -46,6 +55,9 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 
   const [formatId, setFormatId] = useState<string>(MODEL_EXPORT_FORMATS[0]?.id ?? 'stl')
   const [stlOptions, setStlOptions] = useState<STLExportOptions>(STL_DEFAULT_OPTIONS)
+  const [svgOptions, setSvgOptions] = useState<SvgExportOptions>(() =>
+    defaultDesignSvgExportOptions(project),
+  )
   const [curveQuality, setCurveQuality] = useState<CurveQuality>('normal')
   const [fileName, setFileName] = useState<string>(() => sanitizeFileName(project.meta.name))
   const [assembled, setAssembled] = useState<AssembledMesh | null>(null)
@@ -54,10 +66,13 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
   const [exporting, setExporting] = useState(false)
 
   const format = useMemo(() => getModelExportFormat(formatId) ?? MODEL_EXPORT_FORMATS[0], [formatId])
+  const is2d = format?.kind === '2d'
 
   // Re-assemble whenever the user toggles "include imported meshes" — the
   // assembled mesh is the only piece of state that depends on that option.
+  // 2D formats render from the project directly, so no mesh is assembled.
   useEffect(() => {
+    if (is2d) return
     let cancelled = false
     setAssembling(true)
     setErrorMessage(null)
@@ -80,43 +95,66 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
     return () => {
       cancelled = true
     }
-  }, [project, stlOptions.includeImportedMeshes, curveQuality])
+  }, [project, stlOptions.includeImportedMeshes, curveQuality, is2d])
 
   const triangleCount = assembled ? countTriangles(assembled.mesh) : 0
   const estimatedSize = assembled && format?.id === 'stl'
     ? estimateStlFileSize(assembled.mesh, stlOptions.format)
     : null
 
+  // Physical output size of the SVG export (world units are project units).
+  const svgTabs = svgOptions.content.tabs
+  const svgClamps = svgOptions.content.clamps
+  const svgBounds = useMemo(
+    () =>
+      is2d
+        ? resolvePrintBounds(project, svgOptions.area, null, {
+            backdrop: false,
+            tabs: svgTabs,
+            clamps: svgClamps,
+          })
+        : null,
+    [is2d, project, svgOptions.area, svgTabs, svgClamps],
+  )
+
   const warnings = useMemo(() => {
+    if (is2d) return []
     const list = [...(assembled?.warnings ?? [])]
     if (assembled && triangleCount === 0) {
       list.push('No solid geometry to export — add visible features first.')
     }
     return list
-  }, [assembled, triangleCount])
+  }, [is2d, assembled, triangleCount])
 
   async function handleExport() {
-    if (!assembled || !format || triangleCount === 0) return
+    if (!format) return
+    if (!is2d && (!assembled || triangleCount === 0)) return
     setExporting(true)
     try {
       const output = await format.export(
-        { project, mesh: assembled.mesh },
-        format.id === 'stl' ? stlOptions : format.defaultOptions,
+        { project, mesh: assembled?.mesh },
+        format.id === 'stl' ? stlOptions : format.id === 'svg' ? svgOptions : format.defaultOptions,
       )
       const suggestedName = sanitizeFileName(fileName || project.meta.name)
+      // The remembered path is written to without a dialog, so reuse it only
+      // for the same file type — never overwrite a .stl target with SVG text.
+      const rememberedPath =
+        lastModelExportPath?.toLowerCase().endsWith(`.${format.extension}`)
+          ? lastModelExportPath
+          : null
       const savedPath = output.encoding === 'binary'
         ? await platform.saveBinaryFile(
             suggestedName,
             output.data as Uint8Array,
             format.extension,
             format.mimeType,
-            lastModelExportPath,
+            rememberedPath,
           )
         : await platform.saveTextFile(
             suggestedName,
             output.data as string,
             format.extension,
-            lastModelExportPath,
+            rememberedPath,
           )
       if (savedPath) {
         markModelExported(savedPath)
@@ -168,27 +206,46 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
               </div>
             </div>
 
-            <div className="dialog-section-group">
-              <label className="dialog-section-title">Curve quality</label>
-              <Select<CurveQuality>
-                value={curveQuality}
-                options={CURVE_QUALITY_OPTIONS}
-                onChange={setCurveQuality}
-              />
-              <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                Controls how finely arcs and bezier curves are tessellated. Finer = more triangles, smoother curves.
+            {!is2d && (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">Curve quality</label>
+                <Select<CurveQuality>
+                  value={curveQuality}
+                  options={CURVE_QUALITY_OPTIONS}
+                  onChange={setCurveQuality}
+                />
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                  Controls how finely arcs and bezier curves are tessellated. Finer = more triangles, smoother curves.
+                </div>
               </div>
-            </div>
+            )}
 
             {format?.id === 'stl' && (
               <StlOptionsPanel options={stlOptions} onChange={setStlOptions} />
             )}
 
+            {format?.id === 'svg' && (
+              <SvgOptionsPanel project={project} options={svgOptions} onChange={setSvgOptions} />
+            )}
+
             <div className="dialog-section-group">
               <label className="dialog-section-title">Summary</label>
               <div style={{ fontSize: '13px', color: 'var(--text)', display: 'grid', gap: '4px' }}>
-                <div>{assembling ? 'Assembling mesh…' : `${triangleCount.toLocaleString()} triangles`}</div>
-                {estimatedSize !== null && (
+                {is2d && svgBounds ? (
+                  <>
+                    <div>
+                      Exported size: {formatLength(svgBounds.maxX - svgBounds.minX, project.meta.units)} ×{' '}
+                      {formatLength(svgBounds.maxY - svgBounds.minY, project.meta.units)}{' '}
+                      {project.meta.units === 'inch' ? 'in' : 'mm'} at 1:1
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                      Editable vector paths; hidden features are left out and dimensions follow the sketch setting.
+                    </div>
+                  </>
+                ) : (
+                  <div>{assembling ? 'Assembling mesh…' : `${triangleCount.toLocaleString()} triangles`}</div>
+                )}
+                {estimatedSize !== null && !is2d && (
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
                     Estimated file size: {formatBytes(estimatedSize)}
                   </div>
@@ -223,7 +280,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
           <button
             className="btn-primary"
             onClick={handleExport}
-            disabled={!assembled || triangleCount === 0 || assembling || exporting}
+            disabled={exporting || (!is2d && (!assembled || triangleCount === 0 || assembling))}
             type="button"
           >
             {exporting ? 'Exporting…' : `Export .${format?.extension ?? ''}`}
@@ -276,6 +333,98 @@ function StlOptionsPanel({
               onChange={(event) => onChange({ ...options, includeImportedMeshes: event.target.checked })}
             />
             Include imported meshes
+          </label>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function SvgOptionsPanel({
+  project,
+  options,
+  onChange,
+}: {
+  project: Project
+  options: SvgExportOptions
+  onChange: (next: SvgExportOptions) => void
+}) {
+  const areaOptions: { value: DesignSvgExportArea; label: string }[] = [
+    { value: 'visible', label: 'Visible design extents' },
+    { value: 'stock', label: 'Stock extents' },
+  ]
+
+  function updateContent(partial: Partial<DesignSvgExportContent>) {
+    onChange({ ...options, content: { ...options.content, ...partial } })
+  }
+
+  return (
+    <>
+      <div className="dialog-section-group">
+        <label className="dialog-section-title">Export area</label>
+        <Select<DesignSvgExportArea>
+          value={options.area}
+          options={areaOptions}
+          onChange={(area) => onChange({ ...options, area })}
+        />
+      </div>
+
+      <div className="dialog-section-group">
+        <label className="dialog-section-title">Content</label>
+        <div className="export-option-group">
+          <label className="export-option" title={project.tabs.length === 0 ? 'No tabs in this project' : undefined}>
+            <input
+              type="checkbox"
+              checked={options.content.tabs}
+              disabled={project.tabs.length === 0}
+              onChange={(event) => updateContent({ tabs: event.target.checked })}
+            />
+            Tabs
+          </label>
+          <label className="export-option" title={project.clamps.length === 0 ? 'No clamps in this project' : undefined}>
+            <input
+              type="checkbox"
+              checked={options.content.clamps}
+              disabled={project.clamps.length === 0}
+              onChange={(event) => updateContent({ clamps: event.target.checked })}
+            />
+            Clamps
+          </label>
+          <label className="export-option">
+            <input
+              type="checkbox"
+              checked={options.content.featureLabels}
+              onChange={(event) => updateContent({ featureLabels: event.target.checked })}
+            />
+            Feature labels
+          </label>
+          <label className="export-option">
+            <input
+              type="checkbox"
+              checked={options.content.grid}
+              onChange={(event) => updateContent({ grid: event.target.checked })}
+            />
+            Grid
+          </label>
+        </div>
+        <div className="export-option-group">
+          <label className="export-option">
+            <input
+              type="radio"
+              name="svg-color"
+              checked={options.colorMode === 'color'}
+              onChange={() => onChange({ ...options, colorMode: 'color' })}
+            />
+            Color
+          </label>
+          <label className="export-option">
+            <input
+              type="radio"
+              name="svg-color"
+              checked={options.colorMode === 'monochrome'}
+              onChange={() => onChange({ ...options, colorMode: 'monochrome' })}
+            />
+            Monochrome
           </label>
         </div>
       </div>

@@ -29,10 +29,15 @@ import {
   parseCustomScale,
   resolvePrintBounds,
 } from './layout'
-import { buildDesignPrintSvg, profileToPathD } from './svg'
+import { buildDesignPrintSvg, buildDesignSvgExport, profileToPathD } from './svg'
 import { buildDesignPrintHtml } from './html'
-import { defaultDesignPrintOptions } from './types'
-import type { DesignPrintContent, DesignPrintOptions } from './types'
+import { defaultDesignPrintOptions, defaultDesignSvgExportOptions } from './types'
+import type {
+  DesignPrintContent,
+  DesignPrintOptions,
+  DesignSvgExportContent,
+  DesignSvgExportOptions,
+} from './types'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -461,6 +466,176 @@ function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: Test
   })
   assert(svg.includes('A &lt;b&gt; &amp; &quot;quote&quot;'), 'project name is XML-escaped in footer')
   assert(!svg.includes('A <b>'), 'raw markup never lands in the svg')
+}
+
+// ── Geometry-only SVG export (issue #257) ────────────────────
+
+// Mirrors buildDesignPrintSvg's fmt() so expected attribute strings match.
+function fmtNum(value: number): string {
+  const rounded = Math.round(value * 10000) / 10000
+  return String(rounded === 0 ? 0 : rounded)
+}
+
+type ExportOptionOverrides = Omit<Partial<DesignSvgExportOptions>, 'content'> & {
+  content?: Partial<DesignSvgExportContent>
+}
+
+function buildTestExportSvg(
+  units: 'mm' | 'inch' = 'mm',
+  mutate?: (project: Project) => void,
+  overrides: ExportOptionOverrides = {},
+) {
+  const project = newProject('SvgExportTest', units)
+  project.features.push(makeFeature('visible-rect'))
+  project.features.push(makeFeature('hidden-circle', {
+    kind: 'circle',
+    visible: false,
+    sketch: {
+      profile: circleProfile(70, 40, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  }))
+  mutate?.(project)
+  const base = defaultDesignSvgExportOptions(project)
+  const options: DesignSvgExportOptions = {
+    ...base,
+    ...overrides,
+    content: { ...base.content, ...(overrides.content ?? {}) },
+  }
+  const bounds = resolvePrintBounds(project, options.area, null, {
+    backdrop: false,
+    tabs: options.content.tabs,
+    clamps: options.content.clamps,
+  })
+  return { project, options, bounds, svg: buildDesignSvgExport(project, options) }
+}
+
+{
+  // Tight viewBox around the exported bounds, physical mm size at true 1:1.
+  const { svg, bounds } = buildTestExportSvg('mm')
+  const w = bounds.maxX - bounds.minX
+  const h = bounds.maxY - bounds.minY
+  assert(
+    svg.includes(`viewBox="${fmtNum(bounds.minX)} ${fmtNum(bounds.minY)} ${fmtNum(w)} ${fmtNum(h)}"`),
+    'export viewBox equals the exported bounds',
+  )
+  assert(svg.includes(`width="${fmtNum(w)}mm"`), 'mm project: 1 unit = 1 mm')
+  assert(svg.includes(`height="${fmtNum(h)}mm"`), 'mm project: physical height matches bounds')
+}
+
+{
+  // Inch projects export at 1 unit = 25.4 mm.
+  const { svg, bounds } = buildTestExportSvg('inch')
+  const w = bounds.maxX - bounds.minX
+  assert(svg.includes(`width="${fmtNum(w * 25.4)}mm"`), 'inch project: 1 unit = 25.4 mm')
+}
+
+{
+  // No page scaffolding: footer, white background, and clipping are print-only.
+  const { svg } = buildTestExportSvg('mm')
+  assert(!svg.includes('pc-footer'), 'export has no footer/title block')
+  assert(!svg.includes('fill="#ffffff"'), 'export has no background rect')
+  assert(!svg.includes('clipPath'), 'export has no clip path')
+  assert(!svg.includes('pc-print-clip'), 'export references no print clip')
+}
+
+{
+  // Per-feature groups keep layers selectable in vector editors; hidden
+  // features stay out; outlines only, even in color mode.
+  const { svg } = buildTestExportSvg('mm')
+  assert(
+    svg.includes('<g id="feature-visible-rect" data-name="visible-rect">'),
+    'visible feature gets an identified group',
+  )
+  assert(!svg.includes('hidden-circle'), 'hidden feature is omitted entirely')
+  assert(!svg.includes('rgba('), 'export never uses tinted fills')
+  assert(svg.includes('stroke="#1f6fb2"'), 'color mode keeps the color palette strokes')
+
+  const mono = buildTestExportSvg('mm', undefined, { colorMode: 'monochrome' })
+  assert(!mono.svg.includes('#1f6fb2'), 'monochrome mode drops color strokes')
+}
+
+{
+  // Construction geometry: dashed, unfilled; hidden construction omitted.
+  const { svg } = buildTestExportSvg('mm', (project) => {
+    project.features.push(makeFeature('construction-line', {
+      operation: 'construction',
+      sketch: {
+        profile: { start: { x: 0, y: 40 }, segments: [{ type: 'line', to: { x: 100, y: 40 } }], closed: false },
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+    }))
+    project.features.push(makeFeature('construction-hidden', { operation: 'construction', visible: false }))
+  })
+  assert(count(svg, 'data-op="construction"') === 1, 'hidden construction geometry is omitted')
+  const constructionLine = svg.split('\n').find((line) => line.includes('data-op="construction"'))
+  assert(constructionLine !== undefined, 'construction geometry exports')
+  assert(constructionLine!.includes('stroke-dasharray'), 'exported construction geometry is dashed')
+  assert(constructionLine!.includes('fill="none"'), 'exported construction geometry is unfilled')
+}
+
+{
+  // Dimensions follow project.meta.showDimensions, same as printing.
+  const dimension: DimensionAnnotation = {
+    id: 'dim1',
+    type: 'aligned',
+    a: { kind: 'free', point: { x: 10, y: 10 } },
+    b: { kind: 'free', point: { x: 40, y: 10 } },
+    offset: -6,
+    visible: true,
+    locked: false,
+    textOverride: null,
+    precisionOverride: null,
+  }
+  const withDims = buildTestExportSvg('mm', (project) => {
+    project.annotations.push(dimension)
+    project.meta.showDimensions = true
+  })
+  assert(withDims.svg.includes('class="pc-dimension"'), 'dimensions export when enabled')
+  const withoutDims = buildTestExportSvg('mm', (project) => {
+    project.annotations.push(dimension)
+    project.meta.showDimensions = false
+  })
+  assert(!withoutDims.svg.includes('class="pc-dimension"'), 'dimensions omitted when showDimensions is off')
+}
+
+{
+  // Content toggles and area modes; bounds follow the enabled layers.
+  const addFixtures = (project: Project) => {
+    project.tabs.push({ id: 't1', name: 'Tab 1', x: -30, y: 5, w: 8, h: 4, z_top: 3, z_bottom: 0, visible: true })
+    project.clamps.push({ id: 'c1', name: 'Clamp 1', type: 'step_clamp', x: 120, y: 5, w: 10, h: 10, height: 20, visible: true })
+  }
+
+  const defaults = buildTestExportSvg('mm', addFixtures)
+  assert(defaults.options.content.tabs, 'visible tabs default the toggle on')
+  assert(defaults.svg.includes('class="pc-tab"'), 'tabs export when toggled on')
+  assert(defaults.svg.includes('class="pc-clamp"'), 'clamps export when toggled on')
+  assert(!defaults.svg.includes('class="pc-grid"'), 'grid is off by default')
+  assert(!defaults.svg.includes('class="pc-feature-labels"'), 'labels are off by default')
+  assertClose(defaults.bounds.minX, -30, 'enabled tabs widen the exported bounds')
+
+  const bare = buildTestExportSvg('mm', addFixtures, {
+    content: { tabs: false, clamps: false, grid: true, featureLabels: true },
+  })
+  assert(!bare.svg.includes('class="pc-tab"'), 'disabled tabs stay out of the export')
+  assert(!bare.svg.includes('class="pc-clamp"'), 'disabled clamps stay out of the export')
+  assert(bare.svg.includes('class="pc-grid"'), 'grid exports when toggled on')
+  assert(bare.svg.includes('class="pc-feature-labels"'), 'labels export when toggled on')
+  assertClose(bare.bounds.minX, 0, 'disabled fixtures are excluded from the exported bounds')
+
+  const stock = buildTestExportSvg('mm', (project) => {
+    project.origin.visible = false
+  }, { area: 'stock' })
+  assert(
+    stock.svg.includes(`viewBox="0 0 ${fmtNum(stock.bounds.maxX)} ${fmtNum(stock.bounds.maxY)}"`),
+    'stock area exports the stock extents',
+  )
 }
 
 // ── Path data ────────────────────────────────────────────────

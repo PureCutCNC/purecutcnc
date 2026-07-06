@@ -19,12 +19,13 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
   - `definitions/` — bundled machine definitions (Marlin, GRBL flavors, etc.)
   - `types.ts` — `MachineDefinition` and validation
   - `utils.ts` — formatting helpers
-- `modelExport/` — 3D model export (STL today; pluggable format registry)
+- `modelExport/` — model/design export (pluggable format registry: 3D mesh formats and 2D vector formats)
   - `index.ts` — public API and `MODEL_EXPORT_FORMATS` registry
-  - `types.ts` — format/option interfaces
+  - `types.ts` — format/option interfaces (`kind: '2d' | '3d'` gates mesh assembly)
   - `assemble.ts` — manifold union → standard Z-up right-handed export mesh
   - `stl.ts` — binary + ASCII STL writers and the `stlExportFormat` entry
-- [designPrint/](designPrint/INDEX.md) — print-specific vector renderer for the 2D design view: page/scale layout math + SVG/HTML generation (issue #254)
+  - `svg.ts` — `svgExportFormat`: 2D design SVG at true 1:1, backed by `designPrint/` (issue #257)
+- [designPrint/](designPrint/INDEX.md) — vector renderer for the 2D design view: page/scale layout math + SVG/HTML generation for printing (issue #254) and the geometry-only SVG export (issue #257)
 - [operationBooklet/](operationBooklet/INDEX.md) — per-operation report model and PDF booklet generation
 - [simulation/](simulation/INDEX.md) — heightfield-based material removal sim (grid, replay/stepping, GPU heightfield mesh + shaders)
 

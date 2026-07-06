@@ -60,7 +60,8 @@ export interface ModelExportAssembleResult {
 
 export interface ModelExportInput {
   project: Project
-  mesh: ExportTriangleMesh
+  /** Assembled solid mesh; present only for `kind: '3d'` formats. */
+  mesh?: ExportTriangleMesh
 }
 
 export interface ModelExportOutput {
@@ -78,6 +79,11 @@ export interface ModelExportFormat<TOptions = unknown> {
   extension: string
   /** MIME type used by the browser blob save fallback. */
   mimeType: string
+  /**
+   * '3d' formats consume the assembled triangle mesh; '2d' formats render
+   * from the project directly and skip mesh assembly entirely.
+   */
+  kind: '2d' | '3d'
   defaultOptions: TOptions
   /** React node for the format-specific option controls in the dialog. */
   renderOptions: (props: {
