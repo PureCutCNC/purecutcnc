@@ -590,6 +590,40 @@
   height: 20px;
 }
 
+/* On the narrowest tablet widths, compact the command bar instead of
+   dropping buttons — a touch-only tablet has no Cmd/Ctrl+P or desktop menu,
+   so every command (incl. Print Design) must stay reachable. Buttons keep
+   their touch-target size (`.app-shell button` min-width); the tightened
+   gaps make the bar fit at 1024px, and the center section becomes
+   swipe-scrollable ("safe center" keeps the left edge reachable) as a
+   no-overlap safety net when 44px coarse-pointer targets overflow it. */
+@media (max-width: 1080px) {
+  .top-command-bar {
+    gap: 6px;
+  }
+
+  .top-command-bar__center {
+    gap: 6px;
+    justify-content: flex-start;
+    justify-content: safe center;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .top-command-bar__center::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-cmd-btn--operations {
+    width: auto;
+    padding: 0 8px;
+  }
+
+  .top-command-bar__name {
+    max-width: 90px;
+  }
+}
+
 .top-cmd-tab {
   display: inline-flex;
   align-items: center;

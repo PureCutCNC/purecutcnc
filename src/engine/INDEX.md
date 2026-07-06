@@ -24,6 +24,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
   - `types.ts` — format/option interfaces
   - `assemble.ts` — manifold union → standard Z-up right-handed export mesh
   - `stl.ts` — binary + ASCII STL writers and the `stlExportFormat` entry
+- [designPrint/](designPrint/INDEX.md) — print-specific vector renderer for the 2D design view: page/scale layout math + SVG/HTML generation (issue #254)
 - [operationBooklet/](operationBooklet/INDEX.md) — per-operation report model and PDF booklet generation
 - [simulation/](simulation/INDEX.md) — heightfield-based material removal sim (grid, replay/stepping, GPU heightfield mesh + shaders)
 

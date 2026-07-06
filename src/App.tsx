@@ -29,6 +29,7 @@ import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewp
 import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './components/toolpathVisibility'
 import { ExportDialog } from './components/export/ExportDialog'
 import { ModelExportDialog } from './components/export/ModelExportDialog'
+import { PrintDesignDialog } from './components/export/PrintDesignDialog'
 import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
 import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
@@ -65,6 +66,7 @@ function App() {
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showModelExportDialog, setShowModelExportDialog] = useState(false)
+  const [showPrintDialog, setShowPrintDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
@@ -82,8 +84,10 @@ function App() {
   }, [])
 
   const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
+  const handlePrintDesign = useCallback(() => setShowPrintDialog(true), [])
   useDesktopIntegration({
     onExportGcode: handleExportGcode,
+    onPrintDesign: handlePrintDesign,
     onShowAbout: () => setShowAboutDialog(true),
   })
   const { snapSettings, activeSnapMode, setActiveSnapMode, onToggleSnapEnabled, onToggleSnapMode } = useSnapSettings()
@@ -277,6 +281,15 @@ function App() {
         return
       }
 
+      // Cmd/Ctrl+P prints the design document instead of the app shell. On
+      // desktop the native menu accelerator usually consumes the key first;
+      // this covers the web app and any platform that lets it through.
+      if (event.key.toLowerCase() === 'p' && !event.shiftKey) {
+        event.preventDefault()
+        setShowPrintDialog(true)
+        return
+      }
+
       if (event.key.toLowerCase() === 'z' && !event.shiftKey) {
         event.preventDefault()
         useProjectStore.getState().undo()
@@ -347,6 +360,7 @@ function App() {
             zoomWindowActive={zoomWindowActive}
             onImportComplete={handleImportComplete}
             onExportModel={() => setShowModelExportDialog(true)}
+            onPrintDesign={handlePrintDesign}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
             onToggleSnapEnabled={onToggleSnapEnabled}
@@ -451,6 +465,7 @@ function App() {
         zoomWindowActive={zoomWindowActive}
         onImportComplete={handleImportComplete}
         onExportModel={() => setShowModelExportDialog(true)}
+        onPrintDesign={handlePrintDesign}
         snapSettings={snapSettings}
         activeSnapMode={activeSnapMode}
         onToggleSnapEnabled={onToggleSnapEnabled}
@@ -469,6 +484,15 @@ function App() {
 
       {showModelExportDialog && (
         <ModelExportDialog onClose={() => setShowModelExportDialog(false)} />
+      )}
+
+      {showPrintDialog && (
+        <PrintDesignDialog
+          onClose={() => setShowPrintDialog(false)}
+          getCurrentViewBounds={() => sketchCanvasRef.current?.getVisibleWorldBounds() ?? null}
+          toolpaths={visibleToolpaths}
+          toolpathVisibility={toolpathVisibility}
+        />
       )}
 
       {showExportDialog && (

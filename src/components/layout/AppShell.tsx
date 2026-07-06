@@ -53,6 +53,7 @@ interface AppShellProps {
   zoomWindowActive: boolean
   onImportComplete?: () => void
   onExportModel: () => void
+  onPrintDesign?: () => void
   snapSettings: SnapSettings
   activeSnapMode?: SnapMode | null
   onToggleSnapEnabled: () => void
@@ -106,6 +107,7 @@ export function AppShell({
   zoomWindowActive,
   onImportComplete,
   onExportModel,
+  onPrintDesign,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
@@ -359,6 +361,7 @@ export function AppShell({
             onOpenRightDrawer={() => setRightDrawerOpen(true)}
             onImportComplete={onImportComplete}
             onExportModel={onExportModel}
+            onPrintDesign={onPrintDesign}
             snapSettings={snapSettings}
             activeSnapMode={activeSnapMode}
             onToggleSnapEnabled={onToggleSnapEnabled}

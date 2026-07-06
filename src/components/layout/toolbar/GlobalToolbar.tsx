@@ -29,12 +29,13 @@ export function GlobalToolbar({
   zoomWindowActive = false,
   onImportComplete,
   onExportModel,
+  onPrintDesign,
   snapSettings,
   activeSnapMode,
   onToggleSnapEnabled,
   onToggleSnapMode,
 }: ToolbarProps & SnapToolbarProps) {
-  const toolbar = useToolbarState(onZoomToModel, onImportComplete, onExportModel)
+  const toolbar = useToolbarState(onZoomToModel, onImportComplete, onExportModel, onPrintDesign)
 
   return (
     <>
@@ -55,6 +56,7 @@ export function GlobalToolbar({
           onOpen={toolbar.fileCommands.openProject.onActivate}
           onImport={toolbar.fileCommands.importGeometry.onActivate}
           onExportModel={toolbar.fileCommands.exportModel.onActivate}
+          onPrintDesign={toolbar.fileCommands.printDesign.onActivate}
           onSave={toolbar.fileCommands.saveProject.onActivate}
           onUndo={toolbar.fileCommands.undo.onActivate}
           onRedo={toolbar.fileCommands.redo.onActivate}
