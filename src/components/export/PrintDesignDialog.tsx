@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { Select } from '../Select'
@@ -65,6 +65,7 @@ export function PrintDesignDialog({
     defaultDesignPrintOptions(project, getVisibleSceneBounds2D(project)),
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const customScaleInputRef = useRef<HTMLInputElement>(null)
 
   // Snapshot once on open — the canvas cannot pan/zoom behind the modal.
   const [viewBounds] = useState<Bounds2D | null>(() => getCurrentViewBounds())
@@ -267,15 +268,25 @@ export function PrintDesignDialog({
                   />
                   Actual size (1:1)
                 </label>
-                <label className="export-option">
+                <div className="print-dialog__custom-scale">
+                  <label className="export-option">
+                    <input
+                      type="radio"
+                      name="print-scale"
+                      checked={options.scaleMode === 'custom'}
+                      onChange={() => {
+                        update({ scaleMode: 'custom' })
+                        // The field is disabled until this state lands.
+                        window.requestAnimationFrame(() => {
+                          customScaleInputRef.current?.focus()
+                          customScaleInputRef.current?.select()
+                        })
+                      }}
+                    />
+                    Custom
+                  </label>
                   <input
-                    type="radio"
-                    name="print-scale"
-                    checked={options.scaleMode === 'custom'}
-                    onChange={() => update({ scaleMode: 'custom' })}
-                  />
-                  Custom
-                  <input
+                    ref={customScaleInputRef}
                     type="text"
                     className="print-dialog__scale-input"
                     value={options.customScale}
@@ -283,10 +294,9 @@ export function PrintDesignDialog({
                     aria-label="Custom scale (ratio, percentage, or factor)"
                     placeholder="1:2"
                     spellCheck={false}
-                    onClick={(event) => event.stopPropagation()}
                     onChange={(event) => update({ customScale: event.target.value })}
                   />
-                </label>
+                </div>
               </div>
               <div className="print-dialog__row">
                 <label className="print-dialog__row-label">Offset X / Y ({unitSuffix})</label>

@@ -619,9 +619,14 @@
   border-color: var(--accent);
 }
 
+.print-dialog__custom-scale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .print-dialog__scale-input {
-  width: 84px;
-  margin-left: 8px;
+  width: 96px;
   background: #0f1820;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
