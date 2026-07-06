@@ -325,7 +325,7 @@ export function PrintDesignDialog({
 
             <div className="dialog-section-group">
               <label className="dialog-section-title">Content</label>
-              <div className="export-option-group">
+              <div className="export-option-group print-dialog__content-options">
                 <label className="export-option">
                   <input
                     type="checkbox"
@@ -390,7 +390,7 @@ export function PrintDesignDialog({
                   Title block
                 </label>
               </div>
-              <div className="export-option-group">
+              <div className="export-option-group print-dialog__content-options">
                 <label className="export-option">
                   <input
                     type="radio"

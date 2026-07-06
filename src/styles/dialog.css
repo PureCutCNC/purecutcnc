@@ -625,6 +625,19 @@
   gap: 10px;
 }
 
+/* Two-up content toggles keep the options panel above the fold on desktop.
+   Tablet keeps the single column — taller touch targets scroll anyway. */
+.print-dialog__content-options {
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+[data-shell-mode="tablet"] .print-dialog__content-options,
+[data-shell-mode="tablet-compact"] .print-dialog__content-options {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
 .print-dialog__scale-input {
   width: 96px;
   background: #0f1820;
