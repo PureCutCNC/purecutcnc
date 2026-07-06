@@ -463,6 +463,23 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         }
         return
       }
+
+      if (pendingAdd.shape === 'gear' && pendingAdd.anchor) {
+        event.preventDefault()
+        if (!currentEdit) {
+          const fallbackPoint = pendingAdd.outsideRadius !== null
+            ? { x: pendingAdd.anchor.x + pendingAdd.outsideRadius, y: pendingAdd.anchor.y }
+            : pendingAdd.anchor
+          const previewPoint = pendingPreviewPointRef.current?.point ?? fallbackPoint
+          const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
+          const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+          dimEdit.setDimensionEdit({ shape: 'gear', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
+        } else {
+          dimEdit.setDimensionEdit(null)
+          canvasRef.current?.focus({ preventScroll: true })
+        }
+        return
+      }
     }
 
     if (event.key === 'Tab' && pendingMove && pendingMove.fromPoint && !pendingMove.toPoint) {

@@ -208,6 +208,7 @@ export interface ClickPlacementCtx {
   placePendingAddAt: (point: Point) => void
   placePendingSlotAt: (point: Point) => void
   placePendingNgonAt: (point: Point) => void
+  setPendingGearRadiusAt: (point: Point) => void
   placePendingTextAt: (point: Point) => void
   placeOriginAt: (point: Point) => void
   addPendingPolygonPoint: (point: Point) => void
@@ -306,6 +307,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     placePendingAddAt,
     placePendingSlotAt,
     placePendingNgonAt,
+    setPendingGearRadiusAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -784,6 +786,14 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         } else {
           placePendingNgonAt(snapped)
           setPendingPreviewPointRef(null)
+        }
+      } else if (pendingAdd.shape === 'gear') {
+        if (!pendingAdd.anchor) {
+          setPendingAddAnchor(snapped)
+          setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
+        } else if (pendingAdd.outsideRadius === null) {
+          setPendingGearRadiusAt(snapped)
+          setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
         }
       } else if (pendingAdd.shape === 'text') {
         placePendingTextAt(snapped)

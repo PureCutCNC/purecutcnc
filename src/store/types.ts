@@ -41,6 +41,7 @@ import type {
 } from '../types/project'
 import type { TextToolConfig } from '../text'
 import type { ToolLibraryEntry } from '../toolLibrary'
+import type { GearCreationParams } from '../sketch/gearProfile'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -123,6 +124,13 @@ export type PendingAddTool =
     }
   | { shape: 'slot'; points: Point[]; session: number }
   | { shape: 'ngon'; anchor: Point | null; sides: number; session: number }
+  | {
+      shape: 'gear'
+      anchor: Point | null
+      outsideRadius: number | null
+      params: GearCreationParams
+      session: number
+    }
   | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
@@ -456,6 +464,7 @@ export interface ProjectStore {
   startAddTextPlacement: (config: TextToolConfig) => void
   startAddSlotPlacement: () => void
   startAddNgonPlacement: () => void
+  startAddGearPlacement: () => void
   startAddRoundRectPlacement: () => void
   startAddChamferRectPlacement: () => void
   cancelPendingAdd: () => void
@@ -473,6 +482,9 @@ export interface ProjectStore {
   completePendingComposite: () => void
   completePendingOpenComposite: () => void
   setPendingNgonSides: (n: number) => void
+  setPendingGearParams: (patch: Partial<GearCreationParams>) => void
+  setPendingGearRadiusAt: (point: Point) => void
+  completePendingGear: () => string[]
   setPendingRectCorner: (n: number) => void
   placePendingSlotAt: (p3: Point) => void
   placePendingNgonAt: (point: Point) => void
@@ -510,6 +522,7 @@ export interface ProjectStore {
   addSplineFeature: (name: string, points: Point[], depth: number) => void
   addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
+  addGearFeature: (name: string, center: Point, outsideRadius: number, params: GearCreationParams, depth: number) => string[]
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
   addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 

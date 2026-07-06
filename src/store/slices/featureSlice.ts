@@ -52,6 +52,7 @@ import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectP
 import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
+import { createAddGearFeatureAction } from '../helpers/gearFeature'
 import { commonSectionOfIds, isMachinable, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
@@ -104,6 +105,7 @@ export type FeatureSlice = Pick<
   | 'addSplineFeature'
   | 'addSlotFeature'
   | 'addNgonFeature'
+  | 'addGearFeature'
   | 'addRoundRectFeature'
   | 'addChamferRectFeature'
   | 'alignFeatures'
@@ -1245,8 +1247,6 @@ export function createFeatureSlice(
         }
       }),
 
-    // ── Convenience constructors ── delegate to buildShapeFeature ─
-
     addRectFeature: (name, x, y, w, h, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'rect', rectProfile(x, y, w, h), name, depth))
     },
@@ -1271,9 +1271,10 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', slotProfile(p1, p2, width), name, depth))
     },
 
-    addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth))
-    },
+    addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) =>
+      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth)),
+
+    addGearFeature: createAddGearFeatureAction(set, get),
 
     addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))

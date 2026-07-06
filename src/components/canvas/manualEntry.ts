@@ -20,7 +20,7 @@ import type { Point, Segment } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
 
 export interface DimensionEditState {
-  shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon'
+  shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'gear'
   anchor: Point
   arcStart?: Point
   arcEnd?: Point
@@ -184,7 +184,7 @@ export function computeDimensionEditPreviewPoint(
     return { x: midX + (w / 2) * px, y: midY + (w / 2) * py }
   }
 
-  if (edit.shape === 'ngon') {
+  if (edit.shape === 'ngon' || edit.shape === 'gear') {
     const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
     const angleDeg = parseFloat(edit.angle) || 0
     const angleRad = angleDeg * (Math.PI / 180)

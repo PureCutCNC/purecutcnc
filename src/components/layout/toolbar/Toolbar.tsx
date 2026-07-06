@@ -101,8 +101,9 @@ export function Toolbar({
           onText={toolbar.creationCommands.shapeCommands[6].onActivate}
           onSlot={toolbar.creationCommands.shapeCommands[7].onActivate}
           onNgon={toolbar.creationCommands.shapeCommands[8].onActivate}
-          onRoundRect={toolbar.creationCommands.shapeCommands[9].onActivate}
-          onChamferRect={toolbar.creationCommands.shapeCommands[10].onActivate}
+          onGear={toolbar.creationCommands.shapeCommands[9].onActivate}
+          onRoundRect={toolbar.creationCommands.shapeCommands[10].onActivate}
+          onChamferRect={toolbar.creationCommands.shapeCommands[11].onActivate}
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}

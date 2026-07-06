@@ -32,6 +32,10 @@ import {
   resolveOpenCompositeDraftSegments,
 } from '../helpers/profileEdit'
 import type { CompositeSegmentMode, ProjectStore } from '../types'
+import {
+  defaultGearCreationParams,
+  normalizeGearCreationParams,
+} from '../../sketch/gearProfile'
 
 export type PendingAddSlice = Pick<
   ProjectStore,
@@ -47,6 +51,7 @@ export type PendingAddSlice = Pick<
   | 'startAddTextPlacement'
   | 'startAddSlotPlacement'
   | 'startAddNgonPlacement'
+  | 'startAddGearPlacement'
   | 'startAddRoundRectPlacement'
   | 'startAddChamferRectPlacement'
   | 'cancelPendingAdd'
@@ -64,6 +69,9 @@ export type PendingAddSlice = Pick<
   | 'completePendingComposite'
   | 'completePendingOpenComposite'
   | 'setPendingNgonSides'
+  | 'setPendingGearParams'
+  | 'setPendingGearRadiusAt'
+  | 'completePendingGear'
   | 'setPendingRectCorner'
   | 'placePendingSlotAt'
   | 'placePendingNgonAt'
@@ -205,6 +213,22 @@ export function createPendingAddSlice(
     startAddNgonPlacement: () =>
       set((s) => ({
         pendingAdd: { shape: 'ngon', anchor: null, sides: 6, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    startAddGearPlacement: () =>
+      set((s) => ({
+        pendingAdd: {
+          shape: 'gear',
+          anchor: null,
+          outsideRadius: null,
+          params: defaultGearCreationParams(s.project.meta.units === 'mm' ? 20 : 1),
+          session: nextPlacementSession(),
+        },
         pendingMove: null,
         pendingTransform: null,
         pendingOffset: null,
@@ -785,6 +809,60 @@ export function createPendingAddSlice(
             ? { ...s.pendingAdd, sides: Math.max(3, Math.min(50, Math.round(n))) }
             : s.pendingAdd,
       })),
+
+    setPendingGearParams: (patch) =>
+      set((s) => ({
+        pendingAdd:
+          s.pendingAdd?.shape === 'gear'
+            ? {
+                ...s.pendingAdd,
+                params: normalizeGearCreationParams({
+                  ...s.pendingAdd.params,
+                  ...patch,
+                }),
+              }
+            : s.pendingAdd,
+      })),
+
+    setPendingGearRadiusAt: (point) =>
+      set((s) => {
+        if (s.pendingAdd?.shape !== 'gear' || !s.pendingAdd.anchor) {
+          return {}
+        }
+        const minSize = convertLength(0.01, 'mm', s.project.meta.units)
+        const outsideRadius = Math.max(
+          minSize,
+          Math.hypot(point.x - s.pendingAdd.anchor.x, point.y - s.pendingAdd.anchor.y),
+        )
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            outsideRadius,
+            params: s.pendingAdd.outsideRadius === null
+              ? defaultGearCreationParams(outsideRadius)
+              : s.pendingAdd.params,
+          },
+        }
+      }),
+
+    completePendingGear: () => {
+      const state = get()
+      if (state.pendingAdd?.shape !== 'gear' || !state.pendingAdd.anchor || state.pendingAdd.outsideRadius === null) {
+        return []
+      }
+      const depth = Math.min(state.project.stock.thickness, 10)
+      const createdIds = state.addGearFeature(
+        `Gear ${state.project.features.length + 1}`,
+        state.pendingAdd.anchor,
+        state.pendingAdd.outsideRadius,
+        state.pendingAdd.params,
+        depth,
+      )
+      if (createdIds.length > 0) {
+        set({ pendingAdd: null })
+      }
+      return createdIds
+    },
 
     setPendingRectCorner: (n) =>
       set((s) => ({
