@@ -284,6 +284,45 @@ function makeOptions(project: Project, overrides: TestOptionOverrides = {}): Des
   assertClose(viewFallback.minX, -20, 'view falls back to visible extents when unavailable')
 }
 
+{
+  // Visible-extents bounds follow the enabled content layers, so the page is
+  // never scaled to fit content the printout omits.
+  const project = newProject('LayerBounds', 'mm')
+  project.origin.visible = false
+  project.backdrop = {
+    name: 'trace.png',
+    mimeType: 'image/png',
+    imageDataUrl: 'data:image/png;base64,',
+    intrinsicWidth: 100,
+    intrinsicHeight: 100,
+    center: { x: 50, y: 40 },
+    width: 400,
+    height: 400,
+    orientationAngle: 90,
+    opacity: 0.5,
+    visible: true,
+  }
+  project.tabs.push({ id: 't1', name: 'Tab', x: -30, y: 0, w: 10, h: 5, z_top: 3, z_bottom: 0, visible: true })
+  project.clamps.push({ id: 'c1', name: 'Clamp', type: 'step_clamp', x: 120, y: 0, w: 15, h: 15, height: 20, visible: true })
+
+  const defaults = resolvePrintBounds(project, 'visible', null)
+  assertClose(defaults.minX, -30, 'tabs count toward bounds by default')
+  assertClose(defaults.maxX, 135, 'clamps count toward bounds by default')
+
+  const withBackdrop = resolvePrintBounds(project, 'visible', null, { backdrop: true, tabs: true, clamps: true })
+  assertClose(withBackdrop.minX, -150, 'enabled backdrop widens the bounds')
+  assertClose(withBackdrop.maxY, 240, 'enabled backdrop widens the bounds vertically')
+
+  // The backdrop toggle prints the image even when hidden in the sketch.
+  project.backdrop.visible = false
+  const hiddenBackdrop = resolvePrintBounds(project, 'visible', null, { backdrop: true, tabs: true, clamps: true })
+  assertClose(hiddenBackdrop.minX, -150, 'backdrop bounds follow the print toggle, not sketch visibility')
+
+  const noFixtures = resolvePrintBounds(project, 'visible', null, { backdrop: false, tabs: false, clamps: false })
+  assertClose(noFixtures.minX, 0, 'disabled tabs are excluded from bounds')
+  assertClose(noFixtures.maxX, 100, 'disabled clamps and backdrop are excluded from bounds')
+}
+
 // ── SVG smoke tests ──────────────────────────────────────────
 
 function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: TestOptionOverrides = {}) {

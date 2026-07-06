@@ -61,8 +61,10 @@ export function PrintDesignDialog({
   const units = project.meta.units
   const unitSuffix = units === 'inch' ? 'in' : 'mm'
 
+  // Default-orientation bounds exclude the backdrop, matching its
+  // default-off content toggle.
   const [options, setOptions] = useState<DesignPrintOptions>(() =>
-    defaultDesignPrintOptions(project, getVisibleSceneBounds2D(project)),
+    defaultDesignPrintOptions(project, getVisibleSceneBounds2D(project, { includeBackdrop: false })),
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const customScaleInputRef = useRef<HTMLInputElement>(null)
@@ -71,9 +73,18 @@ export function PrintDesignDialog({
   const [viewBounds] = useState<Bounds2D | null>(() => getCurrentViewBounds())
   const footerDate = useMemo(() => new Date().toLocaleDateString(), [])
 
+  // Bounds follow the layers being printed, so toggling backdrop/tabs/clamps
+  // rescales the page to exactly what the output will contain.
+  const contentBackdrop = options.content.backdrop
+  const contentTabs = options.content.tabs
+  const contentClamps = options.content.clamps
   const bounds = useMemo(
-    () => resolvePrintBounds(project, options.area, viewBounds),
-    [project, options.area, viewBounds],
+    () => resolvePrintBounds(project, options.area, viewBounds, {
+      backdrop: contentBackdrop,
+      tabs: contentTabs,
+      clamps: contentClamps,
+    }),
+    [project, options.area, viewBounds, contentBackdrop, contentTabs, contentClamps],
   )
   const layout = useMemo(
     () => computeDesignPrintLayout(options, bounds, units),

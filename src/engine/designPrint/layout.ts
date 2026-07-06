@@ -25,6 +25,7 @@ import { getStockBounds } from '../../types/project'
 import type { Bounds2D, Project } from '../../types/project'
 import type { Units } from '../../utils/units'
 import type {
+  DesignPrintContent,
   DesignPrintLayout,
   DesignPrintOptions,
   PaperPreset,
@@ -117,11 +118,18 @@ export function resolvePaperSizeMm(
  * Resolve the world bounds to print for the selected area mode. `viewBounds`
  * is the sketch canvas's current pan/zoom window; when unavailable the `view`
  * mode falls back to visible-design extents.
+ *
+ * Visible-design extents follow the enabled content layers: tabs, clamps and
+ * the backdrop only widen the bounds when they will actually be printed, so
+ * the page is never scaled to fit content the output omits. Without a
+ * `content` argument, tabs/clamps count and the backdrop does not — matching
+ * the dialog's defaults.
  */
 export function resolvePrintBounds(
   project: Project,
   area: PrintAreaMode,
   viewBounds: Bounds2D | null,
+  content?: Pick<DesignPrintContent, 'backdrop' | 'tabs' | 'clamps'>,
 ): Bounds2D {
   if (area === 'stock') {
     return getStockBounds(project.stock)
@@ -129,7 +137,26 @@ export function resolvePrintBounds(
   if (area === 'view' && viewBounds) {
     return viewBounds
   }
-  return getVisibleSceneBounds2D(project)
+
+  const bounds = getVisibleSceneBounds2D(project, {
+    includeBackdrop: false,
+    includeTabs: content?.tabs ?? true,
+    includeClamps: content?.clamps ?? true,
+  })
+
+  // The backdrop toggle prints the image regardless of its sketch
+  // visibility, so it widens the bounds exactly when it will be drawn.
+  if (content?.backdrop && project.backdrop) {
+    const halfW = project.backdrop.width / 2
+    const halfH = project.backdrop.height / 2
+    return {
+      minX: Math.min(bounds.minX, project.backdrop.center.x - halfW),
+      maxX: Math.max(bounds.maxX, project.backdrop.center.x + halfW),
+      minY: Math.min(bounds.minY, project.backdrop.center.y - halfH),
+      maxY: Math.max(bounds.maxY, project.backdrop.center.y + halfH),
+    }
+  }
+  return bounds
 }
 
 /** Full physical layout for the given options and world bounds. */

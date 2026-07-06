@@ -24,6 +24,26 @@
  */
 
 const CLEANUP_FALLBACK_MS = 60_000
+const SVG_IMAGE_LOAD_CAP_MS = 1_500
+
+/**
+ * Wait for an SVG `<image>` element (e.g. the printed backdrop) to finish
+ * loading. Prefers decode() where available; otherwise resolves on
+ * load/error with a time cap, since SVGImageElement has no `complete` flag
+ * and the events may have fired before the listeners attached.
+ */
+function waitForSvgImage(image: SVGImageElement): Promise<void> {
+  const decodable = image as SVGImageElement & { decode?: () => Promise<void> }
+  if (typeof decodable.decode === 'function') {
+    return decodable.decode().catch(() => undefined)
+  }
+  return new Promise((resolve) => {
+    const done = () => resolve()
+    image.addEventListener('load', done, { once: true })
+    image.addEventListener('error', done, { once: true })
+    window.setTimeout(done, SVG_IMAGE_LOAD_CAP_MS)
+  })
+}
 
 /**
  * Render `html` into a hidden iframe and open the print dialog for it.
@@ -52,13 +72,16 @@ export async function printHtmlDocument(html: string): Promise<void> {
     doc.write(html)
     doc.close()
 
-    // Wait for embedded images (backdrop/model data URLs) so the print
-    // snapshot is complete. decode() failures are non-fatal.
-    await Promise.all(
-      Array.from(doc.images).map((img) =>
+    // Wait for embedded images so the print snapshot is complete. The
+    // design document embeds its rasters (backdrop, model top views) as SVG
+    // <image> elements, which document.images does NOT include — wait for
+    // both kinds. decode() failures are non-fatal.
+    await Promise.all([
+      ...Array.from(doc.images).map((img) =>
         img.decode ? img.decode().catch(() => undefined) : Promise.resolve(undefined),
       ),
-    )
+      ...Array.from(doc.querySelectorAll('image')).map((image) => waitForSvgImage(image)),
+    ])
 
     let cleanedUp = false
     const cleanup = () => {

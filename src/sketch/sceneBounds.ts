@@ -24,11 +24,24 @@ import { getProfileBounds, rectProfile } from '../types/project'
 import type { Bounds2D, Project, SketchProfile } from '../types/project'
 
 /**
+ * Optional layer filter: a layer set to false is left out of the bounds even
+ * when its entities are visible. All layers default to included — the sketch
+ * canvas zoom fits everything on screen; the print engine passes the layers
+ * it will actually draw so the page isn't scaled to fit unprinted content.
+ */
+export interface SceneBoundsLayers {
+  includeBackdrop?: boolean
+  includeTabs?: boolean
+  includeClamps?: boolean
+}
+
+/**
  * Bounds of everything currently visible in the 2D sketch scene: stock,
  * feature geometry (text resolved), tabs, clamps, origin marker, and backdrop.
  * Falls back to the stock profile when nothing is visible.
  */
-export function getVisibleSceneBounds2D(project: Project): Bounds2D {
+export function getVisibleSceneBounds2D(project: Project, layers: SceneBoundsLayers = {}): Bounds2D {
+  const { includeBackdrop = true, includeTabs = true, includeClamps = true } = layers
   const profiles: SketchProfile[] = []
 
   if (project.stock.visible) {
@@ -41,15 +54,19 @@ export function getVisibleSceneBounds2D(project: Project): Bounds2D {
     }
   }
 
-  for (const tab of project.tabs) {
-    if (tab.visible) {
-      profiles.push(rectProfile(tab.x, tab.y, tab.w, tab.h))
+  if (includeTabs) {
+    for (const tab of project.tabs) {
+      if (tab.visible) {
+        profiles.push(rectProfile(tab.x, tab.y, tab.w, tab.h))
+      }
     }
   }
 
-  for (const clamp of project.clamps) {
-    if (clamp.visible) {
-      profiles.push(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
+  if (includeClamps) {
+    for (const clamp of project.clamps) {
+      if (clamp.visible) {
+        profiles.push(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
+      }
     }
   }
 
@@ -77,7 +94,7 @@ export function getVisibleSceneBounds2D(project: Project): Bounds2D {
     maxY = Math.max(maxY, project.origin.y)
   }
 
-  if (project.backdrop?.visible) {
+  if (includeBackdrop && project.backdrop?.visible) {
     const halfW = project.backdrop.width / 2
     const halfH = project.backdrop.height / 2
     minX = Math.min(minX, project.backdrop.center.x - halfW)
