@@ -32,8 +32,8 @@ import {
   isDimensionDangling,
   measureValue,
 } from '../../sketch/dimensions'
-import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
-import { getStockBounds, rectProfile } from '../../types/project'
+import { generateTextShapes, getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
+import { getProfileBounds, getStockBounds, rectProfile } from '../../types/project'
 import type { Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { formatAngle, formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
@@ -245,6 +245,13 @@ interface WorldContext {
   /** Tinted fills inside closed profiles; off for monochrome and SVG export. */
   fills: boolean
   units: Units
+  /**
+   * How label/dimension/origin text is rendered. 'native' emits `<text>`
+   * (crisp on paper). 'skeleton' emits single-stroke `<path>` geometry so the
+   * geometry SVG export stays lightweight and re-imports cleanly instead of
+   * ballooning into filled glyph outlines.
+   */
+  textMode: 'native' | 'skeleton'
 }
 
 /** A length given in paper millimetres expressed in world units. */
@@ -256,20 +263,79 @@ function dash(ctx: WorldContext, ...pattern: number[]): string {
   return pattern.map((v) => fmt(mm(ctx, v))).join(' ')
 }
 
+interface TextElOptions {
+  sizeMm: number
+  fill: string
+  anchor?: 'start' | 'middle' | 'end'
+  rotateDeg?: number
+  halo?: boolean
+  weight?: number
+}
+
+// Skeleton lettering visual tuning. The single-stroke font's `size` is roughly
+// its full glyph height, so scale it down to approximate a `<text>` cap height
+// and give the strokes a weight that stays legible at label sizes.
+const SKELETON_TEXT_CAP_RATIO = 0.72
+const SKELETON_TEXT_STROKE_RATIO = 0.09
+const SKELETON_TEXT_MIN_STROKE_MM = 0.22
+
+/**
+ * Render text as single-stroke skeleton `<path>` geometry positioned to match
+ * the equivalent `<text>` element (horizontal anchor + vertical centering,
+ * optional rotation about the anchor point). Used by the geometry SVG export so
+ * labels stay a handful of line segments instead of dense filled outlines.
+ */
+function skeletonTextEl(ctx: WorldContext, x: number, y: number, content: string, options: TextElOptions): string {
+  const sizeWorld = mm(ctx, options.sizeMm * SKELETON_TEXT_CAP_RATIO)
+  const shapes = generateTextShapes(
+    { text: content, style: 'skeleton', fontId: 'simple_stroke', size: sizeWorld, operation: 'subtract' },
+    { x: 0, y: 0 },
+  )
+  if (shapes.length === 0) return ''
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const shape of shapes) {
+    const bounds = getProfileBounds(shape.profile)
+    minX = Math.min(minX, bounds.minX)
+    maxX = Math.max(maxX, bounds.maxX)
+    minY = Math.min(minY, bounds.minY)
+    maxY = Math.max(maxY, bounds.maxY)
+  }
+
+  const anchor = options.anchor ?? 'middle'
+  let tx = x - minX
+  if (anchor === 'middle') tx -= (maxX - minX) / 2
+  else if (anchor === 'end') tx -= maxX - minX
+  const ty = y - (minY + (maxY - minY) / 2)
+
+  const strokeWidth = fmt(mm(ctx, Math.max(SKELETON_TEXT_MIN_STROKE_MM, options.sizeMm * SKELETON_TEXT_STROKE_RATIO)))
+  const rotate =
+    options.rotateDeg !== undefined && Math.abs(options.rotateDeg) > 0.01
+      ? `rotate(${fmt(options.rotateDeg)} ${fmt(x)} ${fmt(y)}) `
+      : ''
+  const body = shapes
+    .map(
+      (shape) =>
+        `<path d="${profileToPathD(shape.profile)}" fill="none" stroke="${options.fill}"` +
+        ` stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    )
+    .join('')
+  return `<g class="pc-text" transform="${rotate}translate(${fmt(tx)} ${fmt(ty)})">${body}</g>`
+}
+
 function textEl(
   ctx: WorldContext,
   x: number,
   y: number,
   content: string,
-  options: {
-    sizeMm: number
-    fill: string
-    anchor?: 'start' | 'middle' | 'end'
-    rotateDeg?: number
-    halo?: boolean
-    weight?: number
-  },
+  options: TextElOptions,
 ): string {
+  if (ctx.textMode === 'skeleton') {
+    return skeletonTextEl(ctx, x, y, content, options)
+  }
   const anchor = options.anchor ?? 'middle'
   const transform =
     options.rotateDeg !== undefined && Math.abs(options.rotateDeg) > 0.01
@@ -772,6 +838,7 @@ export function buildDesignPrintSvg(
     palette,
     fills: options.colorMode !== 'monochrome',
     units,
+    textMode: 'native',
   }
 
   const tx = layout.originXMm - layout.bounds.minX * layout.scale
@@ -843,6 +910,7 @@ export function buildDesignSvgExport(project: Project, options: DesignSvgExportO
     palette: options.colorMode === 'monochrome' ? MONO_PALETTE : COLOR_PALETTE,
     fills: false,
     units,
+    textMode: 'skeleton',
   }
 
   const world = buildWorldContent(project, ctx, {

@@ -638,6 +638,39 @@ function buildTestExportSvg(
   )
 }
 
+{
+  // Annotation text (origin labels, feature labels, dimension values) is
+  // emitted as lightweight single-stroke skeleton geometry, never <text>, so
+  // the geometry export re-imports as a few line segments instead of dense
+  // filled glyph outlines (issue #257 round-trip bloat).
+  const { svg } = buildTestExportSvg('mm') // origin visible → X/Y labels present
+  assert(!svg.includes('<text'), 'geometry export emits no <text> elements')
+  assert(svg.includes('class="pc-text"'), 'origin axis labels render as skeleton strokes')
+
+  const dimension: DimensionAnnotation = {
+    id: 'dim-skel',
+    type: 'aligned',
+    a: { kind: 'free', point: { x: 10, y: 10 } },
+    b: { kind: 'free', point: { x: 40, y: 10 } },
+    offset: -6,
+    visible: true,
+    locked: false,
+    textOverride: null,
+    precisionOverride: null,
+  }
+  const annotated = buildTestExportSvg('mm', (project) => {
+    project.annotations.push(dimension)
+    project.meta.showDimensions = true
+  }, { content: { featureLabels: true } })
+  assert(!annotated.svg.includes('<text'), 'labels and dimensions never emit <text> in the export')
+  // Skeleton strokes are open polylines, so the value is geometry, not a node.
+  assert(!annotated.svg.includes('>30<'), 'dimension value is skeleton geometry, not a text node')
+
+  // The print SVG keeps crisp native <text>; only the geometry export skeletonizes.
+  const print = buildTestSvg()
+  assert(print.svg.includes('<text'), 'print SVG still uses native <text>')
+}
+
 // ── Path data ────────────────────────────────────────────────
 
 {
