@@ -570,6 +570,33 @@ export function buildFeatureMesh(
   return mesh
 }
 
+/**
+ * Update a clamp mesh's highlight to reflect selection/collision state.
+ *
+ * Selection and collision only change the fixture's color + opacity, never its
+ * geometry, so this is a cheap recolor that can run without rebuilding the CSG
+ * model (issue #261). `buildClampMesh` calls it for the initial appearance and
+ * Viewport3D calls it again on selection/collision changes.
+ */
+export function applyClampHighlight(mesh: THREE.Mesh, selected: boolean, colliding: boolean): void {
+  const material = mesh.material
+  if (!(material instanceof THREE.MeshStandardMaterial)) return
+  material.color.set(
+    colliding
+      ? (selected ? '#ff9c9c' : '#d46b6b')
+      : (selected ? '#9db9ff' : '#6c89d1'),
+  )
+  material.opacity = colliding ? (selected ? 0.8 : 0.68) : (selected ? 0.72 : 0.58)
+}
+
+/** Update a tab mesh's highlight to reflect selection state (see {@link applyClampHighlight}). */
+export function applyTabHighlight(mesh: THREE.Mesh, selected: boolean): void {
+  const material = mesh.material
+  if (!(material instanceof THREE.MeshStandardMaterial)) return
+  material.color.set(selected ? '#c7ef94' : '#9ccd67')
+  material.opacity = selected ? 0.72 : 0.56
+}
+
 export function buildClampMesh(clamp: Clamp, selected = false, colliding = false): THREE.Mesh {
   const shape = profileToShape(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))
   const geometry = new THREE.ExtrudeGeometry(shape, {
@@ -579,18 +606,14 @@ export function buildClampMesh(clamp: Clamp, selected = false, colliding = false
   geometry.rotateX(-Math.PI / 2)
 
   const material = new THREE.MeshStandardMaterial({
-    color:
-      colliding
-        ? (selected ? new THREE.Color('#ff9c9c') : new THREE.Color('#d46b6b'))
-        : (selected ? new THREE.Color('#9db9ff') : new THREE.Color('#6c89d1')),
     transparent: true,
-    opacity: colliding ? (selected ? 0.8 : 0.68) : (selected ? 0.72 : 0.58),
     roughness: 0.72,
     metalness: 0.08,
     side: THREE.DoubleSide,
   })
 
   const mesh = new THREE.Mesh(geometry, material)
+  applyClampHighlight(mesh, selected, colliding)
   mesh.scale.z = -1
   return mesh
 }
@@ -607,15 +630,14 @@ export function buildTabMesh(tab: Tab, selected = false): THREE.Mesh {
   geometry.translate(0, zStart, 0)
 
   const material = new THREE.MeshStandardMaterial({
-    color: selected ? new THREE.Color('#c7ef94') : new THREE.Color('#9ccd67'),
     transparent: true,
-    opacity: selected ? 0.72 : 0.56,
     roughness: 0.74,
     metalness: 0.06,
     side: THREE.DoubleSide,
   })
 
   const mesh = new THREE.Mesh(geometry, material)
+  applyTabHighlight(mesh, selected)
   mesh.scale.z = -1
   return mesh
 }
@@ -943,19 +965,17 @@ export interface SceneObjects {
   clampMeshes: Map<string, THREE.Mesh>
 }
 
-export async function buildScene(
-  project: Project,
-  selectedClampId: string | null = null,
-  selectedTabId: string | null = null,
-  collidingClampIds: string[] = [],
-): Promise<SceneObjects> {
+export async function buildScene(project: Project): Promise<SceneObjects> {
   // Construction geometry is sketch-only — it never reaches the 3D model,
   // feature meshes, or open-feature lines (issue #199). Regions stay: they
   // render display-only walls below.
+  //
+  // Fixtures are built unhighlighted: selection/collision only tint the clamp
+  // and tab meshes, which Viewport3D recolors via applyClampHighlight /
+  // applyTabHighlight without rebuilding this (expensive) CSG model (issue #261).
   const visibleFeatures = modelFeatures(project.features).filter((feature) => feature.visible)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
-  const collidingClampIdSet = new Set(collidingClampIds)
   const stockMesh = buildStockMesh(project.stock)
   const stockWireframe = buildStockWireframe(project.stock)
   const featureMeshes = new Map<string, THREE.Object3D>()
@@ -1008,14 +1028,11 @@ export async function buildScene(
   stockWireframe.visible = showStockReference
 
   for (const tab of visibleTabs) {
-    tabMeshes.set(tab.id, buildTabMesh(tab, tab.id === selectedTabId))
+    tabMeshes.set(tab.id, buildTabMesh(tab))
   }
 
   for (const clamp of visibleClamps) {
-    clampMeshes.set(
-      clamp.id,
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id)),
-    )
+    clampMeshes.set(clamp.id, buildClampMesh(clamp))
   }
 
   return { stockMesh, stockWireframe, modelMesh, featureMeshes, openFeatureLines, tabMeshes, clampMeshes }
