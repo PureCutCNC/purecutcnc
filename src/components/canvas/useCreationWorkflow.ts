@@ -38,6 +38,8 @@ export interface CreationWorkflowCtx {
   placePendingAddAt: (point: Point) => void
   placePendingSlotAt: (point: Point) => void
   placePendingNgonAt: (point: Point) => void
+  setPendingGearRadiusAt: (point: Point) => void
+  completePendingGear: () => string[]
   cancelPendingAdd: () => void
   addPendingPolygonPoint: (point: Point) => void
   addPendingCompositePoint: (point: Point) => void
@@ -51,7 +53,7 @@ export interface CreationWorkflowCtx {
   clearTransientCanvasState: () => void
 }
 
-type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'roundrect' | 'chamferrect' | null
+type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'gear' | 'roundrect' | 'chamferrect' | null
 
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
@@ -70,6 +72,7 @@ export interface CreationWorkflow {
   undoFromCreationPanel: () => void
   finishOpenPathFromPanel: () => void
   finishOpenCompositeFromPanel: () => void
+  completeGearFromPanel: () => void
   setCompositeModeFromPanel: (mode: 'line' | 'arc' | 'spline') => void
 }
 
@@ -86,6 +89,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     placePendingAddAt,
     placePendingSlotAt,
     placePendingNgonAt,
+    setPendingGearRadiusAt,
+    completePendingGear,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -103,7 +108,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     pendingAdd.shape === 'rect' || pendingAdd.shape === 'circle' || pendingAdd.shape === 'ellipse'
     || pendingAdd.shape === 'tab' || pendingAdd.shape === 'clamp'
     || pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite'
-    || pendingAdd.shape === 'slot' || pendingAdd.shape === 'ngon'
+    || pendingAdd.shape === 'slot' || pendingAdd.shape === 'ngon' || pendingAdd.shape === 'gear'
     || pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect'
   ) ? pendingAdd.shape : null
   const creationPanelHasAnchor = creationPanelShape != null && pendingAdd != null && 'anchor' in pendingAdd && !!pendingAdd.anchor
@@ -118,6 +123,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     open: !!creationPanelShape,
     phaseKey: creationDimEditActive ? 'dimensions'
       : (pendingAdd?.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2) ? 'width'
+      : (pendingAdd?.shape === 'gear' && pendingAdd.outsideRadius !== null) ? 'parameters'
       : creationPanelHasAnchor ? 'place'
       : creationPanelHasPoints ? 'adding'
       : creationPanelHasStart ? 'drawing'
@@ -125,7 +131,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     containerRef,
     canvasRef,
     clearTransientCanvasState,
-    focusCanvasOnOpen: !creationDimEditActive,
+    focusCanvasOnOpen: !creationDimEditActive && !(pendingAdd?.shape === 'gear' && pendingAdd.outsideRadius !== null),
   })
 
   const placementPanelActive = !!pendingAdd && !creationPanelShape
@@ -223,6 +229,10 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
       setPendingPreviewPointRef(null)
       setDimensionEdit(null)
       creationWorkflowPanel.focusCanvasAfterAction()
+    } else if (curr?.shape === 'gear' && curr.anchor) {
+      setPendingGearRadiusAt(pt)
+      setPendingPreviewPointRef({ point: pt, session: curr.session })
+      setDimensionEdit(null)
     } else {
       placePendingAddAt(pt)
       setPendingPreviewPointRef(null)
@@ -263,6 +273,14 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     creationWorkflowPanel.focusCanvasAfterAction()
   }
 
+  function completeGearFromPanel() {
+    const createdIds = completePendingGear()
+    if (createdIds.length > 0) {
+      setPendingPreviewPointRef(null)
+      creationWorkflowPanel.focusCanvasAfterAction()
+    }
+  }
+
   function setCompositeModeFromPanel(mode: 'line' | 'arc' | 'spline') {
     setPendingCompositeMode(mode)
     creationWorkflowPanel.focusCanvasAfterAction()
@@ -285,6 +303,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     undoFromCreationPanel,
     finishOpenPathFromPanel,
     finishOpenCompositeFromPanel,
+    completeGearFromPanel,
     setCompositeModeFromPanel,
   }
 }

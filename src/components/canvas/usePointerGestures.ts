@@ -183,6 +183,7 @@ export interface PointerGesturesCtx {
   // Shell closures
   scheduleDraw: () => void
   applyLock: (point: Point, reference: Point) => Point
+  pendingPreviewPointRef: MutableRefObject<PendingPreviewPoint | null>
   setPendingPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingMovePreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingTransformPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
@@ -313,6 +314,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     stopNodeDrag,
     scheduleDraw,
     applyLock,
+    pendingPreviewPointRef,
     setPendingPreviewPointRef,
     setPendingMovePreviewPointRef,
     setPendingTransformPreviewPointRef,
@@ -658,6 +660,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
         scheduleDraw()
+        return
+      }
+      if (pendingAdd.shape === 'gear' && pendingAdd.anchor && pendingAdd.outsideRadius !== null) {
+        if (pendingPreviewPointRef.current?.session !== pendingAdd.session) {
+          setPendingPreviewPointRef({
+            point: { x: pendingAdd.anchor.x + pendingAdd.outsideRadius, y: pendingAdd.anchor.y },
+            session: pendingAdd.session,
+          })
+        }
         return
       }
       // Apply axis lock to preview for polygon/spline/composite
@@ -1057,6 +1068,14 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       scheduleDraw()
     } else if ((pendingAdd?.shape === 'rect' || pendingAdd?.shape === 'circle' || pendingAdd?.shape === 'ellipse' || pendingAdd?.shape === 'tab' || pendingAdd?.shape === 'clamp') && pendingAdd.anchor) {
       setPendingPreviewPointRef({ point: pendingAdd.anchor, session: pendingAdd.session })
+    } else if (pendingAdd?.shape === 'gear' && pendingAdd.anchor && pendingAdd.outsideRadius !== null) {
+      const currentGearPreview = pendingPreviewPointRef.current?.session === pendingAdd.session
+        ? pendingPreviewPointRef.current.point
+        : { x: pendingAdd.anchor.x + pendingAdd.outsideRadius, y: pendingAdd.anchor.y }
+      setPendingPreviewPointRef({
+        point: currentGearPreview,
+        session: pendingAdd.session,
+      })
     } else {
       setPendingPreviewPointRef(null)
     }

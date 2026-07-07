@@ -44,6 +44,7 @@ import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { ConstraintEditPanel } from './ConstraintEditPanel'
 import { DrivingDimensionPanel } from './DrivingDimensionPanel'
+import { GearParameterPanel } from './GearParameterPanel'
 import { useDrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
@@ -66,6 +67,7 @@ import {
   drawPendingSlotAxis,
   drawPendingSlotWidth,
   drawPendingNgon,
+  drawPendingGear,
   drawPendingRoundRect,
   drawPendingChamferRect,
   drawPreviewProfile,
@@ -286,6 +288,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     placePendingAddAt,
     placePendingSlotAt,
     placePendingNgonAt,
+    setPendingGearRadiusAt,
+    completePendingGear,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -321,6 +325,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingConstraint,
     updateConstraintValue,
     setPendingNgonSides,
+    setPendingGearParams,
     setPendingRectCorner,
     setRectStockDimension,
   } = useProjectStore()
@@ -542,6 +547,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     placePendingAddAt,
     placePendingSlotAt,
     placePendingNgonAt,
+    setPendingGearRadiusAt,
+    completePendingGear,
     cancelPendingAdd,
     addPendingPolygonPoint,
     addPendingCompositePoint,
@@ -554,7 +561,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
   })
-
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
     pendingMovePreviewPointRef.current = nextPoint
     scheduleDraw()
@@ -1232,6 +1238,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     } else if (pendingAdd?.shape === 'ngon') {
       if (pendingAdd.anchor && currentPreviewPoint) {
         drawPendingNgon(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.sides, vt, project.meta.units)
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      } else if (currentPreviewPoint) {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
+    } else if (pendingAdd?.shape === 'gear') {
+      if (pendingAdd.anchor && currentPreviewPoint) {
+        drawPendingGear(ctx, pendingAdd.anchor, currentPreviewPoint, pendingAdd.params, vt, project.meta.units)
         drawPendingPoint(ctx, pendingAdd.anchor, vt)
         drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       } else if (currentPreviewPoint) {
@@ -2624,6 +2638,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     stopNodeDrag,
     scheduleDraw,
     applyLock,
+    pendingPreviewPointRef,
     setPendingPreviewPointRef,
     setPendingMovePreviewPointRef,
     setPendingTransformPreviewPointRef,
@@ -2713,6 +2728,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     placePendingAddAt,
     placePendingSlotAt,
     placePendingNgonAt,
+    setPendingGearRadiusAt,
     placePendingTextAt,
     placeOriginAt,
     addPendingPolygonPoint,
@@ -2979,6 +2995,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : creation.creationPanelShape === 'spline' ? 'Spline'
             : creation.creationPanelShape === 'slot' ? 'Slot'
             : creation.creationPanelShape === 'ngon' ? 'Polygon'
+            : creation.creationPanelShape === 'gear' ? 'Gear'
             : creation.creationPanelShape === 'roundrect' ? 'Rounded Rectangle'
             : creation.creationPanelShape === 'chamferrect' ? 'Chamfered Rectangle'
             : 'Composite'
@@ -3003,6 +3020,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 : pendingAdd.shape === 'slot' && pendingAdd.points.length === 1
                   ? 'Click second end center or enter dimensions'
                   : 'Click first end center')
+            : creation.creationPanelShape === 'gear'
+              ? (pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null ? 'Set gear parameters' : pendingAdd.shape === 'gear' && pendingAdd.anchor ? 'Click to set outside radius or enter radius' : 'Click center point')
             : creation.creationPanelHasAnchor
               ? (creation.creationPanelShape === 'circle'
                 ? 'Click to set radius or enter dimensions'
@@ -3044,12 +3063,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   onClick={creation.finishOpenCompositeFromPanel}
                 >Finish</button>
               )}
+              {pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null && !creation.creationDimEditActive && (<button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={creation.completeGearFromPanel}>Confirm</button>)}
               {creation.creationCanDimEdit && !creation.creationDimEditActive && (
                 <button
                   type="button"
                   className="tablet-cmd-btn"
                   onClick={creation.triggerDimensionFromCreationPanel}
-                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : pendingAdd.shape === 'ngon' ? 'Radius' : 'Dimensions'}</button>
+                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? 'Width' : (pendingAdd.shape === 'ngon' || pendingAdd.shape === 'gear') ? 'Radius' : 'Dimensions'}</button>
               )}
               {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
                 <button
@@ -3299,7 +3319,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     </label>
                   </>
                 )
-              ) : dimEdit.dimensionEdit.shape === 'ngon' ? (
+              ) : (dimEdit.dimensionEdit.shape === 'ngon' || dimEdit.dimensionEdit.shape === 'gear') ? (
                 <label className="canvas-workflow-panel__field">
                   <span>Radius</span>
                   <input
@@ -3375,6 +3395,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               )}
             </div>
           )}
+          {pendingAdd.shape === 'gear' && !creation.creationDimEditActive && (<GearParameterPanel pendingAdd={pendingAdd} units={project.meta.units} setPendingGearParams={setPendingGearParams} />)}
           {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
             <div className="canvas-workflow-panel__meta">
               <label className="canvas-workflow-panel__field">

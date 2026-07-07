@@ -26,6 +26,7 @@ import {
 import { roundedRectProfile, chamferedRectProfile } from '../../store/helpers/cannedRectProfiles'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
+import { buildGearProfile, type GearCreationParams } from '../../sketch/gearProfile'
 import {
   drawLineLengthMeasurement,
 } from './measurements'
@@ -817,6 +818,29 @@ export function drawPendingNgon(
   const firstVertexAngle = Math.atan2(cursorPoint.y - anchor.y, cursorPoint.x - anchor.x)
   const profile = ngonProfile(anchor.x, anchor.y, sides, circumradius, firstVertexAngle)
   drawPreviewProfile(ctx, profile, vt, `R = ${formatLength(circumradius, units)}`)
+  drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
+}
+
+export function drawPendingGear(
+  ctx: CanvasRenderingContext2D,
+  anchor: Point,
+  cursorPoint: Point,
+  params: GearCreationParams,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const outsideRadius = Math.hypot(cursorPoint.x - anchor.x, cursorPoint.y - anchor.y)
+  if (outsideRadius < 1e-10) return
+  try {
+    const profile = buildGearProfile({
+      ...params,
+      center: anchor,
+      outsideRadius,
+    })
+    drawPreviewProfile(ctx, profile, vt, `OD R = ${formatLength(outsideRadius, units)}`)
+  } catch {
+    // Invalid parameter combinations are surfaced in the workflow panel.
+  }
   drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
 }
 

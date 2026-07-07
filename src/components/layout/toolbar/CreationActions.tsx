@@ -42,6 +42,7 @@ function CreationActions({
   onText,
   onSlot,
   onNgon,
+  onGear,
   onRoundRect,
   onChamferRect,
 }: {
@@ -58,6 +59,7 @@ function CreationActions({
   onText: () => void
   onSlot: () => void
   onNgon: () => void
+  onGear: () => void
   onRoundRect: () => void
   onChamferRect: () => void
 }) {
@@ -70,7 +72,7 @@ function CreationActions({
   const openModeRef = useRef<PopoverOpenMode | null>(null)
   const side = tooltipSide ?? 'bottom'
   const availableShapeOptions = creationTarget !== 'feature'
-    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text')
+    ? CREATION_SHAPE_OPTIONS.filter((option) => option.value !== 'text' && option.value !== 'gear')
     : CREATION_SHAPE_OPTIONS
   const lastShapeOption = availableShapeOptions.find((option) => option.value === lastShape) ?? availableShapeOptions[0]
   const primaryOptions = availableShapeOptions.filter((o) => o.tier === 'primary')
@@ -104,6 +106,8 @@ function CreationActions({
       onSlot()
     } else if (shape === 'ngon') {
       onNgon()
+    } else if (shape === 'gear') {
+      onGear()
     } else if (shape === 'roundrect') {
       onRoundRect()
     } else if (shape === 'chamferrect') {
