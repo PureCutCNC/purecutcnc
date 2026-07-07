@@ -40,6 +40,8 @@ import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from
 import { resolvePocketRegions } from './resolver'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 
+const ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
+
 interface PolyTreeNode {
   IsHole(): boolean
   Contour(): ClipperPath
@@ -80,6 +82,7 @@ function offsetPaths(
   }
 
   const offset = new ClipperLib.ClipperOffset()
+  offset.ArcTolerance = ROUND_JOIN_ARC_TOLERANCE
   offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, delta)
@@ -1354,18 +1357,25 @@ function generateFinishBandMoves(
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const finishDelta = toolRadius + radialLeave
-  const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
-  const wallRegions = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
-    ? band.regions.flatMap((region) => buildInsetRegions(
-      region,
-      finishDelta,
-      ClipperLib.JoinType.jtMiter,
-      ClipperLib.JoinType.jtRound,
-    ))
-    : finishRegions
+  const shouldRoundPocketWalls = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
+  const needsMiterFinishRegions = operation.finishFloor || (operation.finishWalls && !shouldRoundPocketWalls)
+  const finishRegions = needsMiterFinishRegions
+    ? band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+    : []
+  let wallRegions: ResolvedPocketRegion[] = []
+  if (operation.finishWalls) {
+    wallRegions = shouldRoundPocketWalls
+      ? band.regions.flatMap((region) => buildInsetRegions(
+        region,
+        finishDelta,
+        ClipperLib.JoinType.jtMiter,
+        ClipperLib.JoinType.jtRound,
+      ))
+      : finishRegions
+  }
   const slotScale = resolveSlotFeedScale(operation)
   const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
-  const wallContours = operation.finishWalls ? buildContourLoops(wallRegions) : []
+  const wallContours = buildContourLoops(wallRegions)
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'

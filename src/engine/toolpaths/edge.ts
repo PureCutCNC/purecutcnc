@@ -36,6 +36,8 @@ import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstacl
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 
+const ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
+
 function offsetPaths(
   paths: ClipperPath[],
   delta: number,
@@ -46,6 +48,7 @@ function offsetPaths(
   }
 
   const offset = new ClipperLib.ClipperOffset()
+  offset.ArcTolerance = ROUND_JOIN_ARC_TOLERANCE
   offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, delta)

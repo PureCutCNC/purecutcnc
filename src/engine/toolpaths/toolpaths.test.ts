@@ -1532,9 +1532,12 @@ function testEdgeOutsideRoundCornersOptIn() {
 
   const miter = generateEdgeRouteToolpath(project, baseOp)
   const rounded = generateEdgeRouteToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  const miterCuts = cutMoves(miter.moves)
+  const roundedCuts = cutMoves(rounded.moves)
 
-  assert(cutMoves(miter.moves).length === 4, 'disabled outside route should keep four mitered rectangle cuts')
-  assert(cutMoves(rounded.moves).length > cutMoves(miter.moves).length, 'enabled outside route should emit rounded multi-segment corners')
+  assert(miterCuts.length === 4, 'disabled outside route should keep four mitered rectangle cuts')
+  assert(roundedCuts.length > miterCuts.length, 'enabled outside route should emit rounded multi-segment corners')
+  assert(roundedCuts.length < 100, `rounded outside route should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
   console.log('edge_route_outside round outside corners opt-in: PASSED')
 }
 
@@ -1554,9 +1557,12 @@ function testEdgeOutsideCombinedRoundCorners() {
 
   const miter = generateEdgeRouteToolpath(project, baseOp)
   const rounded = generateEdgeRouteToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  const miterCuts = cutMoves(miter.moves)
+  const roundedCuts = cutMoves(rounded.moves)
 
-  assert(cutMoves(miter.moves).length === 8, 'disabled combined outside route should keep two four-corner contours')
-  assert(cutMoves(rounded.moves).length > cutMoves(miter.moves).length, 'enabled combined outside route should round both contours')
+  assert(miterCuts.length === 8, 'disabled combined outside route should keep two four-corner contours')
+  assert(roundedCuts.length > miterCuts.length, 'enabled combined outside route should round both contours')
+  assert(roundedCuts.length < 200, `combined rounded outside route should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
   console.log('combined edge_route_outside round outside corners: PASSED')
 }
 
@@ -2013,6 +2019,7 @@ function testPocketFinishRoundsIslandWallsOnly() {
   assert(roundedGroups[0].length === 4, 'rounded setting should keep the main pocket boundary mitered')
   assert(miterGroups[1].length === 4, 'disabled island wall should have four mitered cuts')
   assert(roundedGroups[1].length > miterGroups[1].length, 'enabled island wall should use multi-segment rounded corners')
+  assert(roundedGroups[1].length < 100, `rounded island wall should stay coarsely tessellated, got ${roundedGroups[1].length} cuts`)
   console.log('pocket finish rounded island walls only: PASSED')
 }
 
