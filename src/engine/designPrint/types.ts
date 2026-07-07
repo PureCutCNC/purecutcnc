@@ -123,6 +123,41 @@ export interface PrintToolpathVisibility {
   retractions: boolean
 }
 
+/** Which world-space region gets exported as SVG (no canvas-view mode). */
+export type DesignSvgExportArea = Exclude<PrintAreaMode, 'view'>
+
+/** Optional content layers in the SVG export beyond the design geometry. */
+export interface DesignSvgExportContent {
+  grid: boolean
+  featureLabels: boolean
+  tabs: boolean
+  clamps: boolean
+}
+
+/**
+ * Options for the geometry-only SVG export (issue #257). The export is always
+ * true 1:1 physical scale — there is no paper, margin, or scale option.
+ */
+export interface DesignSvgExportOptions {
+  area: DesignSvgExportArea
+  colorMode: PrintColorMode
+  content: DesignSvgExportContent
+}
+
+/** Default SVG export options; content toggles follow project visibility. */
+export function defaultDesignSvgExportOptions(project: Project): DesignSvgExportOptions {
+  return {
+    area: 'visible',
+    colorMode: 'color',
+    content: {
+      grid: false,
+      featureLabels: false,
+      tabs: project.tabs.some((tab) => tab.visible),
+      clamps: project.clamps.some((clamp) => clamp.visible),
+    },
+  }
+}
+
 /** Default margin in project units (10 mm / 0.5 in). */
 export function defaultPrintMargin(units: Units): number {
   return units === 'inch' ? 0.5 : 10

@@ -147,9 +147,13 @@ export const stlExportFormat: ModelExportFormat<STLExportOptions> = {
   name: 'STL (Stereolithography)',
   extension: 'stl',
   mimeType: 'model/stl',
+  kind: '3d',
   defaultOptions: STL_DEFAULT_OPTIONS,
   renderOptions: () => null, // Provided by the dialog itself (avoids React import in this file).
   export(input: ModelExportInput, options: STLExportOptions): ModelExportOutput {
+    if (!input.mesh) {
+      throw new Error('STL export requires an assembled mesh.')
+    }
     if (options.format === 'ascii') {
       return {
         data: writeAsciiStl(input.mesh, sanitizeSolidName(input.project.meta.name)),

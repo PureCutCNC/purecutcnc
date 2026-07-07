@@ -32,16 +32,18 @@ import {
   isDimensionDangling,
   measureValue,
 } from '../../sketch/dimensions'
-import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
-import { getStockBounds, rectProfile } from '../../types/project'
+import { generateTextShapes, getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
+import { getProfileBounds, getStockBounds, rectProfile } from '../../types/project'
 import type { Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { formatAngle, formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { ToolpathResult } from '../toolpaths/types'
-import { PAPER_PRESETS, formatScaleRatio } from './layout'
+import { PAPER_PRESETS, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
 import type {
+  DesignPrintContent,
   DesignPrintLayout,
   DesignPrintOptions,
+  DesignSvgExportOptions,
   PrintToolpathVisibility,
 } from './types'
 
@@ -240,8 +242,16 @@ interface WorldContext {
   /** Paper mm per world unit. */
   scale: number
   palette: PrintPalette
-  mono: boolean
+  /** Tinted fills inside closed profiles; off for monochrome and SVG export. */
+  fills: boolean
   units: Units
+  /**
+   * How label/dimension/origin text is rendered. 'native' emits `<text>`
+   * (crisp on paper). 'skeleton' emits single-stroke `<path>` geometry so the
+   * geometry SVG export stays lightweight and re-imports cleanly instead of
+   * ballooning into filled glyph outlines.
+   */
+  textMode: 'native' | 'skeleton'
 }
 
 /** A length given in paper millimetres expressed in world units. */
@@ -253,20 +263,79 @@ function dash(ctx: WorldContext, ...pattern: number[]): string {
   return pattern.map((v) => fmt(mm(ctx, v))).join(' ')
 }
 
+interface TextElOptions {
+  sizeMm: number
+  fill: string
+  anchor?: 'start' | 'middle' | 'end'
+  rotateDeg?: number
+  halo?: boolean
+  weight?: number
+}
+
+// Skeleton lettering visual tuning. The single-stroke font's `size` is roughly
+// its full glyph height, so scale it down to approximate a `<text>` cap height
+// and give the strokes a weight that stays legible at label sizes.
+const SKELETON_TEXT_CAP_RATIO = 0.72
+const SKELETON_TEXT_STROKE_RATIO = 0.09
+const SKELETON_TEXT_MIN_STROKE_MM = 0.22
+
+/**
+ * Render text as single-stroke skeleton `<path>` geometry positioned to match
+ * the equivalent `<text>` element (horizontal anchor + vertical centering,
+ * optional rotation about the anchor point). Used by the geometry SVG export so
+ * labels stay a handful of line segments instead of dense filled outlines.
+ */
+function skeletonTextEl(ctx: WorldContext, x: number, y: number, content: string, options: TextElOptions): string {
+  const sizeWorld = mm(ctx, options.sizeMm * SKELETON_TEXT_CAP_RATIO)
+  const shapes = generateTextShapes(
+    { text: content, style: 'skeleton', fontId: 'simple_stroke', size: sizeWorld, operation: 'subtract' },
+    { x: 0, y: 0 },
+  )
+  if (shapes.length === 0) return ''
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const shape of shapes) {
+    const bounds = getProfileBounds(shape.profile)
+    minX = Math.min(minX, bounds.minX)
+    maxX = Math.max(maxX, bounds.maxX)
+    minY = Math.min(minY, bounds.minY)
+    maxY = Math.max(maxY, bounds.maxY)
+  }
+
+  const anchor = options.anchor ?? 'middle'
+  let tx = x - minX
+  if (anchor === 'middle') tx -= (maxX - minX) / 2
+  else if (anchor === 'end') tx -= maxX - minX
+  const ty = y - (minY + (maxY - minY) / 2)
+
+  const strokeWidth = fmt(mm(ctx, Math.max(SKELETON_TEXT_MIN_STROKE_MM, options.sizeMm * SKELETON_TEXT_STROKE_RATIO)))
+  const rotate =
+    options.rotateDeg !== undefined && Math.abs(options.rotateDeg) > 0.01
+      ? `rotate(${fmt(options.rotateDeg)} ${fmt(x)} ${fmt(y)}) `
+      : ''
+  const body = shapes
+    .map(
+      (shape) =>
+        `<path d="${profileToPathD(shape.profile)}" fill="none" stroke="${options.fill}"` +
+        ` stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    )
+    .join('')
+  return `<g class="pc-text" transform="${rotate}translate(${fmt(tx)} ${fmt(ty)})">${body}</g>`
+}
+
 function textEl(
   ctx: WorldContext,
   x: number,
   y: number,
   content: string,
-  options: {
-    sizeMm: number
-    fill: string
-    anchor?: 'start' | 'middle' | 'end'
-    rotateDeg?: number
-    halo?: boolean
-    weight?: number
-  },
+  options: TextElOptions,
 ): string {
+  if (ctx.textMode === 'skeleton') {
+    return skeletonTextEl(ctx, x, y, content, options)
+  }
   const anchor = options.anchor ?? 'middle'
   const transform =
     options.rotateDeg !== undefined && Math.abs(options.rotateDeg) > 0.01
@@ -385,7 +454,12 @@ function featureStroke(feature: SketchFeature, palette: PrintPalette): { stroke:
   }
 }
 
-function buildFeatures(project: Project, ctx: WorldContext): string[] {
+/** XML-safe element id for a feature's export group. */
+function featureGroupId(id: string): string {
+  return `feature-${id.replace(/[^A-Za-z0-9_.-]+/g, '-')}`
+}
+
+function buildFeatures(project: Project, ctx: WorldContext, groupPerFeature = false): string[] {
   const parts: string[] = []
 
   for (const feature of project.features) {
@@ -395,6 +469,7 @@ function buildFeatures(project: Project, ctx: WorldContext): string[] {
     const construction = feature.operation === 'construction'
     const strokeWidth = fmt(mm(ctx, construction ? STROKE_CONSTRUCTION_MM : STROKE_FEATURE_MM))
     const dashAttr = dashed || construction ? ` stroke-dasharray="${dash(ctx, 2, 1.4)}"` : ''
+    const featureParts: string[] = []
 
     // Imported models print their full silhouette path set when available;
     // sketch.profile only mirrors the largest silhouette loop.
@@ -403,21 +478,30 @@ function buildFeatures(project: Project, ctx: WorldContext): string[] {
       for (const path of silhouettes) {
         if (path.length < 2) continue
         const points = path.map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ')
-        parts.push(
+        featureParts.push(
           `<polygon class="pc-feature" data-op="${feature.operation}" points="${points}"` +
-            ` fill="${ctx.mono ? 'none' : hexToRgba(stroke, 0.08)}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`,
+            ` fill="${ctx.fills ? hexToRgba(stroke, 0.08) : 'none'}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`,
         )
       }
-      continue
+    } else {
+      for (const profile of getFeatureGeometryProfiles(feature)) {
+        const fill =
+          profile.closed && !construction && ctx.fills ? hexToRgba(stroke, 0.08) : 'none'
+        featureParts.push(
+          `<path class="pc-feature" data-op="${feature.operation}" d="${profileToPathD(profile)}"` +
+            ` fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dashAttr}/>`,
+        )
+      }
     }
 
-    for (const profile of getFeatureGeometryProfiles(feature)) {
-      const fill =
-        profile.closed && !construction && !ctx.mono ? hexToRgba(stroke, 0.08) : 'none'
+    if (featureParts.length === 0) continue
+    if (groupPerFeature) {
       parts.push(
-        `<path class="pc-feature" data-op="${feature.operation}" d="${profileToPathD(profile)}"` +
-          ` fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dashAttr}/>`,
+        `<g id="${escapeXml(featureGroupId(feature.id))}" data-name="${escapeXml(feature.name)}">` +
+          `${featureParts.join('')}</g>`,
       )
+    } else {
+      parts.push(...featureParts)
     }
   }
 
@@ -450,27 +534,31 @@ function buildFeatureLabels(project: Project, ctx: WorldContext): string[] {
   return parts.length > 0 ? [`<g class="pc-feature-labels">${parts.join('')}</g>`] : []
 }
 
-function buildTabsAndClamps(project: Project, ctx: WorldContext, options: DesignPrintOptions): string[] {
+function buildTabsAndClamps(
+  project: Project,
+  ctx: WorldContext,
+  content: Pick<DesignPrintContent, 'tabs' | 'clamps'>,
+): string[] {
   const parts: string[] = []
   const strokeWidth = fmt(mm(ctx, STROKE_FIXTURE_MM))
 
-  if (options.content.tabs) {
+  if (content.tabs) {
     for (const tab of project.tabs) {
       if (!tab.visible) continue
       parts.push(
         `<path class="pc-tab" d="${profileToPathD(rectProfile(tab.x, tab.y, tab.w, tab.h))}"` +
-          ` fill="${ctx.mono ? 'none' : hexToRgba(ctx.palette.tab, 0.08)}" stroke="${ctx.palette.tab}"` +
+          ` fill="${ctx.fills ? hexToRgba(ctx.palette.tab, 0.08) : 'none'}" stroke="${ctx.palette.tab}"` +
           ` stroke-width="${strokeWidth}" stroke-dasharray="${dash(ctx, 1.8, 1.2)}"/>`,
       )
     }
   }
 
-  if (options.content.clamps) {
+  if (content.clamps) {
     for (const clamp of project.clamps) {
       if (!clamp.visible) continue
       parts.push(
         `<path class="pc-clamp" d="${profileToPathD(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))}"` +
-          ` fill="${ctx.mono ? 'none' : hexToRgba(ctx.palette.clamp, 0.08)}" stroke="${ctx.palette.clamp}"` +
+          ` fill="${ctx.fills ? hexToRgba(ctx.palette.clamp, 0.08) : 'none'}" stroke="${ctx.palette.clamp}"` +
           ` stroke-width="${strokeWidth}" stroke-dasharray="${dash(ctx, 1.8, 1.2)}"/>`,
       )
     }
@@ -694,6 +782,44 @@ function buildFooter(
   ]
 }
 
+interface WorldContentArgs {
+  /** Content layer toggles; page-only flags (footer) are ignored here. */
+  content: DesignPrintContent
+  extras: DesignPrintSvgExtras
+  /** World-space window limiting the grid extent. */
+  gridWindow: { minX: number; maxX: number; minY: number; maxY: number }
+  /** Wrap each feature in a `<g id data-name>` group (vector-editor layers). */
+  featureGroups?: boolean
+}
+
+/**
+ * Assemble the world-space design content (grid, backdrop, stock, features,
+ * tabs/clamps, toolpaths, origin, dimensions, labels) independent of any page
+ * scaffolding, so both the print document and the geometry-only SVG export
+ * draw the same scene.
+ */
+function buildWorldContent(project: Project, ctx: WorldContext, args: WorldContentArgs): string[] {
+  const world: string[] = []
+  if (args.content.grid) {
+    world.push(...buildGrid(project, ctx, args.gridWindow))
+  }
+  if (args.content.backdrop) {
+    world.push(...buildBackdrop(project))
+  }
+  world.push(...buildStock(project, ctx))
+  world.push(...buildFeatures(project, ctx, args.featureGroups === true))
+  world.push(...buildTabsAndClamps(project, ctx, args.content))
+  if (args.content.toolpaths) {
+    world.push(...buildToolpaths(ctx, args.extras))
+  }
+  world.push(...buildOrigin(project, ctx))
+  world.push(...buildDimensions(project, ctx))
+  if (args.content.featureLabels) {
+    world.push(...buildFeatureLabels(project, ctx))
+  }
+  return world
+}
+
 /**
  * Render the full print document as an SVG string. The SVG is self-contained
  * (inline styles only) and sized in physical millimetres unless
@@ -710,8 +836,9 @@ export function buildDesignPrintSvg(
   const ctx: WorldContext = {
     scale: layout.scale,
     palette,
-    mono: options.colorMode === 'monochrome',
+    fills: options.colorMode !== 'monochrome',
     units,
+    textMode: 'native',
   }
 
   const tx = layout.originXMm - layout.bounds.minX * layout.scale
@@ -725,24 +852,11 @@ export function buildDesignPrintSvg(
     maxY: (layout.drawableYMm + layout.drawableHeightMm - ty) / layout.scale,
   }
 
-  const world: string[] = []
-  if (options.content.grid) {
-    world.push(...buildGrid(project, ctx, worldWindow))
-  }
-  if (options.content.backdrop) {
-    world.push(...buildBackdrop(project))
-  }
-  world.push(...buildStock(project, ctx))
-  world.push(...buildFeatures(project, ctx))
-  world.push(...buildTabsAndClamps(project, ctx, options))
-  if (options.content.toolpaths) {
-    world.push(...buildToolpaths(ctx, extras))
-  }
-  world.push(...buildOrigin(project, ctx))
-  world.push(...buildDimensions(project, ctx))
-  if (options.content.featureLabels) {
-    world.push(...buildFeatureLabels(project, ctx))
-  }
+  const world = buildWorldContent(project, ctx, {
+    content: options.content,
+    extras,
+    gridWindow: worldWindow,
+  })
 
   const sizeAttrs = extras.physicalSize === false
     ? ''
@@ -768,4 +882,55 @@ export function buildDesignPrintSvg(
   parts.push(...buildFooter(project, options, layout, palette, extras))
   parts.push(`</svg>`)
   return parts.join('\n')
+}
+
+/**
+ * Render the design as a standalone editable SVG at true 1:1 physical scale
+ * (issue #257): tight viewBox around the exported bounds, physical mm size,
+ * no paper/margins/footer/background/clipping, per-feature `<g>` groups, and
+ * outlines only (no tinted fills). Content semantics match printing: hidden
+ * features and hidden construction geometry are omitted, construction prints
+ * dashed and unfilled, and dimensions follow `project.meta.showDimensions`.
+ */
+export function buildDesignSvgExport(project: Project, options: DesignSvgExportOptions): string {
+  const units = project.meta.units
+  const unitMm = unitToMm(units)
+  const bounds = resolvePrintBounds(project, options.area, null, {
+    backdrop: false,
+    tabs: options.content.tabs,
+    clamps: options.content.clamps,
+  })
+  const width = Math.max(bounds.maxX - bounds.minX, 1e-6)
+  const height = Math.max(bounds.maxY - bounds.minY, 1e-6)
+
+  // SVG user units are world units; stroke widths and lettering divide by the
+  // physical scale so they come out in real millimetres, same as printing 1:1.
+  const ctx: WorldContext = {
+    scale: unitMm,
+    palette: options.colorMode === 'monochrome' ? MONO_PALETTE : COLOR_PALETTE,
+    fills: false,
+    units,
+    textMode: 'skeleton',
+  }
+
+  const world = buildWorldContent(project, ctx, {
+    content: {
+      ...options.content,
+      backdrop: false,
+      toolpaths: false,
+      footer: false,
+    },
+    extras: {},
+    gridWindow: bounds,
+    featureGroups: true,
+  })
+
+  // The width/height attributes give the world-unit viewBox its physical
+  // size: 1 project unit = 1 mm (or 1 in), independent of any print scale.
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width * unitMm)}mm" height="${fmt(height * unitMm)}mm"` +
+      ` viewBox="${fmt(bounds.minX)} ${fmt(bounds.minY)} ${fmt(width)} ${fmt(height)}">`,
+    ...world,
+    `</svg>`,
+  ].join('\n')
 }

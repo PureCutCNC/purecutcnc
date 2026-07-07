@@ -25,15 +25,22 @@ export {
   resolvePrintBounds,
   unitToMm,
 } from './layout'
-export { buildDesignPrintSvg, profileToPathD } from './svg'
+export { buildDesignPrintSvg, buildDesignSvgExport, profileToPathD } from './svg'
 export type { DesignPrintSvgExtras } from './svg'
 export { buildDesignPrintHtml } from './html'
 export type { DesignPrintHtmlArgs } from './html'
-export { defaultDesignPrintOptions, defaultPrintMargin } from './types'
+export {
+  defaultDesignPrintOptions,
+  defaultDesignSvgExportOptions,
+  defaultPrintMargin,
+} from './types'
 export type {
   DesignPrintContent,
   DesignPrintLayout,
   DesignPrintOptions,
+  DesignSvgExportArea,
+  DesignSvgExportContent,
+  DesignSvgExportOptions,
   PaperOrientation,
   PaperPreset,
   PaperPresetId,

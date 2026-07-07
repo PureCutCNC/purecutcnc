@@ -15,6 +15,7 @@
  */
 
 import { stlExportFormat } from './stl'
+import { svgExportFormat } from './svg'
 import type { ModelExportFormat } from './types'
 
 export {
@@ -36,8 +37,12 @@ export {
   writeBinaryStl,
   type STLExportOptions,
 } from './stl'
+export { SVG_DEFAULT_OPTIONS, svgExportFormat, type SvgExportOptions } from './svg'
 
-export const MODEL_EXPORT_FORMATS: ModelExportFormat[] = [stlExportFormat as ModelExportFormat]
+export const MODEL_EXPORT_FORMATS: ModelExportFormat[] = [
+  stlExportFormat as ModelExportFormat,
+  svgExportFormat as ModelExportFormat,
+]
 
 export function getModelExportFormat(id: string): ModelExportFormat | null {
   return MODEL_EXPORT_FORMATS.find((format) => format.id === id) ?? null
