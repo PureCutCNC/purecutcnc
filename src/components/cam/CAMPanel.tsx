@@ -1383,6 +1383,17 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
+                  {(selectedOperation.kind === 'edge_route_outside'
+                    || (selectedOperation.kind === 'pocket' && selectedOperation.pass === 'finish' && selectedOperation.finishWalls)) ? (
+                    <label className="properties-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedOperation.roundOutsideCorners ?? false}
+                        onChange={(event) => updateOperation(selectedOperation.id, { roundOutsideCorners: event.target.checked })}
+                      />
+                      <span>Round outside corners</span>
+                    </label>
+                  ) : null}
                   {selectedOperation.kind === 'drilling' ? (
                     <>
                       <label className="properties-field">

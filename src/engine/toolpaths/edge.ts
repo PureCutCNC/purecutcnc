@@ -36,13 +36,17 @@ import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstacl
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 
-function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
+function offsetPaths(
+  paths: ClipperPath[],
+  delta: number,
+  joinType: number = ClipperLib.JoinType.jtMiter,
+): ClipperPath[] {
   if (paths.length === 0) {
     return []
   }
 
   const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, delta)
   return solution as ClipperPath[]
@@ -521,8 +525,12 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     return mask
   }
 
+  const outsideJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
+
   function resolveContourPaths(paths: ClipperPath[]): Point[][] {
-    const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE)
+    const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE, outsideJoinType)
     return offset.map((entry) => fromClipperPath(entry)).filter((points) => points.length >= 3)
   }
 

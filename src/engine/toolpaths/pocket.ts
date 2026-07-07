@@ -584,18 +584,19 @@ export function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint
 export function buildInsetRegions(
   region: ResolvedPocketRegion,
   delta: number,
-  joinType: number = ClipperLib.JoinType.jtMiter,
+  outerJoinType: number = ClipperLib.JoinType.jtMiter,
+  islandJoinType: number = outerJoinType,
 ): ResolvedPocketRegion[] {
   const scale = DEFAULT_CLIPPER_SCALE
   const outerPath = toClipperPath(normalizeWinding(region.outer, false), scale)
   const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
 
-  const insetOuterPaths = offsetPaths([outerPath], -delta * scale, joinType)
+  const insetOuterPaths = offsetPaths([outerPath], -delta * scale, outerJoinType)
   if (insetOuterPaths.length === 0) {
     return []
   }
 
-  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale, joinType)
+  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale, islandJoinType)
   const clipped = executeDifference(insetOuterPaths, expandedIslandPaths)
   return polyTreeToRegions(clipped, region.targetFeatureIds, region.islandFeatureIds, scale)
     .filter((nextRegion) => nextRegion.outer.length >= 3)
@@ -1354,9 +1355,17 @@ function generateFinishBandMoves(
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const finishDelta = toolRadius + radialLeave
   const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+  const wallRegions = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
+    ? band.regions.flatMap((region) => buildInsetRegions(
+      region,
+      finishDelta,
+      ClipperLib.JoinType.jtMiter,
+      ClipperLib.JoinType.jtRound,
+    ))
+    : finishRegions
   const slotScale = resolveSlotFeedScale(operation)
   const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
-  const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
+  const wallContours = operation.finishWalls ? buildContourLoops(wallRegions) : []
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'

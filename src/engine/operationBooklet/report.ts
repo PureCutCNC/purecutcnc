@@ -66,6 +66,13 @@ function operationSupportsMachiningOrder(kind: OperationKind): boolean {
   return kind === 'pocket' || kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
+function operationUsesRoundOutsideCorners(operation: Operation): boolean {
+  return (
+    operation.kind === 'edge_route_outside'
+    || (operation.kind === 'pocket' && operation.pass === 'finish' && operation.finishWalls)
+  )
+}
+
 function targetSummary(project: Project, target: OperationTarget): string {
   if (target.source === 'stock') {
     return 'Stock'
@@ -236,6 +243,10 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
 
   if (operationSupportsMachiningOrder(operation.kind)) {
     rows.push({ label: 'Machining Order', value: machiningOrderLabel(operation.machiningOrder ?? 'level_first') })
+  }
+
+  if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {
+    rows.push({ label: 'Round Outside Corners', value: 'Enabled' })
   }
 
   if (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'finish_surface' || operation.kind === 'finish_surface_cleanup') {
