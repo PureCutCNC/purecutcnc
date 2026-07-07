@@ -17,8 +17,8 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { PendingAddTool } from '../../store/types'
 
-type PendingNgon = Extract<NonNullable<PendingAddTool>, { shape: 'ngon' }>
-type PendingRectCorner = Extract<NonNullable<PendingAddTool>, { shape: 'roundrect' | 'chamferrect' }>
+type PendingNgon = Extract<PendingAddTool, { shape: 'ngon' }>
+type PendingRectCorner = Extract<PendingAddTool, { shape: 'roundrect' | 'chamferrect' }>
 
 interface NgonParameterPanelProps {
   pendingAdd: PendingNgon
@@ -40,14 +40,28 @@ function stopPanelKey(event: KeyboardEvent<HTMLInputElement>): void {
   event.stopPropagation()
 }
 
-function clampNgonSides(value: string, fallback: number): number {
-  const parsed = Math.round(Number(value))
-  return Number.isNaN(parsed) ? fallback : Math.max(3, Math.min(50, parsed))
+function parseNumber(value: string, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function clampCorner(value: string, fallback: number): number {
-  const parsed = Number(value)
-  return Number.isNaN(parsed) || parsed < 0 ? fallback : parsed
+function commitNumber(
+  value: string,
+  fallback: number,
+  commit: (value: number) => void,
+  normalize: (value: number, fallback: number) => number = (next) => next,
+): string {
+  const next = normalize(parseNumber(value, fallback), fallback)
+  commit(next)
+  return String(next)
+}
+
+function normalizeNgonSides(value: number): number {
+  return Math.max(3, Math.min(50, Math.round(value)))
+}
+
+function normalizeCorner(value: number, fallback: number): number {
+  return value < 0 ? fallback : value
 }
 
 function CreationParameterField({ children, label, reference }: CreationParameterFieldProps) {
@@ -134,16 +148,22 @@ export function NgonParameterPanel({ pendingAdd, setPendingNgonSides }: NgonPara
           inputMode="numeric"
           defaultValue={pendingAdd.sides}
           onBlur={(event) => {
-            const clamped = clampNgonSides(event.currentTarget.value, pendingAdd.sides)
-            setPendingNgonSides(clamped)
-            event.currentTarget.value = String(clamped)
+            event.currentTarget.value = commitNumber(
+              event.currentTarget.value,
+              pendingAdd.sides,
+              setPendingNgonSides,
+              normalizeNgonSides,
+            )
           }}
           onKeyDown={(event) => {
             stopPanelKey(event)
             if (event.key === 'Enter') {
-              const clamped = clampNgonSides(event.currentTarget.value, pendingAdd.sides)
-              setPendingNgonSides(clamped)
-              event.currentTarget.value = String(clamped)
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                pendingAdd.sides,
+                setPendingNgonSides,
+                normalizeNgonSides,
+              )
             }
           }}
         />
@@ -166,16 +186,22 @@ export function RectCornerParameterPanel({ pendingAdd, setPendingRectCorner }: R
           inputMode="decimal"
           defaultValue={pendingAdd.corner}
           onBlur={(event) => {
-            const clamped = clampCorner(event.currentTarget.value, pendingAdd.corner)
-            setPendingRectCorner(clamped)
-            event.currentTarget.value = String(clamped)
+            event.currentTarget.value = commitNumber(
+              event.currentTarget.value,
+              pendingAdd.corner,
+              setPendingRectCorner,
+              normalizeCorner,
+            )
           }}
           onKeyDown={(event) => {
             stopPanelKey(event)
             if (event.key === 'Enter') {
-              const clamped = clampCorner(event.currentTarget.value, pendingAdd.corner)
-              setPendingRectCorner(clamped)
-              event.currentTarget.value = String(clamped)
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                pendingAdd.corner,
+                setPendingRectCorner,
+                normalizeCorner,
+              )
             }
           }}
         />
