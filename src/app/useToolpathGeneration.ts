@@ -74,6 +74,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.pocketPattern === b.pocketPattern
     && a.pocketAngle === b.pocketAngle
     && a.pocketSlotFeedPercent === b.pocketSlotFeedPercent
+    && a.roundOutsideCorners === b.roundOutsideCorners
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial
     && a.finishWalls === b.finishWalls

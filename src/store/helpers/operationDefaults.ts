@@ -306,6 +306,7 @@ export function defaultOperationForTarget(
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
     pocketSlotFeedPercent: 100,
+    roundOutsideCorners: false,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,

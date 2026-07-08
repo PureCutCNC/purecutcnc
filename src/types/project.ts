@@ -484,6 +484,7 @@ export interface Operation {
    *  pinch corridors, the parallel boundary pass and first fill line, and the
    *  first finish-floor cut. Undefined or 100 disables the reduction. */
   pocketSlotFeedPercent?: number
+  roundOutsideCorners?: boolean
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

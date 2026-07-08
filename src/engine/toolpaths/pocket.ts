@@ -40,6 +40,9 @@ import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from
 import { resolvePocketRegions } from './resolver'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 
+const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
+const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
+
 interface PolyTreeNode {
   IsHole(): boolean
   Contour(): ClipperPath
@@ -80,6 +83,10 @@ function offsetPaths(
   }
 
   const offset = new ClipperLib.ClipperOffset()
+  offset.ArcTolerance = Math.max(
+    1,
+    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(delta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
+  )
   offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
   const solution = new ClipperLib.Paths()
   offset.Execute(solution, delta)
@@ -584,18 +591,19 @@ export function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint
 export function buildInsetRegions(
   region: ResolvedPocketRegion,
   delta: number,
-  joinType: number = ClipperLib.JoinType.jtMiter,
+  outerJoinType: number = ClipperLib.JoinType.jtMiter,
+  islandJoinType: number = outerJoinType,
 ): ResolvedPocketRegion[] {
   const scale = DEFAULT_CLIPPER_SCALE
   const outerPath = toClipperPath(normalizeWinding(region.outer, false), scale)
   const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
 
-  const insetOuterPaths = offsetPaths([outerPath], -delta * scale, joinType)
+  const insetOuterPaths = offsetPaths([outerPath], -delta * scale, outerJoinType)
   if (insetOuterPaths.length === 0) {
     return []
   }
 
-  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale, joinType)
+  const expandedIslandPaths = offsetPaths(islandPaths, delta * scale, islandJoinType)
   const clipped = executeDifference(insetOuterPaths, expandedIslandPaths)
   return polyTreeToRegions(clipped, region.targetFeatureIds, region.islandFeatureIds, scale)
     .filter((nextRegion) => nextRegion.outer.length >= 3)
@@ -617,6 +625,107 @@ export function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   }
 
   return contours
+}
+
+function buildExpandedIslandContours(
+  regions: ResolvedPocketRegion[],
+  delta: number,
+  joinType: number,
+): Point[][] {
+  const scale = DEFAULT_CLIPPER_SCALE
+  return regions.flatMap((region) => {
+    const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
+    return offsetPaths(islandPaths, delta * scale, joinType)
+      .map((path) => fromClipperPath(path, scale))
+      .filter((island) => island.length >= 3)
+  })
+}
+
+function withoutDuplicateClosingPoint(points: Point[]): Point[] {
+  return points.length > 1 && pointEpsilonEqual(points[0], points[points.length - 1])
+    ? points.slice(0, -1)
+    : points
+}
+
+function isAcuteCorner(points: Point[], index: number): boolean {
+  const count = points.length
+  if (count < 3) return false
+  const current = points[index]
+  const previous = points[(index + count - 1) % count]
+  const next = points[(index + 1) % count]
+  const previousVector = { x: previous.x - current.x, y: previous.y - current.y }
+  const nextVector = { x: next.x - current.x, y: next.y - current.y }
+  const previousLength = Math.hypot(previousVector.x, previousVector.y)
+  const nextLength = Math.hypot(nextVector.x, nextVector.y)
+  if (previousLength <= 1e-9 || nextLength <= 1e-9) return false
+  const cosine = (
+    previousVector.x * nextVector.x + previousVector.y * nextVector.y
+  ) / (previousLength * nextLength)
+  return cosine > 1e-6
+}
+
+function circularPointRun(points: Point[], start: number, end: number): Point[] {
+  const run: Point[] = []
+  for (let index = start; ; index = (index + 1) % points.length) {
+    run.push(points[index])
+    if (index === end) break
+  }
+  return run
+}
+
+function extractRoundedCornerSegment(contour: Point[], corner: Point, delta: number): Point[] {
+  if (contour.length < 2) return []
+  const threshold = delta + Math.max(delta * 0.04, 2 / DEFAULT_CLIPPER_SCALE)
+  const withinThreshold = (index: number) =>
+    Math.sqrt(distanceSquared(contour[(index + contour.length) % contour.length], corner)) <= threshold
+  let nearestIndex = 0
+  let nearestDistance = Number.POSITIVE_INFINITY
+  for (let index = 0; index < contour.length; index += 1) {
+    const distance = distanceSquared(contour[index], corner)
+    if (distance < nearestDistance) {
+      nearestIndex = index
+      nearestDistance = distance
+    }
+  }
+  if (Math.sqrt(nearestDistance) > threshold) return []
+
+  let start = nearestIndex
+  for (let scanned = 0; scanned < contour.length - 1 && withinThreshold(start - 1); scanned += 1) {
+    start = (start + contour.length - 1) % contour.length
+  }
+  let end = nearestIndex
+  for (let scanned = 0; scanned < contour.length - 1 && withinThreshold(end + 1); scanned += 1) {
+    end = (end + 1) % contour.length
+  }
+
+  const segment = circularPointRun(contour, start, end)
+  return segment.length >= 2 ? segment : []
+}
+
+function buildAcuteIslandCornerCleanupSegments(regions: ResolvedPocketRegion[], delta: number): Point[][] {
+  const scale = DEFAULT_CLIPPER_SCALE
+  const segments: Point[][] = []
+  for (const region of regions) {
+    for (const island of region.islands) {
+      const sourcePoints = withoutDuplicateClosingPoint(island)
+      const acuteCorners = sourcePoints.filter((_, index) => isAcuteCorner(sourcePoints, index))
+      if (acuteCorners.length === 0) continue
+
+      const islandPath = toClipperPath(normalizeWinding(sourcePoints, false), scale)
+      const offsetContours = offsetPaths([islandPath], delta * scale, ClipperLib.JoinType.jtRound)
+        .map((path) => fromClipperPath(path, scale))
+        .filter((contour) => contour.length >= 3)
+      for (const corner of acuteCorners) {
+        const candidates = offsetContours
+          .map((contour) => extractRoundedCornerSegment(contour, corner, delta))
+          .filter((segment) => segment.length >= 2)
+        if (candidates.length > 0) {
+          segments.push(candidates.sort((left, right) => right.length - left.length)[0])
+        }
+      }
+    }
+  }
+  return segments
 }
 
 export function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
@@ -1353,10 +1462,33 @@ function generateFinishBandMoves(
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const finishDelta = toolRadius + radialLeave
-  const finishRegions = band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+  const shouldRoundPocketWalls = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
+  const needsMiterFinishRegions = operation.finishFloor || operation.finishWalls
+  const finishRegions = needsMiterFinishRegions
+    ? band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
+    : []
+  let wallContours: Point[][] = []
+  let wallOuterContours: Point[][] = []
+  let wallFinalContours: Point[][] = []
+  let wallCleanupSegments: Point[][] = []
+  if (operation.finishWalls) {
+    if (shouldRoundPocketWalls) {
+      const roundedWallRegions = band.regions.flatMap((region) => buildInsetRegions(
+        region,
+        finishDelta,
+        ClipperLib.JoinType.jtMiter,
+        ClipperLib.JoinType.jtRound,
+      ))
+      const islandCleanupDelta = finishDelta + stepoverDistance
+      wallOuterContours = buildOuterContours(roundedWallRegions)
+      wallFinalContours = buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtRound)
+      wallCleanupSegments = buildAcuteIslandCornerCleanupSegments(band.regions, islandCleanupDelta)
+    } else {
+      wallContours = buildContourLoops(finishRegions)
+    }
+  }
   const slotScale = resolveSlotFeedScale(operation)
   const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
-  const wallContours = operation.finishWalls ? buildContourLoops(finishRegions) : []
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'
@@ -1373,7 +1505,14 @@ function generateFinishBandMoves(
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
-  if (wallContours.length === 0 && floorTrees.length === 0 && floorSegments.length === 0) {
+  if (
+    wallContours.length === 0
+    && wallOuterContours.length === 0
+    && wallFinalContours.length === 0
+    && wallCleanupSegments.length === 0
+    && floorTrees.length === 0
+    && floorSegments.length === 0
+  ) {
     return {
       moves,
       stepLevels: [],
@@ -1436,7 +1575,41 @@ function generateFinishBandMoves(
   }
 
   for (const z of wallStepLevels) {
-    currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
+    if (shouldRoundPocketWalls) {
+      currentPosition = cutClosedContours(
+        moves,
+        wallOuterContours,
+        z,
+        safeZ,
+        maxLinkDistance,
+        currentPosition,
+        false,
+        direction,
+      )
+      const orderedCleanupSegments = orderOpenSegmentsGreedy(
+        wallCleanupSegments,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+      for (const segment of orderedCleanupSegments) {
+        const entryPoint = contourStartPoint(segment, z)
+        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        const cutMoves = toOpenCutMoves(segment, z)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+      currentPosition = cutClosedContours(
+        moves,
+        wallFinalContours,
+        z,
+        safeZ,
+        maxLinkDistance,
+        currentPosition,
+        false,
+        direction,
+      )
+    } else {
+      currentPosition = cutClosedContours(moves, wallContours, z, safeZ, maxLinkDistance, currentPosition, false, direction)
+    }
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }

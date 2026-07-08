@@ -89,6 +89,7 @@ function fixture(): { project: Project; operation: Operation; toolpath: Toolpath
     rpm: 14000,
     pocketPattern: 'offset',
     pocketAngle: 0,
+    roundOutsideCorners: false,
     stockToLeaveRadial: 0.2,
     stockToLeaveAxial: 0,
     finishWalls: true,
@@ -134,12 +135,34 @@ function testReportContent(): void {
   assert(report.warnings.includes('Test warning'), 'toolpath warnings should be included')
   assert(report.settingRows.some((row) => row.label === 'Cut Direction' && row.value === 'Climb'), 'cut direction should be included')
   assert(report.settingRows.some((row) => row.label === 'Machining Order' && row.value === 'Feature first'), 'machining order should be included')
+  assert(!report.settingRows.some((row) => row.label === 'Round Outside Corners'), 'disabled round outside corners should not be included')
   assert(report.toolpathStats.some((row) => row.label === 'Moves' && row.value === '3'), 'toolpath move count should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Estimated Feed Time' && row.value === '2.9 s (excludes G0 rapid time)'), 'estimated feed time should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Feed Travel' && row.value === '25.12 mm (feed and plunge moves)'), 'feed travel should be rounded to 2 decimals')
   assert(report.toolpathStats.some((row) => row.label === 'Rapid Travel' && row.value.includes('G0 speed machine-defined')), 'rapid travel should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Top Z' && row.value === '5 mm'), 'top Z should be included')
   assert(report.toolpathStats.some((row) => row.label === 'Bottom Z' && row.value === '0 mm'), 'bottom Z should be included')
+}
+
+function testReportIncludesEnabledRoundOutsideCorners(): void {
+  console.log('Testing operation booklet reports enabled round outside corners...')
+  const { project, operation, toolpath } = fixture()
+  const report = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'edge_route_outside',
+      roundOutsideCorners: true,
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  assert(
+    report.settingRows.some((row) => row.label === 'Round Outside Corners' && row.value === 'Enabled'),
+    'enabled round outside corners should be reported for outside edge routes',
+  )
 }
 
 async function testPdfSmoke(): Promise<void> {
@@ -192,5 +215,6 @@ function testFeedTimeUsesScaledSlotFeed(): void {
 
 testReportContent()
 testFeedTimeUsesScaledSlotFeed()
+testReportIncludesEnabledRoundOutsideCorners()
 await testPdfSmoke()
 console.log('operation booklet tests passed')

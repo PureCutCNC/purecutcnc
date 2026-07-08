@@ -258,6 +258,7 @@ function makePocketOp(
     rpm: 18000,
     pocketPattern: 'offset',
     pocketAngle: 0,
+    roundOutsideCorners: false,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,
@@ -278,6 +279,23 @@ function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((m) => m.kind === 'cut')
 }
 
+function cutMoveGroups(moves: ToolpathMove[]): ToolpathMove[][] {
+  const groups: ToolpathMove[][] = []
+  let current: ToolpathMove[] = []
+  for (const move of moves) {
+    if (move.kind === 'cut') {
+      current.push(move)
+    } else if (current.length > 0) {
+      groups.push(current)
+      current = []
+    }
+  }
+  if (current.length > 0) {
+    groups.push(current)
+  }
+  return groups
+}
+
 function toolpathMoveSignature(moves: ToolpathMove[]): string[] {
   const fmt = (value: number) => Number(value.toFixed(6))
   return moves.map((move) => JSON.stringify({
@@ -285,6 +303,19 @@ function toolpathMoveSignature(moves: ToolpathMove[]): string[] {
     from: { x: fmt(move.from.x), y: fmt(move.from.y), z: fmt(move.from.z) },
     to: { x: fmt(move.to.x), y: fmt(move.to.y), z: fmt(move.to.z) },
   }))
+}
+
+function hasUndirectedCutMoveNear(
+  moves: ToolpathMove[],
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  epsilon = 0.01,
+): boolean {
+  const near = (point: { x: number; y: number }, expected: { x: number; y: number }) =>
+    approx(point.x, expected.x, epsilon) && approx(point.y, expected.y, epsilon)
+  return moves.some((move) =>
+    (near(move.from, a) && near(move.to, b))
+    || (near(move.from, b) && near(move.to, a)))
 }
 
 /** Dedup consecutive equal Z values in the sequence of cut-move Zs. */
@@ -1499,6 +1530,55 @@ function testEdgeOutsideClipsAroundNonSelectedAddFeatures() {
   console.log('edge_route_outside obstacle clipping (non-selected): PASSED')
 }
 
+function testEdgeOutsideRoundCornersOptIn() {
+  console.log('Testing edge_route_outside round outside corners opt-in...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makeAddFeature('a', 0, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [feature])
+  const baseOp = makePocketOp({
+    kind: 'edge_route_outside',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const miter = generateEdgeRouteToolpath(project, baseOp)
+  const rounded = generateEdgeRouteToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  const miterCuts = cutMoves(miter.moves)
+  const roundedCuts = cutMoves(rounded.moves)
+
+  assert(miterCuts.length === 4, 'disabled outside route should keep four mitered rectangle cuts')
+  assert(roundedCuts.length > miterCuts.length, 'enabled outside route should emit rounded multi-segment corners')
+  assert(roundedCuts.length < 100, `rounded outside route should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
+  console.log('edge_route_outside round outside corners opt-in: PASSED')
+}
+
+function testEdgeOutsideCombinedRoundCorners() {
+  console.log('Testing combined edge_route_outside respects round outside corners...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const featureA = makeAddFeature('a', 0, 0, 20, 12, 2, 0)
+  const featureB = makeAddFeature('b', 30, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [featureA, featureB])
+  const baseOp = makePocketOp({
+    kind: 'edge_route_outside',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['a', 'b'] },
+    toolRef: 't1',
+  })
+
+  const miter = generateEdgeRouteToolpath(project, baseOp)
+  const rounded = generateEdgeRouteToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  const miterCuts = cutMoves(miter.moves)
+  const roundedCuts = cutMoves(rounded.moves)
+
+  assert(miterCuts.length === 8, 'disabled combined outside route should keep two four-corner contours')
+  assert(roundedCuts.length > miterCuts.length, 'enabled combined outside route should round both contours')
+  assert(roundedCuts.length < 200, `combined rounded outside route should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
+  console.log('combined edge_route_outside round outside corners: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
@@ -1911,6 +1991,32 @@ function makeIslandFeature(
   return { ...makePocketFeature(id, x, y, w, h, zTop, zBottom), operation: 'add' }
 }
 
+function makePolygonIslandFeature(
+  id: string,
+  points: Array<{ x: number; y: number }>,
+  zTop: number,
+  zBottom: number,
+): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: polygonProfile(points),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
 function stampedCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return cutMoves(moves).filter((move) => move.feedScale !== undefined)
 }
@@ -1925,6 +2031,79 @@ function horizontalFillMoves(moves: ToolpathMove[], boundaryYs: number[], minLen
     approx(move.from.y, move.to.y)
     && Math.abs(move.to.x - move.from.x) > minLength
     && !boundaryYs.some((y) => approx(move.from.y, y)))
+}
+
+function testPocketFinishRoundsIslandWallsOnly() {
+  console.log('Testing pocket finish rounds island walls while keeping the main boundary mitered...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 2, 0)
+  const island = makePolygonIslandFeature('i1', [
+    { x: 13.75, y: 10 },
+    { x: 27.5, y: 10 },
+    { x: 25, y: 16.25 },
+    { x: 12.5, y: 20 },
+  ], 2, 0)
+  const project = baseProject([tool], [pocket, island])
+  const baseOp = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    finishFloor: false,
+  })
+
+  const miter = generatePocketToolpath(project, baseOp)
+  const rounded = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  const roundedGroups = cutMoveGroups(rounded.moves)
+  const miterCuts = cutMoves(miter.moves)
+  const roundedCuts = cutMoves(rounded.moves)
+
+  assert(roundedGroups.length >= 2, `expected rounded wall contours, got ${roundedGroups.length}`)
+  assert(roundedGroups[0].length === 4, 'rounded setting should keep the main pocket boundary mitered')
+  assert(
+    !hasUndirectedCutMoveNear(roundedCuts, { x: 26.499, y: 17.889 }, { x: 10.135, y: 22.798 }),
+    'enabled island wall should not include a full mitered cleanup edge that makes the rounded finish look sharp',
+  )
+  assert(
+    !hasUndirectedCutMoveNear(roundedCuts, { x: 13.75, y: 6.4 }, { x: 27.5, y: 6.4 }),
+    'enabled island wall should not include a full outer cleanup contour on non-acute edges',
+  )
+  assert(
+    hasUndirectedCutMoveNear(roundedCuts, { x: 31.014, y: 10.78 }, { x: 31.091, y: 10.249 }, 0.02),
+    'enabled island wall should include localized rounded cleanup at acute island corners',
+  )
+  assert(roundedCuts.length > miterCuts.length + 20, 'enabled island wall should finish with multi-segment rounded corners')
+  assert(roundedCuts.length < 120, `rounded island wall pass should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
+
+  const squareIsland = makeIslandFeature('i2', 12, 6, 16, 12, 2, 0)
+  const squareRounded = generatePocketToolpath(baseProject([tool], [pocket, squareIsland]), { ...baseOp, roundOutsideCorners: true })
+  assert(
+    !hasUndirectedCutMoveNear(cutMoves(squareRounded.moves), { x: 12, y: 2.4 }, { x: 28, y: 2.4 }, 0.02),
+    'right-angle island corners should not receive the acute-corner cleanup contour',
+  )
+  console.log('pocket finish rounded island walls only: PASSED')
+}
+
+function testPocketFinishFloorOnlyIgnoresRoundOutsideCorners() {
+  console.log('Testing pocket finish floor-only output ignores round outside corners...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 2, 0)
+  const island = makeIslandFeature('i1', 12, 6, 16, 12, 2, 0)
+  const project = baseProject([tool], [pocket, island])
+  const baseOp = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    finishWalls: false,
+    finishFloor: true,
+  })
+
+  const disabled = generatePocketToolpath(project, baseOp)
+  const enabled = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
+
+  assert(movesEqual(disabled.moves, enabled.moves), 'finish-floor-only moves should not change when round corners is enabled')
+  console.log('pocket finish floor-only round outside corners parity: PASSED')
 }
 
 function testPocketOffsetSlotFeedSimple() {
@@ -2339,6 +2518,8 @@ try {
   testEdgeOutsideUsesStoredModelSilhouettePaths()
   testEdgeOutsideIgnoresTinyStoredModelSilhouetteArtifacts()
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
+  testEdgeOutsideRoundCornersOptIn()
+  testEdgeOutsideCombinedRoundCorners()
   testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly()
@@ -2349,6 +2530,8 @@ try {
   testDrillingTieBreaksByOriginalOrder()
   testDrillingMinimizesSafeZTravelDistance()
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()
+  testPocketFinishRoundsIslandWallsOnly()
+  testPocketFinishFloorOnlyIgnoresRoundOutsideCorners()
   testPocketOffsetSlotFeedSimple()
   testPocketOffsetSlotFeedIslandSections()
   testPocketOffsetSlotFeedPerLevel()

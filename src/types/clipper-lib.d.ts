@@ -38,6 +38,7 @@ declare module 'clipper-lib' {
   }
 
   interface ClipperOffsetLike {
+    ArcTolerance: number
     AddPaths(paths: IntPoint[][], joinType: number, endType: number): void
     Execute(solution: IntPoint[][], delta: number): void
   }
