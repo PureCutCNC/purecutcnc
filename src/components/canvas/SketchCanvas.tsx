@@ -44,6 +44,7 @@ import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { ConstraintEditPanel } from './ConstraintEditPanel'
 import { DrivingDimensionPanel } from './DrivingDimensionPanel'
+import { NgonParameterPanel, RectCornerParameterPanel } from './CreationParameterReferences'
 import { GearParameterPanel } from './GearParameterPanel'
 import { useDrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
@@ -3397,58 +3398,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           )}
           {pendingAdd.shape === 'gear' && !creation.creationDimEditActive && (<GearParameterPanel pendingAdd={pendingAdd} units={project.meta.units} setPendingGearParams={setPendingGearParams} />)}
           {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
-            <div className="canvas-workflow-panel__meta">
-              <label className="canvas-workflow-panel__field">
-                <span>Sides (3–50)</span>
-                <input
-                  key={'sides' in pendingAdd ? pendingAdd.session : undefined}
-                  className="canvas-workflow-panel__count-input"
-                  type="text"
-                  inputMode="numeric"
-                  defaultValue={'sides' in pendingAdd ? pendingAdd.sides : 6}
-                  onBlur={(e) => {
-                    const n = Math.round(Number(e.target.value))
-                    const clamped = Number.isNaN(n) ? ('sides' in pendingAdd ? pendingAdd.sides : 6) : Math.max(3, Math.min(50, n))
-                    setPendingNgonSides(clamped)
-                    e.target.value = String(clamped)
-                  }}
-                  onKeyDown={(e) => {
-                    e.stopPropagation()
-                    if (e.key === 'Enter') {
-                      const n = Math.round(Number(e.currentTarget.value))
-                      if (!Number.isNaN(n)) setPendingNgonSides(Math.max(3, Math.min(50, n)))
-                    }
-                  }}
-                />
-              </label>
-            </div>
+            <NgonParameterPanel pendingAdd={pendingAdd} setPendingNgonSides={setPendingNgonSides} />
           )}
           {(pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !creation.creationDimEditActive && (
-            <div className="canvas-workflow-panel__meta">
-              <label className="canvas-workflow-panel__field">
-                <span>{pendingAdd.shape === 'roundrect' ? 'Corner radius' : 'Chamfer'}</span>
-                <input
-                  key={'corner' in pendingAdd ? pendingAdd.session : undefined}
-                  className="canvas-workflow-panel__count-input"
-                  type="text"
-                  inputMode="decimal"
-                  defaultValue={'corner' in pendingAdd ? pendingAdd.corner : (project.meta.units === 'mm' ? 5 : 0.2)}
-                  onBlur={(e) => {
-                    const v = Number(e.target.value)
-                    const clamped = Number.isNaN(v) || v < 0 ? ('corner' in pendingAdd ? pendingAdd.corner : 0) : v
-                    setPendingRectCorner(clamped)
-                    e.target.value = String(clamped)
-                  }}
-                  onKeyDown={(e) => {
-                    e.stopPropagation()
-                    if (e.key === 'Enter') {
-                      const v = Number(e.currentTarget.value)
-                      if (!Number.isNaN(v) && v >= 0) setPendingRectCorner(v)
-                    }
-                  }}
-                />
-              </label>
-            </div>
+            <RectCornerParameterPanel pendingAdd={pendingAdd} setPendingRectCorner={setPendingRectCorner} />
           )}
           {pendingDraftHasSelfIntersection ? (
             <div className="sketch-banner-warning">This profile self-intersects. 3D/CAM results may be invalid.</div>

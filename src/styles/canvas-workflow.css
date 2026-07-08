@@ -108,24 +108,28 @@
   font-size: 12px;
 }
 
-.canvas-workflow-panel__gear-fields {
+.canvas-workflow-panel__gear-fields,
+.canvas-workflow-panel__parameter-fields {
   display: grid;
   align-items: stretch;
   gap: 6px;
   width: 100%;
 }
 
-.canvas-workflow-panel__field--gear {
+.canvas-workflow-panel__field--gear,
+.canvas-workflow-panel__field--reference {
   grid-template-columns: minmax(94px, 1fr) minmax(84px, 104px) 50px;
   gap: 8px;
   min-height: 38px;
 }
 
-.canvas-workflow-panel__field--gear > span {
+.canvas-workflow-panel__field--gear > span,
+.canvas-workflow-panel__field--reference > span {
   min-width: 0;
 }
 
-.canvas-workflow-panel__gear-reference {
+.canvas-workflow-panel__gear-reference,
+.canvas-workflow-panel__parameter-reference {
   width: 50px;
   height: 34px;
   border: 1px solid rgba(200, 156, 98, 0.22);
