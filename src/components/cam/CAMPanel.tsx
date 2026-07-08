@@ -22,6 +22,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
+import { OperationParameterReference } from './OperationParameterReference'
 import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
@@ -1092,7 +1093,7 @@ export function CAMPanel({
       return <div className="panel-empty">Select an operation to edit its parameters.</div>
     }
     return (
-      <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties">
+      <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
                     <div className="properties-group">
                   <label className="properties-field">
                     <span>Name</span>
@@ -1131,6 +1132,7 @@ export function CAMPanel({
                         min={0.0001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { maxCarveDepth: value })}
                       />
+                      <OperationParameterReference kind="maxDepth" />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'follow_line' ? (
@@ -1142,6 +1144,7 @@ export function CAMPanel({
                         min={0.0001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { carveDepth: value })}
                       />
+                      <OperationParameterReference kind="maxDepth" />
                     </label>
                   ) : null}
                   <label className="properties-field">
@@ -1276,6 +1279,7 @@ export function CAMPanel({
                         min={0.0001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
                       />
+                      <OperationParameterReference kind="stepdown" />
                     </label>
                   ) : null}
                   {selectedOperation.kind !== 'follow_line'
@@ -1294,6 +1298,7 @@ export function CAMPanel({
                         min={0.001}
                         onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
                       />
+                      <OperationParameterReference kind="stepover" />
                     </label>
                   ) : null}
                   <DisclosureSection title="Advanced" storageKey="cam-operation-advanced">
@@ -1318,6 +1323,7 @@ export function CAMPanel({
                           })
                         }}
                       />
+                      <OperationParameterReference kind="pattern" />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'finish_surface' ? (
@@ -1331,6 +1337,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
                       />
+                      <OperationParameterReference kind="pattern" />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'finish_surface_cleanup' ? (
@@ -1344,6 +1351,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
                       />
+                      <OperationParameterReference kind="pattern" />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
@@ -1353,6 +1361,7 @@ export function CAMPanel({
                         value={selectedOperation.pocketAngle}
                         onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
                       />
+                      <OperationParameterReference kind="rasterAngle" />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') ? (
@@ -1366,6 +1375,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
                       />
+                      <OperationParameterReference kind="cutDirection" />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
@@ -1381,6 +1391,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
                       />
+                      <OperationParameterReference kind="machiningOrder" />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'drilling' ? (
@@ -1397,6 +1408,7 @@ export function CAMPanel({
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
                         />
+                        <OperationParameterReference kind="drillType" />
                       </label>
                       {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
                         <label className="properties-field">
@@ -1407,6 +1419,7 @@ export function CAMPanel({
                             min={0}
                             onCommit={(value) => updateOperation(selectedOperation.id, { peckDepth: value })}
                           />
+                          <OperationParameterReference kind="peckDepth" />
                         </label>
                       ) : null}
                       {selectedOperation.drillType === 'dwell' ? (
@@ -1417,6 +1430,7 @@ export function CAMPanel({
                             min={0}
                             onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
                           />
+                          <OperationParameterReference kind="dwell" />
                         </label>
                       ) : null}
                       <label className="properties-field">
@@ -1427,6 +1441,7 @@ export function CAMPanel({
                           min={0}
                           onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
                         />
+                        <OperationParameterReference kind="retractHeight" />
                       </label>
                     </>
                   ) : null}
@@ -1467,6 +1482,7 @@ export function CAMPanel({
                       min={0.0001}
                       onCommit={(value) => updateOperation(selectedOperation.id, { feed: value })}
                     />
+                    <OperationParameterReference kind="feed" />
                   </label>
                   <label className="properties-field">
                     <span>Plunge Feed</span>
@@ -1476,6 +1492,7 @@ export function CAMPanel({
                       min={0.0001}
                       onCommit={(value) => updateOperation(selectedOperation.id, { plungeFeed: value })}
                     />
+                    <OperationParameterReference kind="plungeFeed" />
                   </label>
                   {selectedOperation.kind === 'pocket'
                     && (selectedOperation.pass === 'rough'
@@ -1493,6 +1510,7 @@ export function CAMPanel({
                           pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
                         })}
                       />
+                      <OperationParameterReference kind="slotFeed" />
                     </label>
                   ) : null}
                   <label className="properties-field">
@@ -1502,6 +1520,7 @@ export function CAMPanel({
                       min={1}
                       onCommit={(value) => updateOperation(selectedOperation.id, { rpm: Math.round(value) })}
                     />
+                    <OperationParameterReference kind="rpm" />
                   </label>
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
@@ -1517,6 +1536,7 @@ export function CAMPanel({
                           min={0}
                           onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
                         />
+                        <OperationParameterReference kind="stockRadial" />
                       </label>
                       <label className="properties-field">
                         <span>Stock To Leave Axial</span>
@@ -1526,6 +1546,7 @@ export function CAMPanel({
                           min={0}
                           onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
                         />
+                        <OperationParameterReference kind="stockAxial" />
                       </label>
                     </>
                   ) : null}
@@ -1541,6 +1562,7 @@ export function CAMPanel({
                               min={0}
                               onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
                             />
+                            <OperationParameterReference kind="stockRadial" />
                           </label>
                           <label
                             className="properties-check"
@@ -1577,6 +1599,7 @@ export function CAMPanel({
                                   min={0.0001}
                                   onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMicroStepover: value })}
                                 />
+                                <OperationParameterReference kind="adaptiveSpacing" />
                               </label>
                               <label
                                 className="properties-field"
@@ -1589,6 +1612,7 @@ export function CAMPanel({
                                   max={512}
                                   onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMaxRingsPerBand: Math.floor(value) })}
                                 />
+                                <OperationParameterReference kind="maxRings" />
                               </label>
                             </>
                           ) : null}
@@ -1602,6 +1626,7 @@ export function CAMPanel({
                           min={0}
                           onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
                         />
+                        <OperationParameterReference kind="stockAxial" />
                       </label>
                     </>
                   ) : null}

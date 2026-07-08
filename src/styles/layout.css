@@ -1832,7 +1832,7 @@
   height: 15px;
 }
 
-.properties-field > :not(span):not(.properties-field-label-row) {
+.properties-field > :not(span):not(.properties-field-label-row):not(.op-param-ref) {
   grid-column: 2;
 }
 
@@ -2018,6 +2018,30 @@
   opacity: 1;
 }
 
+/* ── Operation parameter reference column ──────────────────── */
+
+.cam-operation-properties .properties-field {
+  grid-template-columns: minmax(74px, 88px) minmax(0, 1fr) 30px;
+}
+
+.op-param-ref {
+  grid-column: 3;
+  justify-self: end;
+  align-self: center;
+  width: 30px;
+  height: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #0f1820;
+}
+
+/* Action messages (e.g. "✓ Target updated") are plain <span> children, so the
+   reserved third column would otherwise pull them into the 30px icon rail.
+   Force them onto their own full-width row instead. */
+.cam-operation-properties .properties-field > .cam-field-message {
+  grid-column: 1 / -1;
+}
+
 .properties-field .cam-field-message,
 .properties-field .cam-field-note-list {
   margin-top: 2px;
@@ -2113,6 +2137,14 @@
 
   .properties-field > :not(span) {
     grid-column: auto;
+  }
+
+  .cam-operation-properties .properties-field {
+    grid-template-columns: 1fr;
+  }
+
+  .op-param-ref {
+    display: none;
   }
 }
 
