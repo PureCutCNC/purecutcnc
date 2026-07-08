@@ -1323,7 +1323,7 @@ export function CAMPanel({
                           })
                         }}
                       />
-                      <OperationParameterReference kind="pattern" />
+                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'finish_surface' ? (
@@ -1337,7 +1337,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
                       />
-                      <OperationParameterReference kind="pattern" />
+                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'finish_surface_cleanup' ? (
@@ -1351,7 +1351,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
                       />
-                      <OperationParameterReference kind="pattern" />
+                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
@@ -1375,7 +1375,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
                       />
-                      <OperationParameterReference kind="cutDirection" />
+                      <OperationParameterReference kind="cutDirection" variant={selectedOperation.cutDirection ?? 'conventional'} />
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
@@ -1391,7 +1391,7 @@ export function CAMPanel({
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
                       />
-                      <OperationParameterReference kind="machiningOrder" />
+                      <OperationParameterReference kind="machiningOrder" variant={selectedOperation.machiningOrder ?? 'level_first'} />
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'drilling' ? (
@@ -1408,7 +1408,7 @@ export function CAMPanel({
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
                         />
-                        <OperationParameterReference kind="drillType" />
+                        <OperationParameterReference kind="drillType" variant={selectedOperation.drillType ?? 'simple'} />
                       </label>
                       {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
                         <label className="properties-field">

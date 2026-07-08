@@ -37,7 +37,22 @@ function OpParamRefFrame({
   )
 }
 
-export function OperationParameterReference({ kind }: { kind: OperationParamRefKind }) {
+/**
+ * Small schematic reference diagram for an operation parameter, shown in the
+ * third column of the operation properties panel. Mirrors the gear creation
+ * reference column and reuses its `gear-reference__*` SVG element classes.
+ *
+ * For parameters backed by a dropdown, pass the current selection as `variant`
+ * so the diagram reflects the chosen value (e.g. offset vs parallel pattern,
+ * climb vs conventional cut direction).
+ */
+export function OperationParameterReference({
+  kind,
+  variant,
+}: {
+  kind: OperationParamRefKind
+  variant?: string
+}) {
   const label = operationParamRefLabel(kind)
 
   switch (kind) {
@@ -103,13 +118,14 @@ export function OperationParameterReference({ kind }: { kind: OperationParamRefK
       )
 
     case 'plungeFeed':
+      // An endmill (tool) plunging straight down into the stock.
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M10 22H48V28H10Z" />
-          <circle className="gear-reference__guide" cx="29" cy="12" r="5" />
-          <path className="gear-reference__guide" d="M25 17h8" />
-          <path className="gear-reference__accent" d="M29 17v5" />
-          <path className="gear-reference__accent-fill" d="M29 23l-2.6-4.5h5.2z" />
+          <path className="gear-reference__outline" d="M8 24H50V30H8Z" />
+          <path className="gear-reference__outline" d="M24 5h10v13h-10z" />
+          <path className="gear-reference__guide" d="M27 7v9M31 7v9" />
+          <path className="gear-reference__accent" d="M40 8v13" />
+          <path className="gear-reference__accent-fill" d="M40 23l-2.7-4.6h5.4z" />
         </OpParamRefFrame>
       )
 
@@ -144,33 +160,80 @@ export function OperationParameterReference({ kind }: { kind: OperationParamRefK
         </OpParamRefFrame>
       )
 
-    case 'cutDirection':
+    case 'cutDirection': {
+      const climb = variant === 'climb'
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M12 10h34v14H12z" />
-          <path className="gear-reference__accent" d="M18 24h22" />
-          <path className="gear-reference__accent-fill" d="M41 24l-4.5-2.6v5.2z" />
-          <path className="gear-reference__guide" d="M28 17v-3a4 4 0 0 0-3-4" />
+          <rect className="gear-reference__outline" x="19" y="11" width="20" height="14" rx="2" />
+          {climb ? (
+            <>
+              <path className="gear-reference__accent" d="M37 7H21" />
+              <path className="gear-reference__accent-fill" d="M21 7l4-2.4v4.8z" />
+            </>
+          ) : (
+            <>
+              <path className="gear-reference__accent" d="M21 7h16" />
+              <path className="gear-reference__accent-fill" d="M37 7l-4-2.4v4.8z" />
+            </>
+          )}
         </OpParamRefFrame>
       )
+    }
 
-    case 'pattern':
+    case 'pattern': {
+      if (variant === 'parallel') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M10 6h38v22H10z" />
+            <path className="gear-reference__accent" d="M14 11h30M14 17h30M14 23h30" />
+            <path className="gear-reference__guide" d="M44 11v6M14 17v6" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'waterline') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M10 6h38v22H10z" />
+            <path className="gear-reference__accent" d="M29 17m-9 0a9 8 0 1 0 18 0a9 8 0 1 0-18 0" />
+            <path className="gear-reference__accent" d="M29 17m-5 0a5 4 0 1 0 10 0a5 4 0 1 0-10 0" />
+            <circle className="gear-reference__accent-fill" cx="29" cy="17" r="1.3" />
+          </OpParamRefFrame>
+        )
+      }
+      // offset (default)
       return (
         <OpParamRefFrame label={label}>
           <path className="gear-reference__outline" d="M10 6h38v22H10z" />
-          <path className="gear-reference__accent" d="M29 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0" />
-          <path className="gear-reference__guide" d="M29 17m-8 0a8 8 0 1 0 16 0a8 8 0 1 0-16 0" />
+          <path className="gear-reference__accent" d="M15 11h28v12H15z" />
+          <path className="gear-reference__guide" d="M21 15h16v4H21z" />
         </OpParamRefFrame>
       )
+    }
 
-    case 'machiningOrder':
+    case 'machiningOrder': {
+      const featureFirst = variant === 'feature_first'
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__guide" d="M14 10h10v14H14zM24 10h10v14H24zM34 10h10v14H34z" />
-          <path className="gear-reference__accent" d="M19 17l5-3v6zM25 13l5 3-5 3" />
-          <path className="gear-reference__accent-fill" d="M31 11l-2.5 3.5h5z" />
+          <path className="gear-reference__guide" d="M14 9h12v16H14zM32 9h12v16H32z" />
+          <path className="gear-reference__guide" d="M14 17h12M32 17h12" />
+          {featureFirst ? (
+            <>
+              <path className="gear-reference__accent" d="M20 11v9" />
+              <path className="gear-reference__accent-fill" d="M20 22l-2-3.5h4z" />
+              <path className="gear-reference__accent" d="M27 14h5" />
+              <path className="gear-reference__accent-fill" d="M33 14l-3-2v4z" />
+            </>
+          ) : (
+            <>
+              <path className="gear-reference__accent" d="M15 13h26" />
+              <path className="gear-reference__accent-fill" d="M43 13l-3-2v4z" />
+              <path className="gear-reference__accent" d="M15 21h26" />
+              <path className="gear-reference__accent-fill" d="M43 21l-3-2v4z" />
+            </>
+          )}
         </OpParamRefFrame>
       )
+    }
 
     case 'rasterAngle':
       return (
@@ -185,20 +248,18 @@ export function OperationParameterReference({ kind }: { kind: OperationParamRefK
     case 'finishWalls':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M10 8h38v18H10z" />
+          <path className="gear-reference__guide" d="M10 8h38v18H10z" />
           <path className="gear-reference__guide" d="M12 17h34" />
           <path className="gear-reference__accent" d="M10 8v18M48 8v18" />
-          <path className="gear-reference__accent" d="M10 8h38M10 26h38" />
         </OpParamRefFrame>
       )
 
     case 'finishFloor':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M10 8h38v18H10z" />
+          <path className="gear-reference__guide" d="M10 8h38v18H10z" />
           <path className="gear-reference__guide" d="M10 10v14M48 10v14" />
-          <path className="gear-reference__accent" d="M12 26h34" />
-          <path className="gear-reference__accent" d="M12 8h34" />
+          <path className="gear-reference__accent" d="M11 26h36" />
         </OpParamRefFrame>
       )
 
@@ -257,15 +318,50 @@ export function OperationParameterReference({ kind }: { kind: OperationParamRefK
         </OpParamRefFrame>
       )
 
-    case 'drillType':
+    case 'drillType': {
+      const hole = (
+        <>
+          <path className="gear-reference__outline" d="M22 8v18M36 8v18" />
+          <path className="gear-reference__guide" d="M22 8h14" />
+        </>
+      )
+      if (variant === 'peck') {
+        return (
+          <OpParamRefFrame label={label}>
+            {hole}
+            <path className="gear-reference__accent" d="M29 9v4M29 15v4M29 21v3" />
+            <path className="gear-reference__accent-fill" d="M29 25l-2.4-4.2h4.8z" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'chip_breaking') {
+        return (
+          <OpParamRefFrame label={label}>
+            {hole}
+            <path className="gear-reference__accent" d="M29 9v3M29 13.5v2.5M29 17.5v2.5M29 21.5v2.5" />
+            <path className="gear-reference__accent-fill" d="M29 25l-2.4-4.2h4.8z" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'dwell') {
+        return (
+          <OpParamRefFrame label={label}>
+            {hole}
+            <path className="gear-reference__accent" d="M29 9v12" />
+            <path className="gear-reference__accent-fill" d="M29 25l-2.4-4.2h4.8z" />
+            <circle className="gear-reference__accent" cx="40" cy="22" r="3" />
+            <path className="gear-reference__accent" d="M40 22v-2" />
+          </OpParamRefFrame>
+        )
+      }
+      // simple (default)
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M25 2h8v12h-8z" />
-          <path className="gear-reference__guide" d="M25 14l-4 8h16l-4-8" />
-          <path className="gear-reference__guide" d="M29 14v6" />
-          <path className="gear-reference__accent" d="M27 3v10M31 3v10" />
-          <path className="gear-reference__accent-fill" d="M29 22l-2.5-5h5z" />
+          {hole}
+          <path className="gear-reference__accent" d="M29 9v15" />
+          <path className="gear-reference__accent-fill" d="M29 25l-2.4-4.2h4.8z" />
         </OpParamRefFrame>
       )
+    }
   }
 }

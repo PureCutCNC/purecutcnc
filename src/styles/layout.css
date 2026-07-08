@@ -2021,18 +2021,20 @@
 /* ── Operation parameter reference column ──────────────────── */
 
 .cam-operation-properties .properties-field {
-  grid-template-columns: minmax(74px, 88px) minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(74px, 88px) minmax(0, 1fr) 50px;
 }
 
+/* Match the gear/creation reference frame (50×34) so the diagrams read at the
+   same size as the feature-creation dialogs. */
 .op-param-ref {
   grid-column: 3;
   justify-self: end;
   align-self: center;
-  width: 30px;
-  height: 22px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  background: #0f1820;
+  width: 50px;
+  height: 34px;
+  border: 1px solid rgba(200, 156, 98, 0.22);
+  border-radius: 6px;
+  background: rgba(7, 12, 17, 0.72);
 }
 
 /* Action messages (e.g. "✓ Target updated") are plain <span> children, so the
