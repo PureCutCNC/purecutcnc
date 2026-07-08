@@ -623,8 +623,18 @@ export function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   return contours
 }
 
-function buildIslandContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
-  return regions.flatMap((region) => region.islands.filter((island) => island.length >= 3))
+function buildExpandedIslandContours(
+  regions: ResolvedPocketRegion[],
+  delta: number,
+  joinType: number,
+): Point[][] {
+  const scale = DEFAULT_CLIPPER_SCALE
+  return regions.flatMap((region) => {
+    const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
+    return offsetPaths(islandPaths, delta * scale, joinType)
+      .map((path) => fromClipperPath(path, scale))
+      .filter((island) => island.length >= 3)
+  })
 }
 
 export function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
@@ -1377,8 +1387,8 @@ function generateFinishBandMoves(
       ))
       wallContours = [
         ...buildOuterContours(roundedWallRegions),
-        ...buildIslandContourLoops(finishRegions),
-        ...buildIslandContourLoops(roundedWallRegions),
+        ...buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtMiter),
+        ...buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtRound),
       ]
     } else {
       wallContours = buildContourLoops(finishRegions)
