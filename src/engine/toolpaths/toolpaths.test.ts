@@ -2065,11 +2065,22 @@ function testPocketFinishRoundsIslandWallsOnly() {
     'enabled island wall should not include a full mitered cleanup edge that makes the rounded finish look sharp',
   )
   assert(
-    hasUndirectedCutMoveNear(roundedCuts, { x: 13.75, y: 6.4 }, { x: 27.5, y: 6.4 }),
-    'enabled island wall should include an outer rounded cleanup contour before the final rounded wall pass',
+    !hasUndirectedCutMoveNear(roundedCuts, { x: 13.75, y: 6.4 }, { x: 27.5, y: 6.4 }),
+    'enabled island wall should not include a full outer cleanup contour on non-acute edges',
+  )
+  assert(
+    hasUndirectedCutMoveNear(roundedCuts, { x: 31.014, y: 10.78 }, { x: 31.091, y: 10.249 }, 0.02),
+    'enabled island wall should include localized rounded cleanup at acute island corners',
   )
   assert(roundedCuts.length > miterCuts.length + 20, 'enabled island wall should finish with multi-segment rounded corners')
   assert(roundedCuts.length < 120, `rounded island wall pass should stay coarsely tessellated, got ${roundedCuts.length} cuts`)
+
+  const squareIsland = makeIslandFeature('i2', 12, 6, 16, 12, 2, 0)
+  const squareRounded = generatePocketToolpath(baseProject([tool], [pocket, squareIsland]), { ...baseOp, roundOutsideCorners: true })
+  assert(
+    !hasUndirectedCutMoveNear(cutMoves(squareRounded.moves), { x: 12, y: 2.4 }, { x: 28, y: 2.4 }, 0.02),
+    'right-angle island corners should not receive the acute-corner cleanup contour',
+  )
   console.log('pocket finish rounded island walls only: PASSED')
 }
 
