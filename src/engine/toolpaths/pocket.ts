@@ -623,6 +623,10 @@ export function buildContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
   return contours
 }
 
+function buildIslandContourLoops(regions: ResolvedPocketRegion[]): Point[][] {
+  return regions.flatMap((region) => region.islands.filter((island) => island.length >= 3))
+}
+
 export function buildOuterContours(regions: ResolvedPocketRegion[]): Point[][] {
   return regions
     .map((region) => region.outer)
@@ -1358,24 +1362,30 @@ function generateFinishBandMoves(
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const finishDelta = toolRadius + radialLeave
   const shouldRoundPocketWalls = operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners
-  const needsMiterFinishRegions = operation.finishFloor || (operation.finishWalls && !shouldRoundPocketWalls)
+  const needsMiterFinishRegions = operation.finishFloor || operation.finishWalls
   const finishRegions = needsMiterFinishRegions
     ? band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
     : []
-  let wallRegions: ResolvedPocketRegion[] = []
+  let wallContours: Point[][] = []
   if (operation.finishWalls) {
-    wallRegions = shouldRoundPocketWalls
-      ? band.regions.flatMap((region) => buildInsetRegions(
+    if (shouldRoundPocketWalls) {
+      const roundedWallRegions = band.regions.flatMap((region) => buildInsetRegions(
         region,
         finishDelta,
         ClipperLib.JoinType.jtMiter,
         ClipperLib.JoinType.jtRound,
       ))
-      : finishRegions
+      wallContours = [
+        ...buildOuterContours(roundedWallRegions),
+        ...buildIslandContourLoops(finishRegions),
+        ...buildIslandContourLoops(roundedWallRegions),
+      ]
+    } else {
+      wallContours = buildContourLoops(finishRegions)
+    }
   }
   const slotScale = resolveSlotFeedScale(operation)
   const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
-  const wallContours = buildContourLoops(wallRegions)
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'

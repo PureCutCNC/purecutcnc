@@ -305,6 +305,21 @@ function toolpathMoveSignature(moves: ToolpathMove[]): string[] {
   }))
 }
 
+function includesSignatureSubsequence(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0) return true
+  for (let start = 0; start <= haystack.length - needle.length; start += 1) {
+    let matches = true
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) {
+        matches = false
+        break
+      }
+    }
+    if (matches) return true
+  }
+  return false
+}
+
 /** Dedup consecutive equal Z values in the sequence of cut-move Zs. */
 function cutZTransitions(moves: ToolpathMove[]): number[] {
   const transitions: number[] = []
@@ -2012,14 +2027,20 @@ function testPocketFinishRoundsIslandWallsOnly() {
   const rounded = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
   const miterGroups = cutMoveGroups(miter.moves)
   const roundedGroups = cutMoveGroups(rounded.moves)
+  const miterIslandSignature = toolpathMoveSignature(miterGroups[1] ?? [])
+  const roundedCutSignature = toolpathMoveSignature(cutMoves(rounded.moves))
 
   assert(miterGroups.length === 2, `expected mitered outer and island contours, got ${miterGroups.length}`)
-  assert(roundedGroups.length === 2, `expected rounded outer and island contours, got ${roundedGroups.length}`)
+  assert(roundedGroups.length >= 2, `expected rounded wall contours, got ${roundedGroups.length}`)
   assert(miterGroups[0].length === 4, 'mitered main pocket boundary should have four cuts')
   assert(roundedGroups[0].length === 4, 'rounded setting should keep the main pocket boundary mitered')
   assert(miterGroups[1].length === 4, 'disabled island wall should have four mitered cuts')
-  assert(roundedGroups[1].length > miterGroups[1].length, 'enabled island wall should use multi-segment rounded corners')
-  assert(roundedGroups[1].length < 100, `rounded island wall should stay coarsely tessellated, got ${roundedGroups[1].length} cuts`)
+  assert(
+    includesSignatureSubsequence(roundedCutSignature, miterIslandSignature),
+    'enabled island wall should include a mitered cleanup contour for sharp rough-stock corners',
+  )
+  assert(cutMoves(rounded.moves).length > cutMoves(miter.moves).length + miterGroups[1].length, 'enabled island wall should finish with multi-segment rounded corners')
+  assert(cutMoves(rounded.moves).length < 120, `rounded island wall pass should stay coarsely tessellated, got ${cutMoves(rounded.moves).length} cuts`)
   console.log('pocket finish rounded island walls only: PASSED')
 }
 
