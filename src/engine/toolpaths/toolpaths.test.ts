@@ -2061,8 +2061,12 @@ function testPocketFinishRoundsIslandWallsOnly() {
   assert(roundedGroups.length >= 2, `expected rounded wall contours, got ${roundedGroups.length}`)
   assert(roundedGroups[0].length === 4, 'rounded setting should keep the main pocket boundary mitered')
   assert(
-    hasUndirectedCutMoveNear(roundedCuts, { x: 26.499, y: 17.889 }, { x: 10.135, y: 22.798 }),
-    'enabled island wall should include the slanted miter cleanup edge for sharp rough-stock corners',
+    !hasUndirectedCutMoveNear(roundedCuts, { x: 26.499, y: 17.889 }, { x: 10.135, y: 22.798 }),
+    'enabled island wall should not include a full mitered cleanup edge that makes the rounded finish look sharp',
+  )
+  assert(
+    hasUndirectedCutMoveNear(roundedCuts, { x: 13.75, y: 6.4 }, { x: 27.5, y: 6.4 }),
+    'enabled island wall should include an outer rounded cleanup contour before the final rounded wall pass',
   )
   assert(roundedCuts.length > miterCuts.length + 20, 'enabled island wall should finish with multi-segment rounded corners')
   assert(roundedCuts.length < 120, `rounded island wall pass should stay coarsely tessellated, got ${roundedCuts.length} cuts`)

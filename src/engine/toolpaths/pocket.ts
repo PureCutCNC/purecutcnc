@@ -1385,9 +1385,10 @@ function generateFinishBandMoves(
         ClipperLib.JoinType.jtMiter,
         ClipperLib.JoinType.jtRound,
       ))
+      const islandCleanupDelta = finishDelta + stepoverDistance
       wallContours = [
         ...buildOuterContours(roundedWallRegions),
-        ...buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtMiter),
+        ...buildExpandedIslandContours(band.regions, islandCleanupDelta, ClipperLib.JoinType.jtRound),
         ...buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtRound),
       ]
     } else {
