@@ -41,7 +41,7 @@ import { resolvePocketRegions } from './resolver'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
-const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.02
+const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
 
 interface PolyTreeNode {
   IsHole(): boolean

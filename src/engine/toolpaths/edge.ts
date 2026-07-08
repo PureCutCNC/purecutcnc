@@ -37,7 +37,7 @@ import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
-const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.02
+const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
 
 function offsetPaths(
   paths: ClipperPath[],
