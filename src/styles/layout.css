@@ -2025,7 +2025,8 @@
 }
 
 /* Match the gear/creation reference frame (50×34) so the diagrams read at the
-   same size as the feature-creation dialogs. */
+   same size as the feature-creation dialogs. Illustrative only — never a click
+   target (so it can't accidentally toggle a checkbox row's input). */
 .op-param-ref {
   grid-column: 3;
   justify-self: end;
@@ -2035,6 +2036,14 @@
   border: 1px solid rgba(200, 156, 98, 0.22);
   border-radius: 6px;
   background: rgba(7, 12, 17, 0.72);
+  pointer-events: none;
+}
+
+/* Checkbox-backed parameters (Finish Walls/Floor, Adaptive refinement) live in
+   flex `.properties-check` rows, not the grid — push their reference to the same
+   right-hand rail as the field icons. */
+.cam-operation-properties .properties-check .op-param-ref {
+  margin-left: auto;
 }
 
 /* Action messages (e.g. "✓ Target updated") are plain <span> children, so the

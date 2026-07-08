@@ -1455,6 +1455,7 @@ export function CAMPanel({
                           onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
                         />
                         <span>Finish Walls</span>
+                        <OperationParameterReference kind="finishWalls" />
                       </label>
                       <label className="properties-check">
                         <input
@@ -1463,6 +1464,7 @@ export function CAMPanel({
                           onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
                         />
                         <span>Finish Floor</span>
+                        <OperationParameterReference kind="finishFloor" />
                       </label>
                     </>
                   ) : null}
@@ -1585,6 +1587,7 @@ export function CAMPanel({
                               }}
                             />
                             <span>Adaptive refinement</span>
+                            <OperationParameterReference kind="adaptiveRefinement" />
                           </label>
                           {(selectedOperation.waterlineAdaptiveRefinement ?? true) ? (
                             <>
