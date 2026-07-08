@@ -19,7 +19,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling, and creation workflow panels including gear/parameter reference diagrams. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`); `canvas/operationSnapshot.ts` renders static operation booklet images.
 - `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
 - `simulation/` — voxel toolpath simulation viewport and playback controls
-- `cam/` — CAM panels (tools, operations, parameters)
+- `cam/` — CAM panels (tools, operations, parameters); per-parameter reference icons via `OperationParameterReference`
 - `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu
 - `layout/` — app shell (toolbars, sidebars, mode switching); toolbar internals are documented in `layout/toolbar/INDEX.md`
 - `project/` — project-level UI (new/open/save, stock, machine, units)
