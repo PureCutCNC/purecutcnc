@@ -1,6 +1,6 @@
 # e2e — Browser Smoke (Playwright)
 
-Thin, repeatable browser smoke run before manual testing sessions.
+Thin, repeatable browser smoke run before manual testing sessions and in PR CI.
 Covers DOM render + menu→action wiring. Does **NOT** assert geometry,
 pixels, or WebGL canvas contents — those are owned by `npm test`.
 
@@ -15,6 +15,14 @@ discovers all `e2e/*.spec.ts` files. The fixture auto-navigates to the
 app, waits for the canvas, and fails the test on **any** `console.error`
 or uncaught page error.
 
+## CI gate
+
+Pull requests run `npm run test:e2e` in a dedicated workflow job. CI installs
+Chromium with Playwright, forbids committed `.only` tests, keeps traces on
+failure, and uploads `playwright-report/` / `test-results/` when the job fails.
+The e2e job is separate from `npm run build` so the build script stays
+browser-free while PRs still exercise the browser smoke.
+
 ## Scaffolding (read before writing a test)
 
 | File | Role |
@@ -23,6 +31,12 @@ or uncaught page error.
 | `selectors.ts` | **Single source of truth** for DOM selectors. Logical name → `Locator`. When the UI moves a class, update it **here** — every spec picks it up. |
 | `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
 | `featureReferences.helpers.ts` | FR-specific helpers (e.g. `seedLinkedProject`). Built on the generic primitives. A new feature area gets its own `<area>.helpers.ts`. |
+| `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
+
+Current smoke targets:
+
+- `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
+- `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
 
 ## Adding a test
 
@@ -36,6 +50,11 @@ The canonical shape for a new feature-area smoke:
 6. **Assert via the DOM** — never canvas contents, never geometry values
 7. **Console-error guard is automatic** (from the fixture — no per-test boilerplate)
 8. **Area-specific selectors** that don't yet exist in `selectors.ts` are added there; everything else is handled by the existing scaffolding.
+
+User-facing UI or workflow changes should add or extend an e2e smoke when the
+behavior depends on rendered DOM, menu wiring, dialogs, or browser-only boot
+paths. If store/unit coverage is enough, call that out in the PR description so
+the omission is intentional.
 
 ### Worked example — hypothetical "CAM operations" smoke
 
@@ -70,4 +89,3 @@ future change adds Tauri IPC calls at boot time that are not guarded by
 - No screenshot/pixel diffing; no WebGL canvas-content assertions.
 - No Tauri native file-dialog flows — project state is seeded via the
   guarded `window.__pcTest` dev seam.
-- No CI integration.

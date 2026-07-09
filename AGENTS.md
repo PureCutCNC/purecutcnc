@@ -34,13 +34,16 @@ Abandoned work: close the issue with a short reason; the board moves it to `Done
 ```bash
 npm run build          # Full build (lint + icon generation + tsc + tests + vite). Run this before committing.
 npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
+npm run test:e2e       # Playwright browser smoke (PR CI gate; starts its own Vite dev server)
 npm run dev            # Vite dev server (do NOT start this unless asked — the user runs it themselves)
 npm run lint           # ESLint over supported source only: src, vite.config.ts, and build/test scripts
 npm run lint:scripts   # Optional: lint the one-off diagnostic scripts in scripts/ (not a quality gate)
 npm run sync-icons     # Regenerate public/icons.svg from src/assets/icons/*.svg
 ```
 
-Always run `npm run build` from the project root to verify changes compile before committing. `npm run lint` and `npm test` run automatically as part of the build, so a lint failure or failing structural test will fail the build. Do not start the dev/preview server unless asked.
+Always run `npm run build` from the project root to verify changes compile before committing. `npm run lint` and `npm test` run automatically as part of the build, so a lint failure or failing structural test will fail the build. Do not start the dev/preview server unless asked; `npm run test:e2e` owns its temporary dev server when you intentionally run the browser smoke.
+
+`npm run test:e2e` is a separate PR CI gate, not part of `npm run build`. User-facing UI or workflow changes should add or extend an `e2e/*.smoke.spec.ts` test when the behavior depends on rendered DOM, menu wiring, dialogs, or browser-only boot paths. If lower-level structural tests are sufficient, say so in the PR description so the lack of e2e coverage is deliberate.
 
 ## Git & Branching
 
