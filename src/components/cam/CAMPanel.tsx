@@ -53,6 +53,8 @@ interface CAMPanelProps {
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
   onExport: () => void
+  /** Open the Export G-code dialog scoped to a single operation. */
+  onExportOperation: (operationId: string) => void
   generateToolpath: (operation: Operation) => ToolpathResult | null
   toolpathWarnings?: string[] | null
   generatingOperationIds?: Set<string>
@@ -585,6 +587,7 @@ export function CAMPanel({
   selectedOperationId: selectedOperationIdProp,
   onSelectedOperationIdChange,
   onExport,
+  onExportOperation,
   generateToolpath,
   toolpathWarnings,
   generatingOperationIds,
@@ -1957,6 +1960,18 @@ export function CAMPanel({
                               <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
                             </button>
                             {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                            <button
+                              className="tree-action-btn"
+                              type="button"
+                              title="Export G-code for this operation"
+                              aria-label={`Export G-code for ${operation.name}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onExportOperation(operation.id)
+                              }}
+                            >
+                              <Icon id="export" size={14} />
+                            </button>
                             <button
                               className="tree-action-btn"
                               type="button"

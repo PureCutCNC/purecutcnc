@@ -23,7 +23,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu
 - `layout/` — app shell (toolbars, sidebars, mode switching); toolbar internals are documented in `layout/toolbar/INDEX.md`
 - `project/` — project-level UI (new/open/save, stock, machine, units)
-- `export/` — export dialogs: G-code (`ExportDialog`), the Export Model dialog (`ModelExportDialog`, STL mesh + 2D design SVG via `src/engine/modelExport/`), and the Print Design dialog (`PrintDesignDialog`, backed by `src/engine/designPrint/`)
+- `export/` — export dialogs: G-code (`ExportDialog`, with a per-operation checklist backed by the pure helpers in `exportOperationSelection.ts`), the Export Model dialog (`ModelExportDialog`, STL mesh + 2D design SVG via `src/engine/modelExport/`), and the Print Design dialog (`PrintDesignDialog`, backed by `src/engine/designPrint/`)
 - `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)

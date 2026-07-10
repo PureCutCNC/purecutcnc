@@ -712,9 +712,10 @@ persistent panel — it is modal, opened on demand.
 │                                                     │
 │  Units:    Inch                                     │
 │                                                     │
-│  Operations set:                                    │
-│  Using visible + enabled operations                │
-│  (managed from the Operations panel)               │
+│  Operations:                                        │
+│  ☑ Pocket 1                                         │
+│  ☑ Profile 2                                        │
+│  ☐ Drill 3            (No tool assigned)           │
 │                                                     │
 │  Options:                                           │
 │  ☑ Emit tool change commands                        │
@@ -749,17 +750,25 @@ project settings for changes.
 
 ### 7.3 Operations Set
 
-For v1, export uses the same active operation set as simulation:
-- operation must be `enabled`
-- operation must have `showToolpath = true`
+The dialog shows a checklist of all operations in execution order (issue
+#274). The checked set is what gets exported; the preview, stats, and
+warnings recompute from it.
 
-This keeps preview, simulation, and export aligned around one shared
-operation-selection model.
+- Default checked set = the same active set simulation uses (`enabled` +
+  `showToolpath` + tool assigned), so a plain "Export" click matches the
+  on-screen toolpaths.
+- Operations that cannot export (disabled, or no tool assigned) are listed
+  greyed-out with the reason and cannot be checked.
+- Each operation row in the Operations panel also has an "Export G-code"
+  action that opens this dialog with only that operation pre-checked.
+- When exactly one operation is checked, the suggested filename is
+  `<project>_<operation name>`; otherwise it stays `<project>`.
 
 Notes:
 - `enabled` means the operation participates in machining at all
-- `showToolpath` means it is part of the active preview/export/simulation set
-- no separate export checklist is needed in the first pass
+- `showToolpath` means it is part of the active preview/simulation set and
+  the default export selection; the checklist can deviate from it per export
+  without changing the project
 
 ### 7.4 Preview
 

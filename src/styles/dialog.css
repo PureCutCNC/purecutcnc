@@ -217,6 +217,24 @@
   accent-color: var(--accent);
 }
 
+.export-option--disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.export-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-option-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .export-warning-list {
   display: grid;
   gap: 8px;
