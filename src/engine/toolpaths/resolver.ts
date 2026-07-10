@@ -158,6 +158,30 @@ function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   return solution as ClipperPath[]
 }
 
+/**
+ * Union paths with even-odd fill semantics. When multiple same-winding
+ * contours nest, the even-odd rule creates a hole (unlike non-zero, which
+ * would fill the inner area). Used for closed Line contours so that nested
+ * same-winding Lines produce holes rather than a solid fill (issue #270 S2).
+ */
+function unionPathsEvenOdd(paths: ClipperPath[]): ClipperPath[] {
+  if (paths.length === 0) {
+    return []
+  }
+
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    solution,
+    ClipperLib.PolyFillType.pftEvenOdd,
+    ClipperLib.PolyFillType.pftEvenOdd,
+  )
+
+  return solution as ClipperPath[]
+}
+
 function differencePaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
   if (subjectPaths.length === 0) {
     return []
@@ -247,10 +271,17 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   const regionFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'region')
   const regionMask = buildRegionMask(regionFeatures)
-  const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract')
 
-  const targetFeatures = validTargetSourceFeatures
+  const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_recursive'
+  const validTargetSourceFeatures = selectedTargetFeatures
+    .filter((feature) => isVCarve
+      ? (feature.operation === 'subtract' || feature.operation === 'line')
+      : feature.operation === 'subtract')
+
+  const subtractSourceFeatures = validTargetSourceFeatures.filter((f) => f.operation === 'subtract')
+  const lineSourceFeatures = validTargetSourceFeatures.filter((f) => f.operation === 'line')
+
+  const subtractTargetFeatures = subtractSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract')
     .map((feature) => ({
@@ -258,25 +289,49 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       span: resolveFeatureZSpan(project, feature),
     }))
 
+  const lineTargetFeatures = lineSourceFeatures
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'line')
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
+
+  const targetFeatures = [...subtractTargetFeatures, ...lineTargetFeatures]
+
   if (validTargetSourceFeatures.length + regionFeatures.length !== operation.target.featureIds.length) {
-    warnings.push('Some selected target features are missing or are not subtract/region features')
+    const expectedRoles = isVCarve ? 'subtract/line/region' : 'subtract/region'
+    warnings.push(`Some selected target features are missing or are not ${expectedRoles} features`)
   }
 
-  const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
+  const closedSubtractFeatures = subtractTargetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
+  const closedLineFeatures = lineTargetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
+  const closedTargetFeatures = [...closedSubtractFeatures, ...closedLineFeatures]
+
   if (closedTargetFeatures.length !== targetFeatures.length) {
     warnings.push(`${operationLabel} operations only support closed target profiles`)
   }
 
   if (closedTargetFeatures.length === 0) {
+    const targetKindLabel = isVCarve ? 'subtract or line' : 'subtract'
     return {
       operationId: operation.id,
       units: project.meta.units,
       bands: [],
-      warnings: [...warnings, `No valid subtract features were found for this ${operationLabel.toLowerCase()} operation`],
+      warnings: [...warnings, `No valid ${targetKindLabel} features were found for this ${operationLabel.toLowerCase()} operation`],
     }
   }
 
-  const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature, project)))
+  // Candidate island/tab discovery must be conservative across all depth
+  // bands: union every target path with non-zero fill so an obstacle
+  // inside any target contour is discovered regardless of which bands it
+  // overlaps.  Even-odd topology for closed Lines belongs inside each
+  // band (below) where we know which Lines are simultaneously active.
+  const allTargetPathsForDiscovery = [
+    ...closedSubtractFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature, project)),
+    ...closedLineFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature, project)),
+  ]
+  const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
 
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
@@ -303,7 +358,8 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
     ...candidateTabIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
-  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
+  const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
+  const lineIdSet = new Set(closedLineFeatures.map(({ feature }) => feature.id))
   const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
   for (let index = 0; index < depths.length - 1; index += 1) {
@@ -331,6 +387,12 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
         continue
       }
 
+      // Skip line features in the subtract/add loop — they are resolved
+      // separately with even-odd semantics below.
+      if (feature.operation === 'line' && lineIdSet.has(feature.id)) {
+        continue
+      }
+
       const featurePath = flattenFeatureToClipperPath(feature, project)
       if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
         resolvedPaths = unionPaths([...resolvedPaths, featurePath])
@@ -340,6 +402,25 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
       if (feature.operation === 'add' && resolvedPaths.length > 0) {
         resolvedPaths = differencePaths(resolvedPaths, [featurePath])
       }
+    }
+
+    // Resolve closed Line targets with even-odd fill semantics (issue #270 S2).
+    // Nested same-winding Lines create holes; disjoint Lines remain separate.
+    const activeLineTargetsForBand = activeForBand(closedLineFeatures, topZ, bottomZ)
+    let lineAreas: ClipperPath[] = []
+    if (activeLineTargetsForBand.length > 0) {
+      const linePaths = activeLineTargetsForBand.map(({ feature }) => flattenFeatureToClipperPath(feature, project))
+      lineAreas = unionPathsEvenOdd(linePaths)
+
+      // Subtract add islands from line areas so islands protect material
+      // from line targets as they do from subtract targets.
+      for (const island of activeIslands) {
+        if (lineAreas.length > 0) {
+          lineAreas = differencePaths(lineAreas, [flattenFeatureToClipperPath(island.feature, project)])
+        }
+      }
+
+      resolvedPaths = unionPaths([...resolvedPaths, ...lineAreas])
     }
 
     if (resolvedPaths.length > 0 && activeTabIslands.length > 0) {

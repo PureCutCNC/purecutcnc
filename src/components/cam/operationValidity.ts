@@ -27,6 +27,7 @@
 import type { SelectionState } from '../../store/types'
 import type { Operation, OperationKind, OperationPass, Project } from '../../types/project'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
+import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry } from '../../text'
 
 export function operationKindLabel(kind: OperationKind): string {
@@ -133,7 +134,7 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
     if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more closed subtract features first'
+      return 'Select one or more closed subtract or line features first'
     }
 
     const features = selection.selectedFeatureIds
@@ -143,18 +144,16 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
     if (machiningFeatures.length === 0) {
-      return `${operationKindLabel(kind)} requires at least one subtract feature; regions are only filters`
+      return `${operationKindLabel(kind)} requires at least one closed subtract or line feature; regions are only filters`
     }
-    if (!machiningFeatures.every((feature) => feature.operation === 'subtract')) {
-      return `${operationKindLabel(kind)} only accepts subtract features plus optional closed regions`
+    if (!machiningFeatures.every((feature) => isVCarveCompatibleFeature(feature))) {
+      return `${operationKindLabel(kind)} only accepts closed subtract or line features plus optional closed regions`
     }
     if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
       return 'Region filters must be closed profiles'
     }
 
-    return machiningFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? null
-      : `${operationKindLabel(kind)} only accepts closed profiles`
+    return null
   }
 
   if (kind === 'rough_surface') {

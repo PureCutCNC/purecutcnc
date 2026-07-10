@@ -36,6 +36,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction/isSolid predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks. `isSolid` (issue #270) returns true only for add/subtract/model — the base-solid invariant gate.
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
+  - `vcarveTargets.ts` — shared V-carve target eligibility predicate (issue #270 S2): `isVCarveCompatibleFeature` is the single source of truth for "can this feature be a V-carve machining target?"; used by UI hints, compatible selection, CAM panel validation, persisted target validation, and fallback target selection
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
@@ -73,6 +74,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `textReference.test.ts` — issue #228: text-feature creation mints a definition, reference copies resolve (selectable), text edits propagate to definition + siblings, 16-char name truncation
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
+- `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

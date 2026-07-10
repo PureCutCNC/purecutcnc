@@ -18,6 +18,7 @@ import { featureHasClosedGeometry } from '../../text'
 import { convertLength } from '../../utils/units'
 import { defaultTool } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
+import { isVCarveCompatibleFeature } from './vcarveTargets'
 import type {
   FeatureOperation,
   Operation,
@@ -218,7 +219,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+      && machiningFeatures.every((feature) => isVCarveCompatibleFeature(feature))
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
   }
 
@@ -345,9 +346,9 @@ export function fallbackOperationTarget(project: Project, kind: OperationKind): 
   }
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
-    const firstSubtractFeature = project.features.find((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
-    return firstSubtractFeature
-      ? { source: 'features', featureIds: [firstSubtractFeature.id] }
+    const firstCompatibleFeature = project.features.find((feature) => isVCarveCompatibleFeature(feature))
+    return firstCompatibleFeature
+      ? { source: 'features', featureIds: [firstCompatibleFeature.id] }
       : { source: 'stock' }
   }
 

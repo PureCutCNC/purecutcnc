@@ -78,6 +78,7 @@ declare module 'clipper-lib' {
     }
     PolyFillType: {
       pftNonZero: number
+      pftEvenOdd: number
     }
     JoinType: {
       jtMiter: number
