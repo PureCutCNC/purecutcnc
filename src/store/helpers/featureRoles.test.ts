@@ -22,7 +22,7 @@
 
 import type { FeatureOperation, SketchFeature } from '../../types/project'
 import { rectProfile } from '../../types/project'
-import { isConstruction, isMachinable, isRegion, modelFeatures, sectionForOperation } from './featureRoles'
+import { isConstruction, isMachinable, isRegion, isSolid, modelFeatures, sectionForOperation } from './featureRoles'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -78,6 +78,14 @@ assert(sectionForOperation('subtract') === 'features', 'subtract → features se
 assert(sectionForOperation('model') === 'features', 'model → features section')
 assert(sectionForOperation('line') === 'features', 'line → features section')
 assert(sectionForOperation(undefined) === 'features', 'undefined → features section')
+
+// ── isSolid distinguishes solid-contributing from path-only machinable ──
+
+for (const operation of ALL_OPERATIONS) {
+  const feature = makeFeature(`fs-${operation}`, operation)
+  assert(isSolid(feature) === (operation === 'add' || operation === 'subtract' || operation === 'model'),
+    `isSolid(${operation})`)
+}
 
 // ── modelFeatures excludes construction only ─────────────────────
 

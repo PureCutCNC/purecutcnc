@@ -136,14 +136,14 @@ assert(
   propertiesPanel.includes("{ value: 'line', label: 'Line' }"),
   'PropertiesPanel open-profile operation control must offer Line ↔ Construction',
 )
-// The base-solid lock tracks the first MACHINABLE feature, not row 0.
+// The base-solid lock tracks the first SOLID feature, not row 0.
 assert(
-  propertiesPanel.includes('project.features.find(isMachinable)'),
-  'PropertiesPanel first-machining lookup must use isMachinable',
+  propertiesPanel.includes('project.features.find(isSolid)'),
+  'PropertiesPanel first-solid lookup must use isSolid',
 )
 assert(
-  featureTree.includes('feature.id === firstMachiningFeature?.id'),
-  'FeatureTree first-feature lock must track the first machinable feature',
+  featureTree.includes('feature.id === firstSolidFeature?.id'),
+  'FeatureTree first-feature lock must track the first solid feature',
 )
 
 // ── AppShell: statusbar visibility toggle ────────────────────────

@@ -3457,6 +3457,12 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
+.tree-operation-menu__item--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .tree-operation-menu__icon {
   display: inline-flex;
   align-items: center;
