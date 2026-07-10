@@ -33,7 +33,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `derivedFeatures.ts` — computes derived snapshot features from the feature tree; also previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `featureDefinitions.ts` — definition creation, orphan collection, instance rebaking, and make-unique support for feature references
   - `gearFeature.ts` — grouped gear+bore feature insertion helper used by the gear creation action
-  - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks.
+  - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction/isSolid predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks. `isSolid` (issue #270) returns true only for add/subtract/model — the base-solid invariant gate.
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application

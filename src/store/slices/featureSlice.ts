@@ -29,7 +29,7 @@ import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
   cloneProject,
-  enforceFirstMachinableAdd,
+  enforceFirstSolidAdd,
   normalizeFeatureZRange,
   projectsEqual,
   sanitizeOperationPatch,
@@ -53,7 +53,7 @@ import { translateProfile } from '../../components/canvas/previewPrimitives'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
-import { commonSectionOfIds, isMachinable, sectionForOperation } from '../helpers/featureRoles'
+import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -467,9 +467,9 @@ export function createFeatureSlice(
         const safeId = s.project.features.some((existing) => existing.id === featureForInsert.id)
           ? nextUniqueGeneratedId(s.project, 'f')
           : featureForInsert.id
-        const isFirstMachiningFeature = isMachinable(featureForInsert)
-          && !s.project.features.some(isMachinable)
-        const preserveImportedModelOperation = isFirstMachiningFeature && isImportedModelFeature(featureForInsert)
+        const isFirstSolidFeature = isSolid(featureForInsert)
+          && !s.project.features.some(isSolid)
+        const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
         let effectiveFolderId: string | null = featureForInsert.folderId ?? null
         let insertAfterFeatureId: string | null = null
@@ -487,7 +487,7 @@ export function createFeatureSlice(
         if (effectiveFolderSection !== sectionForOperation(featureForInsert.operation)) {
           effectiveFolderId = null
         }
-        const safeFeatureBase: SketchFeature = isFirstMachiningFeature && !preserveImportedModelOperation
+        const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation
           ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, operation: 'add' })
           : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId })
         const nextModelAssets = { ...s.project.modelAssets }
@@ -679,7 +679,7 @@ export function createFeatureSlice(
           featureDefinitions: nextDefinitions,
           // Cascade guard (mirrors reorderFeatures): an operation edit must
           // not leave a non-add feature as the base solid.
-          features: opExplicitlyChanged ? enforceFirstMachinableAdd(mappedFeatures) : mappedFeatures,
+          features: opExplicitlyChanged ? enforceFirstSolidAdd(mappedFeatures) : mappedFeatures,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncStockFromSourceFeature(nextProject, id)
@@ -732,7 +732,7 @@ export function createFeatureSlice(
             (folderId, operation) => folderIdForOperation(s.project, folderId, operation),
             normalizeFeatureZRange,
           )
-          mappedFeatures = enforceFirstMachinableAdd(propagated.features)
+          mappedFeatures = enforceFirstSolidAdd(propagated.features)
           nextDefinitions = propagated.definitions
         }
 
@@ -1029,13 +1029,13 @@ export function createFeatureSlice(
       set((s) => {
         const map = new Map(s.project.features.map((f) => [f.id, f]))
         const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
-        const firstMachiningIndex = reordered.findIndex(isMachinable)
+        const firstSolidIndex = reordered.findIndex(isSolid)
         if (
-          firstMachiningIndex !== -1
-          && reordered[firstMachiningIndex].operation !== 'add'
-          && !isImportedModelFeature(reordered[firstMachiningIndex])
+          firstSolidIndex !== -1
+          && reordered[firstSolidIndex].operation !== 'add'
+          && !isImportedModelFeature(reordered[firstSolidIndex])
         ) {
-          reordered[firstMachiningIndex] = { ...reordered[firstMachiningIndex], operation: 'add' }
+          reordered[firstSolidIndex] = { ...reordered[firstSolidIndex], operation: 'add' }
         }
         return {
           project: syncFeatureTreeProject({

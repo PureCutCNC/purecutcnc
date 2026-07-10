@@ -7,6 +7,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `clipperOpenPaths.test.ts` — tests for the above
 - `csg.ts` — manifold-3d CSG wrappers, STL transformed-geometry cache. Feature input is gated through `store/helpers/featureRoles.modelFeatures()` — construction geometry never reaches the model (issue #199).
 - `constructionExclusion.test.ts` — guard test: construction geometry can never become a machining target, region mask, or CSG input; fails the build if the exclusion regresses
+- `lineRendering.test.ts` — unit tests for `closeLinePolygonIfNeeded`: closed Line profiles append the first point for Line2 closing; open profiles are unchanged
 - `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, silhouette extraction, serialization
 - `importedMesh.test.ts` — tests for the above
 

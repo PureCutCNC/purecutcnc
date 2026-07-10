@@ -30,8 +30,8 @@
  *      never be (or become) an operation target.
  *   4. getOperationAddHint — a selection containing construction is rejected
  *      for every operation kind.
- *   5. isFirstFeatureValid — construction does not count as the first
- *      machining feature.
+ *   5. isFirstFeatureValid — construction and line features do not count as
+ *      the first solid feature.
  *   6. (structural) csg.ts buildScene and Viewport3D route their feature
  *      lists through modelFeatures(), which strips construction.
  *
@@ -191,7 +191,7 @@ assert(
   'pocket on a plain subtract feature stays valid',
 )
 
-// ── 5. isFirstFeatureValid skips construction ─────────────────────
+// ── 5. isFirstFeatureValid skips construction and line ────────────
 
 assert(
   isFirstFeatureValid([makeFeature('c', 'construction'), makeFeature('a', 'add')]),
@@ -199,7 +199,22 @@ assert(
 )
 assert(
   !isFirstFeatureValid([makeFeature('c', 'construction'), makeFeature('s', 'subtract')]),
-  'construction must not satisfy the first-machining-feature-is-add rule',
+  'construction must not satisfy the first-solid-feature-is-add rule',
+)
+// Line features are path geometry, not solid — they must not gate the
+// base-solid rule (issue #270).
+assert(
+  isFirstFeatureValid([makeFeature('l', 'line'), makeFeature('a', 'add')]),
+  'line first + add second is a valid tree',
+)
+assert(
+  !isFirstFeatureValid([makeFeature('l', 'line'), makeFeature('s', 'subtract')]),
+  'line must not satisfy the first-solid-feature-is-add rule',
+)
+// A Lines-only project is valid.
+assert(
+  isFirstFeatureValid([makeFeature('l', 'line')]),
+  'lines-only project is valid',
 )
 
 // ── 6. Structural: the CSG scene and 3D camera route through modelFeatures ──

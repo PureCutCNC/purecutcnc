@@ -521,6 +521,11 @@ export function buildFeatureMesh(
     return scaleZGroup
   }
 
+  // Line features are flat path geometry rendered as line overlays — never extrude.
+  if (feature.operation === 'line') {
+    return new THREE.Group()
+  }
+
   const shape = profileToShape(feature.sketch.profile)
   const isRegion = feature.operation === 'region'
   const zTop = isRegion
@@ -798,7 +803,7 @@ export function buildFeatureSolid(
     }
   }
 
-  if (!feature.sketch.profile.closed) {
+  if (!feature.sketch.profile.closed || feature.operation === 'line') {
     return null
   }
 
@@ -842,7 +847,7 @@ async function buildBooleanModel(
         // because we render the high-resolution mesh as an overlay. This prevents
         // non-manifold STLs from showing their blocky 2.5D fallback extrusion
         // while still allowing 'subtract' STLs to cut holes in the stock.
-        if (feature.operation === 'model' || feature.operation === 'region') {
+        if (feature.operation === 'model' || feature.operation === 'region' || feature.operation === 'line') {
           continue
         }
 
@@ -906,6 +911,25 @@ export function buildStockWireframe(stock: Stock): THREE.LineSegments {
   return lines
 }
 
+// ── Line rendering helpers ──────────────────────────────────────────
+
+/**
+ * Prepare a 2D polygon for Line2 rendering. Open profiles return the
+ * polygon unchanged; closed profiles append the first point so Line2
+ * draws the closing edge (Line2 does not implicitly close strips).
+ *
+ * Pure helper — exported for direct value-level testing.
+ */
+export function closeLinePolygonIfNeeded(
+  polygon: [number, number][],
+  shouldClose: boolean,
+): [number, number][] {
+  if (!shouldClose || polygon.length === 0) return polygon
+  const result = polygon.slice()
+  result.push([...polygon[0]])
+  return result
+}
+
 // ── Open feature (polyline) line builder ────────────────────────────
 
 export function buildOpenFeatureLine(
@@ -917,8 +941,15 @@ export function buildOpenFeatureLine(
   const profile = feature.sketch.profile
   const zTop = resolveDimension(feature.z_top, project)
 
-  // Subdivide the profile into polyline points (handles arcs, beziers)
-  const polygon = profileToPolygon(profile)
+  // Subdivide the profile into polyline points (handles arcs, beziers).
+  // profileToPolygon removes the duplicate final point for solid-polygon use;
+  // for closed Line profiles we must append the first point so Line2 draws
+  // the closing edge (Line2 does not implicitly close strips).
+  const rawPolygon = profileToPolygon(profile)
+  const polygon = closeLinePolygonIfNeeded(
+    rawPolygon,
+    profile.closed && feature.operation === 'line',
+  )
 
   // Build positions in world space, applying the same transform pipeline as other geometry:
   //   rotateX(-PI/2): (x, y, 0) → (x, 0, -y)
@@ -1004,7 +1035,7 @@ export async function buildScene(project: Project): Promise<SceneObjects> {
       if (!modelMesh) {
         for (const expanded of expandFeatureGeometry(feature)) {
           if (expanded.kind !== 'stl' && expanded.operation !== 'region') {
-            if (!expanded.sketch.profile.closed) continue
+            if (!expanded.sketch.profile.closed || expanded.operation === 'line') continue
             featureMeshes.set(expanded.id, buildFeatureMesh(project, expanded, false, false, project.stock.thickness))
           }
         }
@@ -1012,11 +1043,12 @@ export async function buildScene(project: Project): Promise<SceneObjects> {
     }
 
     // Build line representations for open features (polylines, skeleton text, etc.)
-    // These are excluded from the boolean model but should appear as flat lines at z_top.
+    // and closed Line features — both appear as flat 3D line overlays and never
+    // contribute to the solid model.
     for (const feature of visibleFeatures) {
       // Check all geometry profiles (text features may have multiple)
       const profiles = getFeatureGeometryProfiles(feature)
-      if (profiles.some((p) => !p.closed)) {
+      if (profiles.some((p) => !p.closed) || feature.operation === 'line') {
         openFeatureLines.set(feature.id, buildOpenFeatureLine(project, feature))
       }
     }

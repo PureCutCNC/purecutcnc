@@ -66,11 +66,11 @@ function testConstructionCreation(): void {
   assert(constructionRect.operation === 'construction', 'construction target creates construction features')
   assert(constructionRect.name === 'Construction 1', `construction naming, got ${constructionRect.name}`)
 
-  // The next machinable feature is still subject to the first-machining=add rule.
+  // The next solid feature is still subject to the first-solid=add rule.
   useProjectStore.getState().setCreationTarget('feature')
   useProjectStore.getState().addRectFeature('Rect 2', 0, 0, 8, 8, 5)
-  const firstMachinable = lastFeature()
-  assert(firstMachinable.operation === 'add', 'first machinable feature is still forced to add')
+  const firstSolid = lastFeature()
+  assert(firstSolid.operation === 'add', 'first solid feature is still forced to add')
 }
 
 // ── Conversions ───────────────────────────────────────────────────
@@ -248,31 +248,71 @@ function testCopyIntoGroup(): void {
   assert(copyFolder?.section === 'construction', 'copied group folder keeps the section')
 }
 
-// ── Base-solid rule tracks the first MACHINABLE feature ──────────
+// ── Base-solid rule tracks the first SOLID feature ─────────────────
 
-function testFirstMachinableRule(): void {
-  console.log('Testing base-solid rule against the first machinable feature...')
+function testFirstSolidRule(): void {
+  console.log('Testing base-solid rule against the first solid feature...')
   freshStore()
   useProjectStore.getState().setCreationTarget('construction')
   useProjectStore.getState().addRectFeature('C1', 0, 0, 5, 5, 5)
   useProjectStore.getState().setCreationTarget('feature')
   useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
   const baseId = lastFeature().id
-  assert(getFeature(baseId).operation === 'add', 'first machinable feature is forced to add')
+  assert(getFeature(baseId).operation === 'add', 'first solid feature is forced to add')
   useProjectStore.getState().addRectFeature('Pocket', 2, 2, 8, 8, 5)
   const pocketId = lastFeature().id
   assert(getFeature(pocketId).operation === 'subtract', 'later feature stays subtract')
 
-  // The first machinable feature is row 1 (construction sits at row 0) —
+  // The first solid feature is row 1 (construction sits at row 0) —
   // changing it to subtract must still be forced back to add.
   useProjectStore.getState().updateFeature(baseId, { operation: 'subtract' })
-  assert(getFeature(baseId).operation === 'add', 'first machinable feature cannot become subtract')
+  assert(getFeature(baseId).operation === 'add', 'first solid feature cannot become subtract')
 
   // Converting the base out of the model cascades the rule to the successor
   // (mirrors reorderFeatures): the pocket becomes the new base and turns add.
   useProjectStore.getState().updateFeature(baseId, { operation: 'construction' })
   assert(getFeature(baseId).operation === 'construction', 'base may convert to construction')
   assert(getFeature(pocketId).operation === 'add', 'successor is forced to add when the base leaves the model')
+}
+
+// ── First Add → Line conversion is allowed; Subtract remains blocked ─
+
+function testFirstSolidLineConversion(): void {
+  console.log('Testing first solid Add → Line conversion and Subtract prevention...')
+  freshStore()
+  useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
+  const baseId = lastFeature().id
+  assert(getFeature(baseId).operation === 'add', 'first feature is forced to add')
+
+  // The first Add may be converted to Line (non-solid, path-only).
+  useProjectStore.getState().updateFeature(baseId, { operation: 'line' })
+  assert(getFeature(baseId).operation === 'line', 'first Add may convert to Line')
+
+  // Reset and confirm Subtract is still prevented.
+  useProjectStore.getState().updateFeature(baseId, { operation: 'add' })
+  assert(getFeature(baseId).operation === 'add', 'back to Add')
+  useProjectStore.getState().updateFeature(baseId, { operation: 'subtract' })
+  assert(getFeature(baseId).operation === 'add', 'first Add silently stays Add when Subtract is requested')
+
+  // Convert first solid to Line, then add a new feature — it becomes the
+  // new first solid and is forced to Add.
+  useProjectStore.getState().updateFeature(baseId, { operation: 'line' })
+  useProjectStore.getState().addRectFeature('Pocket', 2, 2, 8, 8, 5)
+  const pocketId = lastFeature().id
+  assert(getFeature(pocketId).operation === 'add', 'successor solid is forced Add after first becomes Line')
+
+  // The successor (now first solid) cannot become Subtract.
+  useProjectStore.getState().updateFeature(pocketId, { operation: 'subtract' })
+  assert(getFeature(pocketId).operation === 'add', 'successor cannot become Subtract')
+
+  // Lines-only project: valid (isFirstFeatureValid returns true).
+  useProjectStore.getState().updateFeature(pocketId, { operation: 'line' })
+  assert(getFeature(baseId).operation === 'line' && getFeature(pocketId).operation === 'line', 'all features are Line')
+  // Verify no solid exists (project validation would pass).
+  const allSolid = useProjectStore.getState().project.features.filter(
+    (f) => f.operation === 'add' || f.operation === 'subtract' || f.operation === 'model',
+  )
+  assert(allSolid.length === 0, 'Lines-only project has no solids — isValid')
 }
 
 // ── Bulk operation changes propagate to definitions + linked siblings ──
@@ -383,7 +423,8 @@ testConversions()
 testSectionIntegrity()
 testGrouping()
 testCopyIntoGroup()
-testFirstMachinableRule()
+testFirstSolidRule()
+testFirstSolidLineConversion()
 testBulkLinkedPropagation()
 testConstraintDeferred()
 testSaveVersionStamping()
