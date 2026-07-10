@@ -759,8 +759,9 @@ warnings recompute from it.
   on-screen toolpaths.
 - Operations that cannot export (disabled, or no tool assigned) are listed
   greyed-out with the reason and cannot be checked.
-- Each operation row in the Operations panel also has an "Export G-code"
-  action that opens this dialog with only that operation pre-checked.
+- The Properties header in the Operations panel has an "Export G-code"
+  action (next to Expand) that opens this dialog with only the selected
+  operation pre-checked.
 - When exactly one operation is checked, the suggested filename is
   `<project>_<operation name>`; otherwise it stays `<project>`.
 

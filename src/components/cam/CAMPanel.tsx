@@ -1963,18 +1963,6 @@ export function CAMPanel({
                             <button
                               className="tree-action-btn"
                               type="button"
-                              title="Export G-code for this operation"
-                              aria-label={`Export G-code for ${operation.name}`}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onExportOperation(operation.id)
-                              }}
-                            >
-                              <Icon id="export" size={14} />
-                            </button>
-                            <button
-                              className="tree-action-btn"
-                              type="button"
                               title="Duplicate operation"
                               aria-label="Duplicate operation"
                               onClick={(event) => {
@@ -2009,15 +1997,33 @@ export function CAMPanel({
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
                 <span>Properties</span>
-                <button
-                  className="tree-action-btn"
-                  type="button"
-                  title="Expand operation properties"
-                  aria-label="Expand operation properties"
-                  onClick={() => setExpandedCamSection('operation')}
-                >
-                  <Icon id="expand" />
-                </button>
+                <div className="cam-section-header-actions">
+                  <button
+                    className="tree-action-btn"
+                    type="button"
+                    title="Export G-code for this operation"
+                    aria-label={selectedOperation
+                      ? `Export G-code for ${selectedOperation.name}`
+                      : 'Export G-code for selected operation'}
+                    disabled={!selectedOperation}
+                    onClick={() => {
+                      if (selectedOperation) {
+                        onExportOperation(selectedOperation.id)
+                      }
+                    }}
+                  >
+                    <Icon id="export" />
+                  </button>
+                  <button
+                    className="tree-action-btn"
+                    type="button"
+                    title="Expand operation properties"
+                    aria-label="Expand operation properties"
+                    onClick={() => setExpandedCamSection('operation')}
+                  >
+                    <Icon id="expand" />
+                  </button>
+                </div>
               </div>
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-body">

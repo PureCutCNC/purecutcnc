@@ -17,9 +17,9 @@
 /**
  * Export G-code dialog smoke: the operation checklist (issue #274).
  *
- * Covers the per-operation entry point (row action pre-checks only that
- * operation), the default set from the header Export button, and the
- * disabled state when nothing is checked.
+ * Covers the per-operation entry point (the Properties-header action
+ * pre-checks only the selected operation), the default set from the header
+ * Export button, and the disabled state when nothing is checked.
  */
 
 import { test, expect } from './fixtures'
@@ -29,7 +29,9 @@ test.describe('Export G-code operation checklist smoke', () => {
   test('per-operation export pre-checks only that operation', async ({ app, ui }) => {
     await seedGcodeExportProject(app.page)
 
-    await ui.operations.rowExportButton(app.page, 'Route B').click()
+    // Selecting an operation row points the Properties-header export action at it.
+    await ui.operations.rowByName(app.page, 'Route B').click()
+    await ui.operations.propertiesExportButton(app.page, 'Route B').click()
 
     const dialog = ui.exportDialog.root(app.page)
     await expect(dialog).toBeVisible()

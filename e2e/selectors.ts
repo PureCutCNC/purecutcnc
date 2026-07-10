@@ -109,9 +109,11 @@ export const operations = {
   headerExportButton: (page: Page) =>
     page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Export', exact: true }),
 
-  /** The per-row "Export G-code" action for a named operation. */
-  rowExportButton: (page: Page, name: string) =>
-    operations.rowByName(page, name).getByRole('button', { name: `Export G-code for ${name}` }),
+  /** The Properties-header "Export G-code" action for the selected operation. */
+  propertiesExportButton: (page: Page, name: string) =>
+    page
+      .locator('.cam-section--properties .cam-section-header')
+      .getByRole('button', { name: `Export G-code for ${name}` }),
 }
 
 // ── Export G-code dialog ────────────────────────────────────────────
