@@ -42,7 +42,15 @@ Options:
   --mode MODE         implement (default) or review.
   --worktree DIR      Existing worktree to review (review mode only).
   --skip-build        Skip the post-worker build gate (implement mode).
+  --progress-log FILE Progress log path (default in implement mode:
+                      $PURECUT_WORKTREE_BASE/SLUG.progress.log; review mode
+                      only streams progress when this is set explicitly).
   --help              Show this help.
+
+Progress: the worker streams one-line progress entries into the progress log
+as it works. Dispatch in the background and poll scripts/worker-status.sh
+--slug SLUG (instant, bounded) instead of blocking on — or killing — a long
+foreground run. Judge the worker by idle time in the log, not total runtime.
 
 Permissions: this command reads .env.agent, connects to the DeepSeek endpoint,
 and (implement) runs a bypassPermissions worker. Get explicit approval first.
@@ -57,19 +65,28 @@ slug=""
 base="$DEFAULT_BASE"
 review_worktree=""
 skip_build=false
+progress_log=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --issue)      [[ $# -ge 2 ]] || fail "--issue requires a number"; issue="$2"; shift 2 ;;
-    --task-slug)  [[ $# -ge 2 ]] || fail "--task-slug requires a value"; slug="$2"; shift 2 ;;
-    --base)       [[ $# -ge 2 ]] || fail "--base requires a branch"; base="$2"; shift 2 ;;
-    --mode)       [[ $# -ge 2 ]] || fail "--mode requires implement or review"; mode="$2"; shift 2 ;;
-    --worktree)   [[ $# -ge 2 ]] || fail "--worktree requires a directory"; review_worktree="$2"; shift 2 ;;
-    --skip-build) skip_build=true; shift ;;
-    --help|-h)    usage; exit 0 ;;
-    *)            fail "unknown option: $1" ;;
+    --issue)        [[ $# -ge 2 ]] || fail "--issue requires a number"; issue="$2"; shift 2 ;;
+    --task-slug)    [[ $# -ge 2 ]] || fail "--task-slug requires a value"; slug="$2"; shift 2 ;;
+    --base)         [[ $# -ge 2 ]] || fail "--base requires a branch"; base="$2"; shift 2 ;;
+    --mode)         [[ $# -ge 2 ]] || fail "--mode requires implement or review"; mode="$2"; shift 2 ;;
+    --worktree)     [[ $# -ge 2 ]] || fail "--worktree requires a directory"; review_worktree="$2"; shift 2 ;;
+    --skip-build)   skip_build=true; shift ;;
+    --progress-log) [[ $# -ge 2 ]] || fail "--progress-log requires a file path"; progress_log="$2"; shift 2 ;;
+    --help|-h)      usage; exit 0 ;;
+    *)              fail "unknown option: $1" ;;
   esac
 done
+
+# Append a lifecycle marker to the progress log so worker-status.sh can tell
+# "worker finished, gate running" from "dispatch fully done". Best-effort only.
+progress_mark() {
+  [[ -n "$progress_log" ]] || return 0
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$progress_log" 2>/dev/null || true
+}
 
 [[ -x "$LEAF" ]] || fail "leaf launcher not found or not executable: $LEAF"
 # Without redirection the worker's `claude --print` would block on the terminal.
@@ -94,8 +111,12 @@ if [[ "$mode" == "review" ]]; then
   [[ -n "$review_worktree" ]] || fail "review mode requires --worktree DIR (an existing worktree)"
   [[ -d "$review_worktree" ]] || fail "--worktree is not a directory: $review_worktree"
   printf '== review worker (read-only) in %s ==\n' "$review_worktree" >&2
-  "$LEAF" --mode review --worktree "$review_worktree" --output-format text < "$prompt_file"
-  exit 0
+  leaf_args=(--mode review --worktree "$review_worktree" --output-format text)
+  [[ -n "$progress_log" ]] && leaf_args+=(--progress-log "$progress_log")
+  review_status=0
+  "$LEAF" "${leaf_args[@]}" < "$prompt_file" || review_status=$?
+  progress_mark "[dispatch] done worker_exit=$review_status build=n/a"
+  exit "$review_status"
 fi
 
 # ---- implement mode ----
@@ -120,10 +141,17 @@ printf '== creating worktree %s on %s (from %s) ==\n' "$worktree_dir" "$branch" 
 git -C "$REPO_ROOT" worktree add "$worktree_dir" -b "$branch" "$base" \
   || fail "failed to create worktree"
 
+# Per-slice progress log: the worker streams one-line entries here as it works,
+# so a backgrounded dispatch can be polled (worker-status.sh) instead of killed
+# for looking silent.
+[[ -n "$progress_log" ]] || progress_log="$WORKTREE_BASE/$slug.progress.log"
+printf '== progress log: %s ==\n' "$progress_log" >&2
+printf '== poll with: scripts/worker-status.sh --slug %s ==\n' "$slug" >&2
+
 printf '== dispatching implement worker (bypass) ==\n' >&2
 worker_status=0
 "$LEAF" --mode implement --allow-bypass --worktree "$worktree_dir" \
-  --output-format text < "$prompt_file" || worker_status=$?
+  --output-format text --progress-log "$progress_log" < "$prompt_file" || worker_status=$?
 if [[ "$worker_status" -ne 0 ]]; then
   printf '\n!! worker exited non-zero (%s); worktree left in place for inspection !!\n' \
     "$worker_status" >&2
@@ -133,6 +161,7 @@ fi
 build_result="skipped"
 if [[ "$skip_build" == false ]]; then
   printf '== build gate: npm run build in worktree ==\n' >&2
+  progress_mark "[gate] npm run build starting"
   if [[ ! -d "$worktree_dir/node_modules" ]]; then
     printf '   node_modules missing; running npm install\n' >&2
     ( cd "$worktree_dir" && npm install ) || build_result="install-failed"
@@ -141,6 +170,7 @@ if [[ "$skip_build" == false ]]; then
     if ( cd "$worktree_dir" && npm run build ); then build_result="passed"; else build_result="FAILED"; fi
   fi
 fi
+progress_mark "[dispatch] done worker_exit=$worker_status build=$build_result"
 
 # ---- report ----
 last_commit="$(git -C "$worktree_dir" log -1 --oneline 2>/dev/null || echo '(none)')"
@@ -157,6 +187,7 @@ worktree:     $worktree_dir
 base:         $base
 worker exit:  $worker_status
 build gate:   $build_result
+progress log: $progress_log
 last commit:  $last_commit
 
 uncommitted (should be empty if worker committed):

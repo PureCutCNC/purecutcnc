@@ -97,6 +97,8 @@ git -C "$REPO_ROOT" worktree remove "$worktree_dir" \
   || fail "merge succeeded but worktree removal failed (not clean?): $worktree_dir"
 git -C "$REPO_ROOT" branch -d "$task_branch" \
   || printf 'note: could not delete branch %s (delete manually if desired)\n' "$task_branch" >&2
+# Progress artifacts written by dispatch-task.sh live beside the worktree.
+rm -f "$WORKTREE_BASE/$slug.progress.log" "$WORKTREE_BASE/$slug.progress.log.ndjson"
 
 cat <<EOF
 

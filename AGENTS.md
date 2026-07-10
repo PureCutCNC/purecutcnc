@@ -74,7 +74,7 @@ The full manager loop (plan → dispatch → review → merge) is packaged as th
      --output-format json < work/slice-prompt.md
    ```
    - `--worktree DIR` is **required for `--mode implement`**: the launcher `cd`s into it so the worker operates there by default. This sets the working directory only — it is **not** a sandbox; a `bypassPermissions` worker can still reach any absolute path, so staying in the worktree is a prompt-and-review convention, not a technical boundary. Bound the real risk with a capped, rotatable key and the post-hoc review in step 4. `--worktree` is optional for `--mode review` (read-only, `--permission-mode plan`), which is the safer default — prefer it whenever the slice doesn't need to write.
-   - For slices that run for minutes, dispatch in the background and read the result when it exits, rather than blocking on a foreground call.
+   - For slices that run for minutes, dispatch in the background rather than blocking on a foreground call. Pass `--progress-log FILE` (`dispatch-task.sh` sets one automatically at `$PURECUT_WORKTREE_BASE/SLUG.progress.log`) and poll `scripts/worker-status.sh --slug SLUG` — judge the worker by idle time since its last progress entry, never by total runtime, and never kill a worker whose status is `running`.
 4. **Review the real artifacts, not the report.** The worker ends with a `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` completion block — that is a *report, not acceptance*. Inspect the actual worktree diff, the commit, and the test output before accepting or merging.
 
 ### Credential & token handling
