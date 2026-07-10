@@ -21,7 +21,7 @@ Do not merge the PR into `main`.
 - Latest main merged: `fe6efb0` (worker progress reporting)
 - Approved plan: GitHub issue #270
 - Manager session: 2026-07-09 through 2026-07-10
-- Status: `implementing S2`
+- Status: `implementing S3`
 - User authorization: plan and full implementation approved; credential read,
   outbound DeepSeek access, and bypass worker dispatch explicitly approved
 
@@ -67,8 +67,8 @@ Do not merge the PR into `main`.
 | Slice | Scope | Base | Worker | Manager review | Accepted merge | Required checks |
 | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Closed Line role, UI availability, and model/3D semantics | `a6aea9b` | complete (`8afb7af`) | accepted; closed-overlay correction added | `17fb11f` | focused tests + manager `npm run build` passed (94 files) |
-| S2 | Closed-Line V-carve eligibility and even-odd resolution | `17fb11f` | dispatching | pending | - | operation validity/default/resolver/V-carve tests; build |
-| S3 | SVG/DXF import modes, paint intent, nesting classifier, dialog summary | S2 merge | not started | pending | - | import/store/UI tests; e2e smoke; build |
+| S2 | Closed-Line V-carve eligibility and even-odd resolution | `17fb11f` | complete (`6d60fe1`) | accepted after cross-Z candidate correction | `8390c0b` | focused resolver/eligibility tests + manager `npm run build` passed (97 files) |
+| S3 | SVG/DXF import modes, paint intent, nesting classifier, dialog summary | `8390c0b` | dispatching | pending | - | import/store/UI tests; e2e smoke; build |
 | S4 | Large-import bulk path and batched 3D Line rendering | S3 merge | not started | pending | - | bulk-import/CSG tests and benchmark; build |
 | S5 | Nesting-aware defaults for newly drawn closed features | S4 merge | not started | pending | - | creation/store tests; build |
 
