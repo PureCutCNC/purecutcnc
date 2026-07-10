@@ -27,6 +27,9 @@ This skill automates that documented flow; it does not replace those rules.
 3. **Request permission (see below), then dispatch.** Pipe the prompt into
    `scripts/dispatch-task.sh`. It creates the worktree+branch, runs the worker,
    runs an independent build gate, and reports — it does **not** merge.
+   Run it in the background (redirect output to a file) and watch the slice's
+   progress log instead of blocking a foreground call on the whole run (see
+   "Watching a dispatched worker" below).
 4. **Review the real diff, not the report.** The worker ends with a
    `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block — that is a report, not
    acceptance. Inspect the actual worktree diff, the commit, and the build/test
@@ -56,6 +59,30 @@ yourself or abandoning the delegation.
 The user's explicit approval is required before any credential-backed dispatch
 (AGENTS.md §"Credential & token handling").
 
+## Watching a dispatched worker — judge idle time, never wall-clock
+
+The worker streams its activity into a per-slice progress log at
+`$PURECUT_WORKTREE_BASE/SLUG.progress.log` (path echoed at dispatch time; the
+raw event stream is kept beside it at `….progress.log.ndjson`). Long slices
+are normal: a healthy worker can run 10+ minutes while emitting a steady drip
+of `[note]`/`[tool]`/`[gen]` lines.
+
+- Dispatch in the background with output redirected to a file; do not block a
+  foreground shell call (with its own timeout) on the whole slice.
+- Poll `scripts/worker-status.sh --slug SLUG` every 30–60s. It is instant and
+  bounded — safe to call as often as needed.
+- **Patience rule: never kill a worker because of total elapsed time.** Act
+  only on the probe's state:
+  - `running` — leave it alone, whatever the runtime.
+  - `stale` (no progress for 5+ minutes) — inspect the log tail and the
+    worktree diff before deciding; a build or install step can legitimately
+    be quiet for a while. Kill only if clearly wedged.
+  - `verifying` — worker done, independent build gate running.
+  - `done` — read the dispatch report and start the review.
+- `[tool]` lines are tool calls observed by the harness — the model cannot
+  fake or forget them, so they are the reliable liveness signal. `[note]`
+  lines are the worker narrating its phases.
+
 ## Commands
 
 ```
@@ -68,9 +95,13 @@ scripts/dispatch-task.sh --issue NN --task-slug SLUG [--base BRANCH] < prompt.md
 # Read-only review of an existing worktree (optional helper).
 scripts/dispatch-task.sh --mode review --worktree DIR < prompt.md
 
+# Poll a running dispatch (instant; see "Watching a dispatched worker").
+scripts/worker-status.sh --slug SLUG
+
 # Merge an approved slice and tear down its worktree (--no-ff).
 scripts/finish-task.sh --slug SLUG [--base BRANCH]
 #   refuses to merge into main/master without --allow-main.
+#   also removes the slice's progress log artifacts.
 ```
 
 The leaf launcher `scripts/run-claude-deepseek-agent.sh` (credential scrub,

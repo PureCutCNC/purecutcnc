@@ -5,6 +5,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly PROGRESS_FILTER="$SCRIPT_DIR/worker-progress-filter.jq"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,13 @@ Options:
                          --mode implement; optional for review (defaults to cwd).
   --allow-bypass         Required with --mode implement.
   --output-format FORMAT Claude print output: text or json (default: text).
+  --progress-log FILE    Append one-line timestamped progress entries to FILE
+                         while the worker runs (mirrored to stderr), so a
+                         manager can tail the log instead of staring at a
+                         silent pipe. Runs claude in stream-json mode
+                         internally; stdout still carries only the final
+                         result in the requested --output-format. The raw
+                         event stream is kept at FILE.ndjson for forensics.
   --help                 Show this help.
 
 Credentials are loaded from DEEPSEEK_AGENT_ENV_FILE when set, otherwise the
@@ -73,6 +81,7 @@ mode=""
 worktree=""
 allow_bypass=false
 output_format="text"
+progress_log=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -95,6 +104,11 @@ while [[ $# -gt 0 ]]; do
       output_format="$2"
       shift 2
       ;;
+    --progress-log)
+      [[ $# -ge 2 ]] || fail "--progress-log requires a file path"
+      progress_log="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -114,6 +128,13 @@ case "$output_format" in
   text|json) ;;
   *) fail "--output-format must be text or json" ;;
 esac
+
+if [[ -n "$progress_log" ]]; then
+  command -v jq >/dev/null 2>&1 || fail "--progress-log requires jq on PATH"
+  [[ -f "$PROGRESS_FILTER" ]] || fail "progress filter not found: $PROGRESS_FILTER"
+  mkdir -p "$(dirname "$progress_log")" 2>/dev/null \
+    || fail "cannot create progress log directory for: $progress_log"
+fi
 
 # The prompt must be piped in on stdin; without redirection `claude --print` would
 # block waiting on the terminal. Fail fast with a clear message instead of hanging.
@@ -179,13 +200,21 @@ claude_args=(
   --print
   --no-session-persistence
   --effort "$CLAUDE_CODE_EFFORT_LEVEL"
-  --output-format "$output_format"
 )
 
 if [[ "$mode" == "implement" ]]; then
   claude_args+=(--permission-mode bypassPermissions)
 else
   claude_args+=(--permission-mode plan)
+fi
+
+if [[ -n "$progress_log" ]]; then
+  # Stream events so progress can be distilled live; the final result is
+  # re-emitted on stdout in the requested --output-format below, so callers
+  # see the same stdout contract as a non-streaming run.
+  claude_args+=(--output-format stream-json --verbose --include-partial-messages)
+else
+  claude_args+=(--output-format "$output_format")
 fi
 
 # Run the worker from inside its worktree. NOTE: this sets the working directory
@@ -196,4 +225,36 @@ if [[ -n "$worktree" ]]; then
   cd "$worktree" || fail "could not enter worktree: $worktree"
 fi
 
-exec claude "${claude_args[@]}"
+# Fast path: no progress log requested — hand the process over to claude.
+[[ -n "$progress_log" ]] || exec claude "${claude_args[@]}"
+
+# Progress path: distill each stream-json event into a one-line entry appended
+# to the progress log the moment it happens (mirrored to stderr), so a manager
+# can poll the log and judge the worker by idle time instead of killing a
+# long-but-healthy session. The raw stream is kept beside it for forensics.
+raw_stream="$progress_log.ndjson"
+: > "$progress_log"
+: > "$raw_stream"
+
+set +e
+claude "${claude_args[@]}" \
+  | tee "$raw_stream" \
+  | jq -nRr --unbuffered -f "$PROGRESS_FILTER" \
+  | tee -a "$progress_log" >&2
+worker_status="${PIPESTATUS[0]}"
+set -e
+
+printf '%s [exit] worker exited code=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$worker_status" >> "$progress_log"
+
+# Re-emit the final result on stdout in the caller's requested format,
+# tolerating a truncated last line if the worker died mid-write.
+if [[ "$output_format" == "json" ]]; then
+  jq -nRc '[inputs | fromjson? // empty | select(type == "object" and .type == "result")] | last // empty' \
+    "$raw_stream"
+else
+  jq -nRr '[inputs | fromjson? // empty | select(type == "object" and .type == "result")] | last | .result // empty' \
+    "$raw_stream"
+fi
+
+exit "$worker_status"
