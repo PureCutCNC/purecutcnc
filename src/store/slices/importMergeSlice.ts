@@ -43,18 +43,6 @@ export function createImportMergeSlice(
         return []
       }
 
-      // Group shapes by layer name. Null layer (DXF layer "0") → keyed as '0'.
-      const layerGroups = new Map<string, typeof sourceShapes>()
-      for (const shape of sourceShapes) {
-        const key = shape.layerName ?? '0'
-        const existing = layerGroups.get(key)
-        if (existing) {
-          existing.push(shape)
-        } else {
-          layerGroups.set(key, [shape])
-        }
-      }
-
       const existingFeatureNames = state.project.features.map((f) => f.name)
       const newFolders: FeatureFolder[] = []
       const createdFeatures: SketchFeature[] = []
@@ -65,30 +53,91 @@ export function createImportMergeSlice(
         featureFolders: [...state.project.featureFolders],
       }
 
-      for (const [layerKey, layerShapes] of layerGroups) {
-        const folderDisplayName = layerKey || '0'
-        const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
-        const folderName = uniqueFolderName(folderDisplayName, nextProjectLike.featureFolders)
-        const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
+      if (input.classified && input.classified.length > 0) {
+        // Filter degenerate profiles from classified shapes.
+        const validClassified = input.classified.filter((cs) => !isProfileDegenerate(cs.profile))
+        if (validClassified.length === 0) {
+          return []
+        }
 
-        newFolders.push(folder)
-        nextProjectLike = { ...nextProjectLike, featureFolders: [...nextProjectLike.featureFolders, folder] }
+        // Pass 1: create folders in first-seen layer order.
+        const seenLayers = new Set<string>()
+        const layerFolderMap = new Map<string, FeatureFolder>()
+        for (const cs of validClassified) {
+          const key = cs.layerName ?? '0'
+          if (!seenLayers.has(key)) {
+            seenLayers.add(key)
+            const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
+            const folderName = uniqueFolderName(key || '0', nextProjectLike.featureFolders)
+            const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
+            newFolders.push(folder)
+            layerFolderMap.set(key, folder)
+            nextProjectLike = {
+              ...nextProjectLike,
+              featureFolders: [...nextProjectLike.featureFolders, folder],
+            }
+          }
+        }
 
-        for (const shape of layerShapes) {
+        // Pass 2: create features in classified order globally (parent-before-child,
+        // stable sibling source order).  Each feature is attached to its layer folder.
+        for (const cs of validClassified) {
+          const key = cs.layerName ?? '0'
+          const folder = layerFolderMap.get(key)!
           const featureName = uniqueName(
-            shape.name || folderDisplayName,
+            cs.name || key,
             [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
           )
-          // All closed profiles import as 'add'; open profiles as 'line'.
-          const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
           const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
           const feature = normalizeFeatureZRange({
-            ...createImportedFeature(shape, state.project, folderId, featureName, operation),
+            ...createImportedFeature(
+              { name: cs.name, sourceType: cs.sourceType, layerName: cs.layerName, profile: cs.profile },
+              state.project,
+              folder.id,
+              featureName,
+              cs.operation,
+            ),
             id: nextId,
           })
-
           createdFeatures.push(feature)
           nextProjectLike = { ...nextProjectLike, features: [...nextProjectLike.features, feature] }
+        }
+      } else {
+        // Legacy fallback: layer-by-layer grouping with default role heuristic
+        // (closed → add, open → line).  Only used when no classifier ran.
+        const layerGroups = new Map<string, typeof sourceShapes>()
+        for (const shape of sourceShapes) {
+          const key = shape.layerName ?? '0'
+          const existing = layerGroups.get(key)
+          if (existing) {
+            existing.push(shape)
+          } else {
+            layerGroups.set(key, [shape])
+          }
+        }
+
+        for (const [layerKey, layerShapes] of layerGroups) {
+          const folderDisplayName = layerKey || '0'
+          const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
+          const folderName = uniqueFolderName(folderDisplayName, nextProjectLike.featureFolders)
+          const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
+          newFolders.push(folder)
+          nextProjectLike = { ...nextProjectLike, featureFolders: [...nextProjectLike.featureFolders, folder] }
+
+          for (const shape of layerShapes) {
+            const featureName = uniqueName(
+              shape.name || folderDisplayName,
+              [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
+            )
+            const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
+            const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
+            const feature = normalizeFeatureZRange({
+              ...createImportedFeature(shape, state.project, folderId, featureName, operation),
+              id: nextId,
+            })
+            createdFeatures.push(feature)
+            nextProjectLike = { ...nextProjectLike, features: [...nextProjectLike.features, feature] }
+          }
         }
       }
 

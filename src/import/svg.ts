@@ -46,11 +46,18 @@ interface SvgUnitContext {
 
 interface SvgPresentationContext {
   fill: string | null
+  stroke: string | null
   fontSize: number
   fontFamily: string | null
   fontWeight: string | null
   fontStyle: string | null
   textAnchor: 'start' | 'middle' | 'end'
+  /** Cumulative effective opacity (product of ancestor opacities). */
+  opacity: number
+  /** Inherited fill-opacity (CSS inheritance). */
+  fillOpacity: number
+  /** Inherited stroke-opacity (CSS inheritance). */
+  strokeOpacity: number
 }
 
 function convertSvgUserValue(value: number, units: SvgUnitContext): number {
@@ -192,22 +199,94 @@ function parseStyleProperties(styleText: string | null | undefined): Map<string,
 }
 
 function presentationValue(element: Element, key: string): string | null {
+  // Inline style takes precedence over presentation attributes per SVG/CSS cascade.
+  const styles = parseStyleProperties(element.getAttribute('style'))
+  const styleValue = styles.get(key.toLowerCase())
+  if (styleValue) {
+    return styleValue
+  }
+
   const attributeValue = element.getAttribute(key)
   if (attributeValue && attributeValue.trim()) {
     return attributeValue.trim()
   }
 
-  const styles = parseStyleProperties(element.getAttribute('style'))
-  return styles.get(key.toLowerCase()) ?? null
+  return null
 }
 
-function hasVisiblePaint(value: string | null | undefined): boolean {
+function parseOpacityNumber(value: string | null | undefined): number {
   if (!value) {
+    return 1
+  }
+
+  const trimmed = value.trim()
+  if (trimmed === '') {
+    return 1
+  }
+
+  const parsed = Number.parseFloat(trimmed)
+  if (!Number.isFinite(parsed)) {
+    return 1
+  }
+
+  return Math.max(0, Math.min(1, parsed))
+}
+
+function parseAlphaComponent(value: string): number {
+  if (value.endsWith('%')) {
+    return Number.parseFloat(value) / 100
+  }
+  return Number.parseFloat(value)
+}
+
+function colorHasAlphaZero(rawValue: string): boolean {
+  const trimmed = rawValue.trim()
+
+  // 8-digit hex with alpha 00
+  if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) {
+    return trimmed.slice(7, 9).toLowerCase() === '00'
+  }
+
+  const lower = trimmed.toLowerCase()
+
+  // Modern syntax: rgba(r g b / a), rgb(r g b / a), hsla(h s% l% / a), hsl(h s% l% / a)
+  const slashMatch = lower.match(/(?:rgba?|hsla?)\([^)]*\/\s*([\d.]+%?)\s*\)$/)
+  if (slashMatch) {
+    return parseAlphaComponent(slashMatch[1]) <= 0
+  }
+
+  // Comma syntax: rgba(r, g, b, a), hsla(h, s%, l%, a)
+  const commaMatch = lower.match(/(?:rgba|hsla)\([^,]+,[^,]+,[^,]+,\s*([\d.]+%?)\s*\)$/)
+  if (commaMatch) {
+    return parseAlphaComponent(commaMatch[1]) <= 0
+  }
+
+  return false
+}
+
+function hasVisiblePaint(
+  paintValue: string | null | undefined,
+  effectiveOpacity: number = 1,
+  componentOpacity: number = 1,
+): boolean {
+  if (!paintValue) {
     return false
   }
 
-  const normalized = value.trim().toLowerCase()
-  return normalized !== '' && normalized !== 'none' && normalized !== 'transparent'
+  const normalized = paintValue.trim().toLowerCase()
+  if (normalized === '' || normalized === 'none' || normalized === 'transparent') {
+    return false
+  }
+
+  if (effectiveOpacity <= 0 || componentOpacity <= 0) {
+    return false
+  }
+
+  if (colorHasAlphaZero(paintValue)) {
+    return false
+  }
+
+  return true
 }
 
 function resolvePresentationContext(
@@ -216,6 +295,7 @@ function resolvePresentationContext(
   units: SvgUnitContext,
 ): SvgPresentationContext {
   const fill = presentationValue(element, 'fill') ?? inherited.fill
+  const stroke = presentationValue(element, 'stroke') ?? inherited.stroke
   const fontFamily = presentationValue(element, 'font-family') ?? inherited.fontFamily
   const fontWeight = presentationValue(element, 'font-weight') ?? inherited.fontWeight
   const fontStyle = presentationValue(element, 'font-style') ?? inherited.fontStyle
@@ -226,13 +306,30 @@ function resolvePresentationContext(
   const textAnchorValue = (presentationValue(element, 'text-anchor') ?? inherited.textAnchor).toLowerCase()
   const textAnchor = textAnchorValue === 'middle' || textAnchorValue === 'end' ? textAnchorValue : 'start'
 
+  // opacity is not inherited — each element defaults to 1, but the visual
+  // effect compounds multiplicatively through the ancestor chain.
+  const localOpacityValue = presentationValue(element, 'opacity')
+  const localOpacity = localOpacityValue !== null ? parseOpacityNumber(localOpacityValue) : 1
+  const opacity = inherited.opacity * localOpacity
+
+  // fill-opacity and stroke-opacity are inherited CSS properties.
+  const fillOpacityValue = presentationValue(element, 'fill-opacity')
+  const fillOpacity = fillOpacityValue !== null ? parseOpacityNumber(fillOpacityValue) : inherited.fillOpacity
+
+  const strokeOpacityValue = presentationValue(element, 'stroke-opacity')
+  const strokeOpacity = strokeOpacityValue !== null ? parseOpacityNumber(strokeOpacityValue) : inherited.strokeOpacity
+
   return {
     fill,
+    stroke,
     fontSize,
     fontFamily,
     fontWeight,
     fontStyle,
     textAnchor,
+    opacity,
+    fillOpacity,
+    strokeOpacity,
   }
 }
 
@@ -881,7 +978,7 @@ function parseElementProfiles(
   const tagName = element.tagName.toLowerCase()
   const profiles: Array<{ name: string; profile: SketchProfile }> = []
   const name = shapeName(element, tagName)
-  const closeOpenSubpaths = hasVisiblePaint(presentation.fill)
+  const closeOpenSubpaths = hasVisiblePaint(presentation.fill, presentation.opacity, presentation.fillOpacity)
 
   if (tagName === 'rect') {
     const x = parseSvgLength(element.getAttribute('x'), units)
@@ -1122,11 +1219,15 @@ export function importSvgString(text: string, context: ImportContext): ImportPar
   const shapes: ImportedShape[] = []
   const rootPresentation: SvgPresentationContext = {
     fill: 'black',
+    stroke: null,
     fontSize: convertSvgUserValue(16, units),
     fontFamily: null,
     fontWeight: null,
     fontStyle: null,
     textAnchor: 'start',
+    opacity: 1,
+    fillOpacity: 1,
+    strokeOpacity: 1,
   }
 
   const visit = (element: Element, inheritedMatrix: AffineMatrix2D, inheritedPresentation: SvgPresentationContext) => {
@@ -1161,6 +1262,8 @@ export function importSvgString(text: string, context: ImportContext): ImportPar
         sourceType: 'svg',
         layerName: null,
         profile: entry.profile,
+        hasFill: hasVisiblePaint(nextPresentation.fill, nextPresentation.opacity, nextPresentation.fillOpacity),
+        hasStroke: hasVisiblePaint(nextPresentation.stroke, nextPresentation.opacity, nextPresentation.strokeOpacity),
       })
     }
   }
