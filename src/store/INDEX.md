@@ -29,7 +29,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `constraintsSlice.ts` — persistent fixed-distance constraint placement, value updates, cancellation, and deletion
   - `treeVisibilitySlice.ts` — feature-tree visibility toggles for all regions/construction, folders, region/construction folders, and folder selection
 - `helpers/` — pure helpers used by the store
-  - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
+  - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Join connectivity counts area overlap or a positive-length shared boundary segment (issue #271); corner-only contact does not connect. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived snapshot features from the feature tree; also previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `featureDefinitions.ts` — definition creation, orphan collection, instance rebaking, and make-unique support for feature references
   - `gearFeature.ts` — grouped gear+bore feature insertion helper used by the gear creation action
@@ -63,7 +63,9 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureReferencesMigration.test.ts` — legacy project migration into definitions and instances
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
 - `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
+- `helpers/clipping.test.ts` — join-connectivity predicates (issue #271): shared-edge, corner-contact, disjoint, overlap, and hole-forming union cases for featuresOverlap and the grouping helpers
 - `instanceTransforms.test.ts` — instance transform matrix composition
+- `joinSharedEdge.test.ts` — store-level join of edge-adjacent closed features (issue #271): grouping, session click-to-add, merge result, keepOriginals
 - `linkedConstraintResolve.test.ts` — linked constraint re-solve after definition edit propagates to sibling instances; direct-edit regression; no-drift idempotency
 - `openProfileJoin.test.ts` — open-profile joining behavior
 - `polygonSplit.test.ts` — polygon splitting
