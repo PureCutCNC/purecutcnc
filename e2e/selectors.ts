@@ -68,6 +68,9 @@ export const contextMenu = {
   /** The open context menu container. */
   container: (page: Page) => page.locator('.feature-context-menu'),
 
+  /** The open context-menu flyout submenu. */
+  submenu: (page: Page) => page.locator('.feature-context-menu__submenu'),
+
   /** A menu item by its label text. */
   item: (menu: Locator, label: string) =>
     menu.locator('.feature-context-menu__item', { hasText: label }),
@@ -86,6 +89,21 @@ export const properties = {
   /** Exact text match within the panel. */
   exactText: (page: Page, text: string) =>
     page.locator('.properties-panel').getByText(text, { exact: true }),
+}
+
+// ── CAM operations ──────────────────────────────────────────────────
+
+export const operations = {
+  /** Visible operation-count badge in the CAM panel. */
+  countBadge: (page: Page) =>
+    page.locator('.cam-panel .cam-section--tree .cam-section-header .feature-count'),
+
+  /** Rendered CAM operation rows. */
+  rows: (page: Page) => page.locator('.cam-operation-tree .tree-row--feature'),
+
+  /** A specific CAM operation row by its label text. */
+  rowByName: (page: Page, name: string) =>
+    page.locator('.cam-operation-tree .tree-row--feature').filter({ hasText: name }),
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────
