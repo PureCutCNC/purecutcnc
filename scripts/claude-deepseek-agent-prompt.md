@@ -26,6 +26,7 @@ Required invariants: [INVARIANTS]
 Required checks: [REQUIRED_CHECKS]
 
 Rules:
+- Narrate your progress: before each phase (reading context, editing a group of files, running a check, committing), print one short line saying what you are about to do. These lines stream to the manager while you work; do not batch them up for the end.
 - Make the smallest change that satisfies the slice.
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.
