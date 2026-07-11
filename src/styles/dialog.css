@@ -394,6 +394,45 @@
   transition: transform 0.1s linear;
 }
 
+/* ── Import analysis summary ──────────────────── */
+
+.import-dialog__analysis {
+  margin-top: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.import-dialog__analysis-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.import-dialog__analysis-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.import-dialog__analysis-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.import-dialog__analysis-row strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .import-dialog__toggle-row {
   display: flex;
   align-items: center;

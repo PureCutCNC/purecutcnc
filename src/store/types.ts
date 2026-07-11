@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ImportedShape, ImportSourceType } from '../import'
+import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
 import type { SnapMode } from '../sketch/snapping'
 import type {
@@ -361,7 +361,7 @@ export interface ProjectStore {
   toggleFolderGrouped: (folderId: string) => void
   groupSelectedFeaturesIntoNewFolder: () => string
   addFeature: (feature: SketchFeature) => void
-  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
+  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[]; classified?: ClassifiedShape[] }) => string[]
   importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   updateFeatures: (ids: string[], patch: Partial<SketchFeature>) => void
