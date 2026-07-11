@@ -217,9 +217,47 @@
   accent-color: var(--accent);
 }
 
-/* The operation checklist scrolls internally past ~6 rows so a long
-   operation list doesn't force the whole dialog body to scroll. */
+/* Export G-code dialog: the body itself never scrolls. The operation
+   checklist is the flexible region — it grows to the space left over by
+   the fixed sections (machine, origin, units, options, warnings) and
+   scrolls internally, so warnings stay visible below it. If even the
+   fully-shrunk layout is too tall, the left column scrolls as a fallback. */
+.dialog-body--gcode-export {
+  overflow: hidden;
+  /* Pin the single row to the body height when the 90vh dialog cap engages,
+     so the columns shrink/scroll internally instead of growing past it. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.dialog-body--gcode-export .dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dialog-body--gcode-export .dialog-section > .dialog-section-group {
+  flex: 0 0 auto;
+}
+
+.dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+/* Long warning lists scroll too, instead of pushing the layout around. */
+.dialog-body--gcode-export .export-warning-list {
+  overflow-y: auto;
+  max-height: 150px;
+}
+
 .export-operation-list {
+  flex: 1 1 auto;
+  min-height: 96px;
   max-height: 208px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -861,9 +899,11 @@
   min-height: 44px;
 }
 
-/* Taller rows on tablet — keep ~6 operations visible before scrolling. */
+/* Taller rows on tablet — keep ~6 operations visible before scrolling,
+   and never shrink below ~3 rows. */
 [data-shell-mode="tablet"] .export-operation-list,
 [data-shell-mode="tablet-compact"] .export-operation-list {
+  min-height: 152px;
   max-height: 320px;
 }
 

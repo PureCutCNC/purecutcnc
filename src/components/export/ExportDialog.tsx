@@ -169,7 +169,7 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
           </button>
         </div>
 
-        <div className="dialog-body">
+        <div className="dialog-body dialog-body--gcode-export">
           <div className="dialog-section">
             <div className="dialog-section-group">
               <label className="dialog-section-title">Machine</label>
@@ -200,7 +200,7 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
               </div>
             </div>
 
-            <div className="dialog-section-group">
+            <div className="dialog-section-group dialog-section-group--operations">
               <label className="dialog-section-title">Operations</label>
               {operationOptions.length === 0 ? (
                 <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
