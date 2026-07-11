@@ -217,6 +217,113 @@
   accent-color: var(--accent);
 }
 
+/* Export G-code dialog: the body itself never scrolls. The operation
+   checklist is the flexible region — it grows to the space left over by
+   the fixed sections (machine, origin, units, options, warnings) and
+   scrolls internally, so warnings stay visible below it. If even the
+   fully-shrunk layout is too tall, the left column scrolls as a fallback. */
+.dialog-body--gcode-export {
+  overflow: hidden;
+  /* Pin the single row to the body height when the 90vh dialog cap engages,
+     so the columns shrink/scroll internally instead of growing past it. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.dialog-body--gcode-export .dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dialog-body--gcode-export .dialog-section > .dialog-section-group {
+  flex: 0 0 auto;
+}
+
+/* Shrinkable down to an EXPLICIT floor (title + ~3 checklist rows).
+   The floor must not rely on the automatic minimum of the nested scroll
+   container: Blink and WebKit compute that differently (WebKit refuses to
+   shrink at all), and min-height: 0 overlaps the next section instead. */
+.dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 132px;
+}
+
+/* Warnings live in the right column above the preview: the preview area
+   absorbs their height, keeping the left column's fixed sections short
+   enough to fit without scrolling. */
+.dialog-body--gcode-export .dialog-preview-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.dialog-body--gcode-export .dialog-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Long warning lists scroll too, instead of pushing the layout around. */
+.dialog-body--gcode-export .export-warning-list {
+  overflow-y: auto;
+  max-height: 150px;
+  margin-top: 0;
+}
+
+.export-operations-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.export-operations-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1.4;
+}
+
+.export-operation-list {
+  flex: 1 1 auto;
+  /* No own floor — the group's explicit min-height enforces it, so the
+     list always fits inside the group and can never overlap a sibling. */
+  min-height: 0;
+  max-height: 208px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.export-option--disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.export-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-option-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .export-warning-list {
   display: grid;
   gap: 8px;
@@ -829,6 +936,18 @@
 [data-shell-mode="tablet"] .export-option,
 [data-shell-mode="tablet-compact"] .export-option {
   min-height: 44px;
+}
+
+/* Taller rows on tablet — keep ~6 operations visible before scrolling,
+   and raise the shrink floor to ~3 touch rows. */
+[data-shell-mode="tablet"] .export-operation-list,
+[data-shell-mode="tablet-compact"] .export-operation-list {
+  max-height: 320px;
+}
+
+[data-shell-mode="tablet"] .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations,
+[data-shell-mode="tablet-compact"] .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
+  min-height: 196px;
 }
 
 [data-shell-mode="tablet"] .feat-btn,

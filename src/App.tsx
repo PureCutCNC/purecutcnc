@@ -64,7 +64,9 @@ function App() {
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [isSimulationPending, startSimulationTransition] = useTransition()
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
-  const [showExportDialog, setShowExportDialog] = useState(false)
+  // Non-null opens the Export G-code dialog; operationIds narrows the
+  // pre-checked set to specific operations (per-operation export, issue #274).
+  const [exportDialogRequest, setExportDialogRequest] = useState<{ operationIds?: string[] } | null>(null)
   const [showModelExportDialog, setShowModelExportDialog] = useState(false)
   const [showPrintDialog, setShowPrintDialog] = useState(false)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
@@ -83,7 +85,7 @@ function App() {
     return () => window.removeEventListener('purecutcnc:new-project', handleMenuNew)
   }, [])
 
-  const handleExportGcode = useCallback(() => setShowExportDialog(true), [])
+  const handleExportGcode = useCallback(() => setExportDialogRequest({}), [])
   const handlePrintDesign = useCallback(() => setShowPrintDialog(true), [])
   useDesktopIntegration({
     onExportGcode: handleExportGcode,
@@ -446,7 +448,8 @@ function App() {
             mode={rightTab === 'tools' ? 'tools' : 'operations'}
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
-            onExport={() => setShowExportDialog(true)}
+            onExport={() => setExportDialogRequest({})}
+            onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
             generateToolpath={generateToolpathForOperation}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
@@ -495,10 +498,11 @@ function App() {
         />
       )}
 
-      {showExportDialog && (
+      {exportDialogRequest && (
         <ExportDialog
-          onClose={() => setShowExportDialog(false)}
+          onClose={() => setExportDialogRequest(null)}
           generateToolpath={generateToolpathForOperation}
+          initialOperationIds={exportDialogRequest.operationIds}
         />
       )}
 

@@ -104,6 +104,46 @@ export const operations = {
   /** A specific CAM operation row by its label text. */
   rowByName: (page: Page, name: string) =>
     page.locator('.cam-operation-tree .tree-row--feature').filter({ hasText: name }),
+
+  /** The "Export" button in the Operations panel header (exports the default set). */
+  headerExportButton: (page: Page) =>
+    page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Export', exact: true }),
+
+  /** The Properties-header "Export G-code" action for the selected operation. */
+  propertiesExportButton: (page: Page, name: string) =>
+    page
+      .locator('.cam-section--properties .cam-section-header')
+      .getByRole('button', { name: `Export G-code for ${name}` }),
+}
+
+// ── Export G-code dialog ────────────────────────────────────────────
+
+export const exportDialog = {
+  /** The Export G-code dialog root. */
+  root: (page: Page) =>
+    page.locator('.dialog').filter({ has: page.locator('.dialog-title', { hasText: 'Export G-code' }) }),
+
+  /** All rows of the operation checklist. */
+  operationOptions: (page: Page) =>
+    exportDialog.root(page).locator('.export-operation-list .export-option'),
+
+  /** A checklist row by operation name. */
+  operationOption: (page: Page, name: string) =>
+    exportDialog.operationOptions(page).filter({ hasText: name }),
+
+  /** The checkbox inside a named checklist row. */
+  operationCheckbox: (page: Page, name: string) =>
+    exportDialog.operationOption(page, name).locator('input[type="checkbox"]'),
+
+  /** The "Select all" / "Deselect all" toggle above the checklist. */
+  selectionToggle: (page: Page) =>
+    exportDialog.root(page).locator('.export-operations-toggle'),
+
+  /** Warning entries shown in the dialog. */
+  warnings: (page: Page) => exportDialog.root(page).locator('.export-warning'),
+
+  /** The primary footer button that performs the export. */
+  exportButton: (page: Page) => exportDialog.root(page).locator('.dialog-footer .btn-primary'),
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────
