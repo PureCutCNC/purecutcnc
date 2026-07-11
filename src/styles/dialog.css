@@ -241,12 +241,14 @@
   flex: 0 0 auto;
 }
 
+/* Shrinkable, but only down to its automatic minimum (title + the list's
+   96px floor). min-height: 0 here would let the group collapse further
+   than its content and the list would bleed under the next section. */
 .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
   flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
 }
 
 /* Long warning lists scroll too, instead of pushing the layout around. */
