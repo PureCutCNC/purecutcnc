@@ -359,6 +359,7 @@ export interface ProjectStore {
   toggleConstructionFolderVisible: (folderId: string) => void
   selectFolderFeatures: (folderId: string) => void
   toggleFolderGrouped: (folderId: string) => void
+  revealFeatureFolder: (folderId: string) => void
   groupSelectedFeaturesIntoNewFolder: () => string
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
