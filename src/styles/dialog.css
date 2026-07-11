@@ -217,6 +217,18 @@
   accent-color: var(--accent);
 }
 
+/* The operation checklist scrolls internally past ~6 rows so a long
+   operation list doesn't force the whole dialog body to scroll. */
+.export-operation-list {
+  max-height: 208px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
 .export-option--disabled {
   color: var(--text-dim);
   cursor: default;
@@ -847,6 +859,12 @@
 [data-shell-mode="tablet"] .export-option,
 [data-shell-mode="tablet-compact"] .export-option {
   min-height: 44px;
+}
+
+/* Taller rows on tablet — keep ~6 operations visible before scrolling. */
+[data-shell-mode="tablet"] .export-operation-list,
+[data-shell-mode="tablet-compact"] .export-operation-list {
+  max-height: 320px;
 }
 
 [data-shell-mode="tablet"] .feat-btn,
