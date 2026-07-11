@@ -273,6 +273,9 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
               </div>
             </div>
 
+          </div>
+
+          <div className="dialog-preview-container">
             {previewWarnings.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">Warnings</label>
@@ -283,9 +286,6 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="dialog-preview-container">
             <label className="dialog-section-title">Preview (First 30 lines)</label>
             <div className="dialog-preview">
               {previewLines}

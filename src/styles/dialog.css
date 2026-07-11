@@ -241,20 +241,38 @@
   flex: 0 0 auto;
 }
 
-/* Shrinkable, but only down to its automatic minimum (title + the list's
-   96px floor). min-height: 0 here would let the group collapse further
-   than its content and the list would bleed under the next section. */
+/* Shrinkable down to an EXPLICIT floor (title + ~3 checklist rows).
+   The floor must not rely on the automatic minimum of the nested scroll
+   container: Blink and WebKit compute that differently (WebKit refuses to
+   shrink at all), and min-height: 0 overlaps the next section instead. */
 .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
   flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 132px;
+}
+
+/* Warnings live in the right column above the preview: the preview area
+   absorbs their height, keeping the left column's fixed sections short
+   enough to fit without scrolling. */
+.dialog-body--gcode-export .dialog-preview-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.dialog-body--gcode-export .dialog-preview {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Long warning lists scroll too, instead of pushing the layout around. */
 .dialog-body--gcode-export .export-warning-list {
   overflow-y: auto;
   max-height: 150px;
+  margin-top: 0;
 }
 
 .export-operations-header {
@@ -276,7 +294,9 @@
 
 .export-operation-list {
   flex: 1 1 auto;
-  min-height: 96px;
+  /* No own floor — the group's explicit min-height enforces it, so the
+     list always fits inside the group and can never overlap a sibling. */
+  min-height: 0;
   max-height: 208px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -919,11 +939,15 @@
 }
 
 /* Taller rows on tablet — keep ~6 operations visible before scrolling,
-   and never shrink below ~3 rows. */
+   and raise the shrink floor to ~3 touch rows. */
 [data-shell-mode="tablet"] .export-operation-list,
 [data-shell-mode="tablet-compact"] .export-operation-list {
-  min-height: 152px;
   max-height: 320px;
+}
+
+[data-shell-mode="tablet"] .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations,
+[data-shell-mode="tablet-compact"] .dialog-body--gcode-export .dialog-section > .dialog-section-group--operations {
+  min-height: 196px;
 }
 
 [data-shell-mode="tablet"] .feat-btn,
