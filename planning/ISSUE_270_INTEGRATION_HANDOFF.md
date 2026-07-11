@@ -20,8 +20,8 @@ Do not merge the PR into `main`.
 - Base commit: `276245e7fcc462fac3c30fd4d51e60ca4178bf6d`
 - Latest main merged: `fe6efb0` (worker progress reporting)
 - Approved plan: GitHub issue #270
-- Manager session: 2026-07-09 through 2026-07-10
-- Status: `implementing S3`
+- Manager session: 2026-07-09 through 2026-07-11
+- Status: `implementing S4`
 - User authorization: plan and full implementation approved; credential read,
   outbound DeepSeek access, and bypass worker dispatch explicitly approved
 
@@ -68,8 +68,8 @@ Do not merge the PR into `main`.
 | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Closed Line role, UI availability, and model/3D semantics | `a6aea9b` | complete (`8afb7af`) | accepted; closed-overlay correction added | `17fb11f` | focused tests + manager `npm run build` passed (94 files) |
 | S2 | Closed-Line V-carve eligibility and even-odd resolution | `17fb11f` | complete (`6d60fe1`) | accepted after cross-Z candidate correction | `8390c0b` | focused resolver/eligibility tests + manager `npm run build` passed (97 files) |
-| S3 | SVG/DXF import modes, paint intent, nesting classifier, dialog summary | `8390c0b` | dispatching | pending | - | import/store/UI tests; e2e smoke; build |
-| S4 | Large-import bulk path and batched 3D Line rendering | S3 merge | not started | pending | - | bulk-import/CSG tests and benchmark; build |
+| S3 | SVG/DXF import modes, paint intent, nesting classifier, dialog summary | `ce4377e` | complete (`9db2787`) | accepted after manager classifier/order corrections | `3f743b2` | focused import/store/UI tests; manager `npm run build` passed (100 files); `npm run test:e2e` passed (22 tests) |
+| S4 | Large-import bulk path and batched 3D Line rendering | `3f743b2` | dispatching | pending | - | bulk-import/CSG tests and benchmark; build |
 | S5 | Nesting-aware defaults for newly drawn closed features | S4 merge | not started | pending | - | creation/store tests; build |
 
 ## S1 — Closed Line is a first-class non-solid feature
