@@ -111,6 +111,19 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
     })
   }
 
+  const exportableOperationIds = useMemo(() => (
+    operationOptions
+      .filter((option) => option.exportable)
+      .map((option) => option.operation.id)
+  ), [operationOptions])
+
+  const allExportableSelected = exportableOperationIds.length > 0
+    && exportableOperationIds.every((id) => selectedOperationIds.has(id))
+
+  function toggleAllOperationsSelected() {
+    setSelectedOperationIds(allExportableSelected ? new Set() : new Set(exportableOperationIds))
+  }
+
   useEffect(() => {
     if (!activeDefinition) {
       return
@@ -201,7 +214,18 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
             </div>
 
             <div className="dialog-section-group dialog-section-group--operations">
-              <label className="dialog-section-title">Operations</label>
+              <div className="export-operations-header">
+                <label className="dialog-section-title">Operations</label>
+                {exportableOperationIds.length > 0 ? (
+                  <button
+                    className="export-operations-toggle"
+                    type="button"
+                    onClick={toggleAllOperationsSelected}
+                  >
+                    {allExportableSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                ) : null}
+              </div>
               {operationOptions.length === 0 ? (
                 <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
                   No operations to export. Add one in the Operations panel.

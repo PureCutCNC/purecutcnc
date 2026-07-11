@@ -63,5 +63,18 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+
+    // The header toggle flips the whole selection: Deselect all → Select all.
+    const toggle = ui.exportDialog.selectionToggle(app.page)
+    await expect(toggle).toHaveText('Deselect all')
+    await toggle.click()
+    await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).not.toBeChecked()
+    await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).not.toBeChecked()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+    await expect(toggle).toHaveText('Select all')
+    await toggle.click()
+    await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
+    await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
   })
 })

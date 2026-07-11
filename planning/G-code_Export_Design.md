@@ -759,6 +759,9 @@ warnings recompute from it.
   on-screen toolpaths.
 - Operations that cannot export (disabled, or no tool assigned) are listed
   greyed-out with the reason and cannot be checked.
+- A "Select all" / "Deselect all" toggle next to the section title flips the
+  whole selection (exportable operations only), matching the layer-selection
+  toggle in the import dialog.
 - The Properties header in the Operations panel has an "Export G-code"
   action (next to Expand) that opens this dialog with only the selected
   operation pre-checked.

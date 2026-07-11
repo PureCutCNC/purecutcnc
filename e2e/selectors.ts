@@ -135,6 +135,10 @@ export const exportDialog = {
   operationCheckbox: (page: Page, name: string) =>
     exportDialog.operationOption(page, name).locator('input[type="checkbox"]'),
 
+  /** The "Select all" / "Deselect all" toggle above the checklist. */
+  selectionToggle: (page: Page) =>
+    exportDialog.root(page).locator('.export-operations-toggle'),
+
   /** Warning entries shown in the dialog. */
   warnings: (page: Page) => exportDialog.root(page).locator('.export-warning'),
 

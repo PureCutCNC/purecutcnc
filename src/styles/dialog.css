@@ -255,6 +255,23 @@
   max-height: 150px;
 }
 
+.export-operations-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.export-operations-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1.4;
+}
+
 .export-operation-list {
   flex: 1 1 auto;
   min-height: 96px;
