@@ -20,8 +20,8 @@ Do not merge the PR into `main`.
 - Base commit: `276245e7fcc462fac3c30fd4d51e60ca4178bf6d`
 - Latest main merged: `fe6efb0` (worker progress reporting)
 - Approved plan: GitHub issue #270
-- Manager session: 2026-07-09 through 2026-07-11
-- Status: `implementing S5`
+- Manager session: 2026-07-09 through 2026-07-12
+- Status: `final integration verification`
 - User authorization: plan and full implementation approved; credential read,
   outbound DeepSeek access, and bypass worker dispatch explicitly approved;
   direct manager implementation is also explicitly allowed when it is faster
@@ -72,7 +72,7 @@ Do not merge the PR into `main`.
 | S2 | Closed-Line V-carve eligibility and even-odd resolution | `17fb11f` | complete (`6d60fe1`) | accepted after cross-Z candidate correction | `8390c0b` | focused resolver/eligibility tests + manager `npm run build` passed (97 files) |
 | S3 | SVG/DXF import modes, paint intent, nesting classifier, dialog summary | `ce4377e` | complete (`9db2787`) | accepted after manager classifier/order corrections | `3f743b2` | focused import/store/UI tests; manager `npm run build` passed (100 files); `npm run test:e2e` passed (22 tests) |
 | S4 | Large-import bulk path and batched 3D Line rendering | `3b0f63a` | complete (`3073735`) | rejected initial worker result; manager rewrote and accepted corrected single commit | `8275a00` | focused line/store tests; 2,980 repeated-name import ~47–55 ms; manager `npm run build` passed (102 files) |
-| S5 | Nesting-aware defaults for newly drawn closed features | `8275a00` | implementing directly | pending | - | creation/store tests; build |
+| S5 | Nesting-aware defaults for newly drawn closed features | `75c3b76` | manager direct implementation (`d1717d3`) | accepted; explicit targets preserved and existing-operation propagation fixture corrected | `1a73ccd` | focused classifier/creation/store tests; manager `npm run build` passed (103 files) |
 
 ## S1 — Closed Line is a first-class non-solid feature
 
