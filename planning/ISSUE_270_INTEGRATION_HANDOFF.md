@@ -21,7 +21,7 @@ Do not merge the PR into `main`.
 - Latest main merged: `fe6efb0` (worker progress reporting)
 - Approved plan: GitHub issue #270
 - Manager session: 2026-07-09 through 2026-07-12
-- Status: `final integration verification`
+- Status: `verified; ready for PR`
 - User authorization: plan and full implementation approved; credential read,
   outbound DeepSeek access, and bypass worker dispatch explicitly approved;
   direct manager implementation is also explicitly allowed when it is faster
@@ -222,6 +222,29 @@ changing explicit user-selected operations.
 - Closed Line conversion plus Engrave/V-carve eligibility smoke
 - 3D view interaction after large Paths import
 - Close controlled browser, then stop the dev server
+
+### Completed verification — 2026-07-12
+
+- `npm run build` passed: lint, license headers, TypeScript, all 103 test
+  files, and the production Vite bundle.
+- `npm run test:e2e` passed all 22 Playwright tests, including SVG/DXF
+  Auto/Paths/Solid regions wiring and the landscape-tablet import dialog.
+- Real Aztec SVG Paths: 2,980 closed Lines, one collapsed folder, one selected
+  row, interactive 3D drag, no console errors; about 71 seconds end to end.
+- Real Aztec DXF Paths: 2,980 closed Lines, one collapsed folder, one selected
+  row, interactive 3D drag, no console errors; about 89 seconds end to end.
+- Real Aztec DXF Auto: 2,749 Add and 231 Subtract features, one collapsed
+  folder, one selected row, one invalid/self-intersection warning, no console
+  errors; about 171 seconds end to end.
+- The real-file run exposed expensive impossible contour comparisons. Commit
+  `5286bb5` adds bbox/area rejection plus a 2,980-contour DXF Auto regression.
+- The private user files remain untracked and uncommitted. The controlled
+  browser was closed before the dev server, and port 1420 was confirmed free.
+
+Known limitation: Auto classification of this unusually complex DXF remains
+synchronous and slow (about three minutes on the manager Mac), though it now
+completes and remains geometrically classified. Paths is the recommended mode
+when the design is intended as V-carve/engrave path geometry.
 
 ## User-review handoff
 
