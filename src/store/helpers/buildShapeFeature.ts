@@ -38,6 +38,7 @@ export function buildShapeFeature(
   const operation: FeatureOperation =
     creationTarget === 'region' ? 'region'
     : creationTarget === 'construction' ? 'construction'
+    : creationTarget === 'line' ? 'line'
     : profile.closed ? inferManualFeatureOperation(project, profile)
     : 'line'
   const resolvedName =

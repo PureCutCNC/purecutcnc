@@ -202,6 +202,7 @@ function CreationActions({
     <div className={`toolbar-creation-block toolbar-creation-block--${creationTarget}`}>
       <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
         {renderCreationTargetButton('feature', 'plus', 'Create features')}
+        {renderCreationTargetButton('line', 'snap-line', 'Create lines')}
         {renderCreationTargetButton('region', 'pocket', 'Create regions')}
         {renderCreationTargetButton('construction', 'construction', 'Create construction geometry')}
       </div>

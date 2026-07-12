@@ -135,7 +135,7 @@ export type PendingAddTool =
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
-export type CreationTarget = 'feature' | 'region' | 'construction'
+export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
 
 /**
  * Transient tape-measure state. Not persisted, not in undo history.

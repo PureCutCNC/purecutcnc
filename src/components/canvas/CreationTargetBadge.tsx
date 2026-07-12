@@ -16,8 +16,8 @@
 
 /**
  * Discrete sketch-view overlay showing which drawing mode (creation target)
- * is active — Features / Regions / Construction (issue #199). With three
- * modes, the highlighted toolbar button alone is easy to miss; this badge
+ * is active — Features / Lines / Regions / Construction (issues #199/#270).
+ * With four modes, the highlighted toolbar button alone is easy to miss; this badge
  * keeps the answer to "what will I draw right now?" in the corner of the
  * canvas. Display-only: pointer events pass through to the canvas.
  */
@@ -28,6 +28,7 @@ import type { CreationTarget } from '../../store/types'
 
 const TARGET_PRESENTATION: Record<CreationTarget, { icon: string; label: string }> = {
   feature: { icon: 'plus', label: 'Drawing features' },
+  line: { icon: 'snap-line', label: 'Drawing lines' },
   region: { icon: 'pocket', label: 'Drawing regions' },
   construction: { icon: 'construction', label: 'Drawing construction' },
 }

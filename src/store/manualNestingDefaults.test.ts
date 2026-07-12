@@ -93,6 +93,10 @@ function testExplicitOperationsAndTargetsWin(): void {
   )
   assert(operation('explicit-subtract') === 'subtract', 'direct explicit Subtract is not inferred')
 
+  useProjectStore.getState().setCreationTarget('line')
+  useProjectStore.getState().addRectFeature('closed-line', 10, 10, 10, 10, 5)
+  assert(operation('closed-line') === 'line', 'Line creation target keeps a closed primitive as Line')
+
   useProjectStore.getState().setCreationTarget('region')
   useProjectStore.getState().addRectFeature('ignored-region-name', 10, 10, 10, 10, 5)
   assert(

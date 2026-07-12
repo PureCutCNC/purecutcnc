@@ -21,7 +21,7 @@ Do not merge the PR into `main`.
 - Latest main merged: `fe6efb0` (worker progress reporting)
 - Approved plan: GitHub issue #270
 - Manager session: 2026-07-09 through 2026-07-12
-- Status: `verified; ready for PR`
+- Status: `verified; PR ready for user testing`
 - User authorization: plan and full implementation approved; credential read,
   outbound DeepSeek access, and bypass worker dispatch explicitly approved;
   direct manager implementation is also explicitly allowed when it is faster
@@ -240,6 +240,29 @@ changing explicit user-selected operations.
   `5286bb5` adds bbox/area rejection plus a 2,980-contour DXF Auto regression.
 - The private user files remain untracked and uncommitted. The controlled
   browser was closed before the dev server, and port 1420 was confirmed free.
+
+### Follow-up verification — closed Line sketch rendering
+
+- Closed Line profiles now render as strokes in Sketch rather than filled
+  regions, matching their non-solid role in the 3D view.
+- Desktop and landscape-tablet toolbars now expose a dedicated Line creation
+  target; open and closed shapes created in that mode remain Line features.
+- Ordinary unselected Lines are submitted to the 2D canvas in bounded batches
+  of 128 features. Selection, hover, edit, operation-highlight, and feature-info
+  behavior keep their individual rendering paths.
+- A real 2,980-contour Aztec SVG probe reduced a representative zoom redraw
+  from 6,292 stroke submissions to 380, with about 259 ms zoom latency. A
+  five-step pan used 1,330 strokes in about 746 ms. The remaining cost is the
+  source drawing's roughly 114,840 vector segments; no console errors occurred.
+- `npm run build` passed lint, license headers, TypeScript, all 104 structural
+  test files, and the production Vite bundle.
+- `npm run test:e2e` passed all 24 Playwright tests, including the new desktop
+  and landscape-tablet Line creation target coverage.
+- The reported transient red, green, and blue 3D lines match the intentional
+  machine-origin X/Y/Z triad. Grid helpers use gray/blue-gray colors, so no
+  speculative 3D change was made without a reproducible defect.
+- Playwright, its temporary Vite server, and the controlled browser all exited;
+  port 1420 was confirmed free after the final run.
 
 Known limitation: Auto classification of this unusually complex DXF remains
 synchronous and slow (about three minutes on the manager Mac), though it now
