@@ -9,6 +9,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `edge.ts` — edge / profile-following cuts (outside/inside contour)
 - `vcarve.ts` — V-bit carving from medial axis
 - `vcarveRecursive.ts` — recursive v-carve with larger tools (clears bulk first)
+- `vcarveMedial/` — geometric medial-axis v-carve (`v_carve_medial`): Voronoi-of-boundary skeleton with exact clearances, corner tips, and contact-spread curve filtering (see its `INDEX.md`)
 - `roughSurface.ts` — 3D rough clearing of an imported mesh
 - `finishSurface.ts` — 3D finish pass dispatcher
 - `finishSurfaceCleanup.ts` — cleanup-style 3D imported-mesh finishing that emits deepest retained wall/floor paths from rough-surface-style levels

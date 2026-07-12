@@ -27,6 +27,7 @@ import {
   generatePocketToolpath,
   generateRoughSurfaceToolpath,
   generateSurfaceCleanToolpath,
+  generateVCarveMedialToolpath,
   generateVCarveRecursiveToolpath,
   generateVCarveToolpath,
   type ToolpathResult,
@@ -208,6 +209,8 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
         result = applyClampWarnings(project, generateVCarveToolpath(project, operation), operation)
       } else if (operation.kind === 'v_carve_recursive') {
         result = applyClampWarnings(project, generateVCarveRecursiveToolpath(project, operation), operation)
+      } else if (operation.kind === 'v_carve_medial') {
+        result = applyClampWarnings(project, generateVCarveMedialToolpath(project, operation), operation)
       } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
         result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)

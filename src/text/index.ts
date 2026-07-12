@@ -705,18 +705,29 @@ export function getFeatureGeometryBounds(feature: SketchFeature) {
 
 export function expandFeatureGeometry(feature: SketchFeature, includeSynthetic = true): SketchFeature[] {
   if (isTextFeature(feature)) {
-    return resolveTextFeatureShapes(feature).map((shape, index) => ({
-      ...feature,
-      id: `${feature.id}:text:${index}`,
-      name: feature.name,
-      kind: 'composite',
-      text: null,
-      sketch: {
-        ...feature.sketch,
-        profile: shape.profile,
-      },
-      operation: shape.operation,
-    }))
+    return resolveTextFeatureShapes(feature).map((shape, index) => {
+      const child: SketchFeature = {
+        ...feature,
+        id: `${feature.id}:text:${index}`,
+        name: feature.name,
+        kind: 'composite',
+        text: null,
+        sketch: {
+          ...feature.sketch,
+          profile: shape.profile,
+        },
+        operation: shape.operation,
+      }
+      // The glyph profiles above are fully resolved world-space geometry.
+      // Reference-model fields inherited from the parent instance via the
+      // spread must not survive on synthetic children: consumers treat any
+      // feature carrying a definitionId as an instance to resolve by id,
+      // which fails for synthetic ids and silently yields empty geometry
+      // (e.g. the pocket/v-carve region resolver).
+      delete (child as { definitionId?: string }).definitionId
+      delete (child as { transform?: unknown }).transform
+      return child
+    })
   }
 
   // Model features (imported STL meshes) are treated as 'add' obstacles for

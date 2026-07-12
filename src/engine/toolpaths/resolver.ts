@@ -216,12 +216,15 @@ export function resolvePocketRegions(project: Project, operation: Operation): Re
   const warnings: string[] = []
   const isPocketLike =
     operation.kind === 'pocket' || operation.kind === 'v_carve' || operation.kind === 'v_carve_recursive'
+    || operation.kind === 'v_carve_medial'
   const operationLabel =
     operation.kind === 'pocket'
       ? 'Pocket'
       : operation.kind === 'v_carve_recursive'
         ? 'V-carve recursive'
-        : 'V-carve'
+        : operation.kind === 'v_carve_medial'
+          ? 'V-carve medial'
+          : 'V-carve'
 
   if (!isPocketLike) {
     return {

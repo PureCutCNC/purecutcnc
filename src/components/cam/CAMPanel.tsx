@@ -306,6 +306,8 @@ function operationAddButtonLabel(kind: OperationKind): string {
       return 'V-Carve offset'
     case 'v_carve_recursive':
       return 'V-Carve skeleton'
+    case 'v_carve_medial':
+      return 'V-Carve medial'
     case 'edge_route_inside':
       return 'Edge in'
     case 'edge_route_outside':
@@ -329,6 +331,7 @@ function operationSupportsPassSelection(kind: OperationKind): boolean {
   return kind !== 'follow_line'
     && kind !== 'v_carve'
     && kind !== 'v_carve_recursive'
+    && kind !== 'v_carve_medial'
     && kind !== 'drilling'
     && kind !== 'rough_surface'
     && kind !== 'finish_surface'
@@ -388,6 +391,7 @@ function showStepdown(operation: Project['operations'][number]): boolean {
   if (
     operation.kind === 'v_carve'
     || operation.kind === 'v_carve_recursive'
+    || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
     || operation.kind === 'finish_surface_cleanup'
   ) {
@@ -470,7 +474,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       : null
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'v_carve_medial') {
     if (selection.selectedFeatureIds.length === 0) {
       return null
     }
@@ -748,6 +752,7 @@ export function CAMPanel({
         button('pocket'),
         button('v_carve'),
         button('v_carve_recursive'),
+        button('v_carve_medial'),
         button('edge_route_inside'),
         button('edge_route_outside'),
         button('surface_clean'),
@@ -871,7 +876,7 @@ export function CAMPanel({
     // Load the bundled library so addOperation can auto-pick/import a proper tool.
     const libraryTools = await ensureBundledLibraryLoaded()
 
-    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface') && mode === 'pair') {
+    if ((kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface') && mode === 'pair') {
       const operationId = addOperation(kind, 'rough', target, libraryTools)
       if (operationId) {
         onSelectedOperationIdChange(operationId)
@@ -1113,7 +1118,7 @@ export function CAMPanel({
                     <span>Kind</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' && selectedOperation.kind !== 'finish_surface_cleanup' ? (
+                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_recursive' && selectedOperation.kind !== 'v_carve_medial' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' && selectedOperation.kind !== 'finish_surface_cleanup' ? (
                     <label className="properties-field">
                       <span>Pass</span>
                       <Select
@@ -1126,7 +1131,7 @@ export function CAMPanel({
                       />
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' ? (
+                  {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' || selectedOperation.kind === 'v_carve_medial' ? (
                     <label className="properties-field">
                       <span>Max Carve Depth</span>
                       <DraftLengthInput
@@ -1229,7 +1234,7 @@ export function CAMPanel({
                       value={selectedOperation.toolRef ?? ''}
                       options={[
                         { value: '', label: 'No Tool' },
-                        ...(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
+                        ...(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' || selectedOperation.kind === 'v_carve_medial'
                           ? project.tools.filter((tool) => tool.type === 'v_bit')
                           : project.tools
                         ).map((tool) => ({ value: tool.id, label: tool.name })),
@@ -1240,7 +1245,7 @@ export function CAMPanel({
                         const toolInProjectUnits = newTool && newTool.units !== project.meta.units
                           ? convertToolUnits(newTool, project.meta.units)
                           : newTool
-                        const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive'
+                        const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_recursive' || selectedOperation.kind === 'v_carve_medial'
                         const waterlineSpacing = selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline'
                           ? defaultWaterlineAdaptiveSpacing(newTool, project.meta.units)
                           : 0
@@ -1290,7 +1295,7 @@ export function CAMPanel({
                     && !(selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline') ? (
                     <label className="properties-field">
                       <span>
-                        {selectedOperation.kind === 'v_carve_recursive'
+                        {selectedOperation.kind === 'v_carve_recursive' || selectedOperation.kind === 'v_carve_medial'
                           ? 'Step Size'
                           : selectedOperation.kind === 'v_carve'
                             ? 'Contour Spacing'
@@ -1541,6 +1546,7 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'v_carve'
                     && selectedOperation.kind !== 'v_carve_recursive'
+                    && selectedOperation.kind !== 'v_carve_medial'
                     && selectedOperation.kind !== 'drilling'
                     && selectedOperation.kind !== 'finish_surface' ? (
                     <>

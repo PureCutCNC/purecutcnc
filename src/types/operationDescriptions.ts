@@ -68,6 +68,21 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     ],
     exampleImageName: 'vcarve-skeleton-example.png',
   },
+  v_carve_medial: {
+    title: 'V-Carve Medial',
+    shortSummary: 'Geometric medial-axis V-carve with exact depth from the true skeleton',
+    fullDescription:
+      'V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Step Size controls the skeleton sampling resolution.',
+    keyPoints: [
+      'Requires one or more closed subtract profiles',
+      'Requires a V-bit tool (set the tip angle on the tool first)',
+      'Exact depth: V flanks touch both walls everywhere along the skeleton',
+      'Crisp zero-depth tips in sharp corners; no artifacts on smooth curves',
+      'Single-pass operation (no rough/finish split)',
+      'Optional closed regions act as XY filters',
+    ],
+    exampleImageName: 'vcarve-medial-example.png',
+  },
   edge_route_inside: {
     title: 'Edge Route Inside',
     shortSummary: 'Cut along the inside of a closed subtract profile',

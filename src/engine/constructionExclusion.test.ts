@@ -139,6 +139,7 @@ const ALL_KINDS: OperationKind[] = [
   'edge_route_outside',
   'v_carve',
   'v_carve_recursive',
+  'v_carve_medial',
   'surface_clean',
   'follow_line',
   'drilling',

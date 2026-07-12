@@ -57,4 +57,30 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].target?.source).toBe('features')
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
   })
+
+  test('quick operation creates a V-Carve medial with an auto-picked V-bit', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const row = rowByName(app.page, 'Carve Target')
+    const menu = await openRowContextMenu(app.page, row)
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await clickMenuItem(submenu, 'Create V-Carve (medial)')
+
+    await expect(ui.operations.countBadge(app.page)).toHaveText('1')
+    await expect(ui.operations.rowByName(app.page, 'V-Carve medial')).toBeVisible()
+
+    const project = await getProject(app.page)
+    const operations = project.operations as Array<OperationSnapshot & { toolRef?: unknown }>
+    expect(operations).toHaveLength(1)
+    expect(operations[0].kind).toBe('v_carve_medial')
+    expect(operations[0].target?.source).toBe('features')
+    expect(operations[0].target?.featureIds).toEqual(['f-carve-target'])
+    // The bundled library must have supplied a V-bit automatically.
+    expect(operations[0].toolRef).toBeTruthy()
+    const tools = project.tools as Array<{ id?: unknown; type?: unknown }>
+    expect(tools.some((tool) => tool.id === operations[0].toolRef && tool.type === 'v_bit')).toBe(true)
+  })
 })
