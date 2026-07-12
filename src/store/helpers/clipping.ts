@@ -115,6 +115,39 @@ function rangesOverlap(minA: number, maxA: number, minB: number, maxB: number): 
   return maxA >= minB && maxB >= minA
 }
 
+function pathPerimeter(path: ReturnType<typeof flattenFeatureToClipperPath>): number {
+  let perimeter = 0
+  for (let index = 0; index < path.length; index += 1) {
+    const from = path[index]
+    const to = path[(index + 1) % path.length]
+    perimeter += Math.hypot(to.X - from.X, to.Y - from.Y)
+  }
+  return perimeter
+}
+
+// Unioning two features that share a positive-length stretch of boundary
+// dissolves that stretch from both outlines, shortening the combined
+// perimeter by twice the shared length. Point contact keeps the sum exact,
+// so corner-touching features stay unjoinable (a join would produce a
+// degenerate bow-tie profile). Threshold is in Clipper integer units
+// (1e-4 mm at DEFAULT_CLIPPER_SCALE).
+const SHARED_BOUNDARY_MIN_PERIMETER_DROP = 2
+
+function pathsShareBoundarySegment(
+  pathA: ReturnType<typeof flattenFeatureToClipperPath>,
+  pathB: ReturnType<typeof flattenFeatureToClipperPath>,
+): boolean {
+  const union = executeClipPaths([pathA], [pathB], ClipperLib.ClipType.ctUnion)
+  if (union.length === 0) {
+    return false
+  }
+  const unionPerimeter = union.reduce((sum, path) => sum + pathPerimeter(path), 0)
+  return unionPerimeter < pathPerimeter(pathA) + pathPerimeter(pathB) - SHARED_BOUNDARY_MIN_PERIMETER_DROP
+}
+
+// Join-connectivity predicate (issue #271): closed features count as
+// connected when they overlap in area or share a positive-length boundary
+// segment. Corner-only contact does not connect them.
 export function featuresOverlap(a: SketchFeature, b: SketchFeature): boolean {
   if (!a.sketch.profile.closed || !b.sketch.profile.closed) {
     return false
@@ -129,13 +162,14 @@ export function featuresOverlap(a: SketchFeature, b: SketchFeature): boolean {
     return false
   }
 
-  const intersections = executeClipPaths(
-    [flattenFeatureToClipperPath(a)],
-    [flattenFeatureToClipperPath(b)],
-    0,
-  )
+  const pathA = flattenFeatureToClipperPath(a)
+  const pathB = flattenFeatureToClipperPath(b)
+  const intersections = executeClipPaths([pathA], [pathB], ClipperLib.ClipType.ctIntersection)
+  if (intersections.length > 0) {
+    return true
+  }
 
-  return intersections.length > 0
+  return pathsShareBoundarySegment(pathA, pathB)
 }
 
 // Overlap test used to validate cut-mode target selection. Unlike

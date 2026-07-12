@@ -26,19 +26,32 @@ import {
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
+import {
+  listExportOperationOptions,
+  suggestGcodeFileName,
+} from './exportOperationSelection'
 
 interface ExportDialogProps {
   onClose: () => void
   generateToolpath: (operation: Operation) => ToolpathResult | null
+  /** Pre-check only these operations (per-operation export); defaults to the visible set. */
+  initialOperationIds?: string[]
 }
 
-export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
+export function ExportDialog({ onClose, generateToolpath, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)
   const [emitCoolant, setEmitCoolant] = useState(false)
   const [previewResult, setPreviewResult] = useState<PostProcessorResult | null>(null)
+  const [selectedOperationIds, setSelectedOperationIds] = useState<ReadonlySet<string>>(() => {
+    const options = listExportOperationOptions(project)
+    const selected = initialOperationIds
+      ? options.filter((option) => option.exportable && initialOperationIds.includes(option.operation.id))
+      : options.filter((option) => option.defaultSelected)
+    return new Set(selected.map((option) => option.operation.id))
+  })
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
 
@@ -54,32 +67,62 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
     }
   }
 
+  const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
+
   const activeOperations = useMemo(() => (
-    project.operations
-      .filter((op) => op.enabled && op.showToolpath && op.toolRef)
-      .map((op) => {
-        const toolpath = generateToolpath(op)
-        const toolRecord = project.tools.find((tool) => tool.id === op.toolRef)
+    operationOptions
+      .filter((option) => option.exportable && selectedOperationIds.has(option.operation.id))
+      .map(({ operation }) => {
+        const toolpath = generateToolpath(operation)
+        const toolRecord = project.tools.find((tool) => tool.id === operation.toolRef)
         if (!toolpath || !toolRecord) {
           return null
         }
 
         return {
-          operation: op,
+          operation,
           tool: normalizeToolForProject(toolRecord, project),
           toolpath,
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
-  ), [generateToolpath, project])
+  ), [generateToolpath, operationOptions, project, selectedOperationIds])
 
   const previewWarnings = useMemo(() => {
     const warnings = [...(previewResult?.warnings ?? [])]
+    if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
+      warnings.unshift('No operations selected. Check at least one operation to export.')
+    }
     if (!activeDefinition) {
       warnings.unshift('No machine selected. Select one in Project Settings before exporting.')
     }
     return warnings
-  }, [activeDefinition, previewResult])
+  }, [activeDefinition, operationOptions, previewResult, selectedOperationIds])
+
+  function toggleOperationSelected(operationId: string, selected: boolean) {
+    setSelectedOperationIds((current) => {
+      const next = new Set(current)
+      if (selected) {
+        next.add(operationId)
+      } else {
+        next.delete(operationId)
+      }
+      return next
+    })
+  }
+
+  const exportableOperationIds = useMemo(() => (
+    operationOptions
+      .filter((option) => option.exportable)
+      .map((option) => option.operation.id)
+  ), [operationOptions])
+
+  const allExportableSelected = exportableOperationIds.length > 0
+    && exportableOperationIds.every((id) => selectedOperationIds.has(id))
+
+  function toggleAllOperationsSelected() {
+    setSelectedOperationIds(allExportableSelected ? new Set() : new Set(exportableOperationIds))
+  }
 
   useEffect(() => {
     if (!activeDefinition) {
@@ -104,9 +147,12 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
   }, [activeDefinition, activeOperations, emitCoolant, emitToolChanges, project])
 
   async function handleExport() {
-    if (!previewResult || !activeDefinition) return
+    if (!previewResult || !activeDefinition || activeOperations.length === 0) return
 
-    const suggestedName = project.meta.name.replace(/\s+/g, '_')
+    const suggestedName = suggestGcodeFileName(
+      project.meta.name,
+      activeOperations.map(({ operation }) => operation.name),
+    )
     const ext = activeDefinition.fileExtension
     const exportedPath = await platform.saveTextFile(suggestedName, previewResult.gcode, ext, lastExportPath)
     if (exportedPath) {
@@ -136,7 +182,7 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
           </button>
         </div>
 
-        <div className="dialog-body">
+        <div className="dialog-body dialog-body--gcode-export">
           <div className="dialog-section">
             <div className="dialog-section-group">
               <label className="dialog-section-title">Machine</label>
@@ -167,6 +213,44 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
               </div>
             </div>
 
+            <div className="dialog-section-group dialog-section-group--operations">
+              <div className="export-operations-header">
+                <label className="dialog-section-title">Operations</label>
+                {exportableOperationIds.length > 0 ? (
+                  <button
+                    className="export-operations-toggle"
+                    type="button"
+                    onClick={toggleAllOperationsSelected}
+                  >
+                    {allExportableSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                ) : null}
+              </div>
+              {operationOptions.length === 0 ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
+                  No operations to export. Add one in the Operations panel.
+                </div>
+              ) : (
+                <div className="export-option-group export-operation-list">
+                  {operationOptions.map(({ operation, exportable, reason }) => (
+                    <label
+                      key={operation.id}
+                      className={`export-option${exportable ? '' : ' export-option--disabled'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={!exportable}
+                        checked={exportable && selectedOperationIds.has(operation.id)}
+                        onChange={(event) => toggleOperationSelected(operation.id, event.target.checked)}
+                      />
+                      <span className="export-option-label">{operation.name}</span>
+                      {reason ? <span className="export-option-note">{reason}</span> : null}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="dialog-section-group">
               <label className="dialog-section-title">Options</label>
               <div className="export-option-group">
@@ -189,6 +273,9 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
               </div>
             </div>
 
+          </div>
+
+          <div className="dialog-preview-container">
             {previewWarnings.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">Warnings</label>
@@ -199,9 +286,6 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="dialog-preview-container">
             <label className="dialog-section-title">Preview (First 30 lines)</label>
             <div className="dialog-preview">
               {previewLines}
@@ -220,7 +304,7 @@ export function ExportDialog({ onClose, generateToolpath }: ExportDialogProps) {
           <button
             className="btn-primary"
             onClick={handleExport}
-            disabled={!previewResult || !activeDefinition}
+            disabled={!previewResult || !activeDefinition || activeOperations.length === 0}
             type="button"
           >
             Export {activeDefinition ? `.${activeDefinition.fileExtension}` : ''}

@@ -54,6 +54,8 @@ interface CAMPanelProps {
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
   onExport: () => void
+  /** Open the Export G-code dialog scoped to a single operation. */
+  onExportOperation: (operationId: string) => void
   generateToolpath: (operation: Operation) => ToolpathResult | null
   toolpathWarnings?: string[] | null
   generatingOperationIds?: Set<string>
@@ -586,6 +588,7 @@ export function CAMPanel({
   selectedOperationId: selectedOperationIdProp,
   onSelectedOperationIdChange,
   onExport,
+  onExportOperation,
   generateToolpath,
   toolpathWarnings,
   generatingOperationIds,
@@ -1995,15 +1998,33 @@ export function CAMPanel({
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
                 <span>Properties</span>
-                <button
-                  className="tree-action-btn"
-                  type="button"
-                  title="Expand operation properties"
-                  aria-label="Expand operation properties"
-                  onClick={() => setExpandedCamSection('operation')}
-                >
-                  <Icon id="expand" />
-                </button>
+                <div className="cam-section-header-actions">
+                  <button
+                    className="tree-action-btn"
+                    type="button"
+                    title="Export G-code for this operation"
+                    aria-label={selectedOperation
+                      ? `Export G-code for ${selectedOperation.name}`
+                      : 'Export G-code for selected operation'}
+                    disabled={!selectedOperation}
+                    onClick={() => {
+                      if (selectedOperation) {
+                        onExportOperation(selectedOperation.id)
+                      }
+                    }}
+                  >
+                    <Icon id="export" />
+                  </button>
+                  <button
+                    className="tree-action-btn"
+                    type="button"
+                    title="Expand operation properties"
+                    aria-label="Expand operation properties"
+                    onClick={() => setExpandedCamSection('operation')}
+                  >
+                    <Icon id="expand" />
+                  </button>
+                </div>
               </div>
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-body">

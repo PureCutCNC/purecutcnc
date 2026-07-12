@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -86,6 +86,57 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   const [tabsCollapsed, setTabsCollapsed] = useState(false)
   const [clampsCollapsed, setClampsCollapsed] = useState(false)
   const dragOverTarget = useRef<{ kind: 'features' | 'folder' | 'feature'; id?: string } | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const pendingScrollFeatureId = useRef<string | null>(null)
+
+  // #276: selection can originate outside the tree (sketch canvas click, sketch-edit
+  // entry) — bring the primary selected row into view. Keyed on selectedNode's object
+  // identity, not the feature id: every selection action builds a fresh selectedNode
+  // (hover does not), so re-selecting the same feature — or another member of a
+  // grouped folder, which keeps the same primary id — still scrolls. block:'nearest'
+  // keeps clicks on an already-visible row from scrolling. If the row is hidden
+  // inside a collapsed folder or section, expand it (revealFeatureFolder skips undo
+  // history) and let the follow-up effect below scroll once the row is rendered.
+  const selectedNode = selection.selectedNode
+  useEffect(() => {
+    pendingScrollFeatureId.current = null
+    if (selectedNode?.type !== 'feature') return
+    const row = panelRef.current?.querySelector(`[data-feature-id="${CSS.escape(selectedNode.featureId)}"]`)
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      return
+    }
+    const { project: currentProject, revealFeatureFolder } = useProjectStore.getState()
+    const feature = currentProject.features.find((f) => f.id === selectedNode.featureId)
+    if (!feature) return
+    pendingScrollFeatureId.current = feature.id
+    const section = sectionForOperation(feature.operation)
+    // Intentional setState-in-effect: the effect reacts to an external event
+    // (store selection change) and must expand the hidden row's section before
+    // the deferred scroll below can find it. Fires only on the collapsed path.
+    if (section === 'regions') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRegionsCollapsed(false)
+    } else if (section === 'construction') {
+      setConstructionCollapsed(false)
+    } else {
+      setFeaturesCollapsed(false)
+    }
+    if (feature.folderId) {
+      revealFeatureFolder(feature.folderId)
+    }
+  }, [selectedNode])
+
+  // Deferred half of the reveal-then-scroll: runs after every commit and scrolls
+  // once the newly expanded row is actually in the DOM.
+  useEffect(() => {
+    const id = pendingScrollFeatureId.current
+    if (!id) return
+    const row = panelRef.current?.querySelector(`[data-feature-id="${CSS.escape(id)}"]`)
+    if (!row) return
+    pendingScrollFeatureId.current = null
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  })
 
   function handleFeatureDragStart(id: string) {
     setDragItem({ kind: 'feature', id })
@@ -311,6 +362,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           selection.selectedFeatureIds.includes(feature.id)
         }
         isDragging={dragItem?.kind === 'feature' && dragItem.id === feature.id}
+        dataFeatureId={feature.id}
         visible={feature.visible}
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
@@ -351,7 +403,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   }
 
   return (
-    <div className="feature-tree-panel">
+    <div className="feature-tree-panel" ref={panelRef}>
       <div className="tree-list">
         <TreeRow
           label="Project"
@@ -788,6 +840,7 @@ interface TreeRowProps {
   depth?: number
   isSelected: boolean
   isDragging: boolean
+  dataFeatureId?: string
   visible?: boolean
   operation?: FeatureOperation
   profileClosed?: boolean
@@ -828,6 +881,7 @@ function TreeRow({
   depth = 0,
   isSelected,
   isDragging,
+  dataFeatureId,
   visible,
   operation,
   profileClosed = true,
@@ -888,6 +942,7 @@ function TreeRow({
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
         kind === 'feature' && operation === 'construction' ? 'tree-row--construction' : '',
       ].join(' ')}
+      data-feature-id={dataFeatureId}
       onClick={onClick}
       onMouseDown={(event) => {
         if (event.shiftKey) {

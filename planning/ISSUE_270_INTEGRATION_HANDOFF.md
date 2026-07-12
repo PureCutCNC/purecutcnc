@@ -18,7 +18,7 @@ Do not merge the PR into `main`.
 - Integration branch: `feat/issue-270-svg-dxf-import-integration`
 - Integration worktree: `/Users/frankp/Projects/worktrees/purecutcnc/issue-270-svg-dxf-import-integration`
 - Base commit: `276245e7fcc462fac3c30fd4d51e60ca4178bf6d`
-- Latest main merged: `fe6efb0` (worker progress reporting)
+- Latest main merged: `fe569dd` (PR #278)
 - Approved plan: GitHub issue #270
 - Manager session: 2026-07-09 through 2026-07-12
 - Status: `verified; PR ready for user testing`
@@ -254,10 +254,11 @@ changing explicit user-selected operations.
   from 6,292 stroke submissions to 380, with about 259 ms zoom latency. A
   five-step pan used 1,330 strokes in about 746 ms. The remaining cost is the
   source drawing's roughly 114,840 vector segments; no console errors occurred.
-- `npm run build` passed lint, license headers, TypeScript, all 104 structural
+- `npm run build` passed lint, license headers, TypeScript, all 108 structural
   test files, and the production Vite bundle.
-- `npm run test:e2e` passed all 24 Playwright tests, including the new desktop
-  and landscape-tablet Line creation target coverage.
+- `npm run test:e2e` passed all 26 Playwright tests after merging current
+  `main`, including the new desktop and landscape-tablet Line creation target
+  coverage and `main`'s G-code export smoke.
 - The reported transient red, green, and blue 3D lines match the intentional
   machine-origin X/Y/Z triad. Grid helpers use gray/blue-gray colors, so no
   speculative 3D change was made without a reproducible defect.

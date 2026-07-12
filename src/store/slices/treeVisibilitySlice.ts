@@ -28,6 +28,7 @@ export type TreeVisibilitySlice = Pick<
   | 'toggleConstructionFolderVisible'
   | 'selectFolderFeatures'
   | 'toggleFolderGrouped'
+  | 'revealFeatureFolder'
 >
 
 export function createTreeVisibilitySlice(
@@ -226,6 +227,26 @@ export function createTreeVisibilitySlice(
       return selectionChanged
         ? { ...base, selection: { ...s.selection, groupFolderId: nextGroupFolderId } }
         : base
+    }),
+
+  // Selection-driven reveal (#276): expands a collapsed folder WITHOUT pushing
+  // undo history — Cmd+Z after clicking a feature in the sketch must undo a
+  // real edit, not this UI-state change.
+  revealFeatureFolder: (folderId) =>
+    set((s) => {
+      const folder = s.project.featureFolders.find((f) => f.id === folderId)
+      if (!folder || !folder.collapsed) {
+        return {}
+      }
+      return {
+        project: {
+          ...s.project,
+          featureFolders: s.project.featureFolders.map((f) =>
+            f.id === folderId ? { ...f, collapsed: false } : f
+          ),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        },
+      }
     }),
 
   }
