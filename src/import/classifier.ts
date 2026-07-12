@@ -65,6 +65,24 @@ function bboxContains(outer: BBox, inner: BBox): boolean {
   )
 }
 
+function bboxesOverlapOrTouch(a: BBox, b: BBox): boolean {
+  return !(
+    a.maxX < b.minX ||
+    b.maxX < a.minX ||
+    a.maxY < b.minY ||
+    b.maxY < a.minY
+  )
+}
+
+function bboxesEqual(a: BBox, b: BBox): boolean {
+  return (
+    a.minX === b.minX &&
+    a.maxX === b.maxX &&
+    a.minY === b.minY &&
+    a.maxY === b.maxY
+  )
+}
+
 // ── segment geometry ───────────────────────────────────────────────────
 
 /**
@@ -246,6 +264,7 @@ function pathsEdgesIntersect(a: Point[], b: Point[]): boolean {
  * in both directions (each is fully contained in the other).
  */
 function areProfilesEqual(a: ProfileData, b: ProfileData): boolean {
+  if (!bboxesEqual(a.bbox, b.bbox)) return false
   const diffAB = clipperDifference(a.clipperPath, b.clipperPath)
   if (diffAB.length > 0) return false
   const diffBA = clipperDifference(b.clipperPath, a.clipperPath)
@@ -353,6 +372,7 @@ function buildNestingTree(
   const edgeContact = new Set<number>()
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
+      if (!bboxesOverlapOrTouch(profiles[i].bbox, profiles[j].bbox)) continue
       if (pathsEdgesIntersect(profiles[i].flattened, profiles[j].flattened)) {
         ambiguous.add(i)
         ambiguous.add(j)
@@ -397,6 +417,7 @@ function buildNestingTree(
       // Self-invalid profiles can't be parents; others (including
       // edge-contact-ambiguous) are eligible as containers.
       if (profiles[j].selfInvalid) continue
+      if (profiles[j].area <= profiles[i].area || profiles[j].area >= bestArea) continue
 
       if (!isStrictlyInside(profiles[i], profiles[j])) continue
 

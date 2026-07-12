@@ -494,6 +494,20 @@ function test_manual_ambiguous_contact_stays_add(): void {
   )
 }
 
+function test_large_disjoint_dxf_auto_batch_is_bounded(): void {
+  const shapes = Array.from({ length: 2_980 }, (_, index) => {
+    const column = index % 100
+    const row = Math.floor(index / 100)
+    return closedRect(`shape-${index}`, null, column * 20, row * 20, 10, 10)
+  })
+  const startedAt = Date.now()
+  const { classified, result } = classifyImportShapes(shapes, 'auto', 'dxf')
+  const elapsedMs = Date.now() - startedAt
+  assert(classified.length === shapes.length, 'all disjoint contours classified')
+  assert(result.addCount === shapes.length, 'all disjoint contours stay top-level Add')
+  assert(elapsedMs < 3_000, `2,980 disjoint DXF contours classified in ${elapsedMs}ms`)
+}
+
 // ── run ───────────────────────────────────────────────────────────────
 
 let passed = 0
@@ -530,6 +544,7 @@ const tests: Array<{ name: string; fn: () => void }> = [
   { name: 'touching chain all Add', fn: test_touching_chain_all_add },
   { name: 'manual nested operation inference', fn: test_manual_nested_operation_inference },
   { name: 'manual ambiguous contact stays Add', fn: test_manual_ambiguous_contact_stays_add },
+  { name: '2,980 disjoint DXF Auto contours stay bounded', fn: test_large_disjoint_dxf_auto_batch_is_bounded },
 ]
 
 for (const t of tests) {
