@@ -133,12 +133,91 @@ function testSeekIsGeometricDespiteFeedScaling(): void {
   console.log('seek stays geometric: PASSED')
 }
 
+function gridsEqual(a: SimulationGrid, b: SimulationGrid): boolean {
+  if (a.topZ.length !== b.topZ.length) return false
+  for (let i = 0; i < a.topZ.length; i += 1) {
+    if (!approx(a.topZ[i], b.topZ[i], 1e-6)) return false
+  }
+  return true
+}
+
+function slotMoves(): ToolpathMove[] {
+  return [
+    { kind: 'plunge', from: { x: 5, y: 2, z: 0 }, to: { x: 5, y: 2, z: -2 } },
+    { kind: 'cut', from: { x: 5, y: 2, z: -2 }, to: { x: 35, y: 2, z: -2 } },
+  ]
+}
+
+function testForwardSeekMatchesFreshReplay(): void {
+  console.log('Testing forward seek from a mid-path state matches a fresh replay...')
+  const incremental = new PlaybackController(flatGrid(), slotMoves(), FLAT_TOOL)
+  incremental.seekToDistance(8)
+  incremental.seekToDistance(20)
+  incremental.seekToDistance(27.5)
+
+  const fresh = new PlaybackController(flatGrid(), slotMoves(), FLAT_TOOL)
+  fresh.seekToDistance(27.5)
+
+  assert(approx(incremental.getDistanceTraveled(), 27.5), `incremental seeks should land at 27.5, got ${incremental.getDistanceTraveled()}`)
+  assert(gridsEqual(incremental.liveGrid, fresh.liveGrid), 'chained forward seeks must produce the same grid as one fresh seek')
+  console.log('forward seek matches fresh replay: PASSED')
+}
+
+function testBackwardSeekRestoresEarlierState(): void {
+  console.log('Testing backward seek restores the same grid as seeking there directly...')
+  const controller = new PlaybackController(flatGrid(), slotMoves(), FLAT_TOOL)
+  controller.seekToDistance(30)
+  controller.seekToDistance(10)
+
+  const reference = new PlaybackController(flatGrid(), slotMoves(), FLAT_TOOL)
+  reference.seekToDistance(10)
+
+  assert(approx(controller.getDistanceTraveled(), 10), `backward seek should land at 10, got ${controller.getDistanceTraveled()}`)
+  assert(gridsEqual(controller.liveGrid, reference.liveGrid), 'backward seek must restore un-cut material')
+  console.log('backward seek restores earlier state: PASSED')
+}
+
+function testDirtyRegionAccumulatesUntilCleared(): void {
+  console.log('Testing the dirty region accumulates across steps and resets dirty the full grid...')
+  const controller = new PlaybackController(flatGrid(), slotMoves(), FLAT_TOOL)
+
+  controller.advance(5)
+  const first = controller.getDirtyRegion()
+  assert(first !== null, 'cutting should produce a dirty region')
+
+  controller.advance(10)
+  const accumulated = controller.getDirtyRegion()
+  assert(accumulated !== null, 'dirty region should persist until cleared')
+  assert(
+    accumulated!.colMax >= first!.colMax,
+    'dirty region should accumulate (grow) across advances when not cleared',
+  )
+
+  controller.clearDirtyRegion()
+  assert(controller.getDirtyRegion() === null, 'clearDirtyRegion should empty the region')
+
+  // A backward seek resets to the base grid — cells rise, so the whole grid is dirty.
+  controller.seekToDistance(2)
+  const afterReset = controller.getDirtyRegion()
+  const grid = controller.liveGrid
+  assert(afterReset !== null, 'reset should mark a dirty region')
+  assert(
+    afterReset!.colMin === 0 && afterReset!.rowMin === 0
+    && afterReset!.colMax === grid.cols - 1 && afterReset!.rowMax === grid.rows - 1,
+    'reset must dirty the entire grid (restored cells rise, which cut tracking never reports)',
+  )
+  console.log('dirty region accumulation and reset: PASSED')
+}
+
 try {
   testSubdividePreservesMoveMetadata()
   testSubdivideLeavesShortMovesUntouched()
   testReducedFeedMoveAdvancesSlower()
   testDisabledReferenceFeedIsConstantSpeed()
   testSeekIsGeometricDespiteFeedScaling()
+  testForwardSeekMatchesFreshReplay()
+  testBackwardSeekRestoresEarlierState()
+  testDirtyRegionAccumulatesUntilCleared()
   console.log('\nAll playback tests PASSED.')
 } catch (e) {
   console.error(e)

@@ -21,7 +21,7 @@ import type { SimulationGrid } from './types'
 //   AmbientLight(0xffffff, 0.7)
 //   DirectionalLight(0xffffff, 0.9) at (120, 180, 120)
 //   DirectionalLight(0x96b6ff, 0.35) at (-120, 80, -80)
-const LIGHTING_GLSL = /* glsl */ `
+export const LIGHTING_GLSL = /* glsl */ `
   vec3 calcLighting(vec3 normal) {
     vec3 keyDir = normalize(vec3(120.0, 180.0, 120.0));
     vec3 fillDir = normalize(vec3(-120.0, 80.0, -80.0));

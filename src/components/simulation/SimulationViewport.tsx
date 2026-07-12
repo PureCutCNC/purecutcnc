@@ -18,8 +18,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
-import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProfileBoundaryGeometries, createShaderDrivenBoundaryGeometries, updateHeightfieldTexture } from '../../engine/simulation/gpuMesh'
+import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProfileBoundaryGeometries, createShaderDrivenBoundaryGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
 import { createDynamicBoundaryMaterial, createHeightfieldMaterial, createShaderDrivenBoundaryMaterial } from '../../engine/simulation/heightfieldShader'
+import { createInstancedBoundaryGroup, wallInstanceCount } from '../../engine/simulation/instancedBoundary'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -80,7 +81,13 @@ const VIEW_PRESETS: Record<ViewPreset, { theta: number; phi: number; up: THREE.V
 }
 
 export interface SimulationPlaybackInput {
-  baseGrid: SimulationGrid
+  /**
+   * Starting stock state (prior operations already applied). A thunk so the
+   * heightfield replay of prior operations runs when the user actually starts
+   * playback — not eagerly on every project change while the tab is open. The
+   * provider caches the result until its inputs change.
+   */
+  getBaseGrid: () => SimulationGrid
   moves: ToolpathMove[]
   toolType: ToolType
   toolRadius: number
@@ -140,13 +147,24 @@ const SIMULATION_DETAIL_MIN = 240
 const SIMULATION_DETAIL_MAX = 1500
 const SIMULATION_DETAIL_STEP = 40
 
-// Above this cell count the shader-driven playback boundary mesh (which emits
-// ~18 vertices × ~48 B per cell) would allocate hundreds of MB of typed
-// arrays at build time. We fall back to the static dynamic-profile mesh
-// (walls only at material/empty boundaries at build time, no cut-through
-// rebuilds) for very high detail playback. The cosmetic "missing walls at
-// cut-through" issue from before #103 reappears at the upper end of the
-// detail slider — but it's never a crash, and the perf stays smooth.
+// SPIKE FLAG: render boundary walls + floor with the zero-per-cell-attribute
+// instanced pipeline (instancedBoundary.ts) instead of the CPU-built meshes.
+// Instanced walls have no cell cap, no build stall, and O(1) memory; flip to
+// false to A/B against the previous pipeline.
+const USE_INSTANCED_BOUNDARY = true
+
+// SPIKE FLAG: print compact playback perf stats (advance/upload ms, fps,
+// dirty-rect size) to the console every ~2 s while playing.
+const PLAYBACK_PERF_LOG = true
+
+// Legacy pipeline only (USE_INSTANCED_BOUNDARY = false): above this cell count
+// the shader-driven playback boundary mesh (which emits ~18 vertices × ~48 B
+// per cell) would allocate hundreds of MB of typed arrays at build time. We
+// fall back to the static dynamic-profile mesh (walls only at material/empty
+// boundaries at build time, no cut-through rebuilds) for very high detail
+// playback. The cosmetic "missing walls at cut-through" issue from before #103
+// reappears at the upper end of the detail slider — but it's never a crash,
+// and the perf stays smooth.
 // 500×500 ≈ 250 000 cells → ~108 MB of shader-driven attribute buffers.
 const SHADER_DRIVEN_BOUNDARY_MAX_CELLS = 500 * 500
 
@@ -200,7 +218,6 @@ const PLAYBACK_STEP_SIZES_IN = [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
 // 0.1 in ≈ 2.5 mm — same visual cadence in either unit system.
 const PLAYBACK_DEFAULT_STEP_MM = 2.5
 const PLAYBACK_DEFAULT_STEP_IN = 0.1
-const PLAYBACK_REBUILD_INTERVAL_MS = 0
 
 function disposeSceneObject(object: THREE.Object3D): void {
   const geometries = new Set<THREE.BufferGeometry>()
@@ -639,12 +656,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // Mirror isActive into a ref so the render loop (raw RAF, not React-driven)
   // can read it without re-binding the closure each prop change.
   const isActiveRef = useRef(isActive)
+  // Render-on-demand: the RAF loop only draws when something changed (scene
+  // mutation, texture upload, tool pose, resize) or playback is running.
+  // Camera interaction renders imperatively via the orbit controls' onChange.
+  // Without this the viewport re-rendered a potentially multi-million-vertex
+  // scene at 60 fps while completely idle.
+  const needsRenderRef = useRef(true)
   useEffect(() => {
     isActiveRef.current = isActive
     // When becoming active again, kick a render so the scene is current
     // immediately instead of after the next animate() tick fires (which can
     // be up to ~16 ms away and reads stale buffers on the first paint).
     if (isActive) {
+      needsRenderRef.current = true
       const renderer = rendererRef.current
       const scene = sceneRef.current
       const camera = cameraRef.current
@@ -674,7 +698,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
-  const playbackLastRebuildRef = useRef<number>(0)
+  // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
+  const pendingSeekFractionRef = useRef<number | null>(null)
+  const seekFrameRef = useRef<number>(0)
   const isPlayingRef = useRef(false)
   const playbackSpeedRef = useRef(baseSpeed * PLAYBACK_DEFAULT_MULTIPLIER)
   const playbackMaxStepRef = useRef(playbackMaxStep)
@@ -721,6 +747,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(boundaryMeshRef.current)
       boundaryMeshRef.current = null
     }
+    needsRenderRef.current = true
   }, [])
 
   const disposeClampMeshes = useCallback((scene: THREE.Scene) => {
@@ -734,6 +761,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     }
     clampObjectsRef.current = []
+    needsRenderRef.current = true
   }, [])
 
   const disposeOriginMesh = useCallback((scene: THREE.Scene) => {
@@ -752,6 +780,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     })
     originObjectRef.current = null
+    needsRenderRef.current = true
   }, [])
 
   const zoomToModel = useCallback(() => {
@@ -824,8 +853,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // eslint-disable-next-line react-hooks/immutability -- see rendererRef above (three.js objects in cross-effect refs).
     cameraRef.current = camera
 
+    // Camera changes request a draw from the RAF loop rather than rendering
+    // inline: pointermove can outpace the display refresh, and the loop
+    // coalesces those into at most one render per frame.
     const controls = createOrbitControls(camera, renderer.domElement, () => {
-      renderer.render(scene, camera)
+      needsRenderRef.current = true
     }, () => zoomWindowActiveRef.current)
     controlsRef.current = controls
 
@@ -842,7 +874,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       onRestored: () => {
         // three rebuilds its GL state itself and re-uploads textures/geometry
         // from CPU-side data on the next animate() frame — only the overlay
-        // needs clearing.
+        // needs clearing (plus a render request, since draws are on-demand).
+        needsRenderRef.current = true
         setWebglStatus('ok')
       },
     })
@@ -853,6 +886,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // would otherwise have to wait for the current frame's heavy render to
       // finish before React could commit the new layout.
       if (!isActiveRef.current) return
+      // Draw only when something changed (or playback animates every frame).
+      if (!needsRenderRef.current && !isPlayingRef.current) return
+      needsRenderRef.current = false
       renderer.render(scene, camera)
     }
     animate()
@@ -861,6 +897,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       renderer.setSize(mount.clientWidth, mount.clientHeight)
       camera.aspect = mount.clientWidth / mount.clientHeight
       camera.updateProjectionMatrix()
+      needsRenderRef.current = true
     })
     resizeObserver.observe(mount)
 
@@ -918,10 +955,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     scene.add(surface)
     objectRef.current = surface
 
-    const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
-    const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
-    scene.add(boundary)
-    boundaryMeshRef.current = boundary
+    if (USE_INSTANCED_BOUNDARY) {
+      // Walls at every height step + underside, all shader-driven: nothing to
+      // rebuild on the CPU when the simulation result changes, and interior
+      // pocket walls render as true verticals instead of one-cell-wide slants.
+      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
+      scene.add(boundary)
+      boundaryMeshRef.current = boundary
+    } else {
+      const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
+      const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
+      scene.add(boundary)
+      boundaryMeshRef.current = boundary
+    }
+    needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
       const bounds = new THREE.Box3().setFromObject(surface)
@@ -932,17 +979,54 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
 
-  // The playback boundary is a static shader-driven mesh: walls are emitted at
-  // every grid edge once, and the vertex shader samples both adjacent cells'
-  // heightfields per frame to set wall heights. The only per-tick work here is
-  // marking the heightfield texture dirty so the GPU re-uploads it.
-  const rebuildPlaybackGeometry = useCallback(() => {
+  // Spike instrumentation: per-frame cost accumulators, flushed to the console
+  // every ~2 s while playing (see PLAYBACK_PERF_LOG).
+  const playbackPerfRef = useRef({
+    frames: 0,
+    advanceMs: 0,
+    advanceMaxMs: 0,
+    uploadMs: 0,
+    partialUploads: 0,
+    fullUploads: 0,
+    dirtyCells: 0,
+    windowStart: 0,
+  })
+
+  // The playback boundary mesh is static — walls track the heightfield texture
+  // in the vertex shader — so the only per-tick GPU work is pushing the cells
+  // the cutter actually touched this frame (the controller's dirty region)
+  // into the texture. Falls back to a full re-upload until the texture has
+  // been rendered once (no GL handle yet) or when partial upload is
+  // unavailable. No-ops when nothing changed since the last flush.
+  const flushPlaybackGridToGpu = useCallback(() => {
     const texture = playbackHeightfieldTextureRef.current
-    if (!texture) {
+    const controller = playbackControllerRef.current
+    if (!texture || !controller) {
       return
     }
-    updateHeightfieldTexture(texture)
-    playbackControllerRef.current?.clearDirtyRegion()
+    const region = controller.getDirtyRegion()
+    if (!region) {
+      return
+    }
+    const uploadStart = performance.now()
+    const renderer = rendererRef.current
+    const uploaded = renderer
+      ? uploadHeightfieldRegion(renderer, texture, controller.liveGrid, region)
+      : false
+    if (!uploaded) {
+      updateHeightfieldTexture(texture)
+    }
+    controller.clearDirtyRegion()
+    needsRenderRef.current = true
+
+    const perf = playbackPerfRef.current
+    perf.uploadMs += performance.now() - uploadStart
+    perf.dirtyCells += (region.colMax - region.colMin + 1) * (region.rowMax - region.rowMin + 1)
+    if (uploaded) {
+      perf.partialUploads += 1
+    } else {
+      perf.fullUploads += 1
+    }
   }, [])
 
 
@@ -957,13 +1041,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     latestPoseRef.current = pose
     // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
     tool.position.set(pose.x, pose.z, pose.y)
+    needsRenderRef.current = true
   }, [])
 
   const resetPlaybackRuntime = useCallback((building: boolean) => {
     cancelAnimationFrame(playbackFrameRef.current)
     playbackFrameRef.current = 0
+    cancelAnimationFrame(seekFrameRef.current)
+    seekFrameRef.current = 0
+    pendingSeekFractionRef.current = null
     playbackLastTimeRef.current = 0
-    playbackLastRebuildRef.current = 0
     isPlayingRef.current = false
     setIsPlaying(false)
     setIsPlaybackReady(false)
@@ -1002,6 +1089,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
       playbackControllerRef.current = null
       resetPlaybackRuntime(false)
+      needsRenderRef.current = true
       return
     }
 
@@ -1015,8 +1103,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const buildHandle = requestAnimationFrame(() => {
       if (cancelled) return
 
+      const buildStart = performance.now()
       const controller = new PlaybackController(
-        playbackInput.baseGrid,
+        playbackInput.getBaseGrid(),
         playbackInput.moves,
         {
           toolType: playbackInput.toolType,
@@ -1043,22 +1132,38 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(surface)
       playbackMaterialMeshRef.current = surface
 
-      // Guarded fallback for very high detail: the shader-driven mesh emits
-      // ~18 verts/cell, so >SHADER_DRIVEN_BOUNDARY_MAX_CELLS would allocate
-      // hundreds of MB. Fall back to the static dynamic-profile boundary
-      // (build-once, no rebuilds) at the cost of cosmetic walls not appearing
-      // at brand-new cut-through cells. Better than OOMing.
-      const totalCells = grid.cols * grid.rows
-      if (totalCells <= SHADER_DRIVEN_BOUNDARY_MAX_CELLS) {
-        const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
-        const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
+      if (USE_INSTANCED_BOUNDARY) {
+        // Instanced walls: no per-cell attributes, so any detail level builds
+        // instantly and stays within memory — no cell cap needed.
+        const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
         scene.add(boundary)
         playbackBoundaryMeshRef.current = boundary
       } else {
-        const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
-        const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
-        scene.add(boundary)
-        playbackBoundaryMeshRef.current = boundary
+        // Legacy pipeline. Guarded fallback for very high detail: the
+        // shader-driven mesh emits ~18 verts/cell, so above the cap it would
+        // allocate hundreds of MB. Fall back to the static dynamic-profile
+        // boundary (build-once, no rebuilds) at the cost of cosmetic walls not
+        // appearing at brand-new cut-through cells. Better than OOMing.
+        const totalCells = grid.cols * grid.rows
+        if (totalCells <= SHADER_DRIVEN_BOUNDARY_MAX_CELLS) {
+          const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
+          const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
+          scene.add(boundary)
+          playbackBoundaryMeshRef.current = boundary
+        } else {
+          const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
+          const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
+          scene.add(boundary)
+          playbackBoundaryMeshRef.current = boundary
+        }
+      }
+
+      if (PLAYBACK_PERF_LOG) {
+        console.log(
+          `[sim-playback] build ${(performance.now() - buildStart).toFixed(1)} ms | grid ${grid.cols}×${grid.rows}`
+          + ` | moves ${playbackInput.moves.length} → ${controller.getMoveCount()} subdivided`
+          + ` | boundary ${USE_INSTANCED_BOUNDARY ? `instanced (${wallInstanceCount(grid)} wall instances)` : 'legacy'}`,
+        )
       }
 
       const tool = buildToolMesh({
@@ -1118,7 +1223,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     playbackLastTimeRef.current = performance.now()
-    playbackLastRebuildRef.current = performance.now()
+    const perf = playbackPerfRef.current
+    perf.windowStart = performance.now()
 
     const tick = () => {
       const controllerInner = playbackControllerRef.current
@@ -1138,12 +1244,33 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const step = playbackMaxStepRef.current > 0
         ? Math.min(requested, playbackMaxStepRef.current)
         : requested
-      const gridChanged = controllerInner.advance(step)
+      controllerInner.advance(step)
+      const advanceMs = performance.now() - now
       updateToolMeshPose()
+      flushPlaybackGridToGpu()
 
-      if (gridChanged && now - playbackLastRebuildRef.current >= PLAYBACK_REBUILD_INTERVAL_MS) {
-        rebuildPlaybackGeometry()
-        playbackLastRebuildRef.current = now
+      if (PLAYBACK_PERF_LOG) {
+        perf.frames += 1
+        perf.advanceMs += advanceMs
+        if (advanceMs > perf.advanceMaxMs) perf.advanceMaxMs = advanceMs
+        const windowMs = performance.now() - perf.windowStart
+        if (windowMs >= 2000) {
+          const uploads = perf.partialUploads + perf.fullUploads
+          console.log(
+            `[sim-playback] ${perf.frames} frames in ${Math.round(windowMs)} ms (${(perf.frames / (windowMs / 1000)).toFixed(1)} fps)`
+            + ` | advance avg ${(perf.advanceMs / perf.frames).toFixed(2)} ms max ${perf.advanceMaxMs.toFixed(2)} ms`
+            + ` | upload avg ${(uploads > 0 ? perf.uploadMs / uploads : 0).toFixed(2)} ms`
+            + ` (${perf.partialUploads} partial, ${perf.fullUploads} full, avg ${uploads > 0 ? Math.round(perf.dirtyCells / uploads) : 0} cells)`,
+          )
+          perf.frames = 0
+          perf.advanceMs = 0
+          perf.advanceMaxMs = 0
+          perf.uploadMs = 0
+          perf.partialUploads = 0
+          perf.fullUploads = 0
+          perf.dirtyCells = 0
+          perf.windowStart = performance.now()
+        }
       }
 
       latestProgressRef.current = controllerInner.totalPathLength > 0
@@ -1151,7 +1278,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         : 1
 
       if (controllerInner.isFinished()) {
-        rebuildPlaybackGeometry()
+        flushPlaybackGridToGpu()
 
         setPlaybackProgress(latestProgressRef.current)
         setIsPlaying(false)
@@ -1168,7 +1295,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       cancelAnimationFrame(playbackFrameRef.current)
       playbackFrameRef.current = 0
     }
-  }, [isPlaying, playbackEnabled, rebuildPlaybackGeometry, updateToolMeshPose])
+  }, [isPlaying, playbackEnabled, flushPlaybackGridToGpu, updateToolMeshPose])
 
   // Convert a toolpath pose to machine-relative coordinates.
   // X and Z follow the usual origin-relative subtraction.
@@ -1228,13 +1355,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     if (controller.isFinished()) {
       controller.reset()
-      rebuildPlaybackGeometry()
+      flushPlaybackGridToGpu()
       latestProgressRef.current = 0
       setPlaybackProgress(0)
       updateToolMeshPose()
     }
     setIsPlaying((current) => !current)
-  }, [rebuildPlaybackGeometry, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose])
 
   const handleStop = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -1243,23 +1370,37 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     setIsPlaying(false)
     controller.reset()
-    rebuildPlaybackGeometry()
+    flushPlaybackGridToGpu()
     updateToolMeshPose()
     latestProgressRef.current = 0
     setPlaybackProgress(0)
-  }, [rebuildPlaybackGeometry, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose])
 
+  // Scrubbing fires a change event per mousemove; each engine seek can replay a
+  // large slice of the toolpath. Coalesce to one seek per animation frame: the
+  // slider position updates immediately, the engine applies the latest
+  // requested fraction on the next RAF. Forward drags are incremental in the
+  // controller (cuts are monotonic), so only leftward drags pay for a replay.
   const handleSeek = useCallback((fraction: number) => {
-    const controller = playbackControllerRef.current
-    if (!controller) {
-      return
-    }
-    controller.seekToFraction(fraction)
-    rebuildPlaybackGeometry()
-    updateToolMeshPose()
     latestProgressRef.current = fraction
     setPlaybackProgress(fraction)
-  }, [rebuildPlaybackGeometry, updateToolMeshPose])
+    pendingSeekFractionRef.current = fraction
+    if (seekFrameRef.current) {
+      return
+    }
+    seekFrameRef.current = requestAnimationFrame(() => {
+      seekFrameRef.current = 0
+      const controller = playbackControllerRef.current
+      const pending = pendingSeekFractionRef.current
+      pendingSeekFractionRef.current = null
+      if (!controller || pending === null) {
+        return
+      }
+      controller.seekToFraction(pending)
+      flushPlaybackGridToGpu()
+      updateToolMeshPose()
+    })
+  }, [flushPlaybackGridToGpu, updateToolMeshPose])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1281,6 +1422,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(mesh)
     }
     clampObjectsRef.current = nextClampMeshes
+    needsRenderRef.current = true
 
     return () => {
       disposeClampMeshes(scene)
@@ -1311,6 +1453,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const triad = buildOriginTriad(origin, axisSize)
     scene.add(triad)
     originObjectRef.current = triad
+    needsRenderRef.current = true
 
     return () => {
       disposeOriginMesh(scene)

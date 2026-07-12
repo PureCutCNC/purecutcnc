@@ -18,45 +18,16 @@ import type { Operation, Project } from '../../types/project'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
-import { cutterSurfaceZ } from './tools'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function indexFor(grid: SimulationGrid, col: number, row: number): number {
-  return row * grid.cols + col
-}
-
 function pointToCellRange(min: number, max: number, origin: number, cellSize: number, count: number): [number, number] {
   const start = clamp(Math.floor((min - origin) / cellSize), 0, count - 1)
   const end = clamp(Math.floor((max - origin) / cellSize), 0, count - 1)
   return [Math.min(start, end), Math.max(start, end)]
-}
-
-function pointSegmentDistanceAndT(
-  px: number,
-  py: number,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-): { distance: number; t: number } {
-  const dx = x1 - x0
-  const dy = y1 - y0
-  const lengthSq = dx * dx + dy * dy
-
-  if (lengthSq <= 1e-12) {
-    const ddx = px - x0
-    const ddy = py - y0
-    return { distance: Math.hypot(ddx, ddy), t: 0 }
-  }
-
-  const t = clamp(((px - x0) * dx + (py - y0) * dy) / lengthSq, 0, 1)
-  const cx = x0 + dx * t
-  const cy = y0 + dy * t
-  return { distance: Math.hypot(px - cx, py - cy), t }
 }
 
 export function moveIsMaterialRemoving(move: ToolpathMove): boolean {
@@ -88,34 +59,77 @@ export function applyMoveToGrid(
   let dirtyRowMin = grid.rows
   let dirtyRowMax = -1
 
-  const xyDx = move.to.x - move.from.x
-  const xyDy = move.to.y - move.from.y
-  const xyStationary = (xyDx * xyDx + xyDy * xyDy) <= 1e-12
+  const x0 = move.from.x
+  const y0 = move.from.y
+  const z0 = move.from.z
+  const segDx = move.to.x - x0
+  const segDy = move.to.y - y0
+  const segDz = move.to.z - z0
+  const segLengthSq = segDx * segDx + segDy * segDy
+  const xyStationary = segLengthSq <= 1e-12
+  const invSegLengthSq = xyStationary ? 0 : 1 / segLengthSq
+  const stationaryZ = Math.min(move.from.z, move.to.z)
+
+  // This is the hottest loop in the simulator (called per sub-move per frame
+  // during playback and for the whole path on seeks/replays), so the cutter
+  // profile is dispatched once per move and the distance math is inlined with
+  // a squared-distance early-out. Flat endmills and drills never pay a sqrt.
+  const radiusWithTolerance = toolRadius + 1e-9
+  const radiusSqWithTolerance = radiusWithTolerance * radiusWithTolerance
+  const isBall = toolType === 'ball_endmill'
+  const isVBit = toolType === 'v_bit'
+  const toolRadiusSq = toolRadius * toolRadius
+  let vBitInvSlope = 0
+  if (isVBit) {
+    const includedAngle = Math.max(1, Math.min(179, vBitAngle ?? 60))
+    const slope = Math.tan((includedAngle * Math.PI) / 360)
+    vBitInvSlope = slope > 1e-9 ? 1 / slope : 0
+  }
+
+  const topZ = grid.topZ
+  const stockBottomZ = grid.stockBottomZ
+  const cellSize = grid.cellSize
+  const originX = grid.originX
+  const originY = grid.originY
 
   for (let row = rowStart; row <= rowEnd; row += 1) {
-    const y = grid.originY + (row + 0.5) * grid.cellSize
+    const y = originY + (row + 0.5) * cellSize
+    const rowBase = row * grid.cols
     for (let col = colStart; col <= colEnd; col += 1) {
-      const x = grid.originX + (col + 0.5) * grid.cellSize
-      const { distance, t } = pointSegmentDistanceAndT(x, y, move.from.x, move.from.y, move.to.x, move.to.y)
-      const toolCenterZ = xyStationary
-        ? Math.min(move.from.z, move.to.z)
-        : move.from.z + (move.to.z - move.from.z) * t
-      const cutZ = cutterSurfaceZ(
-        toolType,
-        toolRadius,
-        toolCenterZ,
-        distance,
-        vBitAngle,
-      )
+      const x = originX + (col + 0.5) * cellSize
 
-      if (cutZ === null) {
+      let t: number
+      if (xyStationary) {
+        t = 0
+      } else {
+        t = ((x - x0) * segDx + (y - y0) * segDy) * invSegLengthSq
+        if (t < 0) t = 0
+        else if (t > 1) t = 1
+      }
+      const ddx = x - (x0 + segDx * t)
+      const ddy = y - (y0 + segDy * t)
+      const distanceSq = ddx * ddx + ddy * ddy
+      if (distanceSq > radiusSqWithTolerance) {
         continue
       }
 
-      const idx = indexFor(grid, col, row)
-      const nextZ = Math.max(grid.stockBottomZ, cutZ)
-      if (nextZ < grid.topZ[idx] - 1e-9) {
-        grid.topZ[idx] = nextZ
+      const toolCenterZ = xyStationary ? stationaryZ : z0 + segDz * t
+
+      let cutZ: number
+      if (isBall) {
+        const clampedSq = Math.min(toolRadiusSq, distanceSq)
+        cutZ = toolCenterZ + toolRadius - Math.sqrt(toolRadiusSq - clampedSq)
+      } else if (isVBit) {
+        cutZ = toolCenterZ + Math.sqrt(distanceSq) * vBitInvSlope
+      } else {
+        // flat_endmill and drill cut a flat bottom at the tool center Z.
+        cutZ = toolCenterZ
+      }
+
+      const idx = rowBase + col
+      const nextZ = cutZ > stockBottomZ ? cutZ : stockBottomZ
+      if (nextZ < topZ[idx] - 1e-9) {
+        topZ[idx] = nextZ
         changed += 1
         if (col < dirtyColMin) dirtyColMin = col
         if (col > dirtyColMax) dirtyColMax = col

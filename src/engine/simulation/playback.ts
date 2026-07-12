@@ -190,9 +190,22 @@ export class PlaybackController {
     this.distanceTraveled = 0
     this.finished = this.moves.length === 0
     this.lastMoveApplied = -1
-    this.frameDirtyRegion = null
+    // Restoring the base grid can RAISE cells (un-cut them), which per-move cut
+    // tracking never reports — so a reset dirties the whole grid. Callers that
+    // upload the dirty region to the GPU pick this up like any other change.
+    this.frameDirtyRegion = {
+      colMin: 0,
+      colMax: this.liveGrid.cols - 1,
+      rowMin: 0,
+      rowMax: this.liveGrid.rows - 1,
+    }
   }
 
+  /**
+   * Cells whose heights may have changed since the last `clearDirtyRegion()`.
+   * Accumulates across `advance`/`seek*`/`reset` calls until cleared, so the
+   * caller controls the upload cadence (typically once per rendered frame).
+   */
   getDirtyRegion(): DirtyRegion | null {
     return this.frameDirtyRegion
   }
@@ -272,7 +285,6 @@ export class PlaybackController {
       return false
     }
 
-    this.frameDirtyRegion = null
     let remaining = amount
     let gridChanged = false
 
@@ -359,16 +371,37 @@ export class PlaybackController {
     return gridChanged
   }
 
+  /**
+   * Position the tool at an absolute path distance. Seeking is geometric
+   * (per-move feed ignored) so the progress bar maps 1:1 onto path length.
+   *
+   * Forward seeks advance incrementally from the current state: cuts only ever
+   * lower cells and are order-independent, so advancing from distance d0 to d
+   * produces exactly the same grid as a reset + replay to d — without paying
+   * for the replay. Only backward seeks reset to the base grid and replay
+   * (material cannot be un-cut move by move).
+   *
+   * Returns true when grid contents changed (including the restore on a
+   * backward seek).
+   */
   seekToDistance(target: number): boolean {
     const clampedTarget = Math.max(0, Math.min(this.totalPathLength, target))
-    this.reset()
-    if (clampedTarget <= 0) {
+    const delta = clampedTarget - this.distanceTraveled
+
+    if (delta > 1e-9 && !this.finished) {
+      return this.step(delta, false)
+    }
+    if (delta >= -1e-9) {
+      // Already at the target (within float tolerance) — nothing to do.
       return false
     }
-    // Seeking is instantaneous positioning by path distance — step
-    // geometrically so distanceTraveled lands exactly on the target and the
-    // progress bar stays linear regardless of per-move feed.
-    return this.step(clampedTarget, false)
+
+    this.reset()
+    if (clampedTarget > 0) {
+      this.step(clampedTarget, false)
+    }
+    // A backward seek always un-cuts material, so the grid always changed.
+    return true
   }
 
   seekToFraction(fraction: number): boolean {

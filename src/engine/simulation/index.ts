@@ -23,6 +23,8 @@ export * from './gpuMesh'
 
 export * from './heightfieldShader'
 
+export * from './instancedBoundary'
+
 export * from './playback'
 
 export * from './toolMesh'

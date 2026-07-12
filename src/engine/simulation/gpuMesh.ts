@@ -15,7 +15,7 @@
  */
 
 import * as THREE from 'three'
-import type { SimulationGrid } from './types'
+import type { DirtyRegion, SimulationGrid } from './types'
 
 const MAX_UINT16_INDEX = 65535
 const STOCK_PLANE_CHUNK_CELLS = 128
@@ -146,19 +146,64 @@ function createStockPlaneGeometryChunk(
 }
 
 /**
- * Mark a sub-rectangle of the heightfield texture as needing re-upload.
- * Three.js r163+ supports partial source rects on `copyTextureToTexture`,
- * but the simplest reliable path is to flag the whole texture and let the
- * driver do the upload — the texture is small (cols×rows floats).
- *
- * For grids up to ~2000×2000 the full re-upload is a single
- * `texSubImage2D` of ~16 MB which takes <1 ms on modern GPUs. If profiling
- * shows this matters we can switch to manual `gl.texSubImage2D` on the dirty
- * rows only — the per-frame dirty region is tracked on the playback controller
- * (`getDirtyRegion()`) and can be threaded in here at that point.
+ * Mark the whole heightfield texture as needing re-upload. Fallback path —
+ * prefer `uploadHeightfieldRegion` during playback, which pushes only the
+ * dirty rectangle.
  */
 export function updateHeightfieldTexture(texture: THREE.DataTexture): void {
   texture.needsUpdate = true
+}
+
+/**
+ * Upload only a dirty sub-rectangle of the heightfield to the GPU via
+ * `texSubImage2D`, reading directly out of the shared `grid.topZ` array using
+ * WebGL2 UNPACK_ROW_LENGTH / UNPACK_SKIP_* addressing. A full-grid re-upload
+ * moves cols×rows×4 bytes every cutting frame (9 MB at detail 1500); the dirty
+ * rect during playback is typically just the tool's footprint.
+ *
+ * Reaches for the renderer's live GL texture handle (`renderer.properties`) —
+ * the same handle three uploads into. Returns false when that handle doesn't
+ * exist yet (texture not rendered once) or the context is not WebGL2; callers
+ * must then fall back to `updateHeightfieldTexture`. GL pixel-store state and
+ * the active texture binding are restored before returning, so three's state
+ * cache stays valid.
+ */
+export function uploadHeightfieldRegion(
+  renderer: THREE.WebGLRenderer,
+  texture: THREE.DataTexture,
+  grid: SimulationGrid,
+  region: DirtyRegion,
+): boolean {
+  const gl = renderer.getContext()
+  if (!(gl instanceof WebGL2RenderingContext) || gl.isContextLost()) {
+    return false
+  }
+
+  const textureProperties = renderer.properties.get(texture) as { __webglTexture?: WebGLTexture }
+  const glTexture = textureProperties.__webglTexture
+  if (!glTexture) {
+    return false
+  }
+
+  const colMin = Math.max(0, Math.min(region.colMin, grid.cols - 1))
+  const colMax = Math.max(colMin, Math.min(region.colMax, grid.cols - 1))
+  const rowMin = Math.max(0, Math.min(region.rowMin, grid.rows - 1))
+  const rowMax = Math.max(rowMin, Math.min(region.rowMax, grid.rows - 1))
+  const width = colMax - colMin + 1
+  const height = rowMax - rowMin + 1
+
+  const previousBinding = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null
+  gl.bindTexture(gl.TEXTURE_2D, glTexture)
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, grid.cols)
+  gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, colMin)
+  gl.pixelStorei(gl.UNPACK_SKIP_ROWS, rowMin)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, colMin, rowMin, width, height, gl.RED, gl.FLOAT, grid.topZ)
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0)
+  gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0)
+  gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0)
+  gl.bindTexture(gl.TEXTURE_2D, previousBinding)
+  return true
 }
 
 /**
