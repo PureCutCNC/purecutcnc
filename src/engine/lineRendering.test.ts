@@ -20,7 +20,7 @@
  * Run with: npx tsx src/engine/lineRendering.test.ts
  */
 
-import { closeLinePolygonIfNeeded } from './csg'
+import { closeLinePolygonIfNeeded } from './profilePolyline'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)

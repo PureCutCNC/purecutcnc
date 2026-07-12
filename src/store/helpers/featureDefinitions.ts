@@ -201,6 +201,18 @@ export function createDefinitionForFeature(
   feature: SketchFeature,
 ): { definitionId: string; definition: FeatureDefinition } {
   const definitionId = nextUniqueGeneratedId(project, 'f-')
+  return createDefinitionForFeatureWithId(feature, definitionId)
+}
+
+/**
+ * Build a feature definition with an ID reserved by a caller-owned bulk
+ * allocator. This keeps definition cloning policy centralized without doing
+ * a full project ID scan for every feature in a large import.
+ */
+export function createDefinitionForFeatureWithId(
+  feature: SketchFeature,
+  definitionId: string,
+): { definitionId: string; definition: FeatureDefinition } {
   const definition: FeatureDefinition = {
     id: definitionId,
     kind: feature.kind,
