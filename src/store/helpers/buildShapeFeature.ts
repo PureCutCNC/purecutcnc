@@ -18,6 +18,7 @@ import type { CreationTarget } from '../types'
 import type { FeatureOperation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { isConstruction, isRegion } from './featureRoles'
 import { nextUniqueGeneratedId } from './ids'
+import { inferManualFeatureOperation } from './manualFeatureOperation'
 
 export type ShapeKind = 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite'
 
@@ -37,7 +38,8 @@ export function buildShapeFeature(
   const operation: FeatureOperation =
     creationTarget === 'region' ? 'region'
     : creationTarget === 'construction' ? 'construction'
-    : 'subtract'
+    : profile.closed ? inferManualFeatureOperation(project, profile)
+    : 'line'
   const resolvedName =
     operation === 'region'
       ? `Region ${project.features.filter(isRegion).length + 1}`

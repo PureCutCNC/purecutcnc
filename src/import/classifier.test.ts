@@ -20,7 +20,7 @@
  * Run with: npx tsx src/import/classifier.test.ts
  */
 
-import { classifyImportShapes } from './classifier'
+import { classifyImportShapes, inferNestedSolidOperation } from './classifier'
 import type { ImportGeometryMode, ImportedShape } from './types'
 import { polygonProfile, rectProfile } from '../types/project'
 
@@ -461,6 +461,39 @@ function test_touching_chain_all_add(): void {
   assert(edgeWarning!.includes('"c"'), 'warning names c')
 }
 
+// ── Manual closed-feature default inference ───────────────────────────
+
+function test_manual_nested_operation_inference(): void {
+  const existing = [
+    { profile: rectProfile(0, 0, 100, 100), operation: 'add' as const },
+    { profile: rectProfile(20, 20, 60, 60), operation: 'subtract' as const },
+  ]
+  assert(
+    inferNestedSolidOperation(rectProfile(200, 200, 10, 10), existing) === 'add',
+    'outside all solids defaults Add',
+  )
+  assert(
+    inferNestedSolidOperation(rectProfile(5, 5, 10, 10), existing) === 'subtract',
+    'inside Add defaults Subtract',
+  )
+  assert(
+    inferNestedSolidOperation(rectProfile(30, 30, 10, 10), existing) === 'add',
+    'smallest Subtract container defaults Add',
+  )
+}
+
+function test_manual_ambiguous_contact_stays_add(): void {
+  const outer = { profile: rectProfile(0, 0, 100, 100), operation: 'add' as const }
+  assert(
+    inferNestedSolidOperation(rectProfile(0, 20, 10, 10), [outer]) === 'add',
+    'boundary-touching contour has no strict parent',
+  )
+  assert(
+    inferNestedSolidOperation(rectProfile(0, 0, 100, 100), [outer]) === 'add',
+    'duplicate contour has no strict parent',
+  )
+}
+
 // ── run ───────────────────────────────────────────────────────────────
 
 let passed = 0
@@ -495,6 +528,8 @@ const tests: Array<{ name: string; fn: () => void }> = [
   { name: 'concave container', fn: test_concave_container },
   { name: 'name lookup with non-solid shapes before solids', fn: test_name_lookup_with_non_solid_shapes },
   { name: 'touching chain all Add', fn: test_touching_chain_all_add },
+  { name: 'manual nested operation inference', fn: test_manual_nested_operation_inference },
+  { name: 'manual ambiguous contact stays Add', fn: test_manual_ambiguous_contact_stays_add },
 ]
 
 for (const t of tests) {

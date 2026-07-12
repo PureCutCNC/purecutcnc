@@ -64,8 +64,10 @@ function addLinkedPair(): { featureA: SketchFeature; featureB: SketchFeature; de
   // by the isFirst→force-add rule (first feature must be 'add').
   store.addRectFeature('BasePlate', 0, 0, 200, 200, 10)
 
-  // Create the actual base rect feature
-  store.addRectFeature('Base', 0, 0, 60, 40, 5)
+  // Create the actual base rect strictly inside the plate so the nesting
+  // default makes it Subtract. Avoid a shared boundary at (0, 0), which is
+  // intentionally ambiguous and therefore defaults Add.
+  store.addRectFeature('Base', 10, 10, 60, 40, 5)
   const features1 = useProjectStore.getState().project.features
   const base = features1[1] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
   const defId = base.definitionId!

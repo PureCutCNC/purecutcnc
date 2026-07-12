@@ -252,6 +252,39 @@ function areProfilesEqual(a: ProfileData, b: ProfileData): boolean {
   return diffBA.length === 0
 }
 
+export interface SolidNestingProfile {
+  profile: SketchProfile
+  operation: 'add' | 'subtract'
+}
+
+/**
+ * Infer the default solid role for one newly-created closed profile.
+ * The smallest strict existing container wins; touching, intersecting,
+ * duplicate, open, or invalid geometry does not establish parentage.
+ */
+export function inferNestedSolidOperation(
+  profile: SketchProfile,
+  existingSolids: SolidNestingProfile[],
+): 'add' | 'subtract' {
+  if (!profile.closed) return 'add'
+  const inner = buildProfileData(-1, profile)
+  if (inner.selfInvalid) return 'add'
+
+  let parentOperation: 'add' | 'subtract' | null = null
+  let parentArea = Infinity
+  for (let index = 0; index < existingSolids.length; index += 1) {
+    const candidate = existingSolids[index]
+    if (!candidate.profile.closed) continue
+    const outer = buildProfileData(index, candidate.profile)
+    if (outer.selfInvalid || outer.area >= parentArea) continue
+    if (!isStrictlyInside(inner, outer)) continue
+    parentArea = outer.area
+    parentOperation = candidate.operation
+  }
+
+  return parentOperation === 'add' ? 'subtract' : 'add'
+}
+
 // ── nesting tree ───────────────────────────────────────────────────────
 
 interface NestingNode {
