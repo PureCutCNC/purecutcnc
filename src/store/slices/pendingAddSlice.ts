@@ -20,9 +20,10 @@ import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { createDefinitionForFeature } from '../helpers/featureDefinitions'
+import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { IDENTITY_MATRIX } from '../../types/project'
 import { createTextFeatureAt } from '../helpers/naming'
-import { isConstruction, isRegion } from '../helpers/featureRoles'
+import { isConstruction } from '../helpers/featureRoles'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
 import {
   appendSplineDraftSegment,
@@ -723,36 +724,18 @@ export function createPendingAddSlice(
       }
 
       const depth = Math.min(state.project.stock.thickness, 10)
-      const id = nextUniqueGeneratedId(state.project, 'f')
-      const operation = state.creationTarget === 'region' ? 'region'
-        : state.creationTarget === 'construction' ? 'construction'
-        : 'subtract'
-      const feature: SketchFeature = {
-        id,
-        name: operation === 'region'
-          ? `Region ${state.project.features.filter(isRegion).length + 1}`
-          : operation === 'construction'
-            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
-            : `Composite ${state.project.features.length + 1}`,
-        kind: 'composite',
-        folderId: null,
-        sketch: {
-          profile: {
-            start: clonePoint(state.pendingAdd.start),
-            segments: closedSegments.map(cloneSegment),
-            closed: true,
-          },
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
+      const feature = buildShapeFeature(
+        state.project,
+        state.creationTarget,
+        'composite',
+        {
+          start: clonePoint(state.pendingAdd.start),
+          segments: closedSegments.map(cloneSegment),
+          closed: true,
         },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
+        `Composite ${state.project.features.length + 1}`,
+        depth,
+      )
 
       state.addFeature(feature)
       set({ pendingAdd: null })
