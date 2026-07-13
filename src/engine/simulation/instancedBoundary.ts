@@ -87,22 +87,46 @@ const wallVertexShader = /* glsl */ `
     ivec2 farCell;
     vec3 edgePerp;
 
+    ivec2 perpStep;
     if (uVertical > 0.5) {
       edgeAlong = vec3(0.0, 0.0, uCellSize);
       nearCell = ivec2(edgeCol - 1, edgeRow);
       farCell = ivec2(edgeCol, edgeRow);
       edgePerp = vec3(1.0, 0.0, 0.0);
+      perpStep = ivec2(1, 0);
     } else {
       edgeAlong = vec3(uCellSize, 0.0, 0.0);
       nearCell = ivec2(edgeCol, edgeRow - 1);
       farCell = ivec2(edgeCol, edgeRow);
       edgePerp = vec3(0.0, 0.0, 1.0);
+      perpStep = ivec2(0, 1);
     }
 
     float hNear = cellHeight(nearCell);
     float hFar = cellHeight(farCell);
     float top = max(hNear, hFar);
     float bottom = max(min(hNear, hFar), uStockBottomZ);
+
+    // Fin suppression on machined slopes: a V-flank or ball roundover crosses
+    // many cells, so every edge inside it has a small height step and would
+    // otherwise draw a sliver wall whose axis-aligned lighting differs sharply
+    // from the surface sheet's smooth per-fragment normals (reads as corduroy
+    // striping on V/ball walls). A step that merely CONTINUES its neighbors'
+    // gradient (same sign, comparable magnitude) is part of a slope the
+    // surface already renders — collapse it. Isolated steps (pocket walls,
+    // stepdown terraces, cut-through rims) keep their wall: their neighbors
+    // are flat or the step dwarfs the neighbor gradient.
+    float hNearBeyond = cellHeight(nearCell - perpStep);
+    float hFarBeyond = cellHeight(farCell + perpStep);
+    float dCenter = hFar - hNear;
+    float dNear = hNear - hNearBeyond;
+    float dFar = hFarBeyond - hFar;
+    bool slopeContinues =
+      (dNear * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dNear)) ||
+      (dFar * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dFar));
+    if (slopeContinues) {
+      top = bottom;
+    }
 
     vec3 pos = edgeStart + edgeAlong * position.y;
     pos.y = mix(bottom, top, position.z);
