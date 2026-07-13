@@ -20,10 +20,12 @@ import type {
   DimensionAnchor,
   DimensionAnnotation,
   DimensionRef,
+  FeatureDefinition,
   GlobalConstraint,
   GridSettings,
   LocalConstraint,
   LocalDimension,
+  Matrix2D,
   NamedDimension,
   Operation,
   Point,
@@ -32,7 +34,10 @@ import type {
   Segment,
   SketchFeature,
   SketchProfile,
+  STLFeatureData,
   Stock,
+  Tab,
+  TextFeatureData,
   Tool,
 } from '../types/project'
 
@@ -208,9 +213,47 @@ function convertGlobalConstraint(constraint: GlobalConstraint, from: Units, to: 
   return constraint
 }
 
+function convertTextFeatureData(text: TextFeatureData | null | undefined, from: Units, to: Units): TextFeatureData | null | undefined {
+  return text ? { ...text, size: convertLength(text.size, from, to) } : text
+}
+
+function convertStlFeatureData(stl: STLFeatureData | null | undefined, from: Units, to: Units): STLFeatureData | null | undefined {
+  if (!stl) return stl
+  return {
+    ...stl,
+    // The persisted mesh asset remains in its source coordinate system. Its
+    // per-feature scale is the project-unit bridge and must change with units.
+    scale: convertLength(stl.scale, from, to),
+    silhouettePaths: stl.silhouettePaths?.map((path) =>
+      path.map((point) => convertPoint(point, from, to))),
+  }
+}
+
+function convertMatrixTranslation(transform: Matrix2D, from: Units, to: Units): Matrix2D {
+  return {
+    ...transform,
+    // a/b/c/d are dimensionless rotation/scale; e/f are world translations.
+    e: convertLength(transform.e, from, to),
+    f: convertLength(transform.f, from, to),
+  }
+}
+
+function convertFeatureDefinition(definition: FeatureDefinition, from: Units, to: Units): FeatureDefinition {
+  return {
+    ...definition,
+    profile: convertProfile(definition.profile, from, to),
+    dimensions: definition.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
+    text: convertTextFeatureData(definition.text, from, to),
+    stl: convertStlFeatureData(definition.stl, from, to),
+  }
+}
+
 function convertFeature(feature: SketchFeature, from: Units, to: Units): SketchFeature {
+  const withInstance = feature as SketchFeature & { transform?: Matrix2D }
   return {
     ...feature,
+    text: convertTextFeatureData(feature.text, from, to),
+    stl: convertStlFeatureData(feature.stl, from, to),
     sketch: {
       ...feature.sketch,
       origin: convertPoint(feature.sketch.origin, from, to),
@@ -220,7 +263,10 @@ function convertFeature(feature: SketchFeature, from: Units, to: Units): SketchF
     },
     z_top: convertDimensionRef(feature.z_top, from, to),
     z_bottom: convertDimensionRef(feature.z_bottom, from, to),
-  }
+    ...(withInstance.transform
+      ? { transform: convertMatrixTranslation(withInstance.transform, from, to) }
+      : {}),
+  } as SketchFeature
 }
 
 function convertStock(stock: Stock, from: Units, to: Units): Stock {
@@ -267,6 +313,14 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     plungeFeed: convertLength(operation.plungeFeed, from, to),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
     stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
+    carveDepth: convertLength(operation.carveDepth, from, to),
+    maxCarveDepth: convertLength(operation.maxCarveDepth, from, to),
+    peckDepth: operation.peckDepth === undefined
+      ? undefined
+      : convertLength(operation.peckDepth, from, to),
+    retractHeight: operation.retractHeight === undefined
+      ? undefined
+      : convertLength(operation.retractHeight, from, to),
     waterlineMicroStepover: operation.waterlineMicroStepover === undefined
       ? undefined
       : convertLength(operation.waterlineMicroStepover, from, to),
@@ -276,6 +330,18 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     waterlineTipStepdown: operation.waterlineTipStepdown === undefined
       ? undefined
       : convertLength(operation.waterlineTipStepdown, from, to),
+  }
+}
+
+function convertTab(tab: Tab, from: Units, to: Units): Tab {
+  return {
+    ...tab,
+    x: convertLength(tab.x, from, to),
+    y: convertLength(tab.y, from, to),
+    w: convertLength(tab.w, from, to),
+    h: convertLength(tab.h, from, to),
+    z_top: convertLength(tab.z_top, from, to),
+    z_bottom: convertLength(tab.z_bottom, from, to),
   }
 }
 
@@ -335,10 +401,17 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
       ]),
     ),
     annotations: project.annotations.map((annotation) => convertDimensionAnnotation(annotation, fromUnits, toUnits)),
+    featureDefinitions: Object.fromEntries(
+      Object.entries(project.featureDefinitions).map(([key, definition]) => [
+        key,
+        convertFeatureDefinition(definition, fromUnits, toUnits),
+      ]),
+    ),
     features: project.features.map((feature) => convertFeature(feature, fromUnits, toUnits)),
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),
+    tabs: project.tabs.map((tab) => convertTab(tab, fromUnits, toUnits)),
     clamps: project.clamps.map((clamp) => convertClamp(clamp, fromUnits, toUnits)),
   }
 }

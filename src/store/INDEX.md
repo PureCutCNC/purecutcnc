@@ -80,6 +80,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `textReference.test.ts` — issue #228: text-feature creation mints a definition, reference copies resolve (selectable), text edits propagate to definition + siblings, 16-char name truncation
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
+- `unitChange.test.ts` — explicit convert-vs-reinterpret project unit changes, history/undo behavior, and same-unit no-op coverage
 - `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
 
 ## Gotchas
