@@ -34,7 +34,8 @@ import {
   rectProfile,
   stockFromFeature,
 } from '../types/project'
-import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
+import { projectWithFeatures, replaceProjectFeatures } from '../test/projectFixtures'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -45,7 +46,15 @@ function approx(a: number, b: number, epsilon = 1e-6): boolean {
   return Math.abs(a - b) < epsilon
 }
 
-function makeFeature(overrides: Partial<SketchFeature> & { id: string; name: string; folderId: string | null }): SketchFeature {
+function makeFeature(
+  overrides: Partial<SketchFeature> & {
+    id: string
+    name: string
+    folderId: string | null
+    definitionId?: string
+    transform?: Matrix2D
+  },
+): SketchFeature & { definitionId?: string; transform?: Matrix2D } {
   return {
     id: overrides.id,
     name: overrides.name,
@@ -65,6 +74,8 @@ function makeFeature(overrides: Partial<SketchFeature> & { id: string; name: str
     locked: overrides.locked ?? false,
     text: overrides.text ?? null,
     stl: overrides.stl ?? null,
+    ...(overrides.definitionId ? { definitionId: overrides.definitionId } : {}),
+    ...(overrides.transform ? { transform: overrides.transform } : {}),
   }
 }
 
@@ -132,19 +143,19 @@ function makeMesh(): PersistedImportedMesh {
 
 function makeSourceProject(units: 'mm' | 'inch' = 'mm'): Project {
   const base = newProject('Source', units)
-  return {
+  const features = [
+    makeFeature({ id: 'f-src-1', name: 'Outline', folderId: 'fd-src-a' }),
+    makeFeature({ id: 'f-src-2', name: 'Slot', folderId: 'fd-src-a' }),
+    makeFeature({ id: 'f-src-3', name: 'Hole', folderId: 'fd-src-b', kind: 'circle' }),
+  ]
+  return projectWithFeatures({
     ...base,
     featureFolders: [makeFolder('fd-src-a', 'Bracket'), makeFolder('fd-src-b', 'Holes')],
-    features: [
-      makeFeature({ id: 'f-src-1', name: 'Outline', folderId: 'fd-src-a' }),
-      makeFeature({ id: 'f-src-2', name: 'Slot', folderId: 'fd-src-a' }),
-      makeFeature({ id: 'f-src-3', name: 'Hole', folderId: 'fd-src-b', kind: 'circle' }),
-    ],
     featureTree: [
       { type: 'folder', folderId: 'fd-src-a' },
       { type: 'folder', folderId: 'fd-src-b' },
     ],
-  }
+  }, features)
 }
 
 // ---------------- inspectCamjString ----------------
@@ -219,14 +230,12 @@ function testMergeImportsFolderWithFeatures(): void {
 }
 
 function testMergeRenamesOnNameCollision(): void {
-  const current: Project = {
+  const existing = makeFeature({ id: 'f-existing', name: 'Outline', folderId: 'fd-existing' })
+  const current = projectWithFeatures({
     ...newProject('Target', 'mm'),
     featureFolders: [makeFolder('fd-existing', 'Bracket')],
-    features: [
-      makeFeature({ id: 'f-existing', name: 'Outline', folderId: 'fd-existing' }),
-    ],
     featureTree: [{ type: 'folder', folderId: 'fd-existing' }],
-  }
+  }, [existing])
   const source = makeSourceProject('mm')
   const result = mergeCamjFolders({
     currentProject: current,
@@ -242,18 +251,19 @@ function testMergeRenamesOnNameCollision(): void {
 function testMergeCopiesReferencedMeshAssets(): void {
   const source = makeSourceProject('mm')
   source.modelAssets = { 'mesh-src-1': makeMesh(), 'mesh-unused': makeMesh() }
-  source.features = source.features.map((f) =>
-    f.id === 'f-src-1'
-      ? { ...f, kind: 'stl', stl: { meshAssetId: 'mesh-src-1', scale: 1 } }
-      : f,
-  )
+  const sourceInstance = source.features.find((feature) => feature.id === 'f-src-1')!
+  source.featureDefinitions[sourceInstance.definitionId] = {
+    ...source.featureDefinitions[sourceInstance.definitionId],
+    kind: 'stl',
+    stl: { meshAssetId: 'mesh-src-1', scale: 1 },
+  }
   const current = newProject('Target', 'mm')
   const result = mergeCamjFolders({
     currentProject: current,
     sourceProject: source,
     selectedFolderIds: ['fd-src-a'],
   })
-  const stlFeature = result.project.features.find((f) => result.createdFeatureIds.includes(f.id) && f.stl)!
+  const stlFeature = resolvedProjectFeatures(result.project).find((f) => result.createdFeatureIds.includes(f.id) && f.stl)!
   const remappedAssetId = stlFeature.stl!.meshAssetId!
   assert(remappedAssetId !== 'mesh-src-1', 'mesh asset id should be remapped')
   assert(result.project.modelAssets[remappedAssetId] !== undefined, 'mesh asset should be copied under new id')
@@ -354,7 +364,7 @@ function testMergeScalesUnitsMmToInch(): void {
     sourceProject: source,
     selectedFolderIds: ['fd-src-a'],
   })
-  const imported = result.project.features.find((f) => result.createdFeatureIds.includes(f.id) && f.name.startsWith('Outline'))!
+  const imported = resolvedProjectFeatures(result.project).find((f) => result.createdFeatureIds.includes(f.id) && f.name.startsWith('Outline'))!
   // Source rect 10×10 mm → 10/25.4 in
   const expected = 10 / 25.4
   const lastSeg = imported.sketch.profile.segments[1]
@@ -380,7 +390,7 @@ function testMergeScalesToolUnits(): void {
 function testMergeHidesLooseFeatures(): void {
   const source = makeSourceProject('mm')
   // Add a loose (folderId: null) feature to the source.
-  source.features.push(makeFeature({ id: 'f-loose', name: 'Loose', folderId: null }))
+  replaceProjectFeatures(source, [...source.features, makeFeature({ id: 'f-loose', name: 'Loose', folderId: null })])
   source.featureTree.push({ type: 'feature', featureId: 'f-loose' })
   const inspection = inspectCamjString(JSON.stringify(source))
   assert(!inspection.folderIds.includes('f-loose'), 'loose features should not appear in folder list')
@@ -430,10 +440,14 @@ function makeFeatureBasedStockProject(units: 'mm' | 'inch' = 'mm'): Project {
     z_top: 20,
     z_bottom: 0,
   })
+  const withStockSource = projectWithFeatures(base, [...base.features, stockFeature])
+  const sourceFeature = withStockSource.features.find((feature) => feature.id === stockFeature.id)!
+  withStockSource.features = withStockSource.features.filter((feature) => feature.id !== stockFeature.id)
   return {
-    ...base,
+    ...withStockSource,
     stock: {
       ...stockFromFeature(stockFeature),
+      sourceFeature,
       material: 'walnut',
       color: '#a87f5b',
       visible: false,
@@ -528,7 +542,7 @@ function testMergeStockImportNoOpWhenSourceNotFeatureBased(): void {
 
 // ---------------- P1a regression: linked-instance transform preserved on import ----------------
 
-function makeV20ProjectWithLinkedPair(): Project {
+function makeProjectWithLinkedPair(): Project {
   const source = newProject('Source', 'mm')
   const defId = 'def-shared'
   const definition = {
@@ -540,60 +554,40 @@ function makeV20ProjectWithLinkedPair(): Project {
     stl: null,
     operation: 'add' as const,
   }
-  return {
+  const features = [
+    makeFeature({
+      id: 'f-linked-origin',
+      name: 'Linked Origin',
+      folderId: 'fd-src',
+      definitionId: defId,
+      transform: IDENTITY_MATRIX,
+    }),
+    makeFeature({
+      id: 'f-linked-offset',
+      name: 'Linked Offset',
+      folderId: 'fd-src',
+      sketch: {
+        profile: rectProfile(50, 0, 60, 40),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+      definitionId: defId,
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 50, f: 0 },
+    }),
+  ]
+  return projectWithFeatures({
     ...source,
-    version: '2.0',
     featureDefinitions: { [defId]: definition },
-    features: [
-      {
-        id: 'f-linked-origin',
-        name: 'Linked Origin',
-        kind: 'rect' as const,
-        folderId: 'fd-src',
-        sketch: {
-          profile: rectProfile(0, 0, 60, 40),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 0,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'add' as const,
-        z_top: 5,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-        definitionId: defId,
-        transform: IDENTITY_MATRIX,
-      } as SketchFeature & { definitionId?: string; transform?: Matrix2D },
-      {
-        id: 'f-linked-offset',
-        name: 'Linked Offset',
-        kind: 'rect' as const,
-        folderId: 'fd-src',
-        sketch: {
-          profile: rectProfile(50, 0, 60, 40),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 0,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'add' as const,
-        z_top: 5,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-        definitionId: defId,
-        transform: { a: 1, b: 0, c: 0, d: 1, e: 50, f: 0 } as Matrix2D,
-      } as SketchFeature & { definitionId?: string; transform?: Matrix2D },
-    ],
     featureFolders: [makeFolder('fd-src', 'LinkedParts')],
     featureTree: [{ type: 'folder', folderId: 'fd-src' }],
-  }
+  }, features)
 }
 
 function testMergePreservesLinkedInstanceTransform(): void {
-  const source = makeV20ProjectWithLinkedPair()
-  const offsetFeature = source.features.find((f) => f.id === 'f-linked-offset') as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const source = makeProjectWithLinkedPair()
+  const offsetFeature = source.features.find((f) => f.id === 'f-linked-offset')!
   assert(offsetFeature.definitionId === 'def-shared', 'fixture: offset feature should share definitionId')
   assert(offsetFeature.transform !== undefined && offsetFeature.transform.e === 50, 'fixture: offset feature should have translate-x=50 transform')
 
@@ -606,20 +600,23 @@ function testMergePreservesLinkedInstanceTransform(): void {
 
   assert(result.createdFeatureIds.length === 2, 'both linked features should be imported')
 
-  const importedFeatures = result.project.features.filter((f) => result.createdFeatureIds.includes(f.id))
-  const importedOffset = importedFeatures.find((f) => f.sketch.profile.start.x > 10) as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const importedInstances = result.project.features.filter((f) => result.createdFeatureIds.includes(f.id))
+  const importedFeatures = resolvedProjectFeatures(result.project).filter((f) => result.createdFeatureIds.includes(f.id))
+  const importedOffset = importedFeatures.find((f) => f.sketch.profile.start.x > 10)
   assert(importedOffset !== undefined, 'offset instance should be imported')
-  assert(importedOffset.transform !== undefined, 'imported offset instance should have a transform')
-  assert(importedOffset.transform!.e === 50, `imported transform.e should be 50, got ${importedOffset.transform!.e}`)
-  assert(importedOffset.transform!.a === 1 && importedOffset.transform!.d === 1, 'imported transform should be a pure translate (a=1,d=1)')
+  if (!importedOffset) throw new Error('offset instance should be imported')
+  const importedOffsetInstance = importedInstances.find((feature) => feature.id === importedOffset.id)!
+  assert(importedOffsetInstance.transform.e === 50, `imported transform.e should be 50, got ${importedOffsetInstance.transform.e}`)
+  assert(importedOffsetInstance.transform.a === 1 && importedOffsetInstance.transform.d === 1, 'imported transform should be a pure translate (a=1,d=1)')
 
   const resolved = resolveFeatureInstance(result.project, importedOffset.id)
   assert(resolved !== null, 'resolved offset should not be null')
   assert(Math.abs(resolved!.sketch.profile.start.x - 50) < 1e-6,
     `resolved start.x should be ~50 (offset), got ${resolved!.sketch.profile.start.x}`)
 
-  const importedOrigin = importedFeatures.find((f) => f.sketch.profile.start.x < 10) as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const importedOrigin = importedFeatures.find((f) => f.sketch.profile.start.x < 10)
   assert(importedOrigin !== undefined, 'origin instance should be imported')
+  if (!importedOrigin) throw new Error('origin instance should be imported')
   const resolvedOrigin = resolveFeatureInstance(result.project, importedOrigin.id)
   assert(resolvedOrigin !== null, 'resolved origin should not be null')
   assert(Math.abs(resolvedOrigin!.sketch.profile.start.x) < 1e-6,
@@ -627,9 +624,7 @@ function testMergePreservesLinkedInstanceTransform(): void {
 }
 
 function testMergeRemapsIntersectionConstraintReferences(): void {
-  const source = {
-    ...newProject('Source', 'mm'),
-    features: [
+  const sourceFeatures = [
       makeFeature({
         id: 'f-horizontal',
         name: 'Horizontal',
@@ -692,10 +687,12 @@ function testMergeRemapsIntersectionConstraintReferences(): void {
           }],
         },
       }),
-    ],
+    ]
+  const source = projectWithFeatures({
+    ...newProject('Source', 'mm'),
     featureFolders: [makeFolder('fd-src', 'Refs')],
     featureTree: [{ type: 'folder', folderId: 'fd-src' }],
-  } satisfies Project
+  }, sourceFeatures)
 
   const result = mergeCamjFolders({
     currentProject: newProject('Target', 'mm'),
@@ -710,7 +707,7 @@ function testMergeRemapsIntersectionConstraintReferences(): void {
   assert(importedHorizontal !== undefined, 'horizontal reference should be imported')
   assert(importedVertical !== undefined, 'vertical reference should be imported')
 
-  const constraint = importedOwner!.sketch.constraints[0]
+  const constraint = importedOwner!.constraints[0]
   assert(constraint.reference_intersection !== undefined, 'intersection metadata should be preserved')
   assert(constraint.segment_ids.includes(importedHorizontal!.id), 'segment_ids should include remapped horizontal id')
   assert(constraint.segment_ids.includes(importedVertical!.id), 'segment_ids should include remapped vertical id')

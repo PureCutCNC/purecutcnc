@@ -17,6 +17,7 @@
 import { rectProfile } from '../types/project'
 import type { FeatureOperation, SketchFeature } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolvedProjectFeatures } from './helpers/resolveFeatures'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -28,7 +29,7 @@ function resetStore(): void {
 }
 
 function operation(name: string): FeatureOperation | undefined {
-  return useProjectStore.getState().project.features.find((feature) => feature.name === name)?.operation
+  return resolvedProjectFeatures(useProjectStore.getState().project).find((feature) => feature.name === name)?.operation
 }
 
 function explicitFeature(
@@ -100,13 +101,13 @@ function testExplicitOperationsAndTargetsWin(): void {
   useProjectStore.getState().setCreationTarget('region')
   useProjectStore.getState().addRectFeature('ignored-region-name', 10, 10, 10, 10, 5)
   assert(
-    useProjectStore.getState().project.features.some((feature) => feature.operation === 'region'),
+    resolvedProjectFeatures(useProjectStore.getState().project).some((feature) => feature.operation === 'region'),
     'Region creation target wins',
   )
   useProjectStore.getState().setCreationTarget('construction')
   useProjectStore.getState().addRectFeature('ignored-construction-name', 10, 10, 10, 10, 5)
   assert(
-    useProjectStore.getState().project.features.some((feature) => feature.operation === 'construction'),
+    resolvedProjectFeatures(useProjectStore.getState().project).some((feature) => feature.operation === 'construction'),
     'Construction creation target wins',
   )
 }
@@ -139,7 +140,7 @@ function testClosedCompositeUsesSameInference(): void {
     },
   })
   useProjectStore.getState().completePendingComposite()
-  const composite = useProjectStore.getState().project.features.find((feature) => feature.name.startsWith('Composite'))
+  const composite = resolvedProjectFeatures(useProjectStore.getState().project).find((feature) => feature.name.startsWith('Composite'))
   assert(composite?.operation === 'subtract', 'closed composite inside Add defaults Subtract')
   assert(useProjectStore.getState().pendingAdd === null, 'composite completion clears pending draft')
 }

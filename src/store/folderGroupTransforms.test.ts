@@ -25,11 +25,11 @@
  * Run with: npx tsx src/store/folderGroupTransforms.test.ts
  */
 
-import { newProject, type Matrix2D, type SketchFeature } from '../types/project'
+import { newProject, type Matrix2D } from '../types/project'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { multiplyMatrix, rotateDelta } from './helpers/instanceTransforms'
-import { isIdentityMatrix } from './helpers/resolveFeatures'
+import { isIdentityMatrix, resolveFeatureInstance } from './helpers/resolveFeatures'
 
 // ── Assertion helpers ──────────────────────────────────────────────
 
@@ -102,8 +102,7 @@ function getFeatureTransform(featureId: string): Matrix2D {
   const state = useProjectStore.getState()
   const feature = state.project.features.find((f) => f.id === featureId)
   assert(feature !== undefined, `feature ${featureId} not found in project`)
-  const transform = (feature as SketchFeature & { transform?: Matrix2D }).transform
-  return transform ?? { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+  return feature.transform
 }
 
 /**
@@ -113,7 +112,7 @@ function getFeatureDefinitionId(featureId: string): string | undefined {
   const state = useProjectStore.getState()
   const feature = state.project.features.find((f) => f.id === featureId)
   assert(feature !== undefined, `feature ${featureId} not found in project`)
-  return (feature as SketchFeature & { definitionId?: string }).definitionId
+  return feature.definitionId
 }
 
 // ── Test runner ────────────────────────────────────────────────────
@@ -445,13 +444,13 @@ test('out-of-group instance sharing a definition is NOT affected by group transf
 
   // Get the f1 feature and its definition
   const state = useProjectStore.getState()
-  const f1Feature = state.project.features.find((f) => f.id === f1)
-  assert(f1Feature !== undefined, 'f1 should exist')
+  const f1Feature = resolveFeatureInstance(state.project, f1)
+  assert(f1Feature != null, 'f1 should resolve')
 
   // Create a new feature outside the folder that shares the same definition
   // We construct it manually and call addFeature with explicit definitionId
   const nextId = 'f-outgroup'
-  const outgroupFeature: SketchFeature & { definitionId?: string; transform?: Matrix2D } = {
+  const outgroupFeature = {
     ...f1Feature,
     id: nextId,
     name: 'F-outgroup',
@@ -459,12 +458,12 @@ test('out-of-group instance sharing a definition is NOT affected by group transf
     definitionId: defId,
     transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
   }
-  useProjectStore.getState().addFeature(outgroupFeature as SketchFeature)
+  useProjectStore.getState().addFeature(outgroupFeature)
 
   // Verify outgroup feature exists with same definition
   const stateMid = useProjectStore.getState()
-  const outgroupF = stateMid.project.features.find((f) => f.id === nextId)
-  assert(outgroupF !== undefined, 'outgroup feature should exist')
+  const outgroupF = resolveFeatureInstance(stateMid.project, nextId)
+  assert(outgroupF != null, 'outgroup feature should exist')
   assert(getFeatureDefinitionId(nextId) === defId,
     `outgroup feature should share definition ${defId}, got ${getFeatureDefinitionId(nextId)}`)
 
@@ -485,8 +484,8 @@ test('out-of-group instance sharing a definition is NOT affected by group transf
 
   // Out-of-group feature should be completely unaffected
   const stateAfter = useProjectStore.getState()
-  const outgroupAfter = stateAfter.project.features.find((f) => f.id === nextId)
-  assert(outgroupAfter !== undefined, 'outgroup feature should still exist')
+  const outgroupAfter = resolveFeatureInstance(stateAfter.project, nextId)
+  assert(outgroupAfter != null, 'outgroup feature should still exist')
   const outgroupTransformAfter = getFeatureTransform(nextId)
   assert(
     JSON.stringify(outgroupTransformBefore) === JSON.stringify(outgroupTransformAfter),

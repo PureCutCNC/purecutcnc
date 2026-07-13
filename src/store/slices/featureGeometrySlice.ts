@@ -20,16 +20,15 @@ import {
   cloneProject,
   projectsEqual,
   syncFeatureTreeProject,
-  syncStockFromSourceFeature,
+  syncFeatureBasedStock,
 } from '../helpers/normalize'
 import {
   profileVertices,
-  type Matrix2D,
+  type FeatureInstance,
   type Project,
   type Point,
   type SketchFeature,
   type SketchProfile,
-  IDENTITY_MATRIX,
 } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
@@ -51,9 +50,17 @@ import {
   splitArcSegment,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
-import { getDefinitionId, getInstanceIdsForDefinition, makeUnique as makeUniqueHelper, rebakeAllInstances } from '../helpers/featureDefinitions'
+import { gcOrphanedDefinitions, makeUnique as makeUniqueHelper } from '../helpers/featureDefinitions'
 import { invertMatrix } from '../helpers/instanceTransforms'
-import { applyMatrixToPoint } from '../helpers/resolveFeatures'
+import {
+  applyMatrixToPoint,
+  resolveFeatureInstance,
+  resolvedFeatureMap,
+  resolvedProjectFeatures,
+  resolveProject,
+  type ResolvedProject,
+  type ResolvedSketchFeature,
+} from '../helpers/resolveFeatures'
 import { segmentIntersections, type ResolvedSeg, type LineSeg } from '../helpers/segmentIntersection'
 import { resolveProfileSegments } from '../helpers/resolveProfileSegments'
 
@@ -99,20 +106,79 @@ export function createFeatureGeometrySlice(
     applyProfileBreak,
   } = deps
 
-  function syncEditedFeatureDefinition(project: Project, featureId: string): Project {
-    const editedFeature = project.features.find((feature) => feature.id === featureId)
-    if (!editedFeature) return project
+  function instanceFromResolved(feature: ResolvedSketchFeature): FeatureInstance {
+    return {
+      id: feature.id,
+      name: feature.name,
+      definitionId: feature.definitionId,
+      transform: { ...feature.transform },
+      constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
+      z_top: feature.z_top,
+      z_bottom: feature.z_bottom,
+      folderId: feature.folderId,
+      visible: feature.visible,
+      locked: feature.locked,
+    }
+  }
 
-    const definitionId = getDefinitionId(editedFeature)
+  function restoreResolvedMetadata(
+    source: ResolvedProject,
+    features: SketchFeature[],
+  ): ResolvedSketchFeature[] {
+    const sourceById = new Map(source.features.map((feature) => [feature.id, feature]))
+    return features.flatMap((feature) => {
+      const resolved = sourceById.get(feature.id)
+      if (!resolved) return []
+      return [{
+        ...resolved,
+        ...feature,
+        sketch: feature.sketch,
+      }]
+    })
+  }
+
+  function foldResolvedTranslations(
+    project: Project,
+    resolvedFeatures: SketchFeature[],
+  ): FeatureInstance[] {
+    const expected = resolvedFeatureMap(project)
+    const actual = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))
+    return project.features.map((instance) => {
+      const expectedFeature = expected.get(instance.id)
+      const actualFeature = actual.get(instance.id)
+      if (!expectedFeature || !actualFeature) return instance
+      const dx = actualFeature.sketch.profile.start.x - expectedFeature.sketch.profile.start.x
+      const dy = actualFeature.sketch.profile.start.y - expectedFeature.sketch.profile.start.y
+      return {
+        ...instance,
+        transform: dx === 0 && dy === 0
+          ? instance.transform
+          : {
+              ...instance.transform,
+              e: instance.transform.e + dx,
+              f: instance.transform.f + dy,
+            },
+        constraints: actualFeature.sketch.constraints.map((constraint) => ({ ...constraint })),
+      }
+    })
+  }
+
+  function syncEditedFeatureDefinition(project: ResolvedProject, featureId: string): Project {
+    const editedFeature = project.features.find((feature) => feature.id === featureId)
+    if (!editedFeature) {
+      return { ...project, features: project.features.map(instanceFromResolved) }
+    }
+
+    const definitionId = editedFeature.definitionId
     const definition = project.featureDefinitions[definitionId]
-    if (!definition) return project
+    if (!definition) {
+      return { ...project, features: project.features.map(instanceFromResolved) }
+    }
 
     // Convert the edited feature's world-space profile back to definition-local
     // using the inverse of its transform so linked instances each re-resolve at
     // their own transform and the edited instance round-trips to the same geometry.
-    const transform: Matrix2D =
-      (editedFeature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
-    const inv = invertMatrix(transform)
+    const inv = invertMatrix(editedFeature.transform)
     const localProfile = transformProfileAffine(editedFeature.sketch.profile, (p) =>
       applyMatrixToPoint(inv, p),
     )
@@ -126,48 +192,41 @@ export function createFeatureGeometrySlice(
       stl: editedFeature.stl ? { ...editedFeature.stl } : null,
       operation: editedFeature.operation,
     }
-    const nextProject = {
+    const nextProject: Project = {
       ...project,
+      features: project.features.map(instanceFromResolved),
       featureDefinitions: {
         ...project.featureDefinitions,
         [definitionId]: nextDefinition,
       },
     }
 
-    // Collect all instance IDs before rebaking so we know which features
-    // will have updated reference geometry afterwards.
-    const allInstanceIds = getInstanceIdsForDefinition(project, definitionId)
+    const linkedIds = nextProject.features
+      .filter((feature) => feature.definitionId === definitionId)
+      .map((feature) => feature.id)
+    const resolved = resolvedProjectFeatures(nextProject)
+    const offsets = new Map(linkedIds.map((id) => [id, { dx: 0, dy: 0 }] as const))
+    let propagated = propagateConstraintsOnTranslate(resolved, offsets, { transformProfile })
 
-    let nextFeatures = rebakeAllInstances(nextProject, definitionId)
-
-    // Re-solve constraints for every feature whose fixed_distance constraint
-    // references any rebaked instance.  A sibling's shape change from the rebake
-    // invalidates the constraint cache of dependents that reference that sibling,
-    // just as a direct edit does — so we propagate with zero offsets to trigger
-    // the same dependent re-solve that completePendingMove / moveFeatureControl
-    // use for the directly-edited feature.
-    const offsets = new Map(allInstanceIds.map((id) => [id, { dx: 0, dy: 0 }] as const))
-    nextFeatures = propagateConstraintsOnTranslate(nextFeatures, offsets, { transformProfile })
-
-    // Validate all constraints after linked propagation
-    const featureByIdMap = new Map(nextFeatures.map((f) => [f.id, f]))
-    nextFeatures = nextFeatures.map((f) => {
+    const featureByIdMap = new Map<string, SketchFeature>(propagated.map((f) => [f.id, f]))
+    propagated = propagated.map((f) => {
       if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
       return validateConstraintsOnFeature(f, featureByIdMap)
     })
 
     return {
       ...nextProject,
-      features: nextFeatures,
+      features: foldResolvedTranslations(nextProject, propagated),
     }
   }
 
   return {
   moveFeatureControl: (featureId, control, point) =>
     set((s) => {
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) return feature
 
           const { profile } = feature.sketch
@@ -362,30 +421,36 @@ export function createFeatureGeometrySlice(
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
       // Update owner constraint values to reflect new geometry (Policy #1: owner edited → update value)
-      nextProject.features = clearStaleConstraints(nextProject.features, new Set([featureId]))
+      nextProject.features = restoreResolvedMetadata(
+        nextProject,
+        clearStaleConstraints(nextProject.features, new Set([featureId])),
+      )
       // Propagate to features that depend on the edited feature (Policy #2: reference edited → dependents follow)
-      nextProject.features = propagateConstraintsOnTranslate(
-        nextProject.features,
-        new Map([[featureId, { dx: 0, dy: 0 }]]),
-        { transformProfile },
+      nextProject.features = restoreResolvedMetadata(
+        nextProject,
+        propagateConstraintsOnTranslate(
+          nextProject.features,
+          new Map([[featureId, { dx: 0, dy: 0 }]]),
+          { transformProfile },
+        ),
       )
       // Validate all constraints and mark invalid ones red
       const featureByIdMap = new Map(nextProject.features.map((f) => [f.id, f]))
-      nextProject.features = nextProject.features.map((f) => {
+      nextProject.features = restoreResolvedMetadata(nextProject, nextProject.features.map((f) => {
         if (f.sketch.constraints.every((c) => c.type !== 'fixed_distance')) return f
         return validateConstraintsOnFeature(f, featureByIdMap)
-      })
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
+      }))
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, featureId)
       // Sync stock if the edited feature is the stock source
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
-      if (projectsEqual(nextProject, s.project)) {
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
+      if (projectsEqual(authoritativeProject, s.project)) {
         return {}
       }
       if (s.history.transactionStart) {
-        return { project: nextProject }
+        return { project: authoritativeProject }
       }
       return {
-        project: nextProject,
+        project: authoritativeProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -397,9 +462,10 @@ export function createFeatureGeometrySlice(
   insertFeaturePoint: (featureId, target) =>
     set((s) => {
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
             return feature
           }
@@ -426,11 +492,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         selection: {
           ...s.selection,
           activeControl: null,
@@ -446,8 +512,9 @@ export function createFeatureGeometrySlice(
   joinOpenFeatureEndpoints: (featureId, endpoint, targetFeatureId, targetEndpoint) => {
     let didJoin = false
     set((s) => {
-      const feature = s.project.features.find((entry) => entry.id === featureId) ?? null
-      const targetFeature = s.project.features.find((entry) => entry.id === targetFeatureId) ?? null
+      const editableProject = resolveProject(s.project)
+      const feature = editableProject.features.find((entry) => entry.id === featureId) ?? null
+      const targetFeature = editableProject.features.find((entry) => entry.id === targetFeatureId) ?? null
       if (
         !feature
         || !targetFeature
@@ -470,9 +537,9 @@ export function createFeatureGeometrySlice(
       }
 
       const removedFeatureIds = new Set(featureId === targetFeatureId ? [] : [targetFeatureId])
-      let nextProject = syncFeatureTreeProject({
-        ...s.project,
-        features: s.project.features
+      const nextEditableProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features
           .filter((entry) => !removedFeatureIds.has(entry.id))
           .map((entry) => {
             if (entry.id === featureId) {
@@ -524,12 +591,20 @@ export function createFeatureGeometrySlice(
               },
             }
           }),
-        featureTree: s.project.featureTree.filter((entry) => !(entry.type === 'feature' && removedFeatureIds.has(entry.featureId))),
+        featureTree: editableProject.featureTree.filter((entry) => !(entry.type === 'feature' && removedFeatureIds.has(entry.featureId))),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
-      })
+      }
 
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      let nextProject = syncEditedFeatureDefinition(nextEditableProject, featureId)
+      nextProject = syncFeatureTreeProject({
+        ...nextProject,
+        featureDefinitions: gcOrphanedDefinitions(
+          nextProject.features,
+          nextProject.featureDefinitions,
+          nextProject.stock.sourceFeature,
+        ).definitions,
+      })
+      nextProject = syncFeatureBasedStock(nextProject)
       if (projectsEqual(nextProject, s.project)) {
         return {}
       }
@@ -560,9 +635,10 @@ export function createFeatureGeometrySlice(
   deleteFeaturePoint: (featureId, anchorIndex) =>
     set((s) => {
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
             return feature
           }
@@ -590,11 +666,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         selection: {
           ...s.selection,
           activeControl: null,
@@ -616,9 +692,10 @@ export function createFeatureGeometrySlice(
   filletFeaturePoint: (featureId, anchorIndex, radius) =>
     set((s) => {
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
             return feature
           }
@@ -645,11 +722,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         selection: {
           ...s.selection,
           activeControl: null,
@@ -665,9 +742,10 @@ export function createFeatureGeometrySlice(
   chamferFeaturePoint: (featureId, anchorIndex, distance) =>
     set((s) => {
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== featureId || feature.locked) {
             return feature
           }
@@ -694,11 +772,11 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      nextProject = syncEditedFeatureDefinition(nextProject, featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         selection: {
           ...s.selection,
           activeControl: null,
@@ -714,7 +792,7 @@ export function createFeatureGeometrySlice(
   trimFeatureSegment: (subjectRef, cutterRef) => {
     const hints: string[] = []
     set((s) => {
-      const subjectFeature = s.project.features.find((f) => f.id === subjectRef.featureId)
+      const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
       if (!subjectFeature || subjectFeature.locked) {
         hints.push('Subject feature not found or locked')
         return {}
@@ -752,7 +830,7 @@ export function createFeatureGeometrySlice(
       }
 
       // Resolve cutter segment
-      const cutterFeature = s.project.features.find((f) => f.id === cutterRef.featureId)
+      const cutterFeature = resolveFeatureInstance(s.project, cutterRef.featureId)
       if (!cutterFeature) {
         hints.push('Cutter feature not found')
         return {}
@@ -861,9 +939,10 @@ export function createFeatureGeometrySlice(
 
       // ── Apply the multi-segment trim ────────────────────────────────────
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== subjectRef.featureId) return feature
 
           const nextProfile: SketchProfile = {
@@ -936,11 +1015,11 @@ export function createFeatureGeometrySlice(
 
       if (!changed || projectsEqual(nextProject, s.project)) return {}
 
-      nextProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, subjectRef.featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
@@ -954,7 +1033,7 @@ export function createFeatureGeometrySlice(
   extendFeatureEndpoint: (subjectRef, targetRef) => {
     const hints: string[] = []
     set((s) => {
-      const subjectFeature = s.project.features.find((f) => f.id === subjectRef.featureId)
+      const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
       if (!subjectFeature || subjectFeature.locked) {
         hints.push('Subject feature not found or locked')
         return {}
@@ -1004,7 +1083,7 @@ export function createFeatureGeometrySlice(
         return {}
       }
 
-      const targetFeature = s.project.features.find((f) => f.id === targetRef.featureId)
+      const targetFeature = resolveFeatureInstance(s.project, targetRef.featureId)
       if (!targetFeature) {
         hints.push('Target feature not found')
         return {}
@@ -1116,9 +1195,10 @@ export function createFeatureGeometrySlice(
 
       // Apply the extension: move the growing endpoint to the hit point
       let changed = false
-      let nextProject = {
-        ...s.project,
-        features: s.project.features.map((feature) => {
+      const editableProject = resolveProject(s.project)
+      const nextProject: ResolvedProject = {
+        ...editableProject,
+        features: editableProject.features.map((feature) => {
           if (feature.id !== subjectRef.featureId) return feature
 
           const nextProfile = {
@@ -1155,11 +1235,11 @@ export function createFeatureGeometrySlice(
 
       if (!changed || projectsEqual(nextProject, s.project)) return {}
 
-      nextProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
-      nextProject = syncStockFromSourceFeature(nextProject, subjectRef.featureId)
+      let authoritativeProject = syncEditedFeatureDefinition(nextProject, subjectRef.featureId)
+      authoritativeProject = syncFeatureBasedStock(authoritativeProject)
 
       return {
-        project: nextProject,
+        project: authoritativeProject,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],

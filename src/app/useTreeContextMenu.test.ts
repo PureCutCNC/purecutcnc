@@ -22,6 +22,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useProjectStore } from '../store/projectStore'
+import { projectWithFeatures } from '../test/projectFixtures'
 import type { Clamp, Project, SketchFeature, Tab } from '../types/project'
 import { newProject, rectProfile } from '../types/project'
 import { useTreeContextMenu } from './useTreeContextMenu'
@@ -116,12 +117,11 @@ function makeProject({
   tabs?: Tab[]
   clamps?: Clamp[]
 } = {}): Project {
-  return {
+  return projectWithFeatures({
     ...newProject('tree-context-menu-test', 'mm'),
-    features,
     tabs,
     clamps,
-  }
+  }, features)
 }
 
 function setSelectedFeatureIds(featureIds: string[]) {

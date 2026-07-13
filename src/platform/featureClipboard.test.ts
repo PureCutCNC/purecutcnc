@@ -24,15 +24,15 @@ import {
   selectedVisibleClipboardFeatures,
 } from './featureClipboard'
 import {
-  IDENTITY_MATRIX,
   newProject,
   rectProfile,
-  type FeatureDefinition,
   type Project,
   type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from '../store/projectStore'
 import { emptySelection } from '../store/slices/selectionSlice'
+import { projectWithFeatures as buildProjectWithFeatures, resolvedFeature } from '../test/projectFixtures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -60,33 +60,14 @@ function rectFeature(id: string, name: string, x: number, y: number, visible = t
     z_bottom: 0,
     visible,
     locked: false,
-    definitionId: `def-${id}`,
-    transform: IDENTITY_MATRIX,
-  } as SketchFeature & { definitionId: string; transform: typeof IDENTITY_MATRIX }
-}
-
-function definitionFor(feature: SketchFeature): FeatureDefinition {
-  return {
-    id: (feature as SketchFeature & { definitionId: string }).definitionId,
-    kind: feature.kind,
-    profile: feature.sketch.profile,
-    dimensions: feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-    text: feature.text ? { ...feature.text } : null,
-    stl: feature.stl ? { ...feature.stl } : null,
-    operation: feature.operation,
   }
 }
 
 function projectWithFeatures(features: SketchFeature[]): Project {
-  const project = newProject()
-  return {
-    ...project,
-    features,
-    featureDefinitions: Object.fromEntries(
-      features.map((feature) => [definitionFor(feature).id, definitionFor(feature)])
-    ),
+  return buildProjectWithFeatures({
+    ...newProject(),
     featureTree: features.map((feature) => ({ type: 'feature', featureId: feature.id })),
-  }
+  }, features)
 }
 
 function resetStore(project: Project): void {
@@ -138,6 +119,23 @@ function testCutCopiesThenDeletes(): void {
   assert(useProjectStore.getState().history.past.length === 1, 'cut should add one history entry')
 }
 
+function testCutThenPasteRestoresCanonicalDefinition(): void {
+  const feature = rectFeature('f1', 'Feature', 0, 0)
+  resetStore(projectWithFeatures([feature]))
+  useProjectStore.getState().selectFeatures(['f1'])
+
+  const clipboard = cutSelectedFeatures(useProjectStore.getState())
+  assert(clipboard !== null, 'cut should produce a clipboard payload')
+  assert(Object.keys(useProjectStore.getState().project.featureDefinitions).length === 0,
+    'cutting the last instance should collect its project definition')
+
+  const pastedIds = pasteClipboardFeatures(useProjectStore.getState(), clipboard, { x: 10, y: 10 })
+  assert(pastedIds.length === 1, 'cut feature should paste after its project definition was collected')
+  const pasted = resolveFeatureInstance(useProjectStore.getState().project, pastedIds[0])
+  assert(pasted !== null, 'pasted cut feature should resolve through the restored definition')
+  assertNear(pasted.sketch.profile.start.x, 9, 'restored pasted feature should retain geometry')
+}
+
 function testPastePlacesGroupCenterAndSelectsPastedFeatures(): void {
   const first = rectFeature('f1', 'First', 0, 0)
   const second = rectFeature('f2', 'Second', 5, 5)
@@ -149,7 +147,7 @@ function testPastePlacesGroupCenterAndSelectsPastedFeatures(): void {
 
   const pastedIds = pasteClipboardFeatures(useProjectStore.getState(), clipboard, { x: 20, y: 30 })
   const state = useProjectStore.getState()
-  const pasted = state.project.features.filter((feature) => pastedIds.includes(feature.id))
+  const pasted = resolvedProjectFeatures(state.project).filter((feature) => pastedIds.includes(feature.id))
   const pastedAnchor = featureClipboardAnchor(pasted)
 
   assert(pastedIds.length === 2, 'paste should create one feature per clipboard feature')
@@ -171,11 +169,12 @@ function testIndependentPasteClonesDefinitions(): void {
     meta: { ...newProject().meta, copyMode: 'independent' as const },
   }
 
-  const pasted = buildPlacedClipboardFeatures([feature], project, { x: 20, y: 20 })
+  const source = resolvedFeature(project, feature.id)
+  const pasted = buildPlacedClipboardFeatures([source], project, { x: 20, y: 20 })
 
   assert(pasted.length === 1, 'independent paste should create a feature')
-  const sourceDefinitionId = (feature as SketchFeature & { definitionId: string }).definitionId
-  const pastedDefinitionId = (pasted[0] as SketchFeature & { definitionId: string }).definitionId
+  const sourceDefinitionId = source.definitionId
+  const pastedDefinitionId = pasted[0].definitionId
   assert(pastedDefinitionId !== sourceDefinitionId, 'independent paste should assign a cloned definition id')
 }
 
@@ -221,6 +220,7 @@ function testEditableShortcutTargetGuard(): void {
 testCopyUsesSelectedVisibleFeaturesOnly()
 testCopyDoesNotDirtyProject()
 testCutCopiesThenDeletes()
+testCutThenPasteRestoresCanonicalDefinition()
 testPastePlacesGroupCenterAndSelectsPastedFeatures()
 testIndependentPasteClonesDefinitions()
 testEditableShortcutTargetGuard()

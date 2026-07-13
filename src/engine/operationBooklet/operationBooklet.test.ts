@@ -22,6 +22,7 @@
 
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
+import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathResult } from '../toolpaths/types'
 import { createOperationBookletPdf } from './pdf'
@@ -70,7 +71,7 @@ function fixture(): { project: Project; operation: Operation; toolpath: Toolpath
     visible: true,
     locked: false,
   }
-  project.features = [feature]
+  replaceProjectFeatures(project, [feature])
   const operation: Operation = {
     id: 'op1',
     name: 'Rough pocket',

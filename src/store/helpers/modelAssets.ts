@@ -73,8 +73,8 @@ export function normalizeImportedModelStorage(
 
 export function pruneUnusedModelAssets(project: Project): Project {
   const usedAssetIds = new Set(
-    project.features
-      .map((feature) => feature.stl?.meshAssetId ?? null)
+    Object.values(project.featureDefinitions)
+      .map((definition) => definition.stl?.meshAssetId ?? null)
       .filter((id): id is string => id !== null),
   )
   const nextAssets: Record<string, PersistedImportedMesh> = {}

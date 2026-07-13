@@ -42,7 +42,7 @@ import type { ProjectStore } from './types'
 import {
   createDefinitionForFeature,
 } from './helpers/featureDefinitions'
-import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -62,8 +62,8 @@ function getProject(): Project {
   return useProjectStore.getState().project
 }
 
-function getFeatures(): SketchFeature[] {
-  return getProject().features
+function getFeatures() {
+  return resolvedProjectFeatures(getProject())
 }
 
 function getDefinitions(): Record<string, FeatureDefinition> {
@@ -184,9 +184,10 @@ function test_addFeature_idempotent_when_definitionId_present(): void {
     visible: true,
     locked: false,
     definitionId: 'def-existing',
+    transform: IDENTITY_MATRIX,
   }
 
-  store.addFeature(featureWithDef as SketchFeature & { definitionId?: string })
+  store.addFeature(featureWithDef as SketchFeature & { definitionId?: string; transform?: Matrix2D })
 
   const features = getFeatures()
   assert(features.length === 1, `Expected 1 feature, got ${features.length}`)
@@ -499,23 +500,15 @@ function test_camj_import_merges_definitions_collision_safe(): void {
       {
         id: 'src-f1',
         name: 'Source Feature',
-        kind: 'rect',
+        definitionId: 'f-0001',
+        transform: { ...IDENTITY_MATRIX },
+        constraints: [],
         folderId: 'src-fd1',
-        sketch: {
-          profile: rectProfile(0, 0, 10, 10),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'add',
         z_top: 5,
         z_bottom: 0,
         visible: true,
         locked: false,
-        definitionId: 'f-0001',
-        transform: IDENTITY_MATRIX,
-      } as SketchFeature & { definitionId?: string; transform?: Matrix2D },
+      },
     ],
     featureFolders: [
       { id: 'src-fd1', name: 'Source Folder', collapsed: false },

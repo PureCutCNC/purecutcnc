@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
@@ -22,6 +22,7 @@ import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helper
 import { isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
+import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -75,6 +76,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     selectStock,
     hoverFeature,
   } = useProjectStore()
+  const features = useMemo(() => resolvedProjectFeatures(project), [project])
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -107,7 +109,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       return
     }
     const { project: currentProject, revealFeatureFolder } = useProjectStore.getState()
-    const feature = currentProject.features.find((f) => f.id === selectedNode.featureId)
+    const feature = resolveFeatureInstance(currentProject, selectedNode.featureId)
     if (!feature) return
     pendingScrollFeatureId.current = feature.id
     const section = sectionForOperation(feature.operation)
@@ -163,7 +165,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     // P2-1: skip move when dragging a feature out of its grouped folder (store would reject it).
     // Reordering within the same grouped folder stays allowed.
     if (dragItem.kind === 'feature') {
-      const sourceFeature = project.features.find((f) => f.id === dragItem.id)
+      const sourceFeature = features.find((f) => f.id === dragItem.id)
       const sourceFolder = sourceFeature?.folderId
         ? project.featureFolders.find((f) => f.id === sourceFeature.folderId)
         : null
@@ -174,7 +176,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         } else if (target.kind === 'folder') {
           targetFolder = target.id ?? null
         } else if (target.kind === 'feature' && target.id) {
-          const targetFeature = project.features.find((f) => f.id === target.id)
+          const targetFeature = features.find((f) => f.id === target.id)
           targetFolder = targetFeature?.folderId ?? null
         }
         if (targetFolder !== sourceFeature.folderId) {
@@ -191,7 +193,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       } else if (target.kind === 'folder' && target.id) {
         moveFeatureTreeFeature(dragItem.id, target.id)
       } else if (target.kind === 'feature' && target.id && target.id !== dragItem.id) {
-        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        const targetFeature = features.find((feature) => feature.id === target.id)
         if (targetFeature) {
           moveFeatureTreeFeature(dragItem.id, targetFeature.folderId ?? null, targetFeature.id)
         }
@@ -200,7 +202,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const draggedEntry: { type: 'folder'; folderId: string } = { type: 'folder', folderId: dragItem.id }
       const rootEntries = project.featureTree.filter((entry) => (
         entry.type === 'folder' ||
-        (entry.type === 'feature' && project.features.some((feature) => feature.id === entry.featureId && feature.folderId === null))
+        (entry.type === 'feature' && features.some((feature) => feature.id === entry.featureId && feature.folderId === null))
       ))
       const filteredEntries = rootEntries.filter((entry) => !(entry.type === 'folder' && entry.folderId === dragItem.id))
       let insertIndex = filteredEntries.length
@@ -208,7 +210,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       if (target.kind === 'folder' && target.id && target.id !== dragItem.id) {
         insertIndex = filteredEntries.findIndex((entry) => entry.type === 'folder' && entry.folderId === target.id)
       } else if (target.kind === 'feature' && target.id) {
-        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        const targetFeature = features.find((feature) => feature.id === target.id)
         if (targetFeature?.folderId === null) {
           insertIndex = filteredEntries.findIndex((entry) => entry.type === 'feature' && entry.featureId === target.id)
         }
@@ -228,7 +230,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   }
 
   function handleMoveFeature(featureId: string, direction: -1 | 1) {
-    const feature = project.features.find((f) => f.id === featureId)
+    const feature = features.find((f) => f.id === featureId)
     if (!feature) return
 
     if (feature.folderId === null) {
@@ -238,7 +240,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           const folder = project.featureFolders.find((f) => f.id === entry.folderId)
           return (folder?.section ?? 'features') === featureSection
         }
-        const f = project.features.find((item) => item.id === entry.featureId)
+        const f = features.find((item) => item.id === entry.featureId)
         return sectionForOperation(f?.operation) === featureSection
       })
       const entryIndex = sectionEntries.findIndex((e) => e.type === 'feature' && e.featureId === featureId)
@@ -252,7 +254,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       ;[fullTree[aIdx], fullTree[bIdx]] = [fullTree[bIdx], fullTree[aIdx]]
       reorderFeatureTreeEntries(fullTree)
     } else {
-      const siblings = project.features.filter((f) =>
+      const siblings = features.filter((f) =>
         f.folderId === feature.folderId && sectionForOperation(f.operation) === sectionForOperation(feature.operation)
       )
       const sibIndex = siblings.findIndex((f) => f.id === featureId)
@@ -280,7 +282,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         const f = project.featureFolders.find((item) => item.id === entry.folderId)
         return (f?.section ?? 'features') === section
       }
-      const f = project.features.find((item) => item.id === entry.featureId)
+      const f = features.find((item) => item.id === entry.featureId)
       return sectionForOperation(f?.operation) === section
     })
     const entryIndex = sectionEntries.findIndex((e) => e.type === 'folder' && e.folderId === folderId)
@@ -299,10 +301,10 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // Line features are path geometry and never the base solid, so a Lines-only
   // project is valid with no warning. The store enforces this, but a loaded file
   // could be malformed.
-  const machiningFeatures = project.features.filter(isMachinable)
-  const solidFeatures = project.features.filter(isSolid)
-  const regionFeatures = project.features.filter(isRegion)
-  const constructionFeatures = project.features.filter(isConstruction)
+  const machiningFeatures = features.filter(isMachinable)
+  const solidFeatures = features.filter(isSolid)
+  const regionFeatures = features.filter(isRegion)
+  const constructionFeatures = features.filter(isConstruction)
   const featureFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'features')
   const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
   const constructionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'construction')
@@ -317,7 +319,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'features'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature !== undefined && isMachinable(feature)
   })
 
@@ -326,7 +328,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'regions'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature?.operation === 'region' && feature.folderId === null
   })
 
@@ -335,12 +337,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'construction'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature !== undefined && isConstruction(feature) && feature.folderId === null
   })
 
   function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
-    const feature = project.features.find((entry) => entry.id === featureId)
+    const feature = features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
     }
@@ -503,7 +505,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && rootIdx > 0
               const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
@@ -591,7 +593,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && feature.operation === 'region')
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && feature.operation === 'region')
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && regionIdx > 0
               const canMoveFolderDown = tabletShell && regionIdx < regionRootEntries.length - 1
@@ -679,7 +681,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isConstruction(feature))
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isConstruction(feature))
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && constructionIdx > 0
               const canMoveFolderDown = tabletShell && constructionIdx < constructionRootEntries.length - 1

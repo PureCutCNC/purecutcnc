@@ -9,11 +9,11 @@ Geometry file importers: SVG, DXF, STL, OBJ, and .camj.
 - `svg.ts` — SVG parser: path/shape/text extraction, unit handling, paint-intent tracking (fill/stroke)
 - `dxf.ts` — DXF parser: entity extraction, INSERT expansion, polyline/spline/lwpolyline profiles, open-profile stitching, deduplication
 - `stl.ts` — STL/OBJ mesh silhouette extraction
-- `camj.ts` — .camj inspection and folder merge
+- `camj.ts` — .camj inspection and folder/stock merge through the shared strict 3.0 decoder, including legacy-source conversion
 - `index.ts` — barrel re-exports
 
 ## Tests
 - `svg.test.ts` — SVG paint-intent: inherited/default fill, stroke-only, fill+stroke, inline style precedence, open geometry intent
 - `classifier.test.ts` — nesting classifier: Paths/Solid regions/Auto modes, SVG paint intent, alternating nesting, smallest container, cross-layer nesting, ambiguity warnings, and manual-operation inference
-- `camj.test.ts` — .camj inspection and merge
+- `camj.test.ts` — current-format .camj inspection plus folder, linked-instance, asset, constraint, operation, and stock merge coverage
 - `stl.test.ts`, `obj.test.ts` — mesh silhouette extraction

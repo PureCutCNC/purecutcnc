@@ -49,6 +49,7 @@ import { fallbackOperationTarget, isOperationTargetValid } from '../store/helper
 import { isFirstFeatureValid } from '../store/helpers/normalize'
 import { getOperationAddHint } from '../components/cam/operationValidity'
 import type { SelectionState } from '../store/types'
+import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -83,15 +84,16 @@ function makeFeature(id: string, operation: SketchFeature['operation'], circle =
 }
 
 function makeProject(): Project {
-  const project = newProject('Construction Guard', 'mm')
-  project.features = [
+  const features = [
     makeFeature('f-add', 'add'),
     makeFeature('f-subtract', 'subtract'),
     makeFeature('f-region', 'region'),
     makeFeature('f-construction', 'construction'),
   ]
-  project.featureTree = project.features.map((feature) => ({ type: 'feature', featureId: feature.id }))
-  return project
+  return projectWithFeatures({
+    ...newProject('Construction Guard', 'mm'),
+    featureTree: features.map((feature) => ({ type: 'feature', featureId: feature.id })),
+  }, features)
 }
 
 const project = makeProject()
@@ -155,9 +157,11 @@ for (const kind of ALL_KINDS) {
 
 // fallbackOperationTarget never picks construction: in a construction-only
 // project every kind must fall back to stock or find nothing.
-const constructionOnly = newProject('Construction Only', 'mm')
-constructionOnly.features = [makeFeature('f-c1', 'construction'), makeFeature('f-c2', 'construction')]
-constructionOnly.featureTree = constructionOnly.features.map((feature) => ({ type: 'feature', featureId: feature.id }))
+const constructionOnlyFeatures = [makeFeature('f-c1', 'construction'), makeFeature('f-c2', 'construction')]
+const constructionOnly = projectWithFeatures({
+  ...newProject('Construction Only', 'mm'),
+  featureTree: constructionOnlyFeatures.map((feature) => ({ type: 'feature', featureId: feature.id })),
+}, constructionOnlyFeatures)
 for (const kind of ALL_KINDS) {
   const fallback = fallbackOperationTarget(constructionOnly, kind)
   if (fallback.source === 'features') {
@@ -227,12 +231,12 @@ assert(
   'csg.ts must import modelFeatures from featureRoles',
 )
 assert(
-  /const visibleFeatures = modelFeatures\(project\.features\)/.test(csgSource),
+  /const visibleFeatures = modelFeatures\(resolvedProjectFeatures\(project\)\)/.test(csgSource),
   'csg.ts buildScene must filter its feature list through modelFeatures()',
 )
 const viewportSource = readFileSync(resolve(root, 'src/components/viewport3d/Viewport3D.tsx'), 'utf8')
 assert(
-  viewportSource.includes('modelFeatures(project.features)'),
+  viewportSource.includes('modelFeatures(resolvedProjectFeatures(project))'),
   'Viewport3D camera-fit must exclude construction via modelFeatures()',
 )
 

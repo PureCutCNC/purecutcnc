@@ -22,6 +22,7 @@
 import { getFeatureGeometryProfiles } from '../text'
 import { getProfileBounds, rectProfile } from '../types/project'
 import type { Bounds2D, Project, SketchProfile } from '../types/project'
+import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 
 /**
  * Optional layer filter: a layer set to false is left out of the bounds even
@@ -48,7 +49,7 @@ export function getVisibleSceneBounds2D(project: Project, layers: SceneBoundsLay
     profiles.push(project.stock.profile)
   }
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (feature.visible) {
       profiles.push(...getFeatureGeometryProfiles(feature))
     }

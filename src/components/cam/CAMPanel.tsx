@@ -48,6 +48,7 @@ import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/un
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -354,9 +355,7 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
     return 'Stock'
   }
 
-  const features = target.featureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
+  const features = resolveFeatureInstances(project, target.featureIds)
   const names = features
     .filter(isMachinable)
     .map((feature) => feature.name)
@@ -403,8 +402,8 @@ function showStepdown(operation: Project['operations'][number]): boolean {
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
   // Construction geometry can never be part of an operation target (issue #199).
   if (selection.selectedFeatureIds.some((featureId) => {
-    const feature = project.features.find((entry) => entry.id === featureId)
-    return feature !== undefined && isConstruction(feature)
+    const feature = resolveFeatureInstance(project, featureId)
+    return feature !== null && isConstruction(feature)
   })) {
     return null
   }
@@ -414,9 +413,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return null
@@ -436,9 +433,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
@@ -454,9 +449,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return null
@@ -476,9 +469,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return null
@@ -498,9 +489,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return null
@@ -519,9 +508,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
       return null
     }
 
-    const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return null
@@ -541,9 +528,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
     return null
   }
 
-  const features = selection.selectedFeatureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
+  const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
 
   if (features.length !== selection.selectedFeatureIds.length) {
     return null

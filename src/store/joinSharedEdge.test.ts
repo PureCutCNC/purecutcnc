@@ -24,13 +24,15 @@
 
 import {
   getProfileBounds,
+  IDENTITY_MATRIX,
   newProject,
   rectProfile,
   type FeatureDefinition,
+  type FeatureInstance,
   type Project,
-  type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -64,8 +66,8 @@ function resetStore(): void {
   } as unknown as Partial<ProjectStore>)
 }
 
-/** Add a rect feature with a definition to the project via direct state mutation. */
-function addRectFeature(id: string, name: string, x: number, y: number, w: number, h: number): SketchFeature {
+/** Add a strict instance and its canonical definition via direct state mutation. */
+function addRectFeature(id: string, name: string, x: number, y: number, w: number, h: number): void {
   const profile = rectProfile(x, y, w, h)
   const definition: FeatureDefinition = {
     id: `def-${id}`,
@@ -76,25 +78,18 @@ function addRectFeature(id: string, name: string, x: number, y: number, w: numbe
     stl: null,
     operation: 'add',
   }
-  const feature = {
+  const feature: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId: `def-${id}`,
+    transform: { ...IDENTITY_MATRIX },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: `def-${id}`,
-  } as SketchFeature
+  }
 
   const state = useProjectStore.getState()
   useProjectStore.setState({
@@ -107,8 +102,6 @@ function addRectFeature(id: string, name: string, x: number, y: number, w: numbe
       },
     },
   } as unknown as Partial<ProjectStore>)
-
-  return feature
 }
 
 /** Set the selected feature IDs in the store. */
@@ -164,7 +157,7 @@ test('completePendingShapeAction merges edge-adjacent rects into one feature', (
   assert(!project.features.find((feature) => feature.id === 'a'), 'original a must be consumed')
   assert(!project.features.find((feature) => feature.id === 'b'), 'original b must be consumed')
 
-  const merged = project.features.find((feature) => feature.id === createdIds[0])
+  const merged = resolveFeatureInstance(project, createdIds[0])
   assert(merged, 'merged feature must exist in the project')
   assert(merged.sketch.profile.closed, 'merged profile must be closed')
   const bounds = getProfileBounds(merged.sketch.profile)

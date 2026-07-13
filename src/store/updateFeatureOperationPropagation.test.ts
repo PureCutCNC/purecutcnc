@@ -23,9 +23,8 @@
 
 import {
   newProject,
-  type Matrix2D,
+  type FeatureInstance,
   type Project,
-  type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
@@ -57,7 +56,7 @@ function resetStore(project?: Project): void {
   } as unknown as Partial<ProjectStore>)
 }
 
-function addLinkedPair(): { featureA: SketchFeature; featureB: SketchFeature; defId: string } {
+function addLinkedPair(): { featureA: FeatureInstance; featureB: FeatureInstance; defId: string } {
   const store = useProjectStore.getState()
 
   // Add a dummy "base plate" feature first so the linked pair isn't guarded
@@ -69,8 +68,8 @@ function addLinkedPair(): { featureA: SketchFeature; featureB: SketchFeature; de
   // intentionally ambiguous and therefore defaults Add.
   store.addRectFeature('Base', 10, 10, 60, 40, 5)
   const features1 = useProjectStore.getState().project.features
-  const base = features1[1] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
-  const defId = base.definitionId!
+  const base = features1[1]
+  const defId = base.definitionId
 
   // Create a linked copy via store (translate by 80, 0)
   store.selectFeature(base.id)
@@ -79,7 +78,7 @@ function addLinkedPair(): { featureA: SketchFeature; featureB: SketchFeature; de
   store.completePendingMove({ x: 80, y: 0 })
 
   const features = useProjectStore.getState().project.features
-  const linked = features[2] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const linked = features[2]
   assert(linked.definitionId === defId, 'linked copy should share definitionId')
   assert(features.length === 3, `should have 3 features, got ${features.length}`)
 
@@ -130,11 +129,11 @@ test('operation change on linked instance updates definition + all siblings', ()
   assert(afterProject.featureDefinitions[defId].operation === 'add',
     `definition operation should be add, got ${afterProject.featureDefinitions[defId].operation}`)
 
-  // Both instance rows should agree
+  // Instance rows stay lightweight; both resolver reads use the definition.
   const afterA = afterProject.features.find((f) => f.id === featureA.id)!
   const afterB = afterProject.features.find((f) => f.id === featureB.id)!
-  assert(afterA.operation === 'add', `feature A operation should be add, got ${afterA.operation}`)
-  assert(afterB.operation === 'add', `feature B operation should be add, got ${afterB.operation}`)
+  assert(!('operation' in afterA), 'feature A row should not duplicate operation')
+  assert(!('operation' in afterB), 'feature B row should not duplicate operation')
 
   // Resolver should report the new operation for both
   const resolvedA = resolveFeatureInstance(afterProject, featureA.id)
@@ -161,10 +160,10 @@ test('operation change on linked instance is undoable (one step restores all)', 
   const undoneProject = getProject()
   assert(undoneProject.featureDefinitions[defId].operation === 'subtract', 'undo: definition operation should be subtract again')
 
-  const undoneA = undoneProject.features.find((f) => f.id === featureA.id)!
-  const undoneB = undoneProject.features.find((f) => f.id === featureB.id)!
-  assert(undoneA.operation === 'subtract', 'undo: feature A should be subtract')
-  assert(undoneB.operation === 'subtract', 'undo: feature B should be subtract')
+  const undoneA = resolveFeatureInstance(undoneProject, featureA.id)
+  const undoneB = resolveFeatureInstance(undoneProject, featureB.id)
+  assert(undoneA?.operation === 'subtract', 'undo: feature A should be subtract')
+  assert(undoneB?.operation === 'subtract', 'undo: feature B should be subtract')
 })
 
 test('non-linked (unique) feature operation change works as before', () => {
@@ -176,25 +175,25 @@ test('non-linked (unique) feature operation change works as before', () => {
 
   // Create a unique rect feature (second in tree, starts as 'subtract')
   store.addRectFeature('Unique', 10, 20, 30, 15, 5)
-  const f = useProjectStore.getState().project.features[1] as SketchFeature & { definitionId?: string }
+  const f = useProjectStore.getState().project.features[1]
 
   // Change its operation to 'add'
   store.updateFeature(f.id, { operation: 'add' })
 
   const after = getProject()
-  const afterF = after.features.find((feat) => feat.id === f.id)!
-  assert(afterF.operation === 'add', `unique feature operation should be add, got ${afterF.operation}`)
+  const afterF = resolveFeatureInstance(after, f.id)
+  assert(afterF?.operation === 'add', `unique feature operation should be add, got ${afterF?.operation}`)
 
   // Definition should also be updated
-  const defId = f.definitionId!
+  const defId = f.definitionId
   assert(after.featureDefinitions[defId].operation === 'add',
     `unique definition operation should be add, got ${after.featureDefinitions[defId].operation}`)
 
   // Other fields in the patch still apply normally
   store.updateFeature(f.id, { name: 'Renamed', operation: 'subtract' })
   const after2 = getProject()
-  const f2 = after2.features.find((feat) => feat.id === f.id)!
-  assert(f2.name === 'Renamed', `name should be updated, got ${f2.name}`)
+  const f2 = resolveFeatureInstance(after2, f.id)
+  assert(f2?.name === 'Renamed', `name should be updated, got ${f2?.name}`)
   assert(f2.operation === 'subtract', `operation should be subtract, got ${f2.operation}`)
 })
 

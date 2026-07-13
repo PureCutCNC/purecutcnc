@@ -39,7 +39,6 @@ import type {
   Point,
   Project,
   Segment,
-  SketchFeature,
   SketchProfile,
 } from '../types/project'
 import { resolvedFeatureMap } from '../store/helpers/resolveFeatures'
@@ -108,16 +107,7 @@ function profileForTarget(target: AnchorTarget, project: Project): SketchProfile
   if (target.source === 'stock') {
     return project.stock.profile
   }
-  const resolved = resolvedFeatureMap(project).get(target.featureId)
-  if (resolved) return resolved.sketch.profile
-
-  const feature = project.features.find((f) => f.id === target.featureId)
-  if (!feature) return null
-
-  const withRefs = feature as SketchFeature & { definitionId?: string }
-  if (withRefs.definitionId) return null
-
-  return feature.sketch.profile
+  return resolvedFeatureMap(project).get(target.featureId)?.sketch.profile ?? null
 }
 
 /**

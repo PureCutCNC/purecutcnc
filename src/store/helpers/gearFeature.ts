@@ -15,11 +15,9 @@
  */
 
 import {
-  IDENTITY_MATRIX,
   circleProfile,
   type FeatureFolder,
   type FeatureTreeEntry,
-  type Matrix2D,
   type Point,
   type Project,
   type SketchFeature,
@@ -33,10 +31,11 @@ import {
 import { uniqueName } from '../../import'
 import type { ProjectStore } from '../types'
 import { buildShapeFeature } from './buildShapeFeature'
-import { createDefinitionForFeature } from './featureDefinitions'
+import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
 import { isMachinable, sectionForOperation } from './featureRoles'
 import { nextUniqueGeneratedId } from './ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
+import { resolvedProjectFeatures } from './resolveFeatures'
 
 interface GroupedGearInsertResult {
   createdIds: string[]
@@ -68,7 +67,7 @@ function nextGearNumber(project: Project, section: FeatureFolder['section']): nu
       used.add(value)
     }
   }
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (sectionForOperation(feature.operation) !== section) {
       continue
     }
@@ -137,7 +136,7 @@ export function createGroupedGearFeatureInsert(
     depth,
   )
   const isFirstMachiningFeature = isMachinable(rawGearFeature)
-    && !state.project.features.some(isMachinable)
+    && !resolvedProjectFeatures(state.project).some(isMachinable)
   const section = sectionForOperation(isFirstMachiningFeature ? 'add' : rawGearFeature.operation)
   const gearNumber = nextGearNumber(state.project, section)
   const gearName = uniqueName(`Gear ${gearNumber}`, state.project.features.map((feature) => feature.name))
@@ -155,7 +154,7 @@ export function createGroupedGearFeatureInsert(
     grouped: true,
   }
 
-  let safeGear: SketchFeature = {
+  const safeGear: SketchFeature = {
     ...safeGearBase,
     folderId: groupFolderId,
   }
@@ -180,40 +179,25 @@ export function createGroupedGearFeatureInsert(
     visible: true,
     locked: false,
   })
-  let safeBore: SketchFeature = {
+  const safeBore: SketchFeature = {
     ...boreFeatureBase,
     folderId: groupFolderId,
   }
 
   const gearMinted = createDefinitionForFeature(state.project, safeGear)
-  safeGear = {
-    ...safeGear,
-    definitionId: gearMinted.definitionId,
-    transform: IDENTITY_MATRIX,
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+  const gearInstance = createFeatureInstance(safeGear, gearMinted.definitionId)
 
   const boreMinted = createDefinitionForFeature(
-    {
-      ...state.project,
-      features: [...state.project.features, safeGear],
-      featureDefinitions: {
-        ...state.project.featureDefinitions,
-        [gearMinted.definitionId]: gearMinted.definition,
-      },
-    },
+    state.project,
     safeBore,
   )
-  safeBore = {
-    ...safeBore,
-    definitionId: boreMinted.definitionId,
-    transform: IDENTITY_MATRIX,
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+  const boreInstance = createFeatureInstance(safeBore, boreMinted.definitionId)
 
   const createdIds = [safeGear.id, safeBore.id]
   const project = syncFeatureTreeProject({
     ...state.project,
     featureFolders: [...state.project.featureFolders, groupFolder],
-    features: [...state.project.features, safeGear, safeBore],
+    features: [...state.project.features, gearInstance, boreInstance],
     featureTree: insertRootTreeEntryAfterSelection(
       state.project,
       state.selection.selectedNode,

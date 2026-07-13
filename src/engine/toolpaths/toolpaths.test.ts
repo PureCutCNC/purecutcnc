@@ -25,6 +25,7 @@
 
 import type { Operation, Project, RegionMaskMode, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
@@ -231,11 +232,10 @@ function makeVBit(id: string): Tool {
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
   const project = newProject('test', 'mm')
   // Stock large enough to fit the pockets; thickness doesn't matter here.
-  return {
+  return projectWithFeatures({
     ...project,
     tools,
-    features,
-  }
+  }, features)
 }
 
 function makePocketOp(
@@ -1703,11 +1703,10 @@ function testSurfaceCleanMultiTargetProtectsTallerTarget() {
   const circA = makeCircleBoss('a', 0, 0, 0.5, 0.5, 0)
   const circB = makeCircleBoss('b', 1, 0, 0.5, 0.4, 0)
 
-  const project: Project = {
+  const project = projectWithFeatures({
     ...newProject('surface-test', 'inch'),
     tools: [tool],
-    features: [circA, circB],
-  }
+  }, [circA, circB])
   project.stock = { ...project.stock, thickness: 0.75 }
 
   const op = makePocketOp({

@@ -20,6 +20,7 @@ import { rectProfile } from '../types/project'
 import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
+import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh } from './importedMesh'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 import { buildBatchedLines, type BatchLineMeta } from './lineBatcher'
@@ -866,7 +867,7 @@ export async function buildScene(project: Project): Promise<SceneObjects> {
   // Fixtures are built unhighlighted: selection/collision only tint the clamp
   // and tab meshes, which Viewport3D recolors via applyClampHighlight /
   // applyTabHighlight without rebuilding this (expensive) CSG model (issue #261).
-  const visibleFeatures = modelFeatures(project.features).filter((feature) => feature.visible)
+  const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const stockMesh = buildStockMesh(project.stock)
