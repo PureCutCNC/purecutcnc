@@ -29,6 +29,7 @@ import { formatLength, parseLengthInput } from '../../utils/units'
 import { computeEditDimSteps, type EditDimStep } from './draftHelpers'
 import { arcHandleFromRadius, computeDimensionEditPreviewPoint, type DimensionEditState } from './manualEntry'
 import { anchorPointForIndex, arcControlPoint } from './profilePrimitives'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 
 export interface DimensionEditWorkflowCtx {
   projectRef: MutableRefObject<Project>
@@ -117,7 +118,7 @@ export function useDimensionEditWorkflow(ctx: DimensionEditWorkflowCtx): Dimensi
     }
     const step = steps[stepIndex]
     dimensionEditControlRef.current = step.control
-    const feature = projectRef.current.features.find((f) => f.id === featureId)
+    const feature = resolveFeatureInstance(projectRef.current, featureId)
     if (!feature) return
     const profile = feature.sketch.profile
 
@@ -214,7 +215,7 @@ export function useDimensionEditWorkflow(ctx: DimensionEditWorkflowCtx): Dimensi
     if (!control || !fId) return
 
     if (control.kind === 'arc_handle') {
-      const feature = projectRef.current.features.find((f) => f.id === fId)
+      const feature = resolveFeatureInstance(projectRef.current, fId)
       if (!feature) return
       const profile = feature.sketch.profile
       const seg = profile.segments[control.index]

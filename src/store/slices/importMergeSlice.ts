@@ -15,142 +15,201 @@
  */
 
 import type { StateCreator } from 'zustand'
-import { createImportedFeature, isProfileDegenerate, mergeCamjFolders, uniqueName } from '../../import'
-import type { FeatureFolder, FeatureOperation, Matrix2D, Project, SketchFeature } from '../../types/project'
-import { IDENTITY_MATRIX } from '../../types/project'
-import { nextUniqueGeneratedId } from '../helpers/ids'
-import { createDefinitionForFeature } from '../helpers/featureDefinitions'
+import { createImportedFeature, isProfileDegenerate, mergeCamjFolders } from '../../import'
+import type {
+  FeatureDefinition,
+  FeatureFolder,
+  FeatureOperation,
+  Project,
+  SketchFeature,
+} from '../../types/project'
+import { createDefinitionForFeatureWithId, createFeatureInstance } from '../helpers/featureDefinitions'
+import { genId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
-import { uniqueFolderName } from '../helpers/naming'
 import type { ProjectStore } from '../types'
 
-export type ImportMergeSlice = Pick<
-  ProjectStore,
-  | 'importShapes'
-  | 'importCamjFolders'
->
+/** Imports at this size avoid expanded folders and multi-item selection. */
+export const LARGE_IMPORT_THRESHOLD = 500
+
+export type ImportMergeSlice = Pick<ProjectStore, 'importShapes' | 'importCamjFolders'>
+
+function createNameAllocator(existingNames: Iterable<string>): (preferred: string) => string {
+  const taken = new Set(existingNames)
+  const nextSuffix = new Map<string, number>()
+  return (preferred) => {
+    const base = preferred.trim() || 'Imported'
+    if (!taken.has(base)) {
+      taken.add(base)
+      return base
+    }
+    let suffix = nextSuffix.get(base) ?? 2
+    while (taken.has(`${base} ${suffix}`)) suffix += 1
+    const name = `${base} ${suffix}`
+    taken.add(name)
+    nextSuffix.set(base, suffix + 1)
+    return name
+  }
+}
+
+function createIdAllocator(project: Project): (prefix: string) => string {
+  const used = new Set([
+    ...project.features.map((feature) => feature.id),
+    ...Object.keys(project.featureDefinitions),
+    ...project.featureFolders.map((folder) => folder.id),
+    ...project.tools.map((tool) => tool.id),
+    ...project.operations.map((operation) => operation.id),
+    ...project.tabs.map((tab) => tab.id),
+    ...project.clamps.map((clamp) => clamp.id),
+  ])
+  return (prefix) => {
+    let id = genId(prefix)
+    while (used.has(id)) id = genId(prefix)
+    used.add(id)
+    return id
+  }
+}
 
 export function createImportMergeSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
 ): ImportMergeSlice {
-
   return {
     importShapes: (input) => {
       const state = get()
       const sourceShapes = input.shapes.filter((shape) => !isProfileDegenerate(shape.profile))
-      if (sourceShapes.length === 0) {
-        return []
-      }
+      if (sourceShapes.length === 0) return []
 
-      // Group shapes by layer name. Null layer (DXF layer "0") → keyed as '0'.
-      const layerGroups = new Map<string, typeof sourceShapes>()
-      for (const shape of sourceShapes) {
-        const key = shape.layerName ?? '0'
-        const existing = layerGroups.get(key)
-        if (existing) {
-          existing.push(shape)
-        } else {
-          layerGroups.set(key, [shape])
-        }
-      }
-
-      const existingFeatureNames = state.project.features.map((f) => f.name)
+      const allocateId = createIdAllocator(state.project)
+      const allocateFeatureName = createNameAllocator(state.project.features.map((feature) => feature.name))
+      const allocateFolderName = createNameAllocator(state.project.featureFolders.map((folder) => folder.name))
       const newFolders: FeatureFolder[] = []
       const createdFeatures: SketchFeature[] = []
 
-      let nextProjectLike: Project = {
-        ...state.project,
-        features: [...state.project.features],
-        featureFolders: [...state.project.featureFolders],
-      }
+      if (input.classified && input.classified.length > 0) {
+        const validClassified = input.classified.filter((shape) => !isProfileDegenerate(shape.profile))
+        if (validClassified.length === 0) return []
+        const isLargeImport = validClassified.length >= LARGE_IMPORT_THRESHOLD
+        const layerFolderMap = new Map<string, FeatureFolder>()
 
-      for (const [layerKey, layerShapes] of layerGroups) {
-        const folderDisplayName = layerKey || '0'
-        const folderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
-        const folderName = uniqueFolderName(folderDisplayName, nextProjectLike.featureFolders)
-        const folder: FeatureFolder = { id: folderId, name: folderName, collapsed: false }
+        for (const shape of validClassified) {
+          const layerKey = shape.layerName ?? '0'
+          if (!layerFolderMap.has(layerKey)) {
+            const folder: FeatureFolder = {
+              id: allocateId('fd'),
+              name: allocateFolderName(layerKey || '0'),
+              collapsed: isLargeImport,
+            }
+            layerFolderMap.set(layerKey, folder)
+            newFolders.push(folder)
+          }
+        }
 
-        newFolders.push(folder)
-        nextProjectLike = { ...nextProjectLike, featureFolders: [...nextProjectLike.featureFolders, folder] }
+        // The classifier owns global parent-before-child order, including
+        // cross-layer nesting. Preserve that order while attaching folders.
+        for (const shape of validClassified) {
+          const layerKey = shape.layerName ?? '0'
+          const folder = layerFolderMap.get(layerKey)
+          if (!folder) throw new Error(`Missing import folder for layer ${layerKey}`)
+          createdFeatures.push(normalizeFeatureZRange({
+            ...createImportedFeature(
+              {
+                name: shape.name,
+                sourceType: shape.sourceType,
+                layerName: shape.layerName,
+                profile: shape.profile,
+              },
+              state.project,
+              folder.id,
+              allocateFeatureName(shape.name || layerKey),
+              shape.operation,
+            ),
+            id: allocateId('f'),
+          }))
+        }
+      } else {
+        const isLargeImport = sourceShapes.length >= LARGE_IMPORT_THRESHOLD
+        const layerGroups = new Map<string, typeof sourceShapes>()
+        for (const shape of sourceShapes) {
+          const layerKey = shape.layerName ?? '0'
+          const group = layerGroups.get(layerKey)
+          if (group) group.push(shape)
+          else layerGroups.set(layerKey, [shape])
+        }
 
-        for (const shape of layerShapes) {
-          const featureName = uniqueName(
-            shape.name || folderDisplayName,
-            [...existingFeatureNames, ...createdFeatures.map((f) => f.name)],
-          )
-          // All closed profiles import as 'add'; open profiles as 'line'.
-          const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
-          const nextId = nextUniqueGeneratedId(nextProjectLike, 'f')
-          const feature = normalizeFeatureZRange({
-            ...createImportedFeature(shape, state.project, folderId, featureName, operation),
-            id: nextId,
-          })
-
-          createdFeatures.push(feature)
-          nextProjectLike = { ...nextProjectLike, features: [...nextProjectLike.features, feature] }
+        for (const [layerKey, layerShapes] of layerGroups) {
+          const folder: FeatureFolder = {
+            id: allocateId('fd'),
+            name: allocateFolderName(layerKey || '0'),
+            collapsed: isLargeImport,
+          }
+          newFolders.push(folder)
+          for (const shape of layerShapes) {
+            const operation: FeatureOperation = shape.profile.closed ? 'add' : 'line'
+            createdFeatures.push(normalizeFeatureZRange({
+              ...createImportedFeature(
+                shape,
+                state.project,
+                folder.id,
+                allocateFeatureName(shape.name || layerKey),
+                operation,
+              ),
+              id: allocateId('f'),
+            }))
+          }
         }
       }
 
-      if (createdFeatures.length === 0) {
-        return []
-      }
+      if (createdFeatures.length === 0) return []
 
-      set((s) => {
-        // Mint a definition per imported feature (identity transform).
-        const nextDefinitions = { ...s.project.featureDefinitions }
-        const featuresWithDefs = createdFeatures.map((f) => {
-          const featureWithDef = f as SketchFeature & { definitionId?: string; transform?: Matrix2D }
-          if (featureWithDef.definitionId !== undefined) {
-            return f
-          }
-          const minted = createDefinitionForFeature(s.project, f)
-          nextDefinitions[minted.definitionId] = minted.definition
-          return {
-            ...f,
-            definitionId: minted.definitionId,
-            transform: IDENTITY_MATRIX,
-          }
+      const definitions: Record<string, FeatureDefinition> = {}
+      const featureInstances = createdFeatures.map((feature) => {
+          const definitionId = allocateId('f-')
+          const { definition } = createDefinitionForFeatureWithId(feature, definitionId)
+          definitions[definitionId] = definition
+          return createFeatureInstance(feature, definitionId)
         })
+      const createdIds = createdFeatures.map((feature) => feature.id)
+      const isLargeImport = createdIds.length >= LARGE_IMPORT_THRESHOLD
+      const primaryId = createdIds.at(-1) ?? null
+      const primaryFolderId = newFolders.at(-1)?.id ?? null
 
+      set((current) => {
         const nextProject = syncFeatureTreeProject({
-          ...s.project,
-          featureFolders: [...s.project.featureFolders, ...newFolders],
+          ...current.project,
+          featureFolders: [...current.project.featureFolders, ...newFolders],
           featureTree: [
-            ...s.project.featureTree,
-            ...newFolders.map((f) => ({ type: 'folder' as const, folderId: f.id })),
+            ...current.project.featureTree,
+            ...newFolders.map((folder) => ({ type: 'folder' as const, folderId: folder.id })),
           ],
-          features: [...s.project.features, ...featuresWithDefs],
-          featureDefinitions: nextDefinitions,
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
+          features: [...current.project.features, ...featureInstances],
+          featureDefinitions: { ...current.project.featureDefinitions, ...definitions },
+          meta: { ...current.project.meta, modified: new Date().toISOString() },
         })
-        const createdIds = createdFeatures.map((f) => f.id)
-        const primaryId = createdIds.at(-1) ?? null
-        const primaryFolderId = newFolders.at(-1)?.id ?? null
-
         return {
           project: nextProject,
           selection: {
-            ...s.selection,
-            selectedFeatureId: primaryId,
-            selectedFeatureIds: createdIds,
-            selectedNode: primaryId
-              ? { type: 'feature', featureId: primaryId }
-              : primaryFolderId
-                ? { type: 'folder', folderId: primaryFolderId }
-                : s.selection.selectedNode,
+            ...current.selection,
+            selectedFeatureId: isLargeImport ? null : primaryId,
+            selectedFeatureIds: isLargeImport ? [] : createdIds,
+            selectedNode: isLargeImport && primaryFolderId
+              ? { type: 'folder', folderId: primaryFolderId }
+              : primaryId
+                ? { type: 'feature', featureId: primaryId }
+                : primaryFolderId
+                  ? { type: 'folder', folderId: primaryFolderId }
+                  : current.selection.selectedNode,
             mode: 'feature',
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            past: [...current.history.past, cloneProject(current.project)].slice(-100),
             future: [],
             transactionStart: null,
           },
         }
       })
 
-      return createdFeatures.map((f) => f.id)
+      return createdIds
     },
 
     importCamjFolders: (input) => {
@@ -161,11 +220,9 @@ export function createImportMergeSlice(
         selectedFolderIds: input.selectedFolderIds,
         importStock: input.importStock,
       })
-      if (merge.createdFeatureIds.length === 0 && !merge.stockReplaced) {
-        return []
-      }
+      if (merge.createdFeatureIds.length === 0 && !merge.stockReplaced) return []
 
-      set((s) => {
+      set((current) => {
         const nextProject = syncFeatureTreeProject(merge.project)
         const createdIds = merge.createdFeatureIds
         const primaryId = createdIds.at(-1) ?? null
@@ -173,19 +230,19 @@ export function createImportMergeSlice(
         return {
           project: nextProject,
           selection: {
-            ...s.selection,
+            ...current.selection,
             selectedFeatureId: primaryId,
             selectedFeatureIds: createdIds,
             selectedNode: primaryId
               ? { type: 'feature', featureId: primaryId }
               : primaryFolderId
                 ? { type: 'folder', folderId: primaryFolderId }
-                : s.selection.selectedNode,
+                : current.selection.selectedNode,
             mode: 'feature',
             activeControl: null,
           },
           history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            past: [...current.history.past, cloneProject(current.project)].slice(-100),
             future: [],
             transactionStart: null,
           },

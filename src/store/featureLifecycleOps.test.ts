@@ -32,6 +32,7 @@ import {
   type Stock,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 import { getProfileBounds } from '../types/project'
 
@@ -73,7 +74,7 @@ function getProject(): Project {
 }
 
 function getFeatures(): SketchFeature[] {
-  return getProject().features
+  return resolvedProjectFeatures(getProject())
 }
 
 // ── Test runner ──────────────────────────────────────────────────────
@@ -244,6 +245,41 @@ test('setStockSourceFeature: sets feature as stock source, removes from tree', (
   assert(afterStock.sourceFeature !== null, 'sourceFeature should be stored')
   assert(afterStock.sourceFeature !== undefined, 'sourceFeature should not be undefined')
   assert(getFeatures().length === 0, 'feature should be removed from feature list when set as stock source')
+})
+
+test('linked definition edits refresh feature-based stock geometry', () => {
+  resetStore()
+  const store = useProjectStore.getState()
+  store.addRectFeature('StockSource', 0, 0, 250, 150, 30)
+
+  const project = getProject()
+  const source = project.features[0]
+  const sibling = {
+    ...source,
+    id: 'linked-stock-editor',
+    name: 'Linked stock editor',
+  }
+  useProjectStore.setState({
+    project: {
+      ...project,
+      features: [...project.features, sibling],
+      featureTree: [...project.featureTree, { type: 'feature' as const, featureId: sibling.id }],
+    },
+  } as unknown as Partial<ProjectStore>)
+
+  store.setStockSourceFeature(source.id)
+  const resolvedSibling = resolveFeatureInstance(getProject(), sibling.id)
+  assert(resolvedSibling !== null, 'linked sibling should resolve')
+  store.updateFeature(sibling.id, {
+    sketch: {
+      ...resolvedSibling.sketch,
+      profile: rectProfile(0, 0, 320, 180),
+    },
+  })
+
+  const bounds = getProfileBounds(getProject().stock.profile)
+  assert(approx(bounds.maxX - bounds.minX, 320), 'stock width should follow the shared definition edit')
+  assert(approx(bounds.maxY - bounds.minY, 180), 'stock height should follow the shared definition edit')
 })
 
 test('setStockSourceFeature(null): restores feature and resets to rect stock', () => {

@@ -29,8 +29,14 @@ import type { Locator, Page } from '@playwright/test'
 // ── Feature tree ────────────────────────────────────────────────────
 
 export const tree = {
+  /** Opens the tablet project drawer. */
+  openProjectPanelButton: (page: Page) => page.getByRole('button', { name: 'Open project panel' }),
+
   /** All tree rows (any kind). */
   rows: (page: Page) => page.locator('.tree-row'),
+
+  /** Project root row. */
+  projectRow: (page: Page) => page.locator('.tree-row--project'),
 
   /** Feature rows only (excludes folders, section headers, etc.). */
   featureRows: (page: Page) => page.locator('.tree-row.tree-row--feature'),
@@ -89,6 +95,24 @@ export const properties = {
   /** Exact text match within the panel. */
   exactText: (page: Page, text: string) =>
     page.locator('.properties-panel').getByText(text, { exact: true }),
+
+  /** Project Units custom-select trigger, visible when the project root is selected. */
+  unitsTrigger: (page: Page) =>
+    page.locator('.properties-panel .properties-field').filter({ hasText: 'Units' }).locator('.ui-select__trigger'),
+
+  /** An option in the open Project Units custom select. */
+  unitsOption: (page: Page, label: string) =>
+    page.locator('.properties-panel .properties-field').filter({ hasText: 'Units' }).getByRole('option', { name: label }),
+}
+
+// ── Project unit conversion dialog ─────────────────────────────────
+
+export const unitConversionDialog = {
+  root: (page: Page) => page.getByRole('dialog', { name: 'Change project units?' }),
+  directionArrow: (page: Page) => page.locator('.unit-conversion-route__arrow'),
+  convertButton: (page: Page) => page.getByRole('button', { name: /Convert values/ }),
+  reinterpretButton: (page: Page) => page.getByRole('button', { name: /Keep numeric values/ }),
+  cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
 }
 
 // ── CAM operations ──────────────────────────────────────────────────

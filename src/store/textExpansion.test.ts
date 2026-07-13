@@ -30,6 +30,7 @@
 import { expandTextFeature } from './helpers/textExpansion'
 import type { SketchFeature, Project } from '../types/project'
 import { instantiateProjectTemplate } from './helpers/normalize'
+import { resolvedProjectFeatures } from './helpers/resolveFeatures'
 
 function assertEqual<T>(actual: T, expected: T, message: string) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -101,6 +102,20 @@ function createProject(): Project {
   return instantiateProjectTemplate()
 }
 
+function resolvedExpansion(
+  project: Project,
+  result: ReturnType<typeof expandTextFeature>,
+) {
+  return resolvedProjectFeatures({
+    ...project,
+    features: result.features,
+    featureDefinitions: {
+      ...project.featureDefinitions,
+      ...result.definitions,
+    },
+  })
+}
+
 function runTests() {
   let passCount = 0
   let failCount = 0
@@ -134,7 +149,7 @@ function runTests() {
     }
 
     // Check that features inherit properties from source
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertEqual(feature.operation, 'subtract', 'operation should be subtract')
       assertEqual(feature.z_top, 5, 'z_top should be 5')
       assertEqual(feature.z_bottom, 0, 'z_bottom should be 0')
@@ -157,7 +172,7 @@ function runTests() {
     assertGreaterThan(result.features.length, 0, 'features')
 
     // All expanded features should have closed profiles
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertTrue(feature.sketch.profile.closed === true, 'profile should be closed')
     }
   })
@@ -182,7 +197,7 @@ function runTests() {
 
     const result = expandTextFeature(project, textFeature)
 
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertEqual(feature.visible, false, 'visible should be false')
     }
   })
@@ -194,7 +209,7 @@ function runTests() {
 
     const result = expandTextFeature(project, textFeature)
 
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertEqual(feature.locked, true, 'locked should be true')
     }
   })
@@ -209,7 +224,7 @@ function runTests() {
 
     // All features should have a folderId that exists in folders
     const folderIds = new Set(result.folders.map((f) => f.id))
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertTrue(feature.folderId !== null && folderIds.has(feature.folderId), 'feature should map to valid folder')
     }
   })
@@ -220,7 +235,7 @@ function runTests() {
 
     const result = expandTextFeature(project, textFeature)
 
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       const withRefs = feature as SketchFeature & {
         definitionId?: string
         transform?: { a: number; b: number; c: number; d: number; e: number; f: number }
@@ -272,7 +287,7 @@ function runTests() {
     for (const feature of result.features) {
       assertFalse(allIds.has(feature.id), `duplicate id: ${feature.id}`)
       allIds.add(feature.id)
-      const withRefs = feature as SketchFeature & { definitionId?: string }
+      const withRefs = feature
       if (withRefs.definitionId) {
         assertFalse(allIds.has(withRefs.definitionId), `duplicate id: ${withRefs.definitionId}`)
         allIds.add(withRefs.definitionId)
@@ -298,7 +313,7 @@ function runTests() {
     let textFeature = createTextFeature('A', 'skeleton')
     textFeature.operation = 'add'
     let result = expandTextFeature(project, textFeature)
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertEqual(feature.operation, 'add', 'operation should be add')
     }
 
@@ -306,7 +321,7 @@ function runTests() {
     textFeature = createTextFeature('A', 'skeleton')
     textFeature.operation = 'subtract'
     result = expandTextFeature(project, textFeature)
-    for (const feature of result.features) {
+    for (const feature of resolvedExpansion(project, result)) {
       assertEqual(feature.operation, 'subtract', 'operation should be subtract')
     }
   })

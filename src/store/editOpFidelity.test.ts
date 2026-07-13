@@ -30,6 +30,7 @@ import {
   newProject,
   rectProfile,
   type FeatureDefinition,
+  type FeatureInstance,
   type Matrix2D,
   type Point,
   type Project,
@@ -37,7 +38,7 @@ import {
 } from '../types/project'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
-import { resolveProfile } from './helpers/resolveFeatures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { translateMatrix } from './helpers/instanceTransforms'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -94,37 +95,24 @@ function addRectFeature(
     stl: null,
     operation: 'add',
   }
-  const resolvedProfile =
-    transform === IDENTITY_MATRIX
-      ? profile
-      : resolveProfile(definition, transform)
-
-  const feature = {
+  const instance: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId: `def-${id}`,
+    transform: { ...transform },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolvedProfile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: `def-${id}`,
-    transform,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   const state = useProjectStore.getState()
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, feature as SketchFeature],
+      features: [...state.project.features, instance],
       featureDefinitions: {
         ...state.project.featureDefinitions,
         [`def-${id}`]: definition,
@@ -132,7 +120,9 @@ function addRectFeature(
     },
   } as unknown as Partial<ProjectStore>)
 
-  return { feature: feature as SketchFeature, definition }
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature, `feature ${id} should resolve`)
+  return { feature, definition }
 }
 
 function addLinkedInstance(
@@ -145,36 +135,29 @@ function addLinkedInstance(
   const definition = state.project.featureDefinitions[definitionId]
   assert(definition != null, `definition ${definitionId} must exist`)
 
-  const resolved = resolveProfile(definition, transform)
-  const feature = {
+  const instance: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId,
+    transform: { ...transform },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolved,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: definition.operation,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId,
-    transform,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, feature as SketchFeature],
+      features: [...state.project.features, instance],
     },
   } as unknown as Partial<ProjectStore>)
 
-  return feature as SketchFeature
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature, `feature ${id} should resolve`)
+  return feature
 }
 
 function getProject(): Project {
@@ -182,7 +165,7 @@ function getProject(): Project {
 }
 
 function getFeatures(): SketchFeature[] {
-  return getProject().features
+  return resolvedProjectFeatures(getProject())
 }
 
 // ── Test runner ──────────────────────────────────────────────────────
@@ -415,23 +398,15 @@ test('move arc handle: segment stays arc, linked sibling updated', () => {
       features: [...state.project.features, {
         id: 'f-0001',
         name: 'Original',
-        kind: 'composite' as const,
+        definitionId: 'def-comp',
+        transform: { ...IDENTITY_MATRIX },
+        constraints: [],
         folderId: null,
-        sketch: {
-          profile: resolveProfile(definition, IDENTITY_MATRIX),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 0,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'add' as const,
         z_top: 5,
         z_bottom: 0,
         visible: true,
         locked: false,
-        definitionId: 'def-comp',
-        transform: IDENTITY_MATRIX,
-      } as SketchFeature & { definitionId?: string; transform?: Matrix2D }],
+      }],
       featureDefinitions: {
         ...state.project.featureDefinitions,
         'def-comp': definition,

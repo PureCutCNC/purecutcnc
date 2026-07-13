@@ -19,10 +19,11 @@ import { convertLength } from '../../utils/units'
 import type { Clamp, Segment, SketchFeature, Tab } from '../../types/project'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
-import { createDefinitionForFeature } from '../helpers/featureDefinitions'
-import { IDENTITY_MATRIX } from '../../types/project'
+import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
+import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
-import { isConstruction, isRegion } from '../helpers/featureRoles'
+import { isConstruction } from '../helpers/featureRoles'
+import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { clonePoint, pointsEqual } from '../helpers/geometry'
 import {
   appendSplineDraftSegment,
@@ -402,11 +403,7 @@ export function createPendingAddSlice(
       // creation path. Without this, reference copies point at a missing
       // definition and become un-resolvable / un-selectable (issue #228).
       const minted = createDefinitionForFeature(state.project, baseFeature)
-      const createdFeature: SketchFeature = {
-        ...baseFeature,
-        definitionId: minted.definitionId,
-        transform: IDENTITY_MATRIX,
-      } as SketchFeature & { definitionId: string; transform: typeof IDENTITY_MATRIX }
+      const createdFeature = createFeatureInstance(baseFeature, minted.definitionId)
 
       set((s) => {
         const nextProject = syncFeatureTreeProject({
@@ -501,7 +498,7 @@ export function createPendingAddSlice(
         const feature: SketchFeature = {
           id,
           name: openPathOperation === 'construction'
-            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+            ? `Construction ${resolvedProjectFeatures(state.project).filter(isConstruction).length + 1}`
             : `Spline ${state.project.features.length + 1}`,
           kind: 'spline',
           folderId: null,
@@ -534,7 +531,7 @@ export function createPendingAddSlice(
         const feature: SketchFeature = {
           id,
           name: openPathOperation === 'construction'
-            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+            ? `Construction ${resolvedProjectFeatures(state.project).filter(isConstruction).length + 1}`
             : `Polyline ${state.project.features.length + 1}`,
           kind: 'polygon',
           folderId: null,
@@ -723,36 +720,18 @@ export function createPendingAddSlice(
       }
 
       const depth = Math.min(state.project.stock.thickness, 10)
-      const id = nextUniqueGeneratedId(state.project, 'f')
-      const operation = state.creationTarget === 'region' ? 'region'
-        : state.creationTarget === 'construction' ? 'construction'
-        : 'subtract'
-      const feature: SketchFeature = {
-        id,
-        name: operation === 'region'
-          ? `Region ${state.project.features.filter(isRegion).length + 1}`
-          : operation === 'construction'
-            ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
-            : `Composite ${state.project.features.length + 1}`,
-        kind: 'composite',
-        folderId: null,
-        sketch: {
-          profile: {
-            start: clonePoint(state.pendingAdd.start),
-            segments: closedSegments.map(cloneSegment),
-            closed: true,
-          },
-          origin: { x: 0, y: 0 },
-          orientationAngle: 90,
-          dimensions: [],
-          constraints: [],
+      const feature = buildShapeFeature(
+        state.project,
+        state.creationTarget,
+        'composite',
+        {
+          start: clonePoint(state.pendingAdd.start),
+          segments: closedSegments.map(cloneSegment),
+          closed: true,
         },
-        operation,
-        z_top: depth,
-        z_bottom: 0,
-        visible: true,
-        locked: false,
-      }
+        `Composite ${state.project.features.length + 1}`,
+        depth,
+      )
 
       state.addFeature(feature)
       set({ pendingAdd: null })
@@ -776,7 +755,7 @@ export function createPendingAddSlice(
       const feature: SketchFeature = {
         id,
         name: openCompositeOperation === 'construction'
-          ? `Construction ${state.project.features.filter(isConstruction).length + 1}`
+          ? `Construction ${resolvedProjectFeatures(state.project).filter(isConstruction).length + 1}`
           : `Composite ${state.project.features.length + 1}`,
         kind: 'composite',
         folderId: null,

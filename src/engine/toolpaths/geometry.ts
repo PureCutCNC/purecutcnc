@@ -47,7 +47,7 @@ function clonePoint(point: Point): Point {
   return { x: point.x, y: point.y }
 }
 
-export function resolveDimensionRef(project: Project, value: DimensionRef): number {
+export function resolveDimensionRef(project: Pick<Project, 'dimensions'>, value: DimensionRef): number {
   if (typeof value === 'number') {
     return value
   }
@@ -58,7 +58,7 @@ export function resolveDimensionRef(project: Project, value: DimensionRef): numb
   return named.value
 }
 
-export function resolveFeatureZSpan(project: Project, feature: SketchFeature): ResolvedFeatureZSpan {
+export function resolveFeatureZSpan(project: Pick<Project, 'dimensions'>, feature: SketchFeature): ResolvedFeatureZSpan {
   const top = resolveDimensionRef(project, feature.z_top)
   const bottom = resolveDimensionRef(project, feature.z_bottom)
   const min = Math.min(top, bottom)

@@ -29,6 +29,7 @@ import {
   type Tool,
 } from '../types/project'
 import type { ToolLibraryEntry } from '../toolLibrary'
+import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -98,11 +99,10 @@ function seed(project: Project): void {
 function testAddVCarveImportsVBit(): void {
   // Project has only a flat endmill; adding a V-carve must import + reference a v_bit.
   const base = newProject('t', 'inch')
-  const project: Project = {
+  const project = projectWithFeatures({
     ...base,
     tools: [flatTool('t-flat', 0.25)],
-    features: [makeFeature('f', 'subtract', 2, 2)],
-  }
+  }, [makeFeature('f', 'subtract', 2, 2)])
   seed(project)
 
   const opId = useProjectStore.getState().addOperation(
@@ -128,11 +128,10 @@ function testAddVCarveImportsVBit(): void {
 function testVCarveDepthFallsBackToStockThickness(): void {
   // A v-bit with no max cut depth → maxCarveDepth defaults to the stock thickness.
   const base = newProject('t', 'inch')
-  const project: Project = {
+  const project = projectWithFeatures({
     ...base,
     tools: [{ ...flatTool('t-vbit', 0.5), type: 'v_bit', vBitAngle: 60, maxCutDepth: 0 }],
-    features: [makeFeature('f', 'subtract', 2, 2)],
-  }
+  }, [makeFeature('f', 'subtract', 2, 2)])
   seed(project)
 
   const opId = useProjectStore.getState().addOperation('v_carve_recursive', 'rough', { source: 'features', featureIds: ['f'] }, [])
@@ -148,11 +147,10 @@ function testVCarveDepthFallsBackToStockThickness(): void {
 function testEngraveKeepsShallowDefault(): void {
   // follow_line (engrave) should keep the 1 mm carve/max-carve default.
   const base = newProject('t', 'mm')
-  const project: Project = {
+  const project = projectWithFeatures({
     ...base,
     tools: [flatTool('t-flat', 3)],
-    features: [makeFeature('f', 'subtract', 40, 40)],
-  }
+  }, [makeFeature('f', 'subtract', 40, 40)])
   seed(project)
 
   const opId = useProjectStore.getState().addOperation('follow_line', 'rough', { source: 'features', featureIds: ['f'] }, [])
@@ -166,11 +164,10 @@ function testEngraveKeepsShallowDefault(): void {
 function testAddPocketReusesExistingFlatNoImport(): void {
   // A flat endmill already covers a pocket — no new tool should be added.
   const base = newProject('t', 'inch')
-  const project: Project = {
+  const project = projectWithFeatures({
     ...base,
     tools: [flatTool('t-flat', 0.125)],
-    features: [makeFeature('f', 'subtract', 2, 2)],
-  }
+  }, [makeFeature('f', 'subtract', 2, 2)])
   seed(project)
 
   const opId = useProjectStore.getState().addOperation(

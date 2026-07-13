@@ -36,11 +36,18 @@ import {
   type SketchFeature,
   type SketchProfile,
 } from '../types/project'
-import { resolveFeatureInstance, resolveProfile } from './helpers/resolveFeatures'
+import {
+  commitResolvedInstances,
+  resolveFeatureInstance,
+  resolveProfile,
+  resolvedProjectFeatures,
+  restoreResolvedFeatureMetadata,
+  type ResolvedSketchFeature,
+} from './helpers/resolveFeatures'
 import {
   getInstanceIdsForDefinition,
-  rebakeAllInstances,
 } from './helpers/featureDefinitions'
+import { projectWithFeatures } from '../test/projectFixtures'
 import { resolveSketchSnap } from '../components/canvas/snappingHelpers'
 import type { ViewTransform } from '../components/canvas/viewTransform'
 import { useProjectStore } from './projectStore'
@@ -179,25 +186,25 @@ function makeLinkedSetup(): Project {
     locked: false,
   }
 
-  const project = newProject()
-  project.features = [inst1, inst2, circle]
-  project.featureDefinitions = { [definition.id]: definition }
-  return project
+  return projectWithFeatures({
+    ...newProject(),
+    featureDefinitions: { [definition.id]: definition },
+  }, [inst1, inst2, circle])
 }
 
 // ── Helpers for the linked re-solve ───────────────────────────────────
 
 /**
- * Simulate what syncEditedFeatureDefinition does after rebaking:
- * get all instance IDs, rebake, then re-solve dependents of ALL instances.
+ * Simulate the store read/commit boundary after a shared definition edit:
+ * resolve all instances, then re-solve dependents of every linked instance.
  */
 function linkedRebakeAndResolve(
   project: Project,
   definitionId: string,
   newProfile: SketchProfile,
-): SketchFeature[] {
+): ResolvedSketchFeature[] {
   const def = project.featureDefinitions[definitionId]
-  if (!def) return project.features
+  if (!def) return resolvedProjectFeatures(project)
 
   const nextDef = { ...def, profile: newProfile, kind: inferFeatureKind(newProfile) }
   const nextProject = {
@@ -208,15 +215,14 @@ function linkedRebakeAndResolve(
     },
   }
 
-  // Get all instance IDs BEFORE rebaking
+  // Get all instance IDs before resolving the updated definition.
   const allInstanceIds = getInstanceIdsForDefinition(project, definitionId)
 
-  // Rebake
-  let nextFeatures = rebakeAllInstances(nextProject, definitionId)
+  const resolved = resolvedProjectFeatures(nextProject)
 
-  // Re-solve dependents of ALL rebaked instances
+  // Re-solve dependents of every linked instance.
   const offsets = new Map(allInstanceIds.map((id) => [id, { dx: 0, dy: 0 }] as const))
-  nextFeatures = propagateConstraintsOnTranslate(nextFeatures, offsets, { transformProfile })
+  let nextFeatures = propagateConstraintsOnTranslate(resolved, offsets, { transformProfile })
 
   // Validate all constraints
   const byId = new Map(nextFeatures.map((f) => [f.id, f]))
@@ -225,7 +231,7 @@ function linkedRebakeAndResolve(
     return validateConstraintsOnFeature(f, byId)
   })
 
-  return nextFeatures
+  return restoreResolvedFeatureMetadata(resolved, nextFeatures)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -273,7 +279,7 @@ test('edit linked instance → dependent of sibling re-solves', () => {
   const project = makeLinkedSetup()
 
   // Verify initial positions
-  const circle = project.features.find((f) => f.id === 'circle-dep')!
+  const circle = resolveFeatureInstance(project, 'circle-dep')!
   const cSeg = circle.sketch.profile.segments[0]
   assert(cSeg?.type === 'circle', 'circle should be circle type')
   if (cSeg.type === 'circle') {
@@ -332,7 +338,7 @@ test('direct-edit regression: dependent re-solves after host moves', () => {
   // Simulate direct move of inst-1 (same pattern as completePendingMove):
   // 1. Translate the feature's profile directly
   // 2. Call propagateConstraintsOnTranslate with the move offset
-  const features = project.features.map((f) => {
+  const features = resolvedProjectFeatures(project).map((f) => {
     if (f.id !== 'inst-1') return f
     return {
       ...f,
@@ -375,9 +381,8 @@ test('no-drift stability: double re-solve is idempotent', () => {
   const first = linkedRebakeAndResolve(project, 'def-rect', newProfile)
 
   // Second re-solve — rebuild from the first result with the updated definition
-  const firstProject = {
+  const baseForSecond: Project = {
     ...project,
-    features: first,
     featureDefinitions: {
       ...project.featureDefinitions,
       'def-rect': {
@@ -386,6 +391,10 @@ test('no-drift stability: double re-solve is idempotent', () => {
         kind: inferFeatureKind(newProfile),
       },
     },
+  }
+  const firstProject: Project = {
+    ...baseForSecond,
+    features: commitResolvedInstances(baseForSecond, first),
   }
   const second = linkedRebakeAndResolve(firstProject, 'def-rect', newProfile)
 
@@ -474,13 +483,7 @@ test('constraint commit updates instance transform so snapping sees moved circle
   }
   attachDefinitionRef(circle, 'def-circle', { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
 
-  const project = newProject()
-  project.features = [horizontal, vertical, circle]
-  project.featureDefinitions = {
-    'def-horizontal': { id: 'def-horizontal', kind: 'polygon', profile: horizontalProfile, dimensions: [], operation: 'add' },
-    'def-vertical': { id: 'def-vertical', kind: 'polygon', profile: verticalProfile, dimensions: [], operation: 'add' },
-    'def-circle': { id: 'def-circle', kind: 'circle', profile: circleProf, dimensions: [], operation: 'add' },
-  }
+  const project = projectWithFeatures(newProject(), [horizontal, vertical, circle])
 
   resetStore(project)
   const store = useProjectStore.getState()
@@ -498,7 +501,7 @@ test('constraint commit updates instance transform so snapping sees moved circle
   store.commitConstraintDistance(10)
 
   const nextProject = useProjectStore.getState().project
-  const circleRow = nextProject.features.find((f) => f.id === 'circle') as (SketchFeature & { transform?: Matrix2D }) | undefined
+  const circleRow = nextProject.features.find((f) => f.id === 'circle')
   assert(circleRow !== undefined, 'circle row should exist')
   assert(approx(circleRow.transform?.f ?? 0, -5), `circle transform.f should be -5, got ${circleRow.transform?.f}`)
 

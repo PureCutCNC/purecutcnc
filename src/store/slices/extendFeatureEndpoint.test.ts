@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import type { SketchProfile, Point, Project, ProjectMeta, GridSettings, Stock, MachineOrigin, SketchFeature } from '../../types/project'
+import { newProject, type SketchProfile, type Point, type Project } from '../../types/project'
 import { useProjectStore } from '../projectStore'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 
 const ε = 1e-6
 
@@ -35,18 +37,7 @@ function makeMockProject(
     locked?: boolean
   }>,
 ): Project {
-  return {
-    version: '1.0',
-    meta: { name: 'test', unit: 'mm', modified: new Date().toISOString() } as unknown as ProjectMeta,
-    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as unknown as GridSettings,
-    stock: { x: 0, y: 0, w: 500, h: 500, thickness: 10 } as unknown as Stock,
-    origin: { x: 0, y: 0 } as unknown as MachineOrigin,
-    backdrop: null,
-    dimensions: {},
-    annotations: [],
-    modelAssets: {},
-    featureDefinitions: {},
-    features: features.map((f) => ({
+  return projectWithFeatures(newProject('extend-feature-test', 'mm'), features.map((f) => ({
       id: f.id,
       name: f.id,
       kind: 'polygon' as const,
@@ -63,18 +54,7 @@ function makeMockProject(
       z_bottom: -5,
       visible: f.visible ?? true,
       locked: f.locked ?? false,
-    }) as unknown as SketchFeature[]),
-    featureFolders: [],
-    featureTree: [
-      ...features.map((f) => ({ type: 'feature' as const, featureId: f.id })),
-    ],
-    global_constraints: [],
-    tools: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
-  } as unknown as Project
+    })))
 }
 
 function makeProfile(
@@ -114,7 +94,7 @@ function testExtendLineToVerticalLine() {
   useProjectStore.getState().extendFeatureEndpoint(subject, target)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   assert(updatedFeature !== undefined, 'subject feature should exist')
 
   const updatedProfile = updatedFeature!.sketch.profile
@@ -155,7 +135,7 @@ function testExtendApparentIntersection() {
   useProjectStore.getState().extendFeatureEndpoint(subject, target)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   const endPoint = updatedProfile.segments[0].to
 
@@ -196,7 +176,7 @@ function testExtendNoOpOnClosedProfile() {
 
   // Verify profile is unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   assert(updatedProfile.closed === true, 'closed profile should remain closed')
   assert(
@@ -235,7 +215,7 @@ function testExtendNoOpOnMiddleSegment() {
 
   // Profile unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   assert(updatedFeature!.sketch.profile.segments.length === 3, 'profile should be unchanged')
 
   console.log('  no-op on middle segment: PASSED')
@@ -273,7 +253,7 @@ function testExtendArcEndToLine() {
   useProjectStore.getState().extendFeatureEndpoint(subject, target)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   const endPoint = updatedProfile.segments[0].to
 
@@ -318,7 +298,7 @@ function testExtendParallelNoOp() {
 
   // Profile should be unchanged
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
   assert(
     Math.abs(updatedProfile.segments[0].to.x - 5) < ε,
@@ -356,7 +336,7 @@ function testExtendFromStart() {
   useProjectStore.getState().extendFeatureEndpoint(subject, target)
 
   const updatedProject = useProjectStore.getState().project
-  const updatedFeature = updatedProject.features.find((f: SketchFeature) => f.id === 'subj')
+  const updatedFeature = resolveFeatureInstance(updatedProject, 'subj')
   const updatedProfile = updatedFeature!.sketch.profile
 
   assert(

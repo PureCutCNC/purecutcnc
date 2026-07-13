@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
-import { isConstruction, isMachinable, isRegion, sectionForOperation } from '../../store/helpers/featureRoles'
+import { isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
+import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -75,6 +76,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     selectStock,
     hoverFeature,
   } = useProjectStore()
+  const features = useMemo(() => resolvedProjectFeatures(project), [project])
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -107,7 +109,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       return
     }
     const { project: currentProject, revealFeatureFolder } = useProjectStore.getState()
-    const feature = currentProject.features.find((f) => f.id === selectedNode.featureId)
+    const feature = resolveFeatureInstance(currentProject, selectedNode.featureId)
     if (!feature) return
     pendingScrollFeatureId.current = feature.id
     const section = sectionForOperation(feature.operation)
@@ -163,7 +165,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     // P2-1: skip move when dragging a feature out of its grouped folder (store would reject it).
     // Reordering within the same grouped folder stays allowed.
     if (dragItem.kind === 'feature') {
-      const sourceFeature = project.features.find((f) => f.id === dragItem.id)
+      const sourceFeature = features.find((f) => f.id === dragItem.id)
       const sourceFolder = sourceFeature?.folderId
         ? project.featureFolders.find((f) => f.id === sourceFeature.folderId)
         : null
@@ -174,7 +176,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         } else if (target.kind === 'folder') {
           targetFolder = target.id ?? null
         } else if (target.kind === 'feature' && target.id) {
-          const targetFeature = project.features.find((f) => f.id === target.id)
+          const targetFeature = features.find((f) => f.id === target.id)
           targetFolder = targetFeature?.folderId ?? null
         }
         if (targetFolder !== sourceFeature.folderId) {
@@ -191,7 +193,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       } else if (target.kind === 'folder' && target.id) {
         moveFeatureTreeFeature(dragItem.id, target.id)
       } else if (target.kind === 'feature' && target.id && target.id !== dragItem.id) {
-        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        const targetFeature = features.find((feature) => feature.id === target.id)
         if (targetFeature) {
           moveFeatureTreeFeature(dragItem.id, targetFeature.folderId ?? null, targetFeature.id)
         }
@@ -200,7 +202,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const draggedEntry: { type: 'folder'; folderId: string } = { type: 'folder', folderId: dragItem.id }
       const rootEntries = project.featureTree.filter((entry) => (
         entry.type === 'folder' ||
-        (entry.type === 'feature' && project.features.some((feature) => feature.id === entry.featureId && feature.folderId === null))
+        (entry.type === 'feature' && features.some((feature) => feature.id === entry.featureId && feature.folderId === null))
       ))
       const filteredEntries = rootEntries.filter((entry) => !(entry.type === 'folder' && entry.folderId === dragItem.id))
       let insertIndex = filteredEntries.length
@@ -208,7 +210,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       if (target.kind === 'folder' && target.id && target.id !== dragItem.id) {
         insertIndex = filteredEntries.findIndex((entry) => entry.type === 'folder' && entry.folderId === target.id)
       } else if (target.kind === 'feature' && target.id) {
-        const targetFeature = project.features.find((feature) => feature.id === target.id)
+        const targetFeature = features.find((feature) => feature.id === target.id)
         if (targetFeature?.folderId === null) {
           insertIndex = filteredEntries.findIndex((entry) => entry.type === 'feature' && entry.featureId === target.id)
         }
@@ -228,7 +230,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   }
 
   function handleMoveFeature(featureId: string, direction: -1 | 1) {
-    const feature = project.features.find((f) => f.id === featureId)
+    const feature = features.find((f) => f.id === featureId)
     if (!feature) return
 
     if (feature.folderId === null) {
@@ -238,7 +240,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           const folder = project.featureFolders.find((f) => f.id === entry.folderId)
           return (folder?.section ?? 'features') === featureSection
         }
-        const f = project.features.find((item) => item.id === entry.featureId)
+        const f = features.find((item) => item.id === entry.featureId)
         return sectionForOperation(f?.operation) === featureSection
       })
       const entryIndex = sectionEntries.findIndex((e) => e.type === 'feature' && e.featureId === featureId)
@@ -252,7 +254,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       ;[fullTree[aIdx], fullTree[bIdx]] = [fullTree[bIdx], fullTree[aIdx]]
       reorderFeatureTreeEntries(fullTree)
     } else {
-      const siblings = project.features.filter((f) =>
+      const siblings = features.filter((f) =>
         f.folderId === feature.folderId && sectionForOperation(f.operation) === sectionForOperation(feature.operation)
       )
       const sibIndex = siblings.findIndex((f) => f.id === featureId)
@@ -280,7 +282,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         const f = project.featureFolders.find((item) => item.id === entry.folderId)
         return (f?.section ?? 'features') === section
       }
-      const f = project.features.find((item) => item.id === entry.featureId)
+      const f = features.find((item) => item.id === entry.featureId)
       return sectionForOperation(f?.operation) === section
     })
     const entryIndex = sectionEntries.findIndex((e) => e.type === 'folder' && e.folderId === folderId)
@@ -295,26 +297,29 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     reorderFeatureTreeEntries(fullTree)
   }
 
-  // Warn if first 2.5D feature is not 'add' — imported STL models may be first.
-  // since the store enforces it, but a loaded file could be malformed.
-  const machiningFeatures = project.features.filter(isMachinable)
-  const regionFeatures = project.features.filter(isRegion)
-  const constructionFeatures = project.features.filter(isConstruction)
+  // Warn if first solid feature is not 'add' — imported STL models may be first.
+  // Line features are path geometry and never the base solid, so a Lines-only
+  // project is valid with no warning. The store enforces this, but a loaded file
+  // could be malformed.
+  const machiningFeatures = features.filter(isMachinable)
+  const solidFeatures = features.filter(isSolid)
+  const regionFeatures = features.filter(isRegion)
+  const constructionFeatures = features.filter(isConstruction)
   const featureFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'features')
   const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
   const constructionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'construction')
-  const firstMachiningFeature = machiningFeatures[0] ?? null
+  const firstSolidFeature = solidFeatures[0] ?? null
   const firstFeatureInvalid =
-    !!firstMachiningFeature
-    && firstMachiningFeature.operation !== 'add'
-    && !(firstMachiningFeature.kind === 'stl' && firstMachiningFeature.operation === 'model')
+    !!firstSolidFeature
+    && firstSolidFeature.operation !== 'add'
+    && !(firstSolidFeature.kind === 'stl' && firstSolidFeature.operation === 'model')
 
   const rootEntries = project.featureTree.filter((entry) => {
     if (entry.type === 'folder') {
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'features'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature !== undefined && isMachinable(feature)
   })
 
@@ -323,7 +328,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'regions'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature?.operation === 'region' && feature.folderId === null
   })
 
@@ -332,12 +337,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
       const folder = project.featureFolders.find((item) => item.id === entry.folderId)
       return (folder?.section ?? 'features') === 'construction'
     }
-    const feature = project.features.find((item) => item.id === entry.featureId)
+    const feature = features.find((item) => item.id === entry.featureId)
     return feature !== undefined && isConstruction(feature) && feature.folderId === null
   })
 
   function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
-    const feature = project.features.find((entry) => entry.id === featureId)
+    const feature = features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
     }
@@ -364,7 +369,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
         regionMaskMode={feature.regionMaskMode ?? 'include'}
-        isFirstFeature={feature.id === firstMachiningFeature?.id}
+        isFirstFeature={feature.id === firstSolidFeature?.id}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -500,7 +505,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && rootIdx > 0
               const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
@@ -588,7 +593,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && feature.operation === 'region')
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && feature.operation === 'region')
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && regionIdx > 0
               const canMoveFolderDown = tabletShell && regionIdx < regionRootEntries.length - 1
@@ -676,7 +681,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 return null
               }
 
-              const folderFeatures = project.features.filter((feature) => feature.folderId === folder.id && isConstruction(feature))
+              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isConstruction(feature))
               const folderVisible = folderFeatures.some((f) => f.visible)
               const canMoveFolderUp = tabletShell && constructionIdx > 0
               const canMoveFolderDown = tabletShell && constructionIdx < constructionRootEntries.length - 1
@@ -912,11 +917,13 @@ function TreeRow({
   onDragOver,
   onDrop,
 }: TreeRowProps) {
-  // First feature's operation toggle is locked to 'add' — disable it.
-  // Open profiles (line / open construction) get a reduced menu instead of a
-  // full lock so they can convert to/from construction geometry.
-  const operationLocked = isFirstFeature && operation === 'add'
-  const openProfileOperations = operation === 'line' || (operation === 'construction' && !profileClosed)
+  // The first solid feature must be Add (base-solid rule), but it can be
+  // converted to a non-solid role (Line, Region, Construction). Only Subtract
+  // is disabled on that row — the rest of the menu is available.
+  // Open profiles (line / construction) get a reduced menu of Line +
+  // Construction; closed profiles get the full menu including Line.
+  const subtractDisabled = isFirstFeature && operation === 'add'
+  const openProfileOperations = (operation === 'line' && !profileClosed) || (operation === 'construction' && !profileClosed)
 
   // Popup menu state for operation selector — stores viewport position for fixed positioning
   const operationBtnRef = useRef<HTMLButtonElement>(null)
@@ -1156,11 +1163,11 @@ function TreeRow({
                 'tree-action-btn',
                 'tree-action-btn--operation',
                 `tree-action-btn--${operation}`,
-                operationLocked || operation === 'model' ? 'tree-action-btn--locked' : '',
+                operation === 'model' ? 'tree-action-btn--locked' : '',
               ].join(' ')}
               onClick={(event) => {
                 event.stopPropagation()
-                if (!operationLocked && operation !== 'model') {
+                if (operation !== 'model') {
                   const rect = operationBtnRef.current?.getBoundingClientRect()
                   if (rect) {
                     setOperationMenuPos(
@@ -1172,14 +1179,16 @@ function TreeRow({
                 }
               }}
               title={
-                operationLocked && isFirstFeature
-                  ? 'First 2.5D feature must be Add (base solid)'
-                  : operation === 'line'
-                  ? 'Line — open profile (convert to construction only)'
+                operation === 'line'
+                  ? (profileClosed
+                    ? 'Line — closed path usable by engrave, profile, and V-carve operations'
+                    : 'Line — open profile (Line ↔ Construction only)')
                   : operation === 'model'
                   ? 'Model — imported 3D object (locked)'
                   : operation === 'add'
-                  ? 'Feature adds material'
+                  ? subtractDisabled
+                    ? 'Add — first solid (Subtract unavailable; convert to a non-solid role to unlock)'
+                    : 'Feature adds material'
                   : operation === 'subtract'
                   ? 'Feature subtracts material'
                   : operation === 'construction'
@@ -1187,15 +1196,14 @@ function TreeRow({
                   : 'Region — limits where operations may cut (not machined)'
               }
               aria-label={
-                operationLocked && isFirstFeature ? 'Operation locked to Add'
-                : operation === 'model' ? 'Model — operation locked'
+                operation === 'model' ? 'Model — operation locked'
                 : 'Change operation'
               }
-              aria-haspopup={operationLocked || operation === 'model' ? undefined : 'true'}
+              aria-haspopup={operation === 'model' ? undefined : 'true'}
               aria-expanded={operationMenuPos !== null}
-              aria-disabled={operationLocked || operation === 'model'}
+              aria-disabled={operation === 'model'}
             >
-              {operationLocked && isFirstFeature ? '🔒' : operation === 'line' ? (
+              {operation === 'line' ? (
                 <svg viewBox="0 0 24 24" className="tree-operation-icon" focusable="false" aria-hidden="true">
                   <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                 </svg>
@@ -1215,7 +1223,7 @@ function TreeRow({
                 </svg>
               )}
             </button>
-            {operationMenuPos && !operationLocked && operation !== 'model' ? (
+            {operationMenuPos && operation !== 'model' ? (
               <>
                 <div className="tree-operation-overlay" onClick={() => setOperationMenuPos(null)} />
                 <div className="tree-operation-menu" style={{ top: operationMenuPos.top, left: operationMenuPos.left, transform: 'translateX(-50%)' }}>
@@ -1254,16 +1262,34 @@ function TreeRow({
                       </button>
                       <button
                         type="button"
-                        className={['tree-operation-menu__item', operation === 'subtract' ? 'tree-operation-menu__item--active' : ''].join(' ')}
-                        onClick={(event) => {
+                        className={['tree-operation-menu__item', operation === 'subtract' ? 'tree-operation-menu__item--active' : '', subtractDisabled ? 'tree-operation-menu__item--disabled' : ''].join(' ')}
+                        disabled={subtractDisabled}
+                        onClick={subtractDisabled ? undefined : (event) => {
                           event.stopPropagation()
                           onToggleOperation('subtract')
                           setOperationMenuPos(null)
                         }}
-                        title="Subtract — feature removes material"
+                        title={subtractDisabled ? 'Subtract unavailable — the first solid must be Add or converted to a non-solid role' : 'Subtract — feature removes material'}
                       >
                         <span className="tree-operation-menu__icon">−</span>
                         <span>Subtract</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={['tree-operation-menu__item', operation === 'line' ? 'tree-operation-menu__item--active' : ''].join(' ')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onToggleOperation('line')
+                          setOperationMenuPos(null)
+                        }}
+                        title="Line — closed path machined by engrave/contour operations"
+                      >
+                        <span className="tree-operation-menu__icon">
+                          <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
+                            <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                          </svg>
+                        </span>
+                        <span>Line</span>
                       </button>
                       <button
                         type="button"

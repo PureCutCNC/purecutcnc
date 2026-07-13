@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "3.0",
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
@@ -42,6 +42,7 @@
             "G17",
             "{unitsCommand}"
           ],
+          "operationHeader": [],
           "footer": [],
           "commentPrefix": ";",
           "commentSuffix": "",
@@ -114,6 +115,7 @@
             "{unitsCommand}",
             "{wcsCommand}"
           ],
+          "operationHeader": [],
           "footer": [],
           "commentPrefix": "(",
           "commentSuffix": ")",
@@ -154,8 +156,10 @@
           "drillCommand": "G81",
           "drillWithDwellCommand": "G82",
           "peckDrillCommand": "G83",
+          "chipBreakDrillCommand": null,
           "peckStepWord": "Q",
-          "retractMode": "G98"
+          "retractMode": "G98",
+          "cancelCommand": "G80"
         },
         "coolant": {
           "floodOnCommand": "M8",
@@ -197,6 +201,7 @@
             "{unitsCommand}",
             "{wcsCommand}"
           ],
+          "operationHeader": [],
           "footer": [],
           "commentPrefix": "(",
           "commentSuffix": ")",
@@ -237,8 +242,10 @@
           "drillCommand": "G81",
           "drillWithDwellCommand": "G82",
           "peckDrillCommand": "G83",
+          "chipBreakDrillCommand": null,
           "peckStepWord": "Q",
-          "retractMode": "G98"
+          "retractMode": "G98",
+          "cancelCommand": "G80"
         },
         "coolant": {
           "floodOnCommand": "M8",
@@ -251,7 +258,8 @@
       }
     ],
     "selectedMachineId": null,
-    "showDimensions": true
+    "showDimensions": true,
+    "copyMode": "reference"
   },
   "grid": {
     "extent": 8,
@@ -321,348 +329,95 @@
     {
       "id": "f0001",
       "name": "Rect 1",
-      "kind": "rect",
-      "folderId": null,
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 0.375,
-            "y": 0.375
-          },
-          "segments": [
-            {
-              "type": "line",
-              "to": {
-                "x": 3.625,
-                "y": 0.375
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 3.625,
-                "y": 2.625
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 0.375,
-                "y": 2.625
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 0.375,
-                "y": 0.375
-              }
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
+      "definitionId": "f0001",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
       },
-      "operation": "add",
+      "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "folderId": null,
       "visible": true,
-      "locked": false,
-      "text": null
+      "locked": false
     },
     {
       "id": "f0002",
       "name": "Rect 2",
-      "kind": "rect",
-      "folderId": null,
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 0.5,
-            "y": 0.5
-          },
-          "segments": [
-            {
-              "type": "line",
-              "to": {
-                "x": 3.5,
-                "y": 0.5
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 3.5,
-                "y": 2.5
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 0.5,
-                "y": 2.5
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 0.5,
-                "y": 0.5
-              }
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
+      "definitionId": "f0002",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
       },
-      "operation": "subtract",
+      "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0.6,
+      "folderId": null,
       "visible": true,
-      "locked": false,
-      "text": null
+      "locked": false
     },
     {
       "id": "f0005",
       "name": "Rect 5",
-      "kind": "composite",
-      "folderId": null,
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 0.875,
-            "y": 0.875
-          },
-          "segments": [
-            {
-              "type": "arc",
-              "center": {
-                "x": 1,
-                "y": 0.875
-              },
-              "clockwise": false,
-              "to": {
-                "x": 1,
-                "y": 0.75
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 3,
-                "y": 0.75
-              }
-            },
-            {
-              "type": "arc",
-              "center": {
-                "x": 3,
-                "y": 0.875
-              },
-              "clockwise": false,
-              "to": {
-                "x": 3.125,
-                "y": 0.875
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 3.125,
-                "y": 1.25
-              }
-            },
-            {
-              "type": "arc",
-              "center": {
-                "x": 3,
-                "y": 1.25
-              },
-              "clockwise": false,
-              "to": {
-                "x": 3,
-                "y": 1.375
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 1,
-                "y": 1.375
-              }
-            },
-            {
-              "type": "arc",
-              "center": {
-                "x": 1,
-                "y": 1.25
-              },
-              "clockwise": false,
-              "to": {
-                "x": 0.875,
-                "y": 1.25
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 0.875,
-                "y": 0.875
-              }
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
+      "definitionId": "f0005",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
       },
-      "operation": "add",
+      "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "folderId": null,
       "visible": true,
-      "locked": false,
-      "text": null
+      "locked": false
     },
     {
       "id": "f0003",
       "name": "PureCut",
-      "kind": "text",
-      "text": {
-        "text": "PureCut",
-        "style": "outline",
-        "fontId": "optimer_bold",
-        "size": 0.4
+      "definitionId": "f0003",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
       },
-      "folderId": null,
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 1,
-            "y": 0.875
-          },
-          "segments": [
-            {
-              "type": "line",
-              "to": {
-                "x": 2.9776000000000002,
-                "y": 0.875
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 2.9776000000000002,
-                "y": 1.2618
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 1,
-                "y": 1.2618
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 1,
-                "y": 0.875
-              }
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
-      },
-      "operation": "subtract",
+      "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0.5,
+      "folderId": null,
       "visible": true,
       "locked": false
     },
     {
       "id": "f0004",
       "name": "CNC",
-      "kind": "text",
-      "text": {
-        "text": "CNC",
-        "style": "outline",
-        "fontId": "optimer_bold",
-        "size": 0.4
+      "definitionId": "f0004",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
       },
-      "folderId": null,
-      "sketch": {
-        "profile": {
-          "start": {
-            "x": 1.5,
-            "y": 1.75
-          },
-          "segments": [
-            {
-              "type": "line",
-              "to": {
-                "x": 2.6032,
-                "y": 1.75
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 2.6032,
-                "y": 2.1368
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 1.5,
-                "y": 2.1368
-              }
-            },
-            {
-              "type": "line",
-              "to": {
-                "x": 1.5,
-                "y": 1.75
-              }
-            }
-          ],
-          "closed": true
-        },
-        "origin": {
-          "x": 0,
-          "y": 0
-        },
-        "orientationAngle": 90,
-        "dimensions": [],
-        "constraints": []
-      },
-      "operation": "subtract",
+      "constraints": [],
       "z_top": 0.6,
       "z_bottom": 0.3,
+      "folderId": null,
       "visible": true,
       "locked": false
     }
@@ -745,6 +500,7 @@
     {
       "id": "op0016",
       "name": "Pocket Rough",
+      "description": "",
       "kind": "pocket",
       "pass": "rough",
       "enabled": true,
@@ -764,6 +520,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0.05,
       "stockToLeaveAxial": 0.05,
       "finishWalls": true,
@@ -781,6 +539,7 @@
     {
       "id": "op0017",
       "name": "Pocket Finish",
+      "description": "",
       "kind": "pocket",
       "pass": "finish",
       "enabled": true,
@@ -800,6 +559,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -817,6 +578,7 @@
     {
       "id": "op0018",
       "name": "V-Carve skeleton",
+      "description": "",
       "kind": "v_carve_recursive",
       "pass": "rough",
       "enabled": true,
@@ -836,6 +598,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -853,6 +617,7 @@
     {
       "id": "op0019",
       "name": "V-Carve offset",
+      "description": "",
       "kind": "v_carve",
       "pass": "rough",
       "enabled": true,
@@ -872,6 +637,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -889,6 +656,7 @@
     {
       "id": "op0020",
       "name": "Edge route outside Rough",
+      "description": "",
       "kind": "edge_route_outside",
       "pass": "rough",
       "enabled": true,
@@ -908,6 +676,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0.02,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -925,6 +695,7 @@
     {
       "id": "op0021",
       "name": "Edge route outside Finish",
+      "description": "",
       "kind": "edge_route_outside",
       "pass": "finish",
       "enabled": true,
@@ -944,6 +715,8 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "pocketSlotFeedPercent": 100,
+      "roundOutsideCorners": false,
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -1031,5 +804,290 @@
   ],
   "ai_history": [],
   "modelAssets": {},
-  "annotations": []
+  "annotations": [],
+  "featureDefinitions": {
+    "f0001": {
+      "id": "f0001",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 0.375,
+          "y": 0.375
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3.625,
+              "y": 0.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.625,
+              "y": 2.625
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.375,
+              "y": 2.625
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.375,
+              "y": 0.375
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f0002": {
+      "id": "f0002",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 0.5,
+          "y": 0.5
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3.5,
+              "y": 0.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.5,
+              "y": 2.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.5,
+              "y": 2.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f0005": {
+      "id": "f0005",
+      "kind": "composite",
+      "profile": {
+        "start": {
+          "x": 0.875,
+          "y": 0.875
+        },
+        "segments": [
+          {
+            "type": "arc",
+            "center": {
+              "x": 1,
+              "y": 0.875
+            },
+            "clockwise": false,
+            "to": {
+              "x": 1,
+              "y": 0.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3,
+              "y": 0.75
+            }
+          },
+          {
+            "type": "arc",
+            "center": {
+              "x": 3,
+              "y": 0.875
+            },
+            "clockwise": false,
+            "to": {
+              "x": 3.125,
+              "y": 0.875
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.125,
+              "y": 1.25
+            }
+          },
+          {
+            "type": "arc",
+            "center": {
+              "x": 3,
+              "y": 1.25
+            },
+            "clockwise": false,
+            "to": {
+              "x": 3,
+              "y": 1.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1,
+              "y": 1.375
+            }
+          },
+          {
+            "type": "arc",
+            "center": {
+              "x": 1,
+              "y": 1.25
+            },
+            "clockwise": false,
+            "to": {
+              "x": 0.875,
+              "y": 1.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.875,
+              "y": 0.875
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f0003": {
+      "id": "f0003",
+      "kind": "text",
+      "profile": {
+        "start": {
+          "x": 1,
+          "y": 0.875
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2.9776000000000002,
+              "y": 0.875
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.9776000000000002,
+              "y": 1.2618
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1,
+              "y": 1.2618
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1,
+              "y": 0.875
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": {
+        "text": "PureCut",
+        "style": "outline",
+        "fontId": "optimer_bold",
+        "size": 0.4
+      },
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f0004": {
+      "id": "f0004",
+      "kind": "text",
+      "profile": {
+        "start": {
+          "x": 1.5,
+          "y": 1.75
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2.6032,
+              "y": 1.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.6032,
+              "y": 2.1368
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.5,
+              "y": 2.1368
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.5,
+              "y": 1.75
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": {
+        "text": "CNC",
+        "style": "outline",
+        "fontId": "optimer_bold",
+        "size": 0.4
+      },
+      "stl": null,
+      "operation": "subtract"
+    }
+  }
 }

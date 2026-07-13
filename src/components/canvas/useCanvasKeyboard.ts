@@ -33,7 +33,7 @@ import type {
   SketchControlRef,
   TapeMeasureState,
 } from '../../store/types'
-import type { Point, Project, SketchFeature } from '../../types/project'
+import type { Point, Project } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength } from '../../utils/units'
 import { buildArcSegmentFromThreePoints } from './draftHelpers'
@@ -50,6 +50,7 @@ import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
 import type { MoveWorkflow } from './useMoveWorkflow'
 import type { TransformExactWorkflow } from './useTransformExactWorkflow'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 interface PendingPreviewPoint {
   point: Point
@@ -548,9 +549,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           const canvas = canvasRef.current
           if (canvas) {
             const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
-            const sourceFeatures = pendingOffset.entityIds
-              .map((id) => project.features.find((f) => f.id === id) ?? null)
-              .filter((f): f is SketchFeature => f !== null)
+            const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
               .filter((f) => f.sketch.profile.closed)
             const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)
             if (previewInput) {
@@ -596,7 +595,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
 
       const featureId = selection.selectedFeatureId
       if (!featureId) return
-      const feature = projectRef.current.features.find((f) => f.id === featureId)
+      const feature = resolveFeatureInstance(projectRef.current, featureId)
       if (!feature) return
 
       const profile = feature.sketch.profile

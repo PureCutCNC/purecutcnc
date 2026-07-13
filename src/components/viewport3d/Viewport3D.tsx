@@ -22,6 +22,7 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
@@ -795,6 +796,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       cancelAnimationFrame(frameRef.current)
       controls.dispose()
       ro.disconnect()
+      for (const object of objectsRef.current) {
+        scene.remove(object)
+        disposeObject3D(object)
+      }
+      objectsRef.current = []
       renderer.dispose()
       mount.removeChild(renderer.domElement)
     }
@@ -936,6 +942,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             clampMesh.geometry.dispose()
             disposeObjectMaterial(clampMesh.material)
           }
+          for (const line of nextSceneObjects.batchedLines) {
+            disposeObject3D(line)
+          }
           return
         }
 
@@ -955,9 +964,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           objectsRef.current.push(featureMesh)
         }
 
-        for (const openLine of nextSceneObjects.openFeatureLines.values()) {
-          scene.add(openLine)
-          objectsRef.current.push(openLine)
+        for (const line of nextSceneObjects.batchedLines) {
+          scene.add(line)
+          objectsRef.current.push(line)
         }
 
         for (const tabMesh of nextSceneObjects.tabMeshes.values()) {
@@ -981,7 +990,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         if (controls) {
           // Construction geometry is absent from the 3D scene — keep it out of
           // the camera-fit bounds as well (issue #199).
-          const visibleFeatures = modelFeatures(project.features).filter((feature) => feature.visible)
+          const visibleFeatures = modelFeatures(resolvedProjectFeatures(project)).filter((feature) => feature.visible)
           const visibleTabs = project.tabs.filter((tab) => tab.visible)
           const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
           const profiles =

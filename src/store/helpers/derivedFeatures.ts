@@ -22,13 +22,12 @@ import type {
   FeatureDefinition,
   FeatureOperation,
   FeatureTreeEntry,
-  Matrix2D,
   Point,
   Project,
   SketchFeature,
   SketchProfile,
 } from '../../types/project'
-import { IDENTITY_MATRIX, inferFeatureKind, polygonProfile } from '../../types/project'
+import { inferFeatureKind, polygonProfile } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import { clonePoint, pointsEqual } from './geometry'
 import { nextUniqueGeneratedId } from './ids'
@@ -63,9 +62,9 @@ import {
 } from '../../engine/toolpaths/arcReconstruction'
 import { splitClosedByOpen } from './polygonSplit'
 
-export interface DerivedFeatureGroup {
+export interface DerivedFeatureGroup<TFeature extends { id: string; name: string } = SketchFeature> {
   sourceId: string
-  features: SketchFeature[]
+  features: TFeature[]
 }
 
 export type DerivedFeatureFactory = (
@@ -110,8 +109,7 @@ function collectDerivedFeaturesFromPolyTree(
         logicalDepth === 0 ? baseName : `${baseName} Hole`,
         [...project.features.map((feature) => feature.name), ...features.map((feature) => feature.name)],
       )
-      const nextProject = { ...project, features: [...project.features, ...features] }
-      const result = createDerivedFeature(nextProject, baseFeature, profile, operation, name)
+      const result = createDerivedFeature(project, baseFeature, profile, operation, name)
       features.push(result.feature)
       definitions.push(result.definition)
     }
@@ -119,7 +117,7 @@ function collectDerivedFeaturesFromPolyTree(
 
   for (const child of getClipperChildren(node)) {
     const childResult = collectDerivedFeaturesFromPolyTree(
-      { ...project, features: [...project.features, ...features] },
+      project,
       child,
       baseFeature,
       baseOperation,
@@ -161,7 +159,7 @@ function splitClosedFeatureByOpenCutter(
       ...features.map((f) => f.name),
     ])
     const factoryResult = createDerivedFeature(
-      { ...project, features: [...project.features, ...features] },
+      project,
       target,
       profile,
       target.operation,
@@ -223,7 +221,7 @@ function trimOpenTargetByClosedCutters(
       ...features.map((f) => f.name),
     ])
     const factoryResult = createDerivedFeature(
-      { ...project, features: [...project.features, ...features] },
+      project,
       target,
       profile,
       target.operation,
@@ -295,10 +293,9 @@ export function cutFeaturesByCutterGrouped(
 
       for (const openCutter of openCutters) {
         const splitPieces: SketchFeature[] = []
-        const pieceProject = { ...project, features: [...project.features, ...splitPieces] }
         for (const piece of workingPieces) {
           const splitResult = splitClosedFeatureByOpenCutter(
-            pieceProject,
+            project,
             piece,
             openCutter,
             baseName,
@@ -339,13 +336,13 @@ export function cutFeaturesByCutterGrouped(
   return { groups, definitions: allDefinitions }
 }
 
-export function insertDerivedFeaturesAfterSources(
-  features: SketchFeature[],
-  groups: DerivedFeatureGroup[],
+export function insertDerivedFeaturesAfterSources<TFeature extends { id: string; name: string }>(
+  features: TFeature[],
+  groups: Array<DerivedFeatureGroup<TFeature>>,
   removeIds: Set<string>,
-): SketchFeature[] {
+): TFeature[] {
   const groupMap = new Map(groups.map((group) => [group.sourceId, group.features]))
-  const nextFeatures: SketchFeature[] = []
+  const nextFeatures: TFeature[] = []
 
   for (const feature of features) {
     if (!removeIds.has(feature.id)) {
@@ -360,10 +357,10 @@ export function insertDerivedFeaturesAfterSources(
   return nextFeatures
 }
 
-export function insertDerivedFeatureTreeEntries(
+export function insertDerivedFeatureTreeEntries<TFeature extends { id: string; name: string; folderId: string | null }>(
   featureTree: FeatureTreeEntry[],
-  features: SketchFeature[],
-  groups: DerivedFeatureGroup[],
+  features: TFeature[],
+  groups: Array<DerivedFeatureGroup<TFeature>>,
   removeIds: Set<string>,
 ): FeatureTreeEntry[] {
   const featureMap = new Map(features.map((feature) => [feature.id, feature]))
@@ -400,7 +397,6 @@ export function selectedClosedFeaturesFromIds(project: Project, featureIds: stri
   return featureIds
     .map((featureId) => resolved.get(featureId))
     .filter((feature): feature is NonNullable<typeof feature> => feature !== undefined)
-    .map((feature) => feature as unknown as SketchFeature)
     .filter((feature) => feature.sketch.profile.closed)
 }
 
@@ -428,9 +424,8 @@ export function previewOffsetFeaturesInternal(
     }
 
     const operation: FeatureOperation = baseFeature.operation === 'model' ? 'add' : baseFeature.operation
-    const nextProject = { ...project, features: [...project.features, ...features] }
     const result = createDerivedFeature(
-      nextProject,
+      project,
       baseFeature,
       profile,
       operation,
@@ -454,7 +449,7 @@ export function createDerivedFeature(
   name: string,
 ): { feature: SketchFeature; definition: FeatureDefinition } {
   const id = nextUniqueGeneratedId(project, 'f')
-  const { definitionId, definition } = createSnapshotDefinition(project, {
+  const { definition } = createSnapshotDefinition(project, {
     profile,
     kind: inferFeatureKind(profile),
     operation,
@@ -476,9 +471,7 @@ export function createDerivedFeature(
     z_bottom: baseFeature.z_bottom,
     visible: true,
     locked: false,
-    definitionId,
-    transform: IDENTITY_MATRIX,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D })
+  })
   return { feature, definition }
 }
 

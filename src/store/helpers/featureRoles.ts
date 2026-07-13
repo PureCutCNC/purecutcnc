@@ -29,6 +29,7 @@
  */
 
 import type { FeatureOperation, Project, SketchFeature } from '../../types/project'
+import { resolveFeatureInstances } from './resolveFeatures'
 
 /** Anything carrying an operation — SketchFeature or FeatureDefinition. */
 interface HasOperation {
@@ -54,6 +55,18 @@ export function isRegion(entity: HasOperation): boolean {
  */
 export function isMachinable(entity: HasOperation): boolean {
   return entity.operation !== 'region' && entity.operation !== 'construction'
+}
+
+/**
+ * A feature that is part of the solid tree for base-solid ordering (add,
+ * subtract) or a placeholder solid (imported model). Only add/subtract
+ * participate in Manifold boolean CSG; imported Model entries are rendered
+ * as overlays and skipped by the boolean pipeline. Line features are
+ * machinable path geometry that renders as flat 3D line overlays and never
+ * contributes to the solid model.
+ */
+export function isSolid(entity: HasOperation): boolean {
+  return entity.operation === 'add' || entity.operation === 'subtract' || entity.operation === 'model'
 }
 
 /**
@@ -86,8 +99,5 @@ export function commonSection(entities: HasOperation[]): FeatureTreeSection | nu
 
 /** {@link commonSection} over feature ids; unknown ids are ignored. */
 export function commonSectionOfIds(project: Project, featureIds: string[]): FeatureTreeSection | null {
-  const features = featureIds
-    .map((id) => project.features.find((feature) => feature.id === id))
-    .filter((feature): feature is SketchFeature => feature !== undefined)
-  return commonSection(features)
+  return commonSection(resolveFeatureInstances(project, featureIds))
 }

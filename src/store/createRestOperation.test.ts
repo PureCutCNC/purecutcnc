@@ -30,6 +30,8 @@ import {
   type Project,
   type SketchFeature,
 } from '../types/project'
+import { projectWithFeatures } from '../test/projectFixtures'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -118,7 +120,7 @@ function makeProject(): { project: Project; operation: Operation; machiningId: s
     machiningOrder: 'feature_first',
   }
 
-  const project: Project = {
+  const project = projectWithFeatures({
     ...newProject('Edge rest test'),
     tools: [
       {
@@ -138,7 +140,6 @@ function makeProject(): { project: Project; operation: Operation; machiningId: s
         maxCutDepth: 0,
       },
     ],
-    features: [machiningFeature, regionA, regionB],
     featureFolders: [] as FeatureFolder[],
     featureTree: [
       { type: 'feature', featureId: machiningId },
@@ -146,7 +147,7 @@ function makeProject(): { project: Project; operation: Operation; machiningId: s
       { type: 'feature', featureId: regionIds[1] },
     ],
     operations: [operation],
-  }
+  }, [machiningFeature, regionA, regionB])
 
   return { project, operation, machiningId, regionIds }
 }
@@ -181,7 +182,7 @@ function testEdgeRestCreatesGeneratedRegionFilters(): void {
   assert(restFolder !== undefined, 'expected rest-region folder to exist')
   assert(restFolder?.section === 'regions', 'expected rest-region folder to live in the Regions section')
 
-  const restFeatures = result.regionIds.map((id) => nextProject.features.find((feature) => feature.id === id) ?? null)
+  const restFeatures = result.regionIds.map((id) => resolveFeatureInstance(nextProject, id))
   assert(restFeatures.every((feature) => feature !== null), 'expected all rest region features to exist')
   assert(
     restFeatures.every((feature) => feature?.folderId === restFolder?.id),

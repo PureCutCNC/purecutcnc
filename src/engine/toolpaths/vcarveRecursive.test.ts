@@ -21,6 +21,7 @@
 
 import type { Operation, Point, Project, SketchFeature, Tool } from '../../types/project'
 import { defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { buildInteriorCornerBridge, detectCorners, stepCorners } from './vcarveRecursive'
 import { generateVCarveRecursiveToolpath } from './vcarveRecursive'
 import type { ToolpathMove } from './types'
@@ -453,7 +454,7 @@ function makeVCarveRecursiveOp(featureIds: string[], stepover = 0.4): Operation 
 }
 
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
-  return { ...newProject('test', 'mm'), tools, features }
+  return projectWithFeatures({ ...newProject('test', 'mm'), tools }, features)
 }
 
 function testVCarveRecursiveProducesCutsForSquare(): void {

@@ -18,13 +18,14 @@
  * Feature References Resolver — composes definition + instance transform into
  * world-space resolved features for canvas, hit testing, toolpaths, and export.
  *
- * All read paths that need world geometry should go through these helpers so
- * consumers never need to know whether a feature is a plain row or an instance
- * of a shared definition.
+ * All read paths that need world geometry should go through these helpers.
+ * Serialized rows are always lightweight instances; resolved geometry is an
+ * ephemeral runtime view and must not be stored in the project or history.
  */
 
 import type {
   FeatureDefinition,
+  FeatureInstance,
   Matrix2D,
   Point,
   Project,
@@ -34,15 +35,15 @@ import type {
   SketchProfile,
   STLFeatureData,
 } from '../../types/project'
-import { IDENTITY_MATRIX } from '../../types/project'
+import { multiplyMatrix, translateMatrix } from './instanceTransforms'
 
 // ============================================================================
 // Resolved feature shape
 // ============================================================================
 
 /**
- * World-space resolved feature — compatible with today's {@link SketchFeature}
- * consumers but carries explicit definition/instance provenance.
+ * World-space read model derived from a definition and a lightweight instance.
+ * It must never be stored back into Project or undo history.
  */
 export interface ResolvedSketchFeature {
   /** Instance (feature row) ID. */
@@ -53,18 +54,28 @@ export interface ResolvedSketchFeature {
   definitionId: string
   /** Instance / feature row ID (same as `id`). Kept for clarity. */
   instanceId: string
-  kind: SketchFeature['kind']
-  text: SketchFeature['text']
-  stl: SketchFeature['stl']
-  folderId: SketchFeature['folderId']
+  transform: Matrix2D
+  kind: FeatureDefinition['kind']
+  text: FeatureDefinition['text']
+  stl: FeatureDefinition['stl']
+  folderId: FeatureInstance['folderId']
   /** World-space sketch — profile is the resolved definition profile. */
   sketch: Sketch
-  operation: SketchFeature['operation']
-  regionMaskMode: SketchFeature['regionMaskMode']
-  z_top: SketchFeature['z_top']
-  z_bottom: SketchFeature['z_bottom']
-  visible: SketchFeature['visible']
-  locked: SketchFeature['locked']
+  operation: FeatureDefinition['operation']
+  regionMaskMode: FeatureDefinition['regionMaskMode']
+  z_top: FeatureInstance['z_top']
+  z_bottom: FeatureInstance['z_bottom']
+  visible: FeatureInstance['visible']
+  locked: FeatureInstance['locked']
+}
+
+/**
+ * Ephemeral project read model with world-space feature geometry. This view is
+ * safe to pass through rendering and CAM code, but must never be persisted or
+ * stored in undo history.
+ */
+export type ResolvedProject = Omit<Project, 'features'> & {
+  features: ResolvedSketchFeature[]
 }
 
 // ============================================================================
@@ -352,35 +363,19 @@ export function resolveFeatureDefinition(
 }
 
 /**
- * Determine the definition and transform for a feature row, handling the
- * transitional shape where features lack explicit `definitionId` / `transform`.
- *
- * Returns `null` when no matching definition exists.
+ * Determine the definition and transform for an authoritative instance.
+ * Returns `null` when its required definition is missing.
  */
 function resolveDefinitionAndTransform(
   project: Project,
-  feature: SketchFeature,
+  feature: FeatureInstance,
 ): { definition: FeatureDefinition; transform: Matrix2D } | null {
-  const withRefs = feature as SketchFeature & {
-    definitionId?: string
-    transform?: Matrix2D
-  }
-
-  let definition: FeatureDefinition | undefined
-
-  if (withRefs.definitionId) {
-    // Explicit definitionId: resolve ONLY that definition — no fallback.
-    definition = project.featureDefinitions[withRefs.definitionId]
-    if (!definition) return null
-  } else {
-    // Transitional shape: no definitionId → resolve by feature ID.
-    definition = project.featureDefinitions[feature.id]
-    if (!definition) return null
-  }
+  const definition = project.featureDefinitions[feature.definitionId]
+  if (!definition) return null
 
   return {
     definition,
-    transform: withRefs.transform ?? IDENTITY_MATRIX,
+    transform: feature.transform,
   }
 }
 
@@ -402,9 +397,8 @@ function resolveStlData(
 /**
  * Resolve a single feature row into a world-space {@link ResolvedSketchFeature}.
  *
- * - Finds the matching definition (by `definitionId` if present, otherwise by
- *   feature ID).
- * - Applies the instance transform (identity for transitional features).
+ * - Finds the matching definition by the instance's required `definitionId`.
+ * - Applies the required instance transform.
  * - Returns `null` when the definition is missing.
  */
 export function resolveFeatureInstance(
@@ -414,13 +408,22 @@ export function resolveFeatureInstance(
   const feature = project.features.find((f) => f.id === instanceOrFeatureId)
   if (!feature) return null
 
+  return resolveFeatureRow(project, feature)
+}
+
+/** Resolve an authoritative row that is stored outside Project.features (stock source). */
+export function resolveFeatureRow(
+  project: Project,
+  feature: FeatureInstance,
+): ResolvedSketchFeature | null {
+
   const resolved = resolveDefinitionAndTransform(project, feature)
   if (!resolved) return null
 
   const { definition, transform } = resolved
   const sketch = resolveSketch(definition, transform)
   // Layer per-instance constraints onto the resolved sketch.
-  sketch.constraints = feature.sketch.constraints.map((c) => ({ ...c }))
+  sketch.constraints = feature.constraints.map((c) => ({ ...c }))
 
   const transformPoint = (p: Point) => applyMatrixToPoint(transform, p)
 
@@ -429,6 +432,7 @@ export function resolveFeatureInstance(
     name: feature.name,
     definitionId: definition.id,
     instanceId: feature.id,
+    transform,
     kind: definition.kind,
     text: definition.text ? { ...definition.text } : null,
     stl: resolveStlData(definition.stl, transformPoint),
@@ -456,37 +460,15 @@ export function resolveFeatureInstances(
   project: Project,
   ids?: string[],
 ): ResolvedSketchFeature[] {
-  const targetIds = ids ?? project.features.map((f) => f.id)
+  if (!ids) return resolvedProjectFeatures(project)
+  const featureById = new Map(project.features.map((feature) => [feature.id, feature]))
   const result: ResolvedSketchFeature[] = []
-  for (const id of targetIds) {
-    const resolved = resolveFeatureInstance(project, id)
+  for (const id of ids) {
+    const feature = featureById.get(id)
+    const resolved = feature ? resolveFeatureRow(project, feature) : null
     if (resolved) result.push(resolved)
   }
   return result
-}
-
-// ============================================================================
-// Read-path adapters
-// ============================================================================
-
-function hasExplicitDefinitionId(feature: SketchFeature): boolean {
-  return typeof (feature as SketchFeature & { definitionId?: unknown }).definitionId === 'string'
-}
-
-function rawFeatureAdapter(feature: SketchFeature): ResolvedSketchFeature {
-  return {
-    ...feature,
-    definitionId: feature.id,
-    instanceId: feature.id,
-    regionMaskMode: feature.operation === 'region' ? (feature.regionMaskMode ?? 'include') : undefined,
-    text: feature.text ?? null,
-    stl: feature.stl ?? null,
-    sketch: {
-      ...feature.sketch,
-      profile: { ...feature.sketch.profile },
-      constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
-    },
-  }
 }
 
 /**
@@ -494,15 +476,101 @@ function rawFeatureAdapter(feature: SketchFeature): ResolvedSketchFeature {
  * {@link ResolvedSketchFeature}.  Read paths that need placed/world geometry
  * should use this (or {@link resolvedFeatureMap}) instead of reading
  * `project.features` directly.
- *
- * Explicit missing-definition features are skipped. Transitional rows without
- * a definition reference retain their stored world-space geometry.
+ * Instances with missing definitions are omitted.
  */
 export function resolvedProjectFeatures(project: Project): ResolvedSketchFeature[] {
   return project.features.flatMap((feature) => {
-    const resolved = resolveFeatureInstance(project, feature.id)
-    if (resolved) return [resolved]
-    return hasExplicitDefinitionId(feature) ? [] : [rawFeatureAdapter(feature)]
+    const resolved = resolveFeatureRow(project, feature)
+    return resolved ? [resolved] : []
+  })
+}
+
+/** Build an ephemeral geometry-bearing project view for legacy read APIs. */
+export function resolveProject(project: Project): ResolvedProject {
+  return {
+    ...project,
+    features: resolvedProjectFeatures(project),
+  }
+}
+
+/** Convert a resolved read row back to its lightweight authoritative row. */
+export function featureInstanceFromResolved(
+  feature: ResolvedSketchFeature,
+): FeatureInstance {
+  return {
+    id: feature.id,
+    name: feature.name,
+    definitionId: feature.definitionId,
+    transform: { ...feature.transform },
+    constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
+    z_top: feature.z_top,
+    z_bottom: feature.z_bottom,
+    folderId: feature.folderId,
+    visible: feature.visible,
+    locked: feature.locked,
+  }
+}
+
+/** Reattach resolver-only metadata after a legacy geometry helper returns rows. */
+export function restoreResolvedFeatureMetadata(
+  source: ResolvedSketchFeature[],
+  features: SketchFeature[],
+): ResolvedSketchFeature[] {
+  const sourceById = new Map(source.map((feature) => [feature.id, feature]))
+  return features.flatMap((feature) => {
+    const resolved = sourceById.get(feature.id)
+    if (!resolved) return []
+    return [{
+      ...resolved,
+      ...feature,
+      sketch: feature.sketch,
+    }]
+  })
+}
+
+function matricesEqual(a: Matrix2D, b: Matrix2D): boolean {
+  return a.a === b.a && a.b === b.b && a.c === b.c && a.d === b.d
+    && a.e === b.e && a.f === b.f
+}
+
+/**
+ * Fold an edited resolved view back into lightweight instance state. Definition
+ * geometry is intentionally untouched; profile translation deltas become
+ * instance transforms and constraints remain per-instance.
+ */
+export function commitResolvedInstances(
+  project: Project,
+  editedFeatures: ResolvedSketchFeature[],
+): FeatureInstance[] {
+  const expected = resolvedFeatureMap(project)
+  const edited = new Map(editedFeatures.map((feature) => [feature.id, feature]))
+  return project.features.flatMap((instance) => {
+    const expectedFeature = expected.get(instance.id)
+    const editedFeature = edited.get(instance.id)
+    if (!editedFeature) return [instance]
+    if (!expectedFeature) return [instance]
+
+    const transformChanged = !matricesEqual(instance.transform, editedFeature.transform)
+    const dx = editedFeature.sketch.profile.start.x - expectedFeature.sketch.profile.start.x
+    const dy = editedFeature.sketch.profile.start.y - expectedFeature.sketch.profile.start.y
+    const transform = transformChanged
+      ? { ...editedFeature.transform }
+      : dx === 0 && dy === 0
+        ? instance.transform
+        : multiplyMatrix(translateMatrix(dx, dy), instance.transform)
+
+    return [{
+      id: editedFeature.id,
+      name: editedFeature.name,
+      definitionId: editedFeature.definitionId,
+      transform,
+      constraints: editedFeature.sketch.constraints.map((constraint) => ({ ...constraint })),
+      z_top: editedFeature.z_top,
+      z_bottom: editedFeature.z_bottom,
+      folderId: editedFeature.folderId,
+      visible: editedFeature.visible,
+      locked: editedFeature.locked,
+    }]
   })
 }
 

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Project, SketchFeature } from '../../types/project'
+import type { Project } from '../../types/project'
 import type { PendingAddTool, PendingMoveTool, PendingOffsetTool, PendingTransformTool } from '../../store/types'
 import type { SnapMode } from '../../sketch/snapping'
 import type { SketchViewState } from './viewTransform'
@@ -27,6 +27,7 @@ import { computeViewTransform } from './viewTransform'
 import { resolveOffsetPreview } from './draftGeometry'
 import { computeScaleFactorFromPreview, computeRotateDegreesFromPreview, type OperationDimEdit } from './manualEntry'
 import { filletRadiusFromPoint, chamferDistanceFromPoint } from '../../store/helpers/referenceTransforms'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 export interface TriggerDimensionEditDeps {
   project: Project
@@ -221,9 +222,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const canvasHeight_ = canvasHeight
       if (canvasWidth_ > 0 && canvasHeight_ > 0) {
         const vt = computeViewTransform(project.stock, canvasWidth_, canvasHeight_, viewState)
-        const sourceFeatures = pendingOffset.entityIds
-          .map((id) => project.features.find((f) => f.id === id) ?? null)
-          .filter((f): f is SketchFeature => f !== null)
+        const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
           .filter((f) => f.sketch.profile.closed)
         const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, deps.activeSnapMode ?? null, vt)
         if (previewInput) distance = formatLength(previewInput.signedDistance, units)
@@ -235,7 +234,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
 
   if (selectionMode === 'sketch_edit' && !pendingAdd && pendingSketchFillet && sketchEditPreviewPoint) {
     const featureId = selectedFeatureId
-    const feature = featureId ? project.features.find((f) => f.id === featureId) ?? null : null
+    const feature = featureId ? resolveFeatureInstance(project, featureId) : null
     if (!feature) return
     const radius = sketchEditTool === 'chamfer'
       ? chamferDistanceFromPoint(feature, pendingSketchFillet.anchorIndex, sketchEditPreviewPoint.point)

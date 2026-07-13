@@ -26,7 +26,6 @@
 
 import { rectProfile } from '../../types/project'
 import type {
-  FeatureDefinition,
   Matrix2D,
   Operation,
   Project,
@@ -34,6 +33,7 @@ import type {
 } from '../../types/project'
 import { newProject } from '../../types/project'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolvePocketRegions } from './resolver'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -71,30 +71,11 @@ function makeSubtractFeature(
 }
 
 function makeProject(features: SketchFeature[], transforms?: Map<string, Matrix2D>): Project {
-  const project = newProject('tp-test')
-  const defs: Record<string, FeatureDefinition> = {}
-  const featuresOut: SketchFeature[] = []
-
-  for (const f of features) {
-    defs[f.id] = {
-      id: f.id,
-      kind: f.kind,
-      profile: f.sketch.profile,
-      dimensions: f.sketch.dimensions.map((d) => ({ ...d })),
-      text: f.text ? { ...f.text } : null,
-      stl: f.stl ? { ...f.stl } : null,
-      operation: f.operation,
-    }
-
-    const t = transforms?.get(f.id)
-    if (t) {
-      featuresOut.push({ ...f, definitionId: f.id, transform: t } as SketchFeature)
-    } else {
-      featuresOut.push(f)
-    }
-  }
-
-  return { ...project, features: featuresOut, featureDefinitions: defs }
+  return projectWithFeatures(newProject('tp-test'), features.map((feature) => ({
+    ...feature,
+    definitionId: feature.id,
+    transform: transforms?.get(feature.id),
+  })))
 }
 
 function makePocketOp(id: string, featureIds: string[]): Operation {
@@ -234,6 +215,11 @@ function makePocketOp(id: string, featureIds: string[]): Operation {
     transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
   }
   const project = makeProject([orphanFeature as SketchFeature])
+  project.features[0] = {
+    ...project.features[0],
+    definitionId: 'nonexistent',
+  }
+  delete project.featureDefinitions.orphan
   const op = makePocketOp('op1', ['orphan'])
 
   // Explicit missing definitionId → resolver returns null → Slice 02 contract
@@ -249,24 +235,22 @@ function makePocketOp(id: string, featureIds: string[]): Operation {
   console.log('   ✓ explicit missing definition skipped, no crash')
 }
 
-// Transitional row (no definitionId, no definition): falls back to raw profile.
+// Strict current row without its definition is skipped; there is no raw fallback.
 {
-  console.log('6. Transitional row without definition falls back to raw profile...')
+  console.log('6. Current row without definition has no fallback geometry...')
 
   const feature = makeSubtractFeature('transitional', rectProfile(10, 10, 30, 20))
   const project = makeProject([feature])
-  // Remove the feature definition we added in makeProject to simulate a truly
-  // transitional row (no definitionId, no matching definition).
   delete project.featureDefinitions['transitional']
 
   const op = makePocketOp('op1', ['transitional'])
 
   const result = resolvePocketRegions(project, op)
-  assert(result.bands.length > 0,
-    `transitional row should still resolve via raw profile, got ${result.bands.length} bands`)
+  assert(result.bands.length === 0,
+    `missing definition should resolve no geometry, got ${result.bands.length} bands`)
   console.log(`   result: ${result.bands.length} bands, warnings: ${result.warnings.join('; ') || 'none'}`)
 
-  console.log('   ✓ transitional fallback works')
+  console.log('   ✓ missing definition has no fallback')
 }
 
 console.log('\nall resolverReadPath.test.ts assertions passed')

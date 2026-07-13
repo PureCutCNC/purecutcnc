@@ -69,7 +69,7 @@ function buildGcodeExportProjectJson(): string {
   const stockH = 120
 
   return JSON.stringify({
-    version: '2.0',
+    version: '3.0',
     meta: {
       name: 'Gcode Export E2E Fixture',
       created: now,
@@ -120,22 +120,14 @@ function buildGcodeExportProjectJson(): string {
       {
         id: 'f-machinable-add',
         name: 'Machinable Add',
-        kind: 'rect',
+        definitionId: 'def-machinable-add',
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 30, f: 30 },
+        constraints: [],
         folderId: null,
-        sketch: {
-          profile: resolvedRectProfile(30, 30, 60, 40),
-          origin: { x: 0, y: 0 },
-          orientationAngle: 0,
-          dimensions: [],
-          constraints: [],
-        },
-        operation: 'add',
         z_top: 2,
         z_bottom: 0,
         visible: true,
         locked: false,
-        definitionId: 'def-machinable-add',
-        transform: { a: 1, b: 0, c: 0, d: 1, e: 30, f: 30 },
       },
     ],
     featureFolders: [],

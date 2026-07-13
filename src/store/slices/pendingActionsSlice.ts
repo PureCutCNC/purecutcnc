@@ -15,11 +15,12 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Clamp, Project, SketchFeature, Tab } from '../../types/project'
+import type { Clamp, Project, Tab } from '../../types/project'
 import { largestConnectedOverlapGroup } from '../helpers/clipping'
 import { selectedClosedFeaturesFromIds } from '../helpers/derivedFeatures'
 import { nextPlacementSession } from '../helpers/ids'
 import type { ProjectStore } from '../types'
+import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 
 export type PendingActionsSlice = Pick<
   ProjectStore,
@@ -55,8 +56,8 @@ export type PendingActionsSlice = Pick<
   | 'setPendingTransformReferenceEnd'
 >
 
-function featureById(project: Project, id: string): SketchFeature | null {
-  return project.features.find((feature) => feature.id === id) ?? null
+function featureById(project: Project, id: string): ResolvedSketchFeature | null {
+  return resolveFeatureInstance(project, id)
 }
 
 function clampById(project: Project, id: string): Clamp | null {
@@ -83,7 +84,7 @@ export function createPendingActionsSlice(
           : [featureId]
         const features = featureIds
           .map((id) => featureById(s.project, id))
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
@@ -114,7 +115,7 @@ export function createPendingActionsSlice(
           : [featureId]
         const features = featureIds
           .map((id) => featureById(s.project, id))
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length) {
           return {}
         }
@@ -145,7 +146,7 @@ export function createPendingActionsSlice(
           : [featureId]
         const features = featureIds
           .map((id) => featureById(s.project, id))
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
@@ -176,7 +177,7 @@ export function createPendingActionsSlice(
           : [featureId]
         const features = featureIds
           .map((id) => featureById(s.project, id))
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
@@ -207,7 +208,7 @@ export function createPendingActionsSlice(
           : [featureId]
         const features = featureIds
           .map((id) => featureById(s.project, id))
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }

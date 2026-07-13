@@ -16,25 +16,24 @@
 
 import {
   defaultOrigin,
-  IDENTITY_MATRIX,
   type FeatureDefinition,
   type FeatureFolder,
+  type FeatureInstance,
   type FeatureTreeEntry,
   type LocalConstraint,
   type MachineOrigin,
-  type Matrix2D,
   type NamedDimension,
   type Operation,
   type PersistedImportedMesh,
   type Project,
   type ConstraintSegmentReference,
-  type SketchFeature,
   type Stock,
   type Tool,
 } from '../types/project'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
+import { decodeProjectFormat } from '../store/helpers/projectFormat'
 
 export interface CamjInspection {
   /** Parsed source project. Always uses source units (not yet converted). */
@@ -93,7 +92,7 @@ export function inspectCamjString(text: string): CamjInspection {
     throw new Error('Failed to parse .camj file: missing meta.')
   }
 
-  const project = parsed as Project
+  const { project, convertedLegacy, sourceVersion } = decodeProjectFormat(parsed)
   const sourceUnits: Units = project.meta.units === 'inch' ? 'inch' : 'mm'
 
   const featureCountByFolder = new Map<string, number>()
@@ -125,7 +124,9 @@ export function inspectCamjString(text: string): CamjInspection {
     folderFeatureCount,
     sourceUnits,
     stockIsFeatureBased,
-    warnings: [],
+    warnings: convertedLegacy
+      ? [`Converted legacy file format ${sourceVersion ?? '1.0'} to 3.0 for import.`]
+      : [],
   }
 }
 
@@ -228,7 +229,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
 
   // 2. Identify features inside selected folders.
   const sourceFolderById = new Map(sourceProject.featureFolders.map((f) => [f.id, f]))
-  const importedFeatures: SketchFeature[] = []
+  const importedFeatures: FeatureInstance[] = []
   for (const feature of sourceProject.features) {
     if (feature.folderId && selectedFolderIdSet.has(feature.folderId)) {
       importedFeatures.push(feature)
@@ -306,11 +307,15 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     newDimensions[newDimId] = { ...sourceDim, id: newDimId }
   }
 
-  // Decide which model assets to bring across: meshAssetId on imported STL
-  // features.
+  const definitionIdsToImport = new Set(importedFeatures.map((feature) => feature.definitionId))
+  if (wantsStockImport && sourceProject.stock.sourceFeature) {
+    definitionIdsToImport.add(sourceProject.stock.sourceFeature.definitionId)
+  }
+
+  // Decide which model assets to bring across from imported definitions.
   const referencedMeshAssetIds = new Set<string>()
-  for (const feature of importedFeatures) {
-    const meshAssetId = feature.stl?.meshAssetId
+  for (const definitionId of definitionIdsToImport) {
+    const meshAssetId = sourceProject.featureDefinitions[definitionId]?.stl?.meshAssetId
     if (meshAssetId) referencedMeshAssetIds.add(meshAssetId)
   }
   const newModelAssets: Record<string, PersistedImportedMesh> = {}
@@ -322,130 +327,61 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     newModelAssets[newAssetId] = sourceMesh
   }
 
-  // 6. Build the new features with remapped ids/refs and unique names.
-  const newFeatures: SketchFeature[] = []
+  // 6. Clone only referenced definitions, preserving shared-instance links.
+  const definitionIdMap = new Map<string, string>()
+  const mergedDefinitions: Record<string, FeatureDefinition> = { ...currentProject.featureDefinitions }
+  for (const sourceDefId of definitionIdsToImport) {
+    const sourceDef = sourceProject.featureDefinitions[sourceDefId]
+    if (!sourceDef) {
+      throw new Error(`Imported feature references missing definition ${sourceDefId}.`)
+    }
+    const newDefId = nextId('f-')
+    definitionIdMap.set(sourceDefId, newDefId)
+    const meshAssetId = sourceDef.stl?.meshAssetId
+    mergedDefinitions[newDefId] = {
+      ...sourceDef,
+      id: newDefId,
+      profile: {
+        start: { ...sourceDef.profile.start },
+        segments: sourceDef.profile.segments.map((segment) => ({ ...segment })),
+        closed: sourceDef.profile.closed,
+      },
+      dimensions: sourceDef.dimensions.map((dimension) => ({ ...dimension })),
+      text: sourceDef.text ? { ...sourceDef.text } : null,
+      stl: sourceDef.stl
+        ? {
+            ...sourceDef.stl,
+            meshAssetId: meshAssetId ? (modelAssetIdMap.get(meshAssetId) ?? meshAssetId) : undefined,
+          }
+        : null,
+    }
+  }
+
+  // 6b. Build lightweight instances with remapped IDs and constraints.
+  const newFeatures: FeatureInstance[] = []
   for (const feature of importedFeatures) {
     const newId = featureIdMap.get(feature.id)!
+    const newDefinitionId = definitionIdMap.get(feature.definitionId)
+    if (!newDefinitionId) throw new Error(`Imported feature references missing definition ${feature.definitionId}.`)
     const sourceFolderId = feature.folderId
-    const newFolderId = sourceFolderId ? folderIdMap.get(sourceFolderId) ?? null : null
-
     const featureName = uniqueName(feature.name, [...existingFeatureNames, ...reservedFeatureNames])
     reservedFeatureNames.push(featureName)
-
-    const z_top = typeof feature.z_top === 'string'
-      ? (dimensionIdMap.get(feature.z_top) ?? feature.z_top)
-      : feature.z_top
-    const z_bottom = typeof feature.z_bottom === 'string'
-      ? (dimensionIdMap.get(feature.z_bottom) ?? feature.z_bottom)
-      : feature.z_bottom
-
-    let stl = feature.stl
-    if (stl && stl.meshAssetId) {
-      const remappedAssetId = modelAssetIdMap.get(stl.meshAssetId)
-      if (remappedAssetId) {
-        stl = { ...stl, meshAssetId: remappedAssetId }
-      }
-    }
-
-    // Remap constraints whose feature references are all inside the import set.
     const constraints: LocalConstraint[] = []
-    for (const constraint of feature.sketch.constraints) {
+    for (const constraint of feature.constraints) {
       const remapped = remapConstraint(constraint, featureIdMap)
       if (remapped) constraints.push(remapped)
     }
-
     newFeatures.push({
       ...feature,
       id: newId,
       name: featureName,
-      folderId: newFolderId,
-      stl: stl ?? null,
-      sketch: {
-        ...feature.sketch,
-        constraints,
-      },
-      z_top,
-      z_bottom,
+      definitionId: newDefinitionId,
+      transform: { ...feature.transform },
+      constraints,
+      folderId: sourceFolderId ? folderIdMap.get(sourceFolderId) ?? null : null,
+      z_top: typeof feature.z_top === 'string' ? (dimensionIdMap.get(feature.z_top) ?? feature.z_top) : feature.z_top,
+      z_bottom: typeof feature.z_bottom === 'string' ? (dimensionIdMap.get(feature.z_bottom) ?? feature.z_bottom) : feature.z_bottom,
     })
-  }
-
-  // 6b. Merge featureDefinitions and mint definitions for definition-less imports.
-  const definitionIdMap = new Map<string, string>()
-  const mergedDefinitions: Record<string, FeatureDefinition> = { ...currentProject.featureDefinitions }
-
-  // Remap source featureDefinitions with collision-safe IDs, but only for
-  // definitions that are actually referenced by an imported feature.
-  if (sourceProject.featureDefinitions) {
-    for (const feature of newFeatures) {
-      const withDef = feature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
-      const sourceDefId = withDef.definitionId
-      if (!sourceDefId || definitionIdMap.has(sourceDefId)) continue
-      const sourceDef = sourceProject.featureDefinitions[sourceDefId]
-      if (!sourceDef) continue
-      const newDefId = nextId('f-')
-      definitionIdMap.set(sourceDefId, newDefId)
-      mergedDefinitions[newDefId] = {
-        ...sourceDef,
-        id: newDefId,
-        profile: {
-          start: { ...sourceDef.profile.start },
-          segments: sourceDef.profile.segments.map((seg) => {
-            const cloned = { ...seg } as Record<string, unknown>
-            for (const key of Object.keys(cloned)) {
-              const val = cloned[key]
-              if (val && typeof val === 'object' && 'x' in (val as object)) {
-                cloned[key] = { ...(val as object) }
-              }
-            }
-            return cloned as typeof seg
-          }),
-          closed: sourceDef.profile.closed,
-        },
-        dimensions: sourceDef.dimensions.map((d) => ({ ...d })),
-        text: sourceDef.text ? { ...sourceDef.text } : null,
-        stl: sourceDef.stl ? { ...sourceDef.stl } : null,
-      }
-    }
-  }
-
-  // Apply remapped definitionIds and mint definitions for definition-less features.
-  for (let i = 0; i < newFeatures.length; i++) {
-    const feature = newFeatures[i] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
-    const sourceDefId = feature.definitionId
-
-    if (sourceDefId && definitionIdMap.has(sourceDefId)) {
-      // Remap the feature's definitionId to the collision-safe ID.
-      feature.definitionId = definitionIdMap.get(sourceDefId)
-      feature.transform = feature.transform ?? IDENTITY_MATRIX
-    } else if (!sourceDefId) {
-      // Mint a new definition for this feature.
-      const newDefId = nextId('f-')
-      const definition: FeatureDefinition = {
-        id: newDefId,
-        kind: feature.kind,
-        profile: {
-          start: { ...feature.sketch.profile.start },
-          segments: feature.sketch.profile.segments.map((seg) => {
-            const cloned = { ...seg } as Record<string, unknown>
-            for (const key of Object.keys(cloned)) {
-              const val = cloned[key]
-              if (val && typeof val === 'object' && 'x' in (val as object)) {
-                cloned[key] = { ...(val as object) }
-              }
-            }
-            return cloned as typeof seg
-          }),
-          closed: feature.sketch.profile.closed,
-        },
-        dimensions: feature.sketch.dimensions.map((d) => ({ ...d })),
-        text: feature.text ? { ...feature.text } : null,
-        stl: feature.stl ? { ...feature.stl } : null,
-        operation: feature.operation,
-      }
-      mergedDefinitions[newDefId] = definition
-      feature.definitionId = newDefId
-      feature.transform = IDENTITY_MATRIX
-    }
   }
 
   // 7. Decide which operations to import. Only operations whose target is
@@ -517,13 +453,23 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       warnings.push('Source stock is not feature-based; stock import skipped.')
     } else {
       const newStockFeatureId = nextId('f')
-      const newStockFeature: SketchFeature = {
+      const newDefinitionId = definitionIdMap.get(srcStock.sourceFeature.definitionId)
+      if (!newDefinitionId) {
+        throw new Error(`Imported stock references missing definition ${srcStock.sourceFeature.definitionId}.`)
+      }
+      const newStockFeature: FeatureInstance = {
         ...srcStock.sourceFeature,
         id: newStockFeatureId,
+        definitionId: newDefinitionId,
+        transform: { ...srcStock.sourceFeature.transform },
+        constraints: srcStock.sourceFeature.constraints.flatMap((constraint) => {
+          const remapped = remapConstraint(constraint, featureIdMap)
+          return remapped ? [remapped] : []
+        }),
       }
       nextStock = {
-        profile: newStockFeature.sketch.profile,
-        thickness: typeof newStockFeature.z_top === 'number' ? newStockFeature.z_top : srcStock.thickness,
+        profile: srcStock.profile,
+        thickness: srcStock.thickness,
         material: srcStock.material,
         color: srcStock.color,
         visible: srcStock.visible,

@@ -16,13 +16,13 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 
 ## Subfolders (by area)
 - `common/` — shared cross-panel UI primitives. `DisclosureSection` is the reusable collapsible "Advanced" section (progressive disclosure); its open/collapsed state persists via the pure helpers in `common/disclosureState.ts`.
-- `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling, and creation workflow panels including gear/parameter reference diagrams. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`); `canvas/operationSnapshot.ts` renders static operation booklet images.
+- `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling, and creation workflow panels including gear/parameter reference diagrams. `previewPrimitives.ts` keeps Line/Construction geometry stroke-only; `previewPrimitives.test.ts` covers that rendering-role policy. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`); `canvas/operationSnapshot.ts` renders static operation booklet images.
 - `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
 - `simulation/` — voxel toolpath simulation viewport and playback controls
 - `cam/` — CAM panels (tools, operations, parameters); per-parameter reference icons via `OperationParameterReference`
 - `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu
 - `layout/` — app shell (toolbars, sidebars, mode switching); toolbar internals are documented in `layout/toolbar/INDEX.md`
-- `project/` — project-level UI (new/open/save, stock, machine, units)
+- `project/` — project-level UI (new/open/save, stock, machine, units), including `UnitConversionDialog` for the explicit convert-vs-reinterpret units decision. Import dialog is `ImportGeometryDialog` with analysis delegated to `useImportGeometryAnalysis` (parse/classify caching hook), `ImportGeometryModeSection` (mode select + summary), and `importModelFile` (3D model import utility).
 - `export/` — export dialogs: G-code (`ExportDialog`, with a per-operation checklist backed by the pure helpers in `exportOperationSelection.ts`), the Export Model dialog (`ModelExportDialog`, STL mesh + 2D design SVG via `src/engine/modelExport/`), and the Print Design dialog (`PrintDesignDialog`, backed by `src/engine/designPrint/`)
 - `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.

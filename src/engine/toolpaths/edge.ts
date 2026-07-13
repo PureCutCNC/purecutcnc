@@ -35,6 +35,7 @@ import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBo
 import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstaclesByLevel, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
 const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
@@ -507,7 +508,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
   }
 
   const targetFeatureIdSet = new Set(closedTargetFeatures.map((feature) => feature.id))
-  const allAdditiveObstacles = project.features
+  const allAdditiveObstacles = resolvedProjectFeatures(project)
     .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
     .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
     .filter((feature) => !targetFeatureIdSet.has(feature.id))

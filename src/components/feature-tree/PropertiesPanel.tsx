@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useContext, useRef, useState } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
@@ -24,12 +24,14 @@ import { ZRangeSlider } from './ZRangeSlider'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
-import { isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
+import { isMachinable, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
-import type { FeatureOperation, RegionMaskMode } from '../../types/project'
+import { UnitConversionDialog } from '../project/UnitConversionDialog'
+import type { FeatureOperation, Project, RegionMaskMode } from '../../types/project'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface DraftTextInputProps {
   value: string
@@ -200,6 +202,7 @@ export function PropertiesPanel() {
     makeUnique,
     expandTextFeature,
   } = useProjectStore()
+  const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
   const expandedPanelCtx = useContext(ExpandedPanelContext)
   const closeExpanded = useCallback(
@@ -215,7 +218,7 @@ export function PropertiesPanel() {
   const minimumSnap = convertLength(0.0001, 'mm', units)
 
   const selectedFeature = selectedFeatureId
-    ? project.features.find((feature) => feature.id === selectedFeatureId) ?? null
+    ? features.find((feature) => feature.id === selectedFeatureId) ?? null
     : null
   const selectedNode = selection.selectedNode
   const selectedFolder =
@@ -230,7 +233,7 @@ export function PropertiesPanel() {
     selectedNode?.type === 'tab'
       ? project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
       : null
-  const allSelectedFeatures = project.features.filter((feature) => selectedFeatureIds.includes(feature.id))
+  const allSelectedFeatures = features.filter((feature) => selectedFeatureIds.includes(feature.id))
   const commonSelectedFolderId =
     allSelectedFeatures.length > 0 &&
     allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
@@ -342,6 +345,14 @@ export function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
+  const [pendingUnits, setPendingUnits] = useState<Project['meta']['units'] | null>(null)
+
+  function commitPendingUnits(mode: 'convert' | 'reinterpret') {
+    if (!pendingUnits || pendingUnits === project.meta.units) return
+    const nextUnits = pendingUnits
+    setPendingUnits(null)
+    setUnits(nextUnits, mode)
+  }
 
   function renderContent() {
 
@@ -383,7 +394,9 @@ export function PropertiesPanel() {
                 { value: 'mm', label: 'Millimeters' },
                 { value: 'inch', label: 'Inches' },
               ]}
-              onChange={(value) => setUnits(value)}
+              onChange={(value) => {
+                if (value !== project.meta.units) setPendingUnits(value)
+              }}
             />
           </label>
           <label className="properties-check">
@@ -900,7 +913,7 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Features</span>
-            <DraftTextInput value={`${project.features.length}`} disabled />
+            <DraftTextInput value={`${features.length}`} disabled />
           </label>
         </div>
         <div className="properties-actions">
@@ -957,7 +970,7 @@ export function PropertiesPanel() {
   }
 
   if (selectedFolder) {
-    const featureCount = project.features.filter((feature) => feature.folderId === selectedFolder.id).length
+    const featureCount = features.filter((feature) => feature.folderId === selectedFolder.id).length
 
     return (
       <div className="properties-panel">
@@ -1150,7 +1163,7 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              {allSelectedFeatures.every((f) => !f.sketch.profile.closed || f.operation === 'line') && allSelectedFeatures.length > 0 ? (
+              {allSelectedFeatures.length > 0 && allSelectedFeatures.every((f) => !f.sketch.profile.closed) ? (
                 <div className="properties-locked-field" title="All selected features are open profiles — convert them individually in the tree">
                   <span>Open profiles</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
@@ -1167,6 +1180,7 @@ export function PropertiesPanel() {
                     ...(commonSelectedOperation === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed operations' }] : []),
                     { value: 'subtract', label: 'Subtract' },
                     { value: 'add', label: 'Add' },
+                    { value: 'line', label: 'Line' },
                     { value: 'region', label: 'Region mask' },
                     { value: 'construction', label: 'Construction' },
                   ]}
@@ -1287,13 +1301,14 @@ export function PropertiesPanel() {
   const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
-  // First MACHINABLE feature in the tree must be 'add' (regions/construction
-  // don't count); imported STL models are locked as Model.
-  const firstMachiningFeature = project.features.find(isMachinable) ?? null
+  // First SOLID feature in the tree must be 'add' (lines/regions/construction
+  // don't count as base solids); imported STL models are locked as Model.
+  // The first Add can be converted to a non-solid role (Line, Region,
+  // Construction); only Subtract is disabled on that row.
+  const firstSolidFeature = features.find(isSolid) ?? null
   const isFirstFeature =
-    firstMachiningFeature?.id === selectedFeature.id
-  const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
-  const operationLockedToAdd = isFirstFeature && !isImportedModelFeature
+    firstSolidFeature?.id === selectedFeature.id
+  const subtractDisabled = isFirstFeature && selectedFeature.operation === 'add'
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
@@ -1308,7 +1323,7 @@ export function PropertiesPanel() {
         >
           <label className="properties-field">
             <span>Operation</span>
-            {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+            {!selectedFeature.sketch.profile.closed ? (
               // Open profiles convert between Line (engraved path) and
               // Construction (sketch reference) only — mirrors the tree menu.
               <Select
@@ -1321,21 +1336,31 @@ export function PropertiesPanel() {
                   operation: value as import('../../types/project').FeatureOperation,
                 })}
               />
-            ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
-              <div className="properties-locked-field" title={
-                selectedFeature.operation === 'model'
-                  ? 'Model features are imported 3D objects and cannot change operation type'
-                  : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
-              }>
-                <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
+            ) : selectedFeature.operation === 'model' ? (
+              <div className="properties-locked-field" title="Model features are imported 3D objects and cannot change operation type">
+                <span>Model</span>
                 <span className="properties-locked-hint" aria-hidden="true">🔒</span>
               </div>
+            ) : subtractDisabled ? (
+              <Select
+                value={selectedFeature.operation}
+                options={[
+                  { value: 'add', label: 'Add' },
+                  { value: 'line', label: 'Line' },
+                  { value: 'region', label: 'Region mask' },
+                  { value: 'construction', label: 'Construction' },
+                ]}
+                onChange={(value) => updateFeature(selectedFeature.id, {
+                  operation: value as FeatureOperation,
+                })}
+              />
             ) : (
               <Select
                 value={selectedFeature.operation}
                 options={[
                   { value: 'subtract', label: 'Subtract' },
                   { value: 'add', label: 'Add' },
+                  { value: 'line', label: 'Line' },
                   { value: 'region', label: 'Region mask' },
                   { value: 'construction', label: 'Construction' },
                 ]}
@@ -1472,7 +1497,7 @@ export function PropertiesPanel() {
                 </div>
               </label>
             </>
-          ) : !selectedFeature.sketch.profile.closed ? (
+          ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
             <>
               <label className="properties-field">
                 <span>Z Top</span>
@@ -1581,7 +1606,7 @@ export function PropertiesPanel() {
             .filter((c) => c.type === 'fixed_distance')
             .map((c) => {
               const refId = c.reference_feature_id ?? c.segment_ids[0]
-              const refFeature = refId ? project.features.find((f) => f.id === refId) : null
+              const refFeature = refId ? features.find((f) => f.id === refId) : null
               const label = typeof c.value === 'number' ? formatLength(c.value, units) : '—'
               const refName = refFeature?.name ?? (refId ? `#${refId}` : 'World')
               const isIntersectionConstraint = c.reference_type === 'intersection' || c.reference_snap_mode === 'intersection'
@@ -1641,6 +1666,15 @@ export function PropertiesPanel() {
           onClose={() => setShowManager(false)}
         />
       )}
+      {pendingUnits && pendingUnits !== project.meta.units ? (
+        <UnitConversionDialog
+          fromUnits={project.meta.units}
+          toUnits={pendingUnits}
+          onConvert={() => commitPendingUnits('convert')}
+          onReinterpret={() => commitPendingUnits('reinterpret')}
+          onCancel={() => setPendingUnits(null)}
+        />
+      ) : null}
     </>
   )
 }

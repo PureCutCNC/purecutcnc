@@ -61,6 +61,8 @@ import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
   drawFeature,
+  drawFeatureInfo,
+  drawLineFeatureBatch,
   drawMoveGuide,
   drawPendingPathLoop,
   drawPendingPoint,
@@ -145,6 +147,7 @@ import {
   pasteClipboardFeatures,
   type FeatureClipboardPayload,
 } from '../../platform/featureClipboard'
+import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 export type { SketchCanvasHandle }
 
@@ -751,7 +754,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     const activeUrls = new Set(
-      project.features
+      resolvedProjectFeatures(project)
         .map((feature) => feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null)
         .filter((url): url is string => !!url),
     )
@@ -777,7 +780,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       cache.set(url, image)
       image.src = url
     }
-  }, [project.features])
+  }, [project])
 
   useEffect(() => {
     return () => {
@@ -860,6 +863,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!ctx) return
 
     const project = projectRef.current
+    const features = resolvedProjectFeatures(project)
     const selection = selectionRef.current
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
@@ -901,7 +905,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     stockLabelRectsRef.current = []
     if (project.stock.visible) {
-      const anyFeatureExceedsStock = project.features.some(
+      const anyFeatureExceedsStock = features.some(
         (feature) => feature.visible
           && feature.kind !== 'text'
           && profileExceedsStock(feature.sketch.profile, project.stock),
@@ -913,7 +917,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawOriginMarker(ctx, project.origin, vt)
     }
 
-    for (const feature of project.features) {
+    const batchedLineFeatures: SketchFeature[] = []
+    for (const feature of features) {
       if (!feature.visible) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
@@ -921,7 +926,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
 
-      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+      const batchLine = feature.operation === 'line'
+        && !operationHighlightIds
+        && !selected
+        && !hovered
+        && !editing
+        && !groupSelected
+      if (batchLine) {
+        batchedLineFeatures.push(feature)
+      } else {
+        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+      }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
@@ -982,6 +997,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.restore()
       }
     }
+    drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
+    if (project.meta.showFeatureInfo) {
+      for (const feature of batchedLineFeatures) {
+        drawFeatureInfo(ctx, feature, vt, project.meta.units)
+      }
+    }
 
     const clipboardPlacement = pendingClipboardPlacementRef.current
     const clipboardPlacementPreviewPoint = clipboardPlacementPreviewPointRef.current
@@ -1037,7 +1058,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     // Reset label rects before rebuilding
     constraintLabelRectsRef.current = []
-    for (const feature of project.features) {
+    for (const feature of features) {
       if (!feature.visible) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
@@ -1326,9 +1347,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           drawPendingPoint(ctx, currentMovePreviewPoint, vt, snap.isActiveSnapPoint(currentMovePreviewPoint))
         }
       } else if (pendingMove.entityType === 'feature') {
-        const features = pendingMove.entityIds
-          .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
-          .filter((feature): feature is SketchFeature => feature !== null)
+        const features = resolveFeatureInstances(project, pendingMove.entityIds)
         if (features.length === 0) {
           return
         }
@@ -1525,9 +1544,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         return
       }
 
-      const features = pendingTransform.entityIds
-        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
+      const features = resolveFeatureInstances(project, pendingTransform.entityIds)
 
       if (features.length === 0) {
         return
@@ -1605,9 +1622,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingOffset) {
-      const features = pendingOffset.entityIds
-        .map((featureId) => project.features.find((entry) => entry.id === featureId) ?? null)
-        .filter((feature): feature is SketchFeature => feature !== null)
+      const features = resolveFeatureInstances(project, pendingOffset.entityIds)
         .filter((feature) => feature.sketch.profile.closed)
       const rawOffsetPoint = currentOffsetRawPreviewPoint ?? livePointerWorldRef.current ?? snap.activeSnapRef.current?.rawPoint ?? null
       const snappedOffsetPoint = currentOffsetPreviewPoint ?? snap.activeSnapRef.current?.point ?? rawOffsetPoint
@@ -1654,8 +1669,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawPendingPoint(ctx, pendingSketchExtensionRef.current.anchor, vt)
       }
       if (pendingExtendHitRef.current && pendingSketchEditRef.current?.subject) {
-        const subjFeature = project.features.find(
-          (f) => f.id === pendingSketchEditRef.current!.subject!.featureId,
+        const subjFeature = resolveFeatureInstance(
+          project,
+          pendingSketchEditRef.current.subject.featureId,
         )
         if (subjFeature && !subjFeature.sketch.profile.closed) {
           const subjProfile = subjFeature.sketch.profile
@@ -1933,8 +1949,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (selection.mode !== 'sketch_edit') return null
     if (selection.selectedFeatureIds.length !== 1) return null
     if (!selection.selectedFeatureId) return null
-    return project.features.find((feature) => feature.id === selection.selectedFeatureId)
-      ?? (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature ? project.stock.sourceFeature : null)
+    return resolveFeatureInstance(project, selection.selectedFeatureId)
+      ?? (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature
+        ? resolveFeatureRow(project, project.stock.sourceFeature)
+        : null)
   }
 
   function openEndpointAnchor(feature: SketchFeature, endpoint: OpenProfileEndpoint): Point { return endpoint === 'start' ? feature.sketch.profile.start : anchorPointForIndex(feature.sketch.profile, feature.sketch.profile.segments.length) }
@@ -1953,8 +1971,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     let best: OpenEndpointHit | null = null
     let bestDistance = OPEN_ENDPOINT_JOIN_HIT_RADIUS * OPEN_ENDPOINT_JOIN_HIT_RADIUS
 
-    for (let index = project.features.length - 1; index >= 0; index -= 1) {
-      const feature = project.features[index]
+    const features = resolvedProjectFeatures(project)
+    for (let index = features.length - 1; index >= 0; index -= 1) {
+      const feature = features[index]
       if (
         !feature
         || !feature.visible
@@ -2263,9 +2282,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
           // Extend preview: compute extension-line intersection for dashed preview
           if (sketchEditTool === 'extend' && hit) {
-            const subjFeature = project.features.find(
-              (f) => f.id === pending.subject!.featureId,
-            )
+            const subjFeature = resolveFeatureInstance(project, pending.subject.featureId)
             if (subjFeature && !subjFeature.sketch.profile.closed) {
               const subjProfile = subjFeature.sketch.profile
               const subjSegIndex = pending.subject!.segmentIndex
@@ -2288,9 +2305,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 const subjResolved = resolveProfileSegments(subjProfile)
                 const subjSeg = subjResolved[subjSegIndex]
                 if (subjSeg) {
-                  const tgtFeature = project.features.find(
-                    (f) => f.id === hit.featureId,
-                  )
+                  const tgtFeature = resolveFeatureInstance(project, hit.featureId)
                   if (tgtFeature) {
                     const tgtResolved = resolveProfileSegments(
                       tgtFeature.sketch.profile,
@@ -2377,9 +2392,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
           // Trim preview: compute span that would be removed
           if (sketchEditTool === 'trim' && hit && pending.subject) {
-            const trimSubjFeature = project.features.find(
-              (f) => f.id === pending.subject!.featureId,
-            )
+            const trimSubjFeature = resolveFeatureInstance(project, pending.subject.featureId)
             if (trimSubjFeature && !trimSubjFeature.sketch.profile.closed) {
               const trimProfile = trimSubjFeature.sketch.profile
               const trimSegIndex = pending.subject.segmentIndex
@@ -2389,9 +2402,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               const trimSubjResolved = resolveProfileSegments(trimProfile)
               const trimSubjSeg = trimSubjResolved[trimSegIndex]
               if (trimSubjSeg) {
-                const trimTgtFeature = project.features.find(
-                  (f) => f.id === hit.featureId,
-                )
+                const trimTgtFeature = resolveFeatureInstance(project, hit.featureId)
                 if (trimTgtFeature) {
                   const trimTgtResolved = resolveProfileSegments(
                     trimTgtFeature.sketch.profile,
@@ -2747,9 +2758,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const editingFeature =
     selection.mode === 'sketch_edit' && selection.selectedFeatureId
-      ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ??
+      ? resolveFeatureInstance(project, selection.selectedFeatureId) ??
         (project.stock.sourceFeatureId === selection.selectedFeatureId && project.stock.sourceFeature
-          ? project.stock.sourceFeature
+          ? resolveFeatureRow(project, project.stock.sourceFeature)
           : null)
       : null
   const editingClamp = (() => {

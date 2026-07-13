@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
+import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -122,9 +123,12 @@ export function splitFeatureTargets(project: Project, featureIds: string[]): Spl
   const features: SketchFeature[] = []
   const missingFeatureIds: string[] = []
   const featureOrder = new Map(project.features.map((feature, index) => [feature.id, index]))
+  const resolvedById = new Map(
+    resolveFeatureInstances(project, featureIds).map((feature) => [feature.id, feature]),
+  )
 
   for (const featureId of featureIds) {
-    const feature = project.features.find((entry) => entry.id === featureId) ?? null
+    const feature = resolvedById.get(featureId) ?? null
     if (feature) {
       features.push(feature)
     } else {

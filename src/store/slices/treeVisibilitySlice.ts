@@ -18,6 +18,7 @@ import type { StateCreator } from 'zustand'
 import type { ProjectStore } from '../types'
 import { isConstruction } from '../helpers/featureRoles'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { resolvedFeatureMap } from '../helpers/resolveFeatures'
 
 export type TreeVisibilitySlice = Pick<
   ProjectStore,
@@ -38,10 +39,11 @@ export function createTreeVisibilitySlice(
   return {
   setAllRegionsVisible: (visible) =>
     set((s) => {
+      const resolved = resolvedFeatureMap(s.project)
       const nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => (
-          feature.operation === 'region' ? { ...feature, visible } : feature
+          resolved.get(feature.id)?.operation === 'region' ? { ...feature, visible } : feature
         )),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -60,10 +62,13 @@ export function createTreeVisibilitySlice(
 
   setAllConstructionVisible: (visible) =>
     set((s) => {
+      const resolved = resolvedFeatureMap(s.project)
       const nextProject = {
         ...s.project,
         features: s.project.features.map((feature) => (
-          isConstruction(feature) ? { ...feature, visible } : feature
+          resolved.get(feature.id) && isConstruction(resolved.get(feature.id)!)
+            ? { ...feature, visible }
+            : feature
         )),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -107,13 +112,14 @@ export function createTreeVisibilitySlice(
 
   toggleRegionFolderVisible: (folderId) =>
     set((s) => {
-      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId && f.operation === 'region')
+      const resolved = resolvedFeatureMap(s.project)
+      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId && resolved.get(f.id)?.operation === 'region')
       const anyVisible = folderFeatures.some((f) => f.visible)
       const nextVisible = !anyVisible
       const nextProject = {
         ...s.project,
         features: s.project.features.map((f) =>
-          f.folderId === folderId && f.operation === 'region' ? { ...f, visible: nextVisible } : f
+          f.folderId === folderId && resolved.get(f.id)?.operation === 'region' ? { ...f, visible: nextVisible } : f
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
@@ -132,13 +138,22 @@ export function createTreeVisibilitySlice(
 
   toggleConstructionFolderVisible: (folderId) =>
     set((s) => {
-      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId && isConstruction(f))
+      const resolved = resolvedFeatureMap(s.project)
+      const folderFeatures = s.project.features.filter((f) => {
+        const feature = resolved.get(f.id)
+        return f.folderId === folderId && feature !== undefined && isConstruction(feature)
+      })
       const anyVisible = folderFeatures.some((f) => f.visible)
       const nextVisible = !anyVisible
       const nextProject = {
         ...s.project,
         features: s.project.features.map((f) =>
-          f.folderId === folderId && isConstruction(f) ? { ...f, visible: nextVisible } : f
+          (() => {
+            const feature = resolved.get(f.id)
+            return f.folderId === folderId && feature !== undefined && isConstruction(feature)
+              ? { ...f, visible: nextVisible }
+              : f
+          })()
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }
