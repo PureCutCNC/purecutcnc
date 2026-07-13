@@ -20,6 +20,8 @@ import type {
   DimensionAnchor,
   DimensionAnnotation,
   DimensionRef,
+  FeatureDefinition,
+  FeatureInstance,
   GlobalConstraint,
   GridSettings,
   LocalConstraint,
@@ -30,7 +32,6 @@ import type {
   Project,
   ProjectMeta,
   Segment,
-  SketchFeature,
   SketchProfile,
   Stock,
   Tool,
@@ -208,16 +209,31 @@ function convertGlobalConstraint(constraint: GlobalConstraint, from: Units, to: 
   return constraint
 }
 
-function convertFeature(feature: SketchFeature, from: Units, to: Units): SketchFeature {
+function convertFeatureDefinition(
+  definition: FeatureDefinition,
+  from: Units,
+  to: Units,
+): FeatureDefinition {
+  return {
+    ...definition,
+    profile: convertProfile(definition.profile, from, to),
+    dimensions: definition.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
+  }
+}
+
+function convertFeatureInstance(
+  feature: FeatureInstance,
+  from: Units,
+  to: Units,
+): FeatureInstance {
   return {
     ...feature,
-    sketch: {
-      ...feature.sketch,
-      origin: convertPoint(feature.sketch.origin, from, to),
-      profile: convertProfile(feature.sketch.profile, from, to),
-      dimensions: feature.sketch.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
-      constraints: feature.sketch.constraints.map((constraint) => convertLocalConstraint(constraint, from, to)),
+    transform: {
+      ...feature.transform,
+      e: convertLength(feature.transform.e, from, to),
+      f: convertLength(feature.transform.f, from, to),
     },
+    constraints: feature.constraints.map((constraint) => convertLocalConstraint(constraint, from, to)),
     z_top: convertDimensionRef(feature.z_top, from, to),
     z_bottom: convertDimensionRef(feature.z_bottom, from, to),
   }
@@ -229,7 +245,9 @@ function convertStock(stock: Stock, from: Units, to: Units): Stock {
     profile: convertProfile(stock.profile, from, to),
     thickness: convertLength(stock.thickness, from, to),
     origin: convertPoint(stock.origin, from, to),
-    sourceFeature: stock.sourceFeature ? convertFeature(stock.sourceFeature, from, to) : stock.sourceFeature,
+    sourceFeature: stock.sourceFeature
+      ? convertFeatureInstance(stock.sourceFeature, from, to)
+      : stock.sourceFeature,
   }
 }
 
@@ -335,7 +353,13 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
       ]),
     ),
     annotations: project.annotations.map((annotation) => convertDimensionAnnotation(annotation, fromUnits, toUnits)),
-    features: project.features.map((feature) => convertFeature(feature, fromUnits, toUnits)),
+    featureDefinitions: Object.fromEntries(
+      Object.entries(project.featureDefinitions).map(([id, definition]) => [
+        id,
+        convertFeatureDefinition(definition, fromUnits, toUnits),
+      ]),
+    ),
+    features: project.features.map((feature) => convertFeatureInstance(feature, fromUnits, toUnits)),
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),

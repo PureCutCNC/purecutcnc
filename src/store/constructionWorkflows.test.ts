@@ -26,6 +26,7 @@
 import { useProjectStore } from './projectStore'
 import { newProject } from '../types/project'
 import type { Project, SketchFeature } from '../types/project'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -41,13 +42,13 @@ function freshStore(project?: Project): void {
 }
 
 function getFeature(id: string): SketchFeature {
-  const feature = useProjectStore.getState().project.features.find((item) => item.id === id)
-  assert(feature !== undefined, `feature ${id} exists`)
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature != null, `feature ${id} exists`)
   return feature
 }
 
 function lastFeature(): SketchFeature {
-  const features = useProjectStore.getState().project.features
+  const features = resolvedProjectFeatures(useProjectStore.getState().project)
   assert(features.length > 0, 'expected at least one feature')
   return features[features.length - 1]
 }
@@ -309,7 +310,7 @@ function testFirstSolidLineConversion(): void {
   useProjectStore.getState().updateFeature(pocketId, { operation: 'line' })
   assert(getFeature(baseId).operation === 'line' && getFeature(pocketId).operation === 'line', 'all features are Line')
   // Verify no solid exists (project validation would pass).
-  const allSolid = useProjectStore.getState().project.features.filter(
+  const allSolid = resolvedProjectFeatures(useProjectStore.getState().project).filter(
     (f) => f.operation === 'add' || f.operation === 'subtract' || f.operation === 'model',
   )
   assert(allSolid.length === 0, 'Lines-only project has no solids — isValid')
@@ -373,7 +374,7 @@ function testSaveVersionStamping(): void {
   freshStore()
   useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
   const withoutConstruction = JSON.parse(useProjectStore.getState().saveProject()) as { version: string }
-  assert(withoutConstruction.version === '2.0', 'no construction → file stays 2.0')
+  assert(withoutConstruction.version === '3.0', 'all current saves use the strict 3.0 format')
 
   // Add an OPEN construction polyline directly (as the open-path tool does).
   const open: SketchFeature = {
@@ -406,16 +407,16 @@ function testSaveVersionStamping(): void {
 
   const saved = useProjectStore.getState().saveProject()
   const parsed = JSON.parse(saved) as { version: string }
-  assert(parsed.version === '2.1', 'construction present → file stamped 2.1')
+  assert(parsed.version === '3.0', 'construction project remains stamped 3.0')
 
   // Round trip: the open construction profile must survive load untouched
   // (the legacy open-profile → line migration must skip construction).
   useProjectStore.getState().openProjectFromText(saved, null)
-  const reloaded = useProjectStore.getState().project.features.find((f) => f.name === 'Construction 1')
+  const reloaded = resolvedProjectFeatures(useProjectStore.getState().project).find((f) => f.name === 'Construction 1')
   assert(reloaded !== undefined, 'open construction survives a save/load round trip')
   assert(reloaded.operation === 'construction', 'open construction keeps its operation on load')
   assert(!reloaded.sketch.profile.closed, 'open construction stays open on load')
-  assert(useProjectStore.getState().loadWarning === null, 'a 2.1 file opens without a version warning in this build')
+  assert(useProjectStore.getState().loadWarning === null, 'a current 3.0 file opens without a version warning')
 }
 
 testConstructionCreation()

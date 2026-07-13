@@ -29,6 +29,7 @@
  */
 
 import type { FeatureOperation, Project, SketchFeature } from '../../types/project'
+import { resolveFeatureInstances } from './resolveFeatures'
 
 /** Anything carrying an operation — SketchFeature or FeatureDefinition. */
 interface HasOperation {
@@ -98,8 +99,5 @@ export function commonSection(entities: HasOperation[]): FeatureTreeSection | nu
 
 /** {@link commonSection} over feature ids; unknown ids are ignored. */
 export function commonSectionOfIds(project: Project, featureIds: string[]): FeatureTreeSection | null {
-  const features = featureIds
-    .map((id) => project.features.find((feature) => feature.id === id))
-    .filter((feature): feature is SketchFeature => feature !== undefined)
-  return commonSection(features)
+  return commonSection(resolveFeatureInstances(project, featureIds))
 }

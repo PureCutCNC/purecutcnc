@@ -29,6 +29,7 @@
 
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
 import type { MachineDefinition } from '../gcode/types'
@@ -277,11 +278,10 @@ function makePocketOp(
 
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
   const project = newProject('test', 'mm')
-  return {
+  return projectWithFeatures({
     ...project,
     tools,
-    features,
-  }
+  }, features)
 }
 
 /** Post a toolpath through the real postprocessor and return the G-code string. */

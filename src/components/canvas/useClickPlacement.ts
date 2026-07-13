@@ -34,7 +34,7 @@ import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeatur
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { resolveFeatureInstance, resolveFeatureInstances, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
   computeViewTransform,
@@ -868,9 +868,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     if (pendingOffset) {
-      const sourceFeatures = pendingOffset.entityIds
-        .map((id) => project.features.find((f) => f.id === id) ?? null)
-        .filter((f): f is SketchFeature => f !== null)
+      const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
         .filter((f) => f.sketch.profile.closed)
       if (!pickedPoint) {
         return
@@ -893,7 +891,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           point.cx >= rect.cx - rect.halfW && point.cx <= rect.cx + rect.halfW &&
           point.cy >= rect.cy - rect.halfH && point.cy <= rect.cy + rect.halfH
         ) {
-          const feature = project.features.find((f) => f.id === rect.featureId)
+          const feature = resolveFeatureInstance(project, rect.featureId)
           const foundConstraint = feature?.sketch.constraints.find((c) => c.id === rect.constraintId)
           if (foundConstraint && typeof foundConstraint.value === 'number') {
             constraint.setConstraintEdit({

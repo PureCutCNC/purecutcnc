@@ -25,6 +25,7 @@ import {
   newProject,
   rectProfile,
   type FeatureDefinition,
+  type FeatureInstance,
   type Matrix2D,
   type Point,
   type Project,
@@ -33,7 +34,12 @@ import {
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { getDefinitionId } from './helpers/featureDefinitions'
-import { resolveProfile, applyMatrixToPoint } from './helpers/resolveFeatures'
+import {
+  resolveFeatureInstance,
+  resolveProfile,
+  resolvedProjectFeatures,
+  applyMatrixToPoint,
+} from './helpers/resolveFeatures'
 import {
   invertMatrix,
   multiplyMatrix,
@@ -98,37 +104,24 @@ function addRectFeature(
     stl: null,
     operation: 'add',
   }
-  const resolvedProfile =
-    transform === IDENTITY_MATRIX
-      ? profile
-      : resolveProfile(definition, transform)
-
-  const feature = {
+  const instance: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId: `def-${id}`,
+    transform: { ...transform },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolvedProfile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: `def-${id}`,
-    transform,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   const state = useProjectStore.getState()
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, feature as SketchFeature],
+      features: [...state.project.features, instance],
       featureDefinitions: {
         ...state.project.featureDefinitions,
         [`def-${id}`]: definition,
@@ -136,7 +129,9 @@ function addRectFeature(
     },
   } as unknown as Partial<ProjectStore>)
 
-  return { feature: feature as SketchFeature, definition }
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature, `feature ${id} should resolve`)
+  return { feature, definition }
 }
 
 /** Add a linked instance sharing an existing definition. */
@@ -150,44 +145,37 @@ function addLinkedInstance(
   const definition = state.project.featureDefinitions[definitionId]
   assert(definition != null, `definition ${definitionId} must exist`)
 
-  const resolved = resolveProfile(definition, transform)
-  const feature = {
+  const instance: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId,
+    transform: { ...transform },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolved,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: definition.operation,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId,
-    transform,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, feature as SketchFeature],
+      features: [...state.project.features, instance],
     },
   } as unknown as Partial<ProjectStore>)
 
-  return feature as SketchFeature
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature, `feature ${id} should resolve`)
+  return feature
 }
 
 function getProject(): Project {
   return useProjectStore.getState().project
 }
 
-function getFeatures(): SketchFeature[] {
-  return getProject().features
+function getFeatures() {
+  return resolvedProjectFeatures(getProject())
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -330,7 +318,7 @@ test('fillet edit on transformed instance propagates to all instances via defini
   // Apply the edit
   useProjectStore.getState().applySketchEdit()
 
-  // Both instances should be re-baked with the new definition
+  // Both instances should resolve through the edited definition.
   const features = getFeatures()
   const orig = features.find((f) => f.id === 'f-0001')!
   const transformed = features.find((f) => f.id === 'f-0002')!
@@ -425,7 +413,7 @@ test('chamfer edit on transformed instance propagates to all instances via defin
   const original = features.find((feature) => feature.id === 'f-0001')!
   const transformed = features.find((feature) => feature.id === 'f-0002')!
   assert(original.sketch.profile.segments.length === 5, 'chamfer adds one line segment to the original instance')
-  assert(transformed.sketch.profile.segments.length === 5, 'chamfer rebakes the linked instance')
+  assert(transformed.sketch.profile.segments.length === 5, 'chamfer updates the linked resolver view')
   assert(transformed.sketch.profile.segments.every((segment) => segment.type === 'line'), 'chamfer remains line geometry')
   assert(pointEq(
     transformed.sketch.profile.start,
@@ -625,9 +613,8 @@ test('transformProfileAffine transforms circle center (radius preserved under tr
   assert(approx(radius, 10), `radius preserved at 10, got ${radius}`)
 })
 
-// Regression: arc segments (e.g. in composites) must survive rebake instead of
-// being flattened to splines. resolveProfile keeps arcs under similarity
-// transforms; transformProfileAffine (inverse-bake) keeps them as arcs.
+// Regression: arc segments (e.g. in composites) must survive resolver and edit
+// transforms instead of being flattened to splines.
 test('resolveProfile preserves arc segments under identity + translate', () => {
   const profile = {
     start: { x: 10, y: 0 },

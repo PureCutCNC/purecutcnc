@@ -32,6 +32,7 @@ import {
 } from '../types/project'
 import {
   applyMatrixToPoint,
+  commitResolvedInstances,
   isCirclePreservingTransform,
   isIdentityMatrix,
   isMirrorTransform,
@@ -41,6 +42,7 @@ import {
   resolveProfile,
   resolveSketch,
 } from './helpers/resolveFeatures'
+import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -108,20 +110,7 @@ function makeCircleFeature(
 
 /** Build a minimal migrated project (like normalizeProject output). */
 function makeMigratedProject(features: SketchFeature[]): Project {
-  const project = newProject('test')
-  const defs: Record<string, FeatureDefinition> = {}
-  for (const f of features) {
-    defs[f.id] = {
-      id: f.id,
-      kind: f.kind,
-      profile: f.sketch.profile,
-      dimensions: f.sketch.dimensions.map((d) => ({ ...d })),
-      text: f.text ? { ...f.text } : null,
-      stl: f.stl ? { ...f.stl } : null,
-      operation: f.operation,
-    }
-  }
-  return { ...project, features, featureDefinitions: defs }
+  return projectWithFeatures(newProject('test'), features)
 }
 
 // ── Matrix helpers ──────────────────────────────────────────────────
@@ -542,12 +531,11 @@ function testTranslatedFeatureResolution(): void {
   // Add a definitionId and transform to the feature row (future shape)
   const featureWithTransform = {
     ...project.features[0],
-    definitionId: 'f-001',
     transform: { a: 1, b: 0, c: 0, d: 1, e: 50, f: -30 },
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+  }
   const project2: Project = {
     ...project,
-    features: [featureWithTransform as unknown as SketchFeature],
+    features: [featureWithTransform],
   }
 
   const resolved = resolveFeatureInstance(project2, 'f-001')
@@ -569,12 +557,11 @@ function testRotatedInstanceResolution(): void {
   // 90° CCW around origin
   const featureWithTransform = {
     ...project.features[0],
-    definitionId: 'f-001',
     transform: { a: 0, b: 1, c: -1, d: 0, e: 0, f: 0 },
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+  }
   const project2: Project = {
     ...project,
-    features: [featureWithTransform as unknown as SketchFeature],
+    features: [featureWithTransform],
   }
 
   const resolved = resolveFeatureInstance(project2, 'f-001')
@@ -599,12 +586,11 @@ function testUniformScaleCircleInstanceResolution(): void {
 
   const featureWithTransform = {
     ...project.features[0],
-    definitionId: 'f-circle-01',
     transform: { a: 2, b: 0, c: 0, d: 2, e: 10, f: 10 },
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+  }
   const project2: Project = {
     ...project,
-    features: [featureWithTransform as unknown as SketchFeature],
+    features: [featureWithTransform],
   }
 
   const resolved = resolveFeatureInstance(project2, 'f-circle-01')
@@ -629,11 +615,9 @@ function testMissingDefinitionReturnsNull(): void {
   console.log('17. Missing definition returns null...')
 
   // Feature with no matching definition
-  const feature: SketchFeature = {
-    ...makeRectFeature('f-orphan', 'Orphan'),
-  }
-  const project = makeMigratedProject([]) // no definitions!
-  const project2 = { ...project, features: [feature] }
+  const feature = makeRectFeature('f-orphan', 'Orphan')
+  const project2 = makeMigratedProject([feature])
+  delete project2.featureDefinitions['f-orphan']
 
   const resolved = resolveFeatureInstance(project2, 'f-orphan')
   assert(resolved === null, 'expected null for missing definition')
@@ -670,10 +654,10 @@ function testExplicitDefinitionIdMissingDoesNotFallback(): void {
   const featureWithBadDefId = {
     ...project.features[0],
     definitionId: 'missing-def',
-  } as SketchFeature & { definitionId: string }
+  }
   const project2: Project = {
     ...project,
-    features: [featureWithBadDefId as unknown as SketchFeature],
+    features: [featureWithBadDefId],
   }
 
   const resolved = resolveFeatureInstance(project2, 'f-inst')
@@ -745,21 +729,17 @@ function testResolveFeatureDefinition(): void {
   console.log('   ✓ resolveFeatureDefinition correct')
 }
 
-function testTransitionalFallbackWithoutDefinitionId(): void {
-  console.log('24. Transitional shape resolves via feature ID fallback...')
+function testMissingDefinitionIdDoesNotFallback(): void {
+  console.log('24. Missing definitionId does not fall back to feature ID...')
 
-  // Simulate the current transitional state: features have no definitionId,
-  // definitions are keyed by feature ID.
-  const feature = makeRectFeature('f-trans-01', 'Transitional')
+  const feature = makeRectFeature('f-trans-01', 'Invalid current row')
   const project = makeMigratedProject([feature])
-  // Ensure the feature has NO definitionId property
   delete (project.features[0] as unknown as Record<string, unknown>).definitionId
 
   const resolved = resolveFeatureInstance(project, 'f-trans-01')
-  assert(resolved !== null, 'should resolve via feature ID fallback')
-  assert(resolved.definitionId === 'f-trans-01', `expected definitionId f-trans-01, got ${resolved.definitionId}`)
+  assert(resolved === null, 'should not resolve without an explicit definition ID')
 
-  console.log('   ✓ transitional fallback works')
+  console.log('   ✓ missing definitionId has no fallback')
 }
 
 function testInstanceConstraintsPreserved(): void {
@@ -788,6 +768,38 @@ function testInstanceConstraintsPreserved(): void {
   assert(resolved.sketch.constraints[0].type === 'horizontal', 'expected horizontal constraint')
 
   console.log('   ✓ instance constraints preserved')
+}
+
+function testCommitResolvedSubsetPreservesOtherInstances(): void {
+  console.log('26. Committing a resolved subset preserves unrelated instances...')
+
+  const project = makeMigratedProject([
+    makeRectFeature('f-first', 'First'),
+    makeCircleFeature('f-second', 'Second'),
+  ])
+  const first = resolveFeatureInstance(project, 'f-first')
+  assert(first !== null, 'first feature should resolve')
+  const edited = {
+    ...first,
+    sketch: {
+      ...first.sketch,
+      profile: {
+        ...first.sketch.profile,
+        start: {
+          x: first.sketch.profile.start.x + 12,
+          y: first.sketch.profile.start.y - 4,
+        },
+      },
+    },
+  }
+
+  const committed = commitResolvedInstances(project, [edited])
+  assert(committed.length === 2, `expected 2 instances, got ${committed.length}`)
+  assert(committed[1] === project.features[1], 'unrelated instance should be preserved unchanged')
+  assert(committed[0].transform.e === 12, `expected x translation 12, got ${committed[0].transform.e}`)
+  assert(committed[0].transform.f === -4, `expected y translation -4, got ${committed[0].transform.f}`)
+
+  console.log('   ✓ resolved subset commit preserves unrelated instances')
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -819,8 +831,9 @@ const tests: Array<{ name: string; fn: () => void }> = [
   { name: 'resolveFeatureInstances filtered', fn: testResolveFeatureInstancesFiltered },
   { name: 'resolveFeatureInstances skips missing', fn: testResolveFeatureInstancesSkipsMissing },
   { name: 'resolveFeatureDefinition', fn: testResolveFeatureDefinition },
-  { name: 'transitional fallback', fn: testTransitionalFallbackWithoutDefinitionId },
+  { name: 'missing definitionId has no fallback', fn: testMissingDefinitionIdDoesNotFallback },
   { name: 'instance constraints', fn: testInstanceConstraintsPreserved },
+  { name: 'resolved subset commit', fn: testCommitResolvedSubsetPreservesOtherInstances },
 ]
 
 for (const test of tests) {

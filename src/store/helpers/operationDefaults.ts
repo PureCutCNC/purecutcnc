@@ -19,6 +19,7 @@ import { convertLength } from '../../utils/units'
 import { defaultTool } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
+import { resolveProject } from './resolveFeatures'
 import type {
   FeatureOperation,
   Operation,
@@ -26,7 +27,6 @@ import type {
   OperationPass,
   OperationTarget,
   Project,
-  SketchFeature,
   Tool,
 } from '../../types/project'
 
@@ -43,10 +43,11 @@ export function folderIdForOperation(project: Project, folderId: string | null, 
  * — each feature keeps the folder only when it matches its own tree section,
  * otherwise it falls back to that section's root (null).
  */
-export function resolveFolderAssignments(project: Project, featureIds: string[], folderId: string | null): Map<string, string | null> {
+export function resolveFolderAssignments(authoritativeProject: Project, featureIds: string[], folderId: string | null): Map<string, string | null> {
+  const project = resolveProject(authoritativeProject)
   return new Map(featureIds.map((id) => {
     const feature = project.features.find((entry) => entry.id === id)
-    return [id, folderIdForOperation(project, folderId, feature?.operation)] as const
+    return [id, folderIdForOperation(authoritativeProject, folderId, feature?.operation)] as const
   }))
 }
 
@@ -94,7 +95,8 @@ export function operationKindLabel(kind: OperationKind): string {
   }
 }
 
-export function isOperationTargetValid(project: Project, kind: OperationKind, target: OperationTarget): boolean {
+export function isOperationTargetValid(authoritativeProject: Project, kind: OperationKind, target: OperationTarget): boolean {
+  const project = resolveProject(authoritativeProject)
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target (issue #199). One guard covers every kind below.
   if (target.source === 'features' && target.featureIds.some((featureId) => {
@@ -111,7 +113,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     if (features.length !== target.featureIds.length) {
       return false
@@ -131,7 +133,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
@@ -147,7 +149,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     if (features.length !== target.featureIds.length) {
       return false
@@ -167,7 +169,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     if (features.length !== target.featureIds.length) {
       return false
@@ -191,7 +193,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     if (features.length !== target.featureIds.length) {
       return false
@@ -210,7 +212,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
     const features = target.featureIds
       .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is SketchFeature => feature !== null)
+      .filter((feature) => feature !== null)
 
     if (features.length !== target.featureIds.length) {
       return false
@@ -229,7 +231,7 @@ export function isOperationTargetValid(project: Project, kind: OperationKind, ta
 
   const features = target.featureIds
     .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+    .filter((feature) => feature !== null)
 
   if (features.length !== target.featureIds.length) {
     return false
@@ -330,7 +332,8 @@ export function defaultOperationForTarget(
   }
 }
 
-export function fallbackOperationTarget(project: Project, kind: OperationKind): OperationTarget {
+export function fallbackOperationTarget(authoritativeProject: Project, kind: OperationKind): OperationTarget {
+  const project = resolveProject(authoritativeProject)
   if (kind === 'drilling') {
     const firstCircle = project.features.find((feature) => feature.kind === 'circle')
     return firstCircle

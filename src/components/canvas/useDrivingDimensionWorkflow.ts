@@ -227,8 +227,7 @@ export function useDrivingDimensionWorkflow(ctx: DrivingDimensionWorkflowCtx): D
       const parsed = parseLengthInput(edit.value, projectRef.current.meta.units)
       if (parsed === null || parsed <= 0) return
       const linearEdit = edit.edit
-      const resolved = resolvedFeatureMap(projectRef.current).get(linearEdit.featureId)
-      const feature = resolved ?? projectRef.current.features.find((f) => f.id === linearEdit.featureId)
+      const feature = resolvedFeatureMap(projectRef.current).get(linearEdit.featureId)
       if (!feature) return
 
       const profile = feature.sketch.profile
@@ -245,8 +244,7 @@ export function useDrivingDimensionWorkflow(ctx: DrivingDimensionWorkflowCtx): D
       const parsed = parseAngleInput(edit.value)
       if (parsed === null) return
       const angleEdit = edit.edit
-      const resolved = resolvedFeatureMap(projectRef.current).get(angleEdit.featureId)
-      const feature = resolved ?? projectRef.current.features.find((f) => f.id === angleEdit.featureId)
+      const feature = resolvedFeatureMap(projectRef.current).get(angleEdit.featureId)
       if (!feature) return
 
       const drivenIndex = anchorToControlIndex(angleEdit.drivenAnchor, feature.sketch.profile)
@@ -266,7 +264,7 @@ export function useDrivingDimensionWorkflow(ctx: DrivingDimensionWorkflowCtx): D
     const targetRadius = radiusEdit.kind === 'diameter' ? parsed / 2 : parsed
     if (targetRadius <= 0) return
 
-    const feature = projectRef.current.features.find((f) => f.id === radiusEdit.featureId)
+    const feature = resolvedFeatureMap(projectRef.current).get(radiusEdit.featureId)
     if (!feature) return
 
     const profile = feature.sketch.profile

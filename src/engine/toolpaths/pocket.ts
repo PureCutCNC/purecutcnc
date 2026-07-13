@@ -39,6 +39,7 @@ import {
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { resolvePocketRegions } from './resolver'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
 const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
@@ -1696,7 +1697,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
 
   const formatZ = (value: number) => Number(value.toFixed(6)).toString()
   const formatFeatureSpan = (featureId: string) => {
-    const feature = project.features.find((entry) => entry.id === featureId)
+    const feature = resolveFeatureInstance(project, featureId)
     if (!feature) {
       return `${featureId} [missing]`
     }
@@ -1706,7 +1707,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
   }
 
   const formatIslandSpan = (id: string) => {
-    const feature = project.features.find((entry) => entry.id === id)
+    const feature = resolveFeatureInstance(project, id)
     if (feature) {
       const span = resolveFeatureZSpan(project, feature)
       return `${feature.name} (${feature.id}) [${formatZ(span.max)} -> ${formatZ(span.min)}]`

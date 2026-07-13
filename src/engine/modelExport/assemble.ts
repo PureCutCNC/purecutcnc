@@ -17,6 +17,7 @@
 import type { Manifold as ManifoldSolid } from 'manifold-3d'
 import { buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from '../csg'
 import { expandFeatureGeometry } from '../../text'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import type { Project, SketchFeature } from '../../types/project'
 import {
   CURVE_QUALITY_ARC_STEP_RADIANS,
@@ -45,7 +46,7 @@ export async function assembleModelExportMesh(
   const warnings: string[] = []
   const arcStepRadians = CURVE_QUALITY_ARC_STEP_RADIANS[options.curveQuality]
 
-  const visibleFeatures = project.features.filter((feature) => feature.visible)
+  const visibleFeatures = resolvedProjectFeatures(project).filter((feature) => feature.visible)
   const expanded = visibleFeatures.flatMap((feature) => expandFeatureGeometry(feature, false))
 
   // 1) Build the boolean union of add/subtract features. Imported-mesh

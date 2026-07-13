@@ -29,6 +29,7 @@ import { TopCommandBar } from './TopCommandBar'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 
 
@@ -313,13 +314,14 @@ export function AppShell({
     setAllTabsVisible,
     setAllClampsVisible,
   } = useProjectStore()
+  const resolvedFeatures = useMemo(() => resolvedProjectFeatures(project), [project])
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
   const stockHeight = stockBounds.maxY - stockBounds.minY
-  const regionCount = project.features.filter((feature) => feature.operation === 'region').length
-  const anyRegionsVisible = project.features.some((feature) => feature.operation === 'region' && feature.visible)
-  const constructionCount = project.features.filter((feature) => feature.operation === 'construction').length
-  const anyConstructionVisible = project.features.some((feature) => feature.operation === 'construction' && feature.visible)
+  const regionCount = resolvedFeatures.filter((feature) => feature.operation === 'region').length
+  const anyRegionsVisible = resolvedFeatures.some((feature) => feature.operation === 'region' && feature.visible)
+  const constructionCount = resolvedFeatures.filter((feature) => feature.operation === 'construction').length
+  const anyConstructionVisible = resolvedFeatures.some((feature) => feature.operation === 'construction' && feature.visible)
   const anyTabsVisible = project.tabs.some((tab) => tab.visible)
   const anyClampsVisible = project.clamps.some((clamp) => clamp.visible)
   const centerTabs = ['sketch', 'preview3d', 'simulation'] as const

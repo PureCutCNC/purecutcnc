@@ -22,6 +22,7 @@
 
 import type { Operation, Point, Project, SketchFeature } from '../../types/project'
 import { newProject, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolvePocketRegions } from './resolver'
 import type { ResolvedPocketRegion } from './types'
 
@@ -96,7 +97,7 @@ function makeFeature(
 }
 
 function makeProject(features: SketchFeature[]): Project {
-  return { ...newProject(), features }
+  return projectWithFeatures(newProject(), features)
 }
 
 function makeVCarveOp(id: string, featureIds: string[]): Operation {

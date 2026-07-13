@@ -24,8 +24,9 @@
  */
 
 import { rectProfile } from '../../types/project'
-import { newProject, type FeatureDefinition, type Matrix2D, type Project, type SketchFeature } from '../../types/project'
+import { newProject, type Matrix2D, type Project, type SketchFeature } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { findHitFeatureId, featureFullyInsideRect } from './hitTest'
 import type { ViewTransform } from './viewTransform'
 
@@ -66,34 +67,13 @@ function makeFeature(
 
 function makeProject(
   features: SketchFeature[],
-  defs?: Record<string, FeatureDefinition>,
   transforms?: Map<string, Matrix2D>,
 ): Project {
-  const project = newProject('hit-test')
-  const featureDefs: Record<string, FeatureDefinition> = defs ?? {}
-  if (!defs) {
-    for (const f of features) {
-      featureDefs[f.id] = {
-        id: f.id,
-        kind: f.kind,
-        profile: f.sketch.profile,
-        dimensions: f.sketch.dimensions.map((d) => ({ ...d })),
-        text: f.text ? { ...f.text } : null,
-        stl: f.stl ? { ...f.stl } : null,
-        operation: f.operation,
-      }
-    }
-  }
-
-  // Apply per-feature transforms if provided.
-  const featuresWithTransforms = features.map((f) => {
-    if (transforms?.has(f.id)) {
-      return { ...f, definitionId: f.id, transform: transforms.get(f.id)! }
-    }
-    return f
-  })
-
-  return { ...project, features: featuresWithTransforms, featureDefinitions: featureDefs }
+  return projectWithFeatures(newProject('hit-test'), features.map((feature) => ({
+    ...feature,
+    definitionId: feature.id,
+    transform: transforms?.get(feature.id),
+  })))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -127,10 +107,10 @@ function makeProject(
 
   // Transform: translate by (100, 50). World-space profile is at (100,50)-(110,56).
   const translateTransform: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 100, f: 50 }
-  const project = makeProject([feature], undefined, new Map([['f0001', translateTransform]]))
+  const project = makeProject([feature], new Map([['f0001', translateTransform]]))
 
   // Verify the feature has definitionId + transform
-  const raw = project.features[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const raw = project.features[0]
   assert(raw.definitionId === 'f0001', 'feature should have definitionId')
   assert(raw.transform?.e === 100 && raw.transform?.f === 50, 'feature should have translate transform')
 
@@ -153,7 +133,7 @@ function makeProject(
   const definitionProfile = rectProfile(0, 0, 10, 6)
   const feature = makeFeature('f0001', definitionProfile)
   const translateTransform: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 100, f: 50 }
-  const project = makeProject([feature], undefined, new Map([['f0001', translateTransform]]))
+  const project = makeProject([feature], new Map([['f0001', translateTransform]]))
   const resolvedList = resolvedProjectFeatures(project)
 
   // The world-space rect is at (100,50)-(110,56).
@@ -182,6 +162,11 @@ function makeProject(
     transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
   }
   const project = makeProject([orphanFeature as SketchFeature])
+  project.features[0] = {
+    ...project.features[0],
+    definitionId: 'nonexistent',
+  }
+  delete project.featureDefinitions.orphan
 
   // resolvedProjectFeatures should skip the orphan (missing definition).
   const resolvedList = resolvedProjectFeatures(project)

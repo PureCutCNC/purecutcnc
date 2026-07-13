@@ -32,6 +32,12 @@ import {
   openImportDialog,
 } from './importGeometry.helpers'
 
+function projectFeatureOperations(project: Record<string, unknown>): Array<string | undefined> {
+  const features = project.features as Array<{ definitionId: string }>
+  const definitions = project.featureDefinitions as Record<string, { operation?: string }>
+  return features.map((feature) => definitions[feature.definitionId]?.operation)
+}
+
 // ── Dialog wiring ──────────────────────────────────────────────────────
 
 test('dialog opens and closes', async ({ app }) => {
@@ -155,9 +161,8 @@ test.describe('SVG import', () => {
 
     // Verify actual project features via existing test seam
     const project = await getProject(app.page)
-    const features = project.features as Array<{ name: string; operation: string }>
-    expect(features).toHaveLength(2)
-    const ops = features.map((f) => f.operation).sort()
+    const ops = projectFeatureOperations(project).sort()
+    expect(ops).toHaveLength(2)
     expect(ops).toEqual(['add', 'line'])
   })
 })
@@ -234,18 +239,18 @@ test.describe('DXF import', () => {
 
     // Verify actual project features
     const project = await getProject(app.page)
-    const features = project.features as Array<{ name: string; operation: string }>
-    expect(features.length).toBeGreaterThanOrEqual(3)
+    const operations = projectFeatureOperations(project)
+    expect(operations.length).toBeGreaterThanOrEqual(3)
 
     // Add parent must precede Subtract child
-    const addIdx = features.findIndex((f) => f.operation === 'add')
-    const subIdx = features.findIndex((f) => f.operation === 'subtract')
+    const addIdx = operations.findIndex((operation) => operation === 'add')
+    const subIdx = operations.findIndex((operation) => operation === 'subtract')
     expect(addIdx).toBeGreaterThanOrEqual(0)
     expect(subIdx).toBeGreaterThanOrEqual(0)
     expect(addIdx).toBeLessThan(subIdx)
 
     // An open Line feature exists
-    const lineIdx = features.findIndex((f) => f.operation === 'line')
+    const lineIdx = operations.findIndex((operation) => operation === 'line')
     expect(lineIdx).toBeGreaterThanOrEqual(0)
   })
 })

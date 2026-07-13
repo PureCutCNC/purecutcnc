@@ -27,6 +27,7 @@ import type {
   SketchFeature,
   SketchProfile,
 } from '../types/project'
+import { projectWithFeatures } from '../test/projectFixtures'
 import {
   angleBetween,
   dimensionLayout,
@@ -66,7 +67,7 @@ function makeFeature(id: string, profile: SketchProfile): SketchFeature {
 
 function projectWith(features: SketchFeature[]): Project {
   const base = newProject('dim-test', 'mm')
-  return { ...base, features }
+  return projectWithFeatures(base, features)
 }
 
 // A 10×6 rectangle whose corners are well-known.

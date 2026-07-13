@@ -15,11 +15,11 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Project, SketchFeature } from '../../types/project'
+import type { Project } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { cloneProject } from '../helpers/normalize'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
-import { getDefinitionId, rebakeAllInstances } from '../helpers/featureDefinitions'
+import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 
 export interface SelectionSliceDependencies {
   normalizeProject: (project: Project) => Project
@@ -149,8 +149,8 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
   }
 }
 
-function featureById(project: Project, id: string): SketchFeature | null {
-  return project.features.find((feature) => feature.id === id) ?? null
+function featureById(project: Project, id: string): ResolvedSketchFeature | null {
+  return resolveFeatureInstance(project, id)
 }
 
 export function createSelectionSlice(
@@ -188,7 +188,7 @@ export function createSelectionSlice(
                     : [...existingIds, id]
           const proposedFeatures = proposedIds
             .map((featureId) => featureById(s.project, featureId))
-            .filter((feature): feature is SketchFeature => feature !== null)
+            .filter((feature): feature is ResolvedSketchFeature => feature !== null)
           const nextIds = featuresFormConnectedOverlapGroup(proposedFeatures)
             ? proposedIds
             : existingIds
@@ -288,7 +288,7 @@ export function createSelectionSlice(
 
           const cutters = pendingShapeAction.cutterIds
             .map((cId) => featureById(s.project, cId))
-            .filter((f): f is SketchFeature => f !== null)
+            .filter((f): f is ResolvedSketchFeature => f !== null)
           if (!selectedFeature || !cutters.some((cutter) => featuresOverlapForCut(selectedFeature, cutter))) {
             return {}
           }
@@ -390,7 +390,7 @@ export function createSelectionSlice(
             ? (() => {
                 const nextFeatures = nextIds
                   .map((id) => featureById(s.project, id))
-                  .filter((feature): feature is SketchFeature => feature !== null)
+                  .filter((feature): feature is ResolvedSketchFeature => feature !== null)
                 return featuresFormConnectedOverlapGroup(nextFeatures)
                   ? nextIds
                   : s.selection.selectedFeatureIds
@@ -624,17 +624,7 @@ export function createSelectionSlice(
 
     enterSketchEdit: (id) =>
       set((s) => {
-        const feature = s.project.features.find((entry) => entry.id === id) ?? null
-        const definitionId = feature ? getDefinitionId(feature) : null
-        const project = definitionId && s.project.featureDefinitions[definitionId]
-          ? {
-              ...s.project,
-              features: rebakeAllInstances(s.project, definitionId),
-            }
-          : s.project
-
         return {
-          project,
           pendingTransform: null,
           pendingOffset: null,
           selection: {
@@ -739,18 +729,7 @@ export function createSelectionSlice(
         }
 
         if (s.sketchEditSession?.entityType === 'feature') {
-          const feature = s.project.features.find((entry) => entry.id === s.sketchEditSession?.entityId) ?? null
-          const definitionId = feature ? getDefinitionId(feature) : null
-          const project = definitionId && s.project.featureDefinitions[definitionId]
-            ? {
-                ...s.project,
-                features: rebakeAllInstances(s.project, definitionId),
-                meta: { ...s.project.meta, modified: new Date().toISOString() },
-              }
-            : s.project
-
           return {
-            project,
             selection: { ...s.selection, mode: 'feature', sketchEditTool: null, activeControl: null, groupFolderId: null },
             sketchEditSession: null,
             pendingConstraint: null,

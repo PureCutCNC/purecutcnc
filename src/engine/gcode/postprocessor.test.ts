@@ -22,6 +22,7 @@
 
 import { circleProfile, defaultTool, newProject } from '../../types/project'
 import type { Operation, SketchFeature } from '../../types/project'
+import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { generateDrillingToolpath } from '../toolpaths/drilling'
 import type { ToolpathResult } from '../toolpaths/types'
@@ -384,7 +385,7 @@ function runDrillingFixture(
     visible: true,
     locked: false,
   }
-  project.features = [circle]
+  replaceProjectFeatures(project, [circle])
 
   const operation: Operation = {
     id: 'op1',

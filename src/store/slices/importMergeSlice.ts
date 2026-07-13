@@ -20,12 +20,10 @@ import type {
   FeatureDefinition,
   FeatureFolder,
   FeatureOperation,
-  Matrix2D,
   Project,
   SketchFeature,
 } from '../../types/project'
-import { IDENTITY_MATRIX } from '../../types/project'
-import { createDefinitionForFeatureWithId } from '../helpers/featureDefinitions'
+import { createDefinitionForFeatureWithId, createFeatureInstance } from '../helpers/featureDefinitions'
 import { genId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
@@ -164,12 +162,11 @@ export function createImportMergeSlice(
       if (createdFeatures.length === 0) return []
 
       const definitions: Record<string, FeatureDefinition> = {}
-      const featuresWithDefinitions: Array<SketchFeature & { definitionId: string; transform: Matrix2D }> =
-        createdFeatures.map((feature) => {
+      const featureInstances = createdFeatures.map((feature) => {
           const definitionId = allocateId('f-')
           const { definition } = createDefinitionForFeatureWithId(feature, definitionId)
           definitions[definitionId] = definition
-          return { ...feature, definitionId, transform: IDENTITY_MATRIX }
+          return createFeatureInstance(feature, definitionId)
         })
       const createdIds = createdFeatures.map((feature) => feature.id)
       const isLargeImport = createdIds.length >= LARGE_IMPORT_THRESHOLD
@@ -184,7 +181,7 @@ export function createImportMergeSlice(
             ...current.project.featureTree,
             ...newFolders.map((folder) => ({ type: 'folder' as const, folderId: folder.id })),
           ],
-          features: [...current.project.features, ...featuresWithDefinitions],
+          features: [...current.project.features, ...featureInstances],
           featureDefinitions: { ...current.project.featureDefinitions, ...definitions },
           meta: { ...current.project.meta, modified: new Date().toISOString() },
         })
