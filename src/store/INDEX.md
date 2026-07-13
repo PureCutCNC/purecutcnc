@@ -3,7 +3,7 @@
 Zustand store. The single source of truth for the current `.camj` project. **All project mutations must go through actions on `projectStore` — never mutate state directly.**
 
 ## Files
-- `projectStore.ts` — main store: project state, feature tree, undo/redo, persistence, tool/operation/stock actions. The big one.
+- `projectStore.ts` — store composition root: initial state, shared dependencies, and slice assembly
 - `types.ts` — store-internal types (state shape, action signatures)
 
 ## Subfolders
@@ -31,7 +31,8 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `helpers/` — pure helpers used by the store
   - `clipping.ts` — clipper-lib wrappers (handles the integer scaling factor): profile↔Clipper-path conversion, boolean/offset execution, and overlap predicates. Join connectivity counts area overlap or a positive-length shared boundary segment (issue #271); corner-only contact does not connect. Arc/curve reconstruction of Clipper output lives in `engine/toolpaths/arcReconstruction.ts`.
   - `derivedFeatures.ts` — computes derived snapshot features from the feature tree; also previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
-  - `featureDefinitions.ts` — definition creation, orphan collection, instance rebaking, and make-unique support for feature references
+  - `featureDefinitions.ts` — definition/instance creation, orphan collection, operation propagation, and make-unique support for feature references
+  - `featureMutations.ts` — authoritative definition/instance updates and folding resolved constraint translations back into lightweight rows
   - `gearFeature.ts` — grouped gear+bore feature insertion helper used by the gear creation action
   - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction/isSolid predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks. `isSolid` (issue #270) returns true only for add/subtract/model — the base-solid invariant gate.
   - `geometry.ts` — geometric utilities (bounds, transforms)
@@ -43,20 +44,21 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
   - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
-  - `resolveFeatures.ts` — resolves definition and instance rows into world-space feature geometry for read paths
+  - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
+  - `projectFormat.ts` — validates format 3.0 projects and performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
+  - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests
-- `constructionWorkflows.test.ts` — construction geometry (issue #199): creation target, conversions construction↔feature↔region, folder/section integrity, deferred constraints, save-version stamping, open-profile round trip
+- `constructionWorkflows.test.ts` — construction geometry (issue #199): creation target, conversions construction↔feature↔region, folder/section integrity, deferred constraints, 3.0 save stamping, open-profile round trip
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
-- `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
+- `duplicateReference.test.ts` — reference copies share definitions and apply transforms once; independent copies clone definitions; copyMode store behavior
 - `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
 - `importRoles.test.ts` — importShapes with typed `classified` array: explicit roles honored in classifier order, fallback to legacy closed→add/open→line, definitions created, history recorded, layer grouping preserved; child-first source → parent-before-child, degenerate prefix, and cross-layer ordering regressions (issue #270 S3)
 - `manualNestingDefaults.test.ts` — manual closed-feature defaults (issue #270 S5): Add/Subtract alternation, non-solid exclusion, explicit-operation precedence, no retroactive changes, and closed-composite completion
@@ -65,13 +67,13 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureLifecycle.test.ts` — create→definition, save/load round-trip, undo/redo, delete→GC per FeatureKind
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
 - `gearCreation.test.ts` — gear creation store flow: radius placement, optional bore as a grouped subtract feature, validation, selection, and definitions
-- `featureReferencesMigration.test.ts` — legacy project migration into definitions and instances
+- `featureReferencesMigration.test.ts` — strict 3.0 serialization, 1.0/2.0/2.1 one-way conversion, malformed-row rejection, and linked-instance size regression
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
 - `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
 - `helpers/clipping.test.ts` — join-connectivity predicates (issue #271): shared-edge, corner-contact, disjoint, overlap, and hole-forming union cases for featuresOverlap and the grouping helpers
 - `instanceTransforms.test.ts` — instance transform matrix composition
 - `joinSharedEdge.test.ts` — store-level join of edge-adjacent closed features (issue #271): grouping, session click-to-add, merge result, keepOriginals
-- `linkedConstraintResolve.test.ts` — linked constraint re-solve after definition edit propagates to sibling instances; direct-edit regression; no-drift idempotency
+- `linkedConstraintResolve.test.ts` — linked constraint re-solve through resolved instances after definition edits; direct-edit regression; no-drift idempotency
 - `openProfileJoin.test.ts` — open-profile joining behavior
 - `polygonSplit.test.ts` — polygon splitting
 - `profileEdit.test.ts` — profile and segment-editing helper behavior

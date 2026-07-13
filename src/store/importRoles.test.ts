@@ -22,6 +22,7 @@
 
 import type { ClassifiedShape } from '../import'
 import { rectProfile } from '../types/project'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 
 function assert(cond: boolean, msg: string): void {
@@ -33,7 +34,7 @@ function resetStore(): void {
 }
 
 function getFeatures() {
-  return useProjectStore.getState().project.features
+  return resolvedProjectFeatures(useProjectStore.getState().project)
 }
 
 function getDefinitions() {
@@ -45,7 +46,7 @@ function getHistory() {
 }
 
 function getFeatureById(id: string) {
-  return useProjectStore.getState().project.features.find((f) => f.id === id)
+  return resolveFeatureInstance(useProjectStore.getState().project, id)
 }
 
 function getFolders() {

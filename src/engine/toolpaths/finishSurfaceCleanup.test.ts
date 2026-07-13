@@ -23,6 +23,7 @@
 import { readFileSync } from 'fs'
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
 import { normalizeProject } from '../../store/projectStore'
+import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { serializeImportedMesh } from '../importedMesh'
 import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import type { ToolpathMove } from './types'
@@ -664,7 +665,7 @@ function testCleanupIntersectingOuterWallAvoidsDuplicateReturnLoop(): void {
 function testCleanupRespectsContainingPocketDepth(): void {
   console.log('Testing finish_surface_cleanup respects containing subtract pocket depth...')
   const { project, operation } = makeFrustumProject(['model1'])
-  project.features = [makeContainingAddFeature(), makeContainingSubtractFeature(), ...project.features]
+  replaceProjectFeatures(project, [makeContainingAddFeature(), makeContainingSubtractFeature(), ...project.features])
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
   const minCutZ = Math.min(...cutMoves(result.moves).map((move) => move.to.z))
 
@@ -695,7 +696,7 @@ function testCleanupKeepsOuterWallEnvelopeTight(): void {
 function testCleanupRespectsRegionMask(): void {
   console.log('Testing finish_surface_cleanup respects region-mask clipping...')
   const { project, operation } = makePocketBlockProject(['model1', 'region-left'])
-  project.features = [...project.features, makeRegionFeature('region-left', -2, -2, 12, 14)]
+  replaceProjectFeatures(project, [...project.features, makeRegionFeature('region-left', -2, -2, 12, 14)])
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
 
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)

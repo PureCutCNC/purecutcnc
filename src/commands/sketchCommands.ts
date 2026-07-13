@@ -30,6 +30,7 @@ import type {
   TapeMeasureState,
 } from '../store/types'
 import { featureHasClosedGeometry } from '../text'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 
 export interface CommandDescriptor {
   id: string
@@ -110,9 +111,7 @@ export function deriveSketchCommandPredicates({
 }: Pick<SketchCommandStateInput, 'project' | 'selection'>): SketchCommandPredicates {
   const selectedFeatureIds = selection.mode === 'feature' ? selection.selectedFeatureIds : []
   const primarySelectedFeatureId = selection.selectedFeatureId ?? selectedFeatureIds[0] ?? null
-  const selectedFeatures = selectedFeatureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null)
+  const selectedFeatures = resolveFeatureInstances(project, selectedFeatureIds)
   const hasSelectedFeatures = selectedFeatureIds.length > 0
   const hasSelectedBackdrop = selection.selectedNode?.type === 'backdrop' && !!project.backdrop
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
@@ -128,7 +127,7 @@ export function deriveSketchCommandPredicates({
     && selection.selectedNode?.type === 'feature'
     && !!selection.selectedFeatureId
   const sketchEditFeature = featureSketchEditActive
-    ? project.features.find((feature) => feature.id === selection.selectedFeatureId) ?? null
+    ? resolveFeatureInstance(project, selection.selectedFeatureId!)
     : null
   // Trim/extend only apply to open subjects; disable them while editing a closed feature.
   const sketchEditFeatureOpen = !!sketchEditFeature && !featureHasClosedGeometry(sketchEditFeature)

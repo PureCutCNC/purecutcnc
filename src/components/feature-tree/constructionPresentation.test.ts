@@ -153,7 +153,7 @@ assert(
 )
 // The base-solid lock tracks the first SOLID feature, not row 0.
 assert(
-  propertiesPanel.includes('project.features.find(isSolid)'),
+  propertiesPanel.includes('features.find(isSolid)'),
   'PropertiesPanel first-solid lookup must use isSolid',
 )
 assert(

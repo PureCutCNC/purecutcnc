@@ -21,6 +21,7 @@
 
 import { DEFAULT_SNAP_SETTINGS, type SnapSettings } from '../../sketch/snapping'
 import { newProject, type Point, type Project, type SketchFeature, type SketchProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ViewTransform } from './viewTransform'
 
@@ -60,7 +61,7 @@ function makeFeature(id: string, profile: SketchProfile): SketchFeature {
 }
 
 function makeProject(features: SketchFeature[]): Project {
-  return { ...newProject('snap-intersection-test', 'mm'), features }
+  return projectWithFeatures(newProject('snap-intersection-test', 'mm'), features)
 }
 
 function snapSettings(modes: SnapSettings['modes'], pixelRadius = 6): SnapSettings {

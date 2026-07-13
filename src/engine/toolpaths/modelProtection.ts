@@ -25,6 +25,7 @@ import {
   toClipperPath,
 } from './geometry'
 import { significantSilhouettePaths } from './silhouette'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 // clipper-lib exposes pftEvenOdd at runtime, but its TS type only includes pftNonZero.
 const POLY_FILL_EVEN_ODD = 0
@@ -158,7 +159,7 @@ export function containingSubtractBottomZ(
 ): number | null {
   let bottom: number | null = null
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'subtract') continue
 
@@ -197,7 +198,7 @@ export function isFootprintInsideAddFeature(
   modelFootprintPaths: ClipperPath[],
 ): boolean {
   if (subjectPaths.length === 0) return false
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'add') continue
     const addPaths = featureFootprintPaths(feature)
@@ -225,7 +226,7 @@ export function relatedSubtractFeatures(
 ): Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number; clearancePaths?: ClipperPath[] }> {
   const related: Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number; clearancePaths?: ClipperPath[] }> = []
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'subtract') continue
 
@@ -263,7 +264,7 @@ export function relatedIntersectingAddFeatures(
 ): Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> {
   const related: Array<{ feature: SketchFeature; paths: ClipperPath[]; bottomZ: number; topZ: number }> = []
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'add') continue
 
@@ -445,7 +446,7 @@ export function buildProtectedFootprintPaths(
   const tabExpansion = Math.max(0, options.tabExpansion ?? featureExpansion)
   const clampExpansion = Math.max(0, options.clampExpansion ?? featureExpansion)
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (options.targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'add' && feature.operation !== 'model') continue
     if (!isActiveAtZ(project, feature, options.z)) continue

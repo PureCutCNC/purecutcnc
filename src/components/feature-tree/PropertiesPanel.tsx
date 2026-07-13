@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useContext, useRef, useState } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
@@ -31,6 +31,7 @@ import { convertLength, formatLength, parseLengthInput } from '../../utils/units
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { UnitConversionDialog } from '../project/UnitConversionDialog'
 import type { FeatureOperation, Project, RegionMaskMode } from '../../types/project'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface DraftTextInputProps {
   value: string
@@ -201,6 +202,7 @@ export function PropertiesPanel() {
     makeUnique,
     expandTextFeature,
   } = useProjectStore()
+  const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
   const expandedPanelCtx = useContext(ExpandedPanelContext)
   const closeExpanded = useCallback(
@@ -216,7 +218,7 @@ export function PropertiesPanel() {
   const minimumSnap = convertLength(0.0001, 'mm', units)
 
   const selectedFeature = selectedFeatureId
-    ? project.features.find((feature) => feature.id === selectedFeatureId) ?? null
+    ? features.find((feature) => feature.id === selectedFeatureId) ?? null
     : null
   const selectedNode = selection.selectedNode
   const selectedFolder =
@@ -231,7 +233,7 @@ export function PropertiesPanel() {
     selectedNode?.type === 'tab'
       ? project.tabs.find((tab) => tab.id === selectedNode.tabId) ?? null
       : null
-  const allSelectedFeatures = project.features.filter((feature) => selectedFeatureIds.includes(feature.id))
+  const allSelectedFeatures = features.filter((feature) => selectedFeatureIds.includes(feature.id))
   const commonSelectedFolderId =
     allSelectedFeatures.length > 0 &&
     allSelectedFeatures.every((feature) => feature.folderId === allSelectedFeatures[0]?.folderId)
@@ -911,7 +913,7 @@ export function PropertiesPanel() {
           </label>
           <label className="properties-field">
             <span>Features</span>
-            <DraftTextInput value={`${project.features.length}`} disabled />
+            <DraftTextInput value={`${features.length}`} disabled />
           </label>
         </div>
         <div className="properties-actions">
@@ -968,7 +970,7 @@ export function PropertiesPanel() {
   }
 
   if (selectedFolder) {
-    const featureCount = project.features.filter((feature) => feature.folderId === selectedFolder.id).length
+    const featureCount = features.filter((feature) => feature.folderId === selectedFolder.id).length
 
     return (
       <div className="properties-panel">
@@ -1303,7 +1305,7 @@ export function PropertiesPanel() {
   // don't count as base solids); imported STL models are locked as Model.
   // The first Add can be converted to a non-solid role (Line, Region,
   // Construction); only Subtract is disabled on that row.
-  const firstSolidFeature = project.features.find(isSolid) ?? null
+  const firstSolidFeature = features.find(isSolid) ?? null
   const isFirstFeature =
     firstSolidFeature?.id === selectedFeature.id
   const subtractDisabled = isFirstFeature && selectedFeature.operation === 'add'
@@ -1604,7 +1606,7 @@ export function PropertiesPanel() {
             .filter((c) => c.type === 'fixed_distance')
             .map((c) => {
               const refId = c.reference_feature_id ?? c.segment_ids[0]
-              const refFeature = refId ? project.features.find((f) => f.id === refId) : null
+              const refFeature = refId ? features.find((f) => f.id === refId) : null
               const label = typeof c.value === 'number' ? formatLength(c.value, units) : '—'
               const refName = refFeature?.name ?? (refId ? `#${refId}` : 'World')
               const isIntersectionConstraint = c.reference_type === 'intersection' || c.reference_snap_mode === 'intersection'

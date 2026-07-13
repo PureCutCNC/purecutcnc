@@ -17,7 +17,8 @@
 import { resolveProfileSegments } from './resolveProfileSegments'
 import { segmentIntersections, type LineSeg, type ArcSeg } from './segmentIntersection'
 import { segmentHitTest } from '../../components/canvas/hitTest'
-import type { SketchProfile, Point, Project, ProjectMeta, GridSettings, Stock, MachineOrigin, SketchFeature } from '../../types/project'
+import { newProject, type SketchProfile, type Point, type Project, type SketchFeature } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import type { ViewTransform } from '../../components/canvas/viewTransform'
 
 const ε = 1e-6
@@ -307,21 +308,7 @@ function makeMockViewTransform(scale = 1): ViewTransform {
 }
 
 function makeMockProject(profiles: Array<{ id: string; profile: SketchProfile; visible: boolean }>): Project {
-  // Build a minimal project that flows through resolvedProjectFeatures →
-  // rawFeatureAdapter (legacy path — no definitionId, no matching
-  // featureDefinition).
-  return {
-    version: '1.0',
-    meta: { name: 'test', unit: 'mm' } as unknown as ProjectMeta,
-    grid: { sizeX: 100, sizeY: 100, originX: 0, originY: 0 } as unknown as GridSettings,
-    stock: { x: 0, y: 0, w: 100, h: 100, thickness: 10 } as unknown as Stock,
-    origin: { x: 0, y: 0 } as unknown as MachineOrigin,
-    backdrop: null,
-    dimensions: {},
-    annotations: [],
-    modelAssets: {},
-    featureDefinitions: {},
-    features: profiles.map((p) => ({
+  const features: SketchFeature[] = profiles.map((p) => ({
       id: p.id,
       name: p.id,
       kind: 'polygon',
@@ -338,16 +325,8 @@ function makeMockProject(profiles: Array<{ id: string; profile: SketchProfile; v
       z_bottom: -5,
       visible: p.visible,
       locked: false,
-    }) as unknown as SketchFeature[]),
-    featureFolders: [],
-    featureTree: [],
-    global_constraints: [],
-    tools: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
-  } as unknown as Project
+    }))
+  return projectWithFeatures(newProject('test', 'mm'), features)
 }
 
 function testSegmentHitTestArcIndex() {

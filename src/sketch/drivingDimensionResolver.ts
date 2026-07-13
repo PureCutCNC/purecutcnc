@@ -270,8 +270,7 @@ function resolveRadiusDrivingEdit(
   if (!featureId) return null
 
   // Verify the feature exists and the segment is an arc/circle
-  const resolved = resolvedFeatureMap(project).get(featureId)
-  const feature = resolved ?? project.features.find((f) => f.id === featureId)
+  const feature = resolvedFeatureMap(project).get(featureId)
   if (!feature) return { disabled: true, reason: 'Feature not found' }
 
   const seg = feature.sketch.profile.segments[centerAnchor.segmentIndex]
@@ -316,8 +315,7 @@ function resolveLinearDrivingEdit(
   if (featureIdA !== featureIdB) return { disabled: true, reason: 'Anchors span different features' }
 
   // Verify the feature exists
-  const resolved = resolvedFeatureMap(project).get(featureIdA)
-  const feature = resolved ?? project.features.find((f) => f.id === featureIdA)
+  const feature = resolvedFeatureMap(project).get(featureIdA)
   if (!feature) return { disabled: true, reason: 'Feature not found' }
 
   // Resolve world points
@@ -371,8 +369,7 @@ function resolveAngleDrivingEdit(
     return { disabled: true, reason: 'Angle anchors span different features' }
   }
 
-  const resolved = resolvedFeatureMap(project).get(featureIdA)
-  const feature = resolved ?? project.features.find((f) => f.id === featureIdA)
+  const feature = resolvedFeatureMap(project).get(featureIdA)
   if (!feature) return { disabled: true, reason: 'Feature not found' }
 
   const profile = feature.sketch.profile

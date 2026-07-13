@@ -24,6 +24,7 @@ import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../.
 import type {
   Clamp,
   FeatureDefinition,
+  FeatureInstance,
   FeatureOperation,
   Operation,
   Point,
@@ -38,6 +39,7 @@ import { idNumericSuffix } from './ids'
 import { isSolid } from './featureRoles'
 import { isImportedModelFeature } from './modelAssets'
 import { fallbackOperationTarget, defaultOperationForTarget, isOperationTargetValid } from './operationDefaults'
+import { resolveFeatureRow } from './resolveFeatures'
 
 export function normalizeAngleDegrees(angle: number): number {
   const normalized = angle % 360
@@ -401,7 +403,7 @@ export function syncFeatureTreeProject(project: Project): Project {
     }
   }
 
-  const orderedFeatures: SketchFeature[] = []
+  const orderedFeatures: FeatureInstance[] = []
   const pushedFeatureIds = new Set<string>()
 
   for (const entry of normalizedTree) {
@@ -436,33 +438,23 @@ export function syncFeatureTreeProject(project: Project): Project {
   }
 }
 
-export function syncStockFromSourceFeature(project: Project, featureId: string): Project {
+export function syncFeatureBasedStock(project: Project): Project {
   const stock = project.stock
-  if (!stock.sourceFeature || stock.sourceFeatureId !== featureId) {
+  if (!stock.sourceFeature || !stock.sourceFeatureId) {
     return project
   }
 
-  const updatedFeature = project.features.find((f) => f.id === featureId)
-  if (updatedFeature) {
-    const syncedStock = {
-      ...stock,
-      sourceFeature: updatedFeature,
-      profile: updatedFeature.sketch.profile,
-      thickness: typeof updatedFeature.z_top === 'number' ? updatedFeature.z_top : stock.thickness,
-    }
-    return {
-      ...project,
-      stock: syncedStock,
-    }
-  }
-
-  const source = stock.sourceFeature
+  const sourceInstance = project.features.find((feature) => feature.id === stock.sourceFeatureId)
+    ?? stock.sourceFeature
+  const resolvedSource = resolveFeatureRow(project, sourceInstance)
+  if (!resolvedSource) return project
   return {
     ...project,
     stock: {
       ...stock,
-      profile: source.sketch.profile,
-      thickness: typeof source.z_top === 'number' ? source.z_top : stock.thickness,
+      sourceFeature: sourceInstance,
+      profile: resolvedSource.sketch.profile,
+      thickness: typeof resolvedSource.z_top === 'number' ? resolvedSource.z_top : stock.thickness,
     },
   }
 }
@@ -510,7 +502,7 @@ export function clearProjectMemoryCaches(): void {
   clearSTLTransformedGeometryCache()
 }
 
-export function projectsEqual(a: Project, b: Project): boolean {
+export function projectsEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 

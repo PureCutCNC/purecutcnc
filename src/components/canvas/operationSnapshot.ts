@@ -25,6 +25,7 @@ import { drawClampFootprint, drawTabFootprint } from './scenePrimitives'
 import { computeFitViewStateForBounds, computeViewTransform } from './viewTransform'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface Bounds2D {
   minX: number
@@ -98,7 +99,7 @@ function snapshotBounds(project: Project, operation: Operation, toolpath: Toolpa
   }, project.stock.profile)
 
   const targetIds = operationTargetIds(operation)
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (!feature.visible && !targetIds.has(feature.id)) {
       continue
     }
@@ -225,7 +226,7 @@ export async function renderOperationSnapshotPng(
     lineWidth: 2 * pixelRatio,
   })
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     const isTarget = targetIds.has(feature.id) || operation.target.source === 'stock'
     const profiles = getFeatureGeometryProfiles(feature)
     for (const profile of profiles) {

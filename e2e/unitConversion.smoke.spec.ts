@@ -30,15 +30,13 @@ interface UnitProjectSnapshot {
 
 interface CircleProjectSnapshot {
   meta: { units: 'mm' | 'inch' }
-  features: Array<{
-    sketch: {
-      profile: {
-        start: { x: number; y: number }
-        segments: Array<{
-          type: string
-          center?: { x: number; y: number }
-        }>
-      }
+  featureDefinitions: Record<string, {
+    profile: {
+      start: { x: number; y: number }
+      segments: Array<{
+        type: string
+        center?: { x: number; y: number }
+      }>
     }
   }>
 }
@@ -136,8 +134,8 @@ test('converts native circles in the T-style example without changing their shap
   await ui.unitConversionDialog.convertButton(app.page).click()
 
   const converted = await getProject(app.page) as unknown as CircleProjectSnapshot
-  const circleProfile = converted.features
-    .map((feature) => feature.sketch.profile)
+  const circleProfile = Object.values(converted.featureDefinitions)
+    .map((definition) => definition.profile)
     .find((profile) => profile.segments.some((segment) => segment.type === 'circle'))
   const circle = circleProfile?.segments.find((segment) => segment.type === 'circle')
 

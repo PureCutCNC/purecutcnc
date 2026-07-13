@@ -120,9 +120,13 @@ test.describe('Feature references browser smoke', () => {
     const features = project.features as Array<Record<string, unknown>>
     const linkedA = features.find((f) => f.name === 'Linked A') as Record<string, unknown>
     expect(linkedA, 'Linked A should still exist after Make Unique').toBeDefined()
-    const sketch = linkedA.sketch as Record<string, unknown>
-    const profile = sketch.profile as Record<string, unknown>
+    const transform = linkedA.transform as Record<string, number>
+    const definitionId = linkedA.definitionId as string
+    const definitions = project.featureDefinitions as Record<string, Record<string, unknown>>
+    const profile = definitions[definitionId].profile as Record<string, unknown>
     const start = profile.start as Record<string, number>
+    expect(Number.isFinite(transform.e), `Linked A transform.e should be finite, got ${transform.e}`).toBe(true)
+    expect(Number.isFinite(transform.f), `Linked A transform.f should be finite, got ${transform.f}`).toBe(true)
     expect(Number.isFinite(start.x), `Linked A start.x should be finite, got ${start.x}`).toBe(true)
     expect(Number.isFinite(start.y), `Linked A start.y should be finite, got ${start.y}`).toBe(true)
     // Linked A is at (0,0) in the original fixture — should stay near origin
@@ -177,14 +181,12 @@ test.describe('Feature references browser smoke', () => {
     const originalIds = new Set(['f-linked-a', 'f-linked-b', 'f-independent', 'f-unique'])
     const copied = features.find((f) => !originalIds.has(f.id as string)) as Record<string, unknown>
     expect(copied, 'copied feature should exist with a new id').toBeDefined()
-    const copiedSketch = copied.sketch as Record<string, unknown>
-    const copiedProfile = copiedSketch.profile as Record<string, unknown>
-    const copiedStart = copiedProfile.start as Record<string, number>
-    expect(Number.isFinite(copiedStart.x), `copied start.x should be finite, got ${copiedStart.x}`).toBe(true)
-    expect(Number.isFinite(copiedStart.y), `copied start.y should be finite, got ${copiedStart.y}`).toBe(true)
+    const copiedTransform = copied.transform as Record<string, number>
+    expect(Number.isFinite(copiedTransform.e), `copied transform.e should be finite, got ${copiedTransform.e}`).toBe(true)
+    expect(Number.isFinite(copiedTransform.f), `copied transform.f should be finite, got ${copiedTransform.f}`).toBe(true)
     // The copy was placed near (30, 110) via completePendingMove
-    expect(copiedStart.x, `copied start.x should be near 30, got ${copiedStart.x}`).toBeGreaterThan(0)
-    expect(copiedStart.y, `copied start.y should be near 110, got ${copiedStart.y}`).toBeGreaterThan(50)
+    expect(copiedTransform.e, `copied transform.e should be near 30, got ${copiedTransform.e}`).toBeGreaterThan(0)
+    expect(copiedTransform.f, `copied transform.f should be near 110, got ${copiedTransform.f}`).toBeGreaterThan(50)
   })
 
   // ── 7. Edit Sketch enters/exits ─────────────────────────────────
@@ -241,6 +243,58 @@ test.describe('Feature references browser smoke', () => {
 
     await expect(ui.tree.featureRows(app.page)).toHaveCount(4)
     await expect(ui.badge.linked(app.page)).toHaveCount(2)
+    const saved = await getProject(app.page)
+    expect(saved.version).toBe('3.0')
+    expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
+  })
+
+  test('legacy project warns, becomes unsaved, and saves as strict 3.0', async ({ app }) => {
+    await seedLinkedProject(app.page)
+    const current = await getProject(app.page)
+    const instance = (current.features as Array<Record<string, unknown>>)[0]
+    const definitions = current.featureDefinitions as Record<string, Record<string, unknown>>
+    const definition = definitions[instance.definitionId as string]
+    const legacyFeature = {
+      id: instance.id,
+      name: instance.name,
+      kind: definition.kind,
+      folderId: instance.folderId,
+      sketch: {
+        profile: definition.profile,
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: definition.dimensions,
+        constraints: instance.constraints,
+      },
+      operation: definition.operation,
+      text: definition.text,
+      stl: definition.stl,
+      z_top: instance.z_top,
+      z_bottom: instance.z_bottom,
+      visible: instance.visible,
+      locked: instance.locked,
+    }
+    const legacy = {
+      ...current,
+      version: '2.1',
+      featureDefinitions: {},
+      features: [legacyFeature],
+      featureTree: [{ type: 'feature', featureId: instance.id }],
+    }
+
+    let alertMessage = ''
+    app.page.on('dialog', async (dialog) => {
+      alertMessage = dialog.message()
+      await dialog.accept()
+    })
+    await seedProject(app.page, JSON.stringify(legacy))
+    await expect(app.page.getByText('Unsaved', { exact: true })).toBeVisible()
+    await expect.poll(() => alertMessage).toContain('converted in memory')
+    expect(alertMessage).toContain('not compatible with older')
+
+    const saved = await getProject(app.page)
+    expect(saved.version).toBe('3.0')
+    expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
   })
 
   // ── 10. Newer-version warning ────────────────────────────────────
@@ -252,9 +306,9 @@ test.describe('Feature references browser smoke', () => {
       await dialog.accept()
     })
 
-    // Load a project with version > LATEST_PROJECT_VERSION (2.0)
+    // Load a project with version > LATEST_PROJECT_VERSION (3.0)
     const base = await getProject(app.page)
-    ;(base as Record<string, unknown>).version = '3.0'
+    ;(base as Record<string, unknown>).version = '4.0'
     await seedProject(app.page, JSON.stringify(base))
 
     expect(alertMessage, 'should show forward-compat warning alert').toContain('newer version')

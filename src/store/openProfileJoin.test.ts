@@ -21,6 +21,7 @@
  */
 
 import { newProject, polygonProfile, profileVertices, type Point, type SketchFeature, type SketchProfile } from '../types/project'
+import { projectWithFeatures, resolvedFeature, resolvedFeatures } from '../test/projectFixtures'
 import type { OpenProfileEndpoint } from './types'
 import { useProjectStore } from './projectStore'
 import { joinOpenProfiles } from './helpers/derivedFeatures'
@@ -85,14 +86,13 @@ function testStoreJoinAbsorbsFeatureThenClosesPath(): void {
   console.log('Testing store open join absorbs and closes...')
   const upper = makeFeature('upper', [{ x: 0, y: 0 }, { x: 10, y: 0 }])
   const lower = makeFeature('lower', [{ x: 0, y: 10 }, { x: 10, y: 10 }])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('open join', 'mm'),
-    features: [upper, lower],
     featureTree: [
       { type: 'feature' as const, featureId: upper.id },
       { type: 'feature' as const, featureId: lower.id },
     ],
-  }
+  }, [upper, lower])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
@@ -102,11 +102,11 @@ function testStoreJoinAbsorbsFeatureThenClosesPath(): void {
   let state = useProjectStore.getState()
   assert(state.project.features.length === 1, `expected lower feature to be absorbed, got ${state.project.features.length} features`)
   assert(state.project.features[0].id === upper.id, 'expected upper feature to remain active')
-  assert(!state.project.features[0].sketch.profile.closed, 'first join should leave a still-open feature')
+  assert(!resolvedFeature(state.project, upper.id).sketch.profile.closed, 'first join should leave a still-open feature')
 
   assert(store.joinOpenFeatureEndpoints(upper.id, 'start', upper.id, 'end'), 'expected same-feature endpoint join to close')
   state = useProjectStore.getState()
-  const profile = state.project.features[0].sketch.profile
+  const profile = resolvedFeature(state.project, upper.id).sketch.profile
   assert(profile.closed, 'same-feature endpoint join should close the profile')
   assert(pointsApprox(profile.segments[profile.segments.length - 1].to, profile.start), 'closed profile should end at its start point')
 }
@@ -115,14 +115,13 @@ function testJoinDuringHistoryTransactionCommitsAsOneUndoStep(): void {
   console.log('Testing open join respects active history transaction...')
   const upper = makeFeature('upper', [{ x: 0, y: 0 }, { x: 10, y: 0 }])
   const lower = makeFeature('lower', [{ x: 0, y: 10 }, { x: 10, y: 10 }])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('open join transaction', 'mm'),
-    features: [upper, lower],
     featureTree: [
       { type: 'feature' as const, featureId: upper.id },
       { type: 'feature' as const, featureId: lower.id },
     ],
-  }
+  }, [upper, lower])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
@@ -145,18 +144,17 @@ function testDeleteSegmentOpensClosedProfile(): void {
     { x: 10, y: 10 },
     { x: 0, y: 10 },
   ])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('delete segment', 'mm'),
-    features: [square],
     featureTree: [{ type: 'feature' as const, featureId: square.id }],
-  }
+  }, [square])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
   store.enterSketchEdit(square.id)
   store.deleteFeatureSegment(square.id, 1)
 
-  const profile = useProjectStore.getState().project.features[0].sketch.profile
+  const profile = resolvedFeature(useProjectStore.getState().project, square.id).sketch.profile
   assert(!profile.closed, 'deleted segment should leave profile open')
   assert(pointsApprox(profile.start, { x: 10, y: 10 }), 'open profile should start after deleted segment')
   assert(pointsApprox(profile.segments[profile.segments.length - 1].to, { x: 10, y: 0 }), 'open profile should end before deleted segment')
@@ -170,18 +168,17 @@ function testDeleteSegmentSplitsOpenProfile(): void {
     { x: 20, y: 0 },
     { x: 30, y: 0 },
   ])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('delete open segment', 'mm'),
-    features: [path],
     featureTree: [{ type: 'feature' as const, featureId: path.id }],
-  }
+  }, [path])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
   store.enterSketchEdit(path.id)
   store.deleteFeatureSegment(path.id, 1)
 
-  const features = useProjectStore.getState().project.features
+  const features = resolvedFeatures(useProjectStore.getState().project)
   assert(features.length === 2, `expected split delete to create two features, got ${features.length}`)
   assert(pointsApprox(features[0].sketch.profile.start, { x: 0, y: 0 }), 'first split should keep original start')
   assert(pointsApprox(features[0].sketch.profile.segments[0].to, { x: 10, y: 0 }), 'first split should end before deleted segment')
@@ -198,18 +195,17 @@ function testDisconnectClosedProfileDuplicatesAnchor(): void {
     { x: 10, y: 10 },
     { x: 0, y: 10 },
   ])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('disconnect closed', 'mm'),
-    features: [square],
     featureTree: [{ type: 'feature' as const, featureId: square.id }],
-  }
+  }, [square])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
   store.enterSketchEdit(square.id)
   store.disconnectFeaturePoint(square.id, 1)
 
-  const profile = useProjectStore.getState().project.features[0].sketch.profile
+  const profile = resolvedFeature(useProjectStore.getState().project, square.id).sketch.profile
   assert(!profile.closed, 'disconnect should leave profile open')
   assert(pointsApprox(profile.start, { x: 10, y: 0 }), 'disconnect should start at selected anchor')
   assert(pointsApprox(profile.segments[profile.segments.length - 1].to, profile.start), 'disconnect should duplicate selected anchor at path end')
@@ -222,18 +218,17 @@ function testDisconnectSplitsOpenProfile(): void {
     { x: 10, y: 0 },
     { x: 20, y: 0 },
   ])
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('disconnect open', 'mm'),
-    features: [path],
     featureTree: [{ type: 'feature' as const, featureId: path.id }],
-  }
+  }, [path])
 
   const store = useProjectStore.getState()
   store.loadProject(project)
   store.enterSketchEdit(path.id)
   store.disconnectFeaturePoint(path.id, 1)
 
-  const features = useProjectStore.getState().project.features
+  const features = resolvedFeatures(useProjectStore.getState().project)
   assert(features.length === 2, `expected disconnect to create two features, got ${features.length}`)
   assert(pointsApprox(features[0].sketch.profile.start, { x: 0, y: 0 }), 'first split should keep original start')
   assert(pointsApprox(features[0].sketch.profile.segments[0].to, { x: 10, y: 0 }), 'first split should end at duplicated anchor')

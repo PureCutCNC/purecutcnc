@@ -28,6 +28,7 @@ import type { SelectionState, SketchEditTool } from '../../store/types'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import type { Point, Project } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 
 export interface FilletWorkflowCtx {
   projectRef: MutableRefObject<Project>
@@ -115,7 +116,7 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     if (!pending || !preview) return
     const featureId = selectionRef.current.selectedFeatureId
     if (!featureId) return
-    const feature = projectRef.current.features.find((f) => f.id === featureId) ?? null
+    const feature = resolveFeatureInstance(projectRef.current, featureId)
     if (!feature) return
     const units = projectRef.current.meta.units
     const radius = selectionRef.current.sketchEditTool === 'chamfer'

@@ -31,13 +31,13 @@ import {
   generateVCarveToolpath,
   type ToolpathResult,
 } from '../engine/toolpaths'
-import type { Clamp, Operation, Project, SketchFeature, Stock, Tab, Tool } from '../types/project'
+import type { Clamp, FeatureInstance, Operation, Project, Stock, Tab, Tool } from '../types/project'
 
 export interface ToolpathCacheEntry {
   result: ToolpathResult
   operation: Operation
   stock: Stock
-  features: SketchFeature[]
+  features: FeatureInstance[]
   tools: Tool[]
   tabs: Tab[]
   clamps: Clamp[]

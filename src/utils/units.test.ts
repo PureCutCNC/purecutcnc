@@ -20,9 +20,9 @@ import { circleProfile, defaultTool, newProject, rectProfile } from '../types/pr
 import type {
   DimensionAnnotation,
   FeatureDefinition,
+  FeatureInstance,
   Matrix2D,
   Project,
-  SketchFeature,
 } from '../types/project'
 import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
 import { convertProjectUnits } from './units'
@@ -107,27 +107,18 @@ const anchoredAngleDim: DimensionAnnotation = {
     stl: null,
     operation: 'subtract',
   }
-  const feature = {
+  const feature: FeatureInstance = {
     id: 'circle-1',
     name: 'T-style mounting hole',
-    kind: 'circle',
-    text: null,
-    stl: null,
-    folderId: null,
-    sketch: {
-      profile: sourceProfile,
-      origin: circleCenter,
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'subtract',
+    definitionId: definition.id,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
     z_top: 0,
     z_bottom: -0.25,
+    folderId: null,
     visible: true,
     locked: false,
-    definitionId: definition.id,
-  } as SketchFeature & { definitionId: string }
+  }
   const project: Project = {
     ...base,
     featureDefinitions: { [definition.id]: definition },
@@ -137,26 +128,18 @@ const anchoredAngleDim: DimensionAnnotation = {
   const mm = convertProjectUnits(project, 'mm')
   const definitionProfile = mm.featureDefinitions[definition.id].profile
   const definitionCircle = definitionProfile.segments[0]
-  const compatibilityProfile = mm.features[0].sketch.profile
-  const compatibilityCircle = compatibilityProfile.segments[0]
 
   assert(definitionCircle.type === 'circle', 'definition circle remains native')
-  assert(compatibilityCircle.type === 'circle', 'compatibility circle remains native')
-  if (definitionCircle.type === 'circle' && compatibilityCircle.type === 'circle') {
+  if (definitionCircle.type === 'circle') {
     const expectedRadius = 0.09375 * MM_PER_INCH
     const definitionRadius = Math.hypot(
       definitionProfile.start.x - definitionCircle.center.x,
       definitionProfile.start.y - definitionCircle.center.y,
     )
-    const compatibilityRadius = Math.hypot(
-      compatibilityProfile.start.x - compatibilityCircle.center.x,
-      compatibilityProfile.start.y - compatibilityCircle.center.y,
-    )
 
     assert(approx(definitionCircle.center.x, 13.240586030257012 * MM_PER_INCH), 'definition circle center converts')
     assert(approx(definitionRadius, expectedRadius), 'definition circle radius converts without distortion')
-    assert(approx(compatibilityCircle.center.y, 8.925006054020724 * MM_PER_INCH), 'compatibility circle center converts')
-    assert(approx(compatibilityRadius, expectedRadius), 'compatibility circle radius converts without distortion')
+    assert(approx(mm.features[0].transform.e, 0), 'circle instance transform remains independent of definition geometry')
   }
 
   const round = convertProjectUnits(mm, 'inch')
@@ -236,62 +219,42 @@ const anchoredAngleDim: DimensionAnnotation = {
     operation: 'model',
   }
   const transform: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 25.4, f: 50.8 }
-  const textFeature = {
+  const textFeature: FeatureInstance = {
     id: 'text-1',
     name: 'Text',
-    kind: 'text',
-    text: textDefinition.text,
-    stl: null,
-    folderId: null,
-    sketch: {
-      profile: rectProfile(25.4, 50.8, 25.4, 12.7),
-      origin: { x: 25.4, y: 50.8 },
-      orientationAngle: 0,
-      dimensions: [localDimension],
-      constraints: [{
-        id: 'constraint-1',
-        type: 'fixed_distance',
-        segment_ids: ['text-1', 'reference-1'],
-        value: 25.4,
-        anchor_point: { x: 25.4, y: 50.8 },
-        reference_point: { x: 50.8, y: 76.2 },
-        reference_segment: {
-          a: { x: 0, y: 25.4 },
-          b: { x: 25.4, y: 25.4 },
-        },
-        reference_t: 0.25,
-      }],
-    },
-    operation: 'subtract',
-    z_top: 25.4,
-    z_bottom: 0,
-    visible: true,
-    locked: false,
     definitionId: textDefinition.id,
     transform,
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
-  const stlFeature = {
-    id: 'stl-1',
-    name: 'Model',
-    kind: 'stl',
-    text: null,
-    stl: stlDefinition.stl,
-    folderId: null,
-    sketch: {
-      profile: rectProfile(0, 0, 25.4, 50.8),
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'model',
-    z_top: 50.8,
+    constraints: [{
+      id: 'constraint-1',
+      type: 'fixed_distance',
+      segment_ids: ['text-1', 'reference-1'],
+      value: 25.4,
+      anchor_point: { x: 25.4, y: 50.8 },
+      reference_point: { x: 50.8, y: 76.2 },
+      reference_segment: {
+        a: { x: 0, y: 25.4 },
+        b: { x: 25.4, y: 25.4 },
+      },
+      reference_t: 0.25,
+    }],
+    z_top: 25.4,
     z_bottom: 0,
+    folderId: null,
     visible: true,
     locked: false,
+  }
+  const stlFeature: FeatureInstance = {
+    id: 'stl-1',
+    name: 'Model',
     definitionId: stlDefinition.id,
     transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
-  } as SketchFeature & { definitionId: string; transform: Matrix2D }
+    constraints: [],
+    z_top: 50.8,
+    z_bottom: 0,
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
 
   const anchoredDimension: DimensionAnnotation = {
     ...anchoredAngleDim,
@@ -351,8 +314,8 @@ const anchoredAngleDim: DimensionAnnotation = {
   }
 
   const inch = convertProjectUnits(project, 'inch')
-  const inchText = inch.features[0] as SketchFeature & { transform?: Matrix2D }
-  const inchConstraint = inchText.sketch.constraints[0]
+  const inchText = inch.features[0]
+  const inchConstraint = inchText.constraints[0]
   const inchAnchored = inch.annotations[1]
 
   assert(approx(inch.meta.maxTravelZ, 10), 'project metadata lengths convert')
@@ -383,10 +346,10 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(inch.modelAssets === project.modelAssets, 'immutable mesh assets are not rewritten')
 
   const round = convertProjectUnits(inch, 'mm')
-  const roundText = round.features[0] as SketchFeature & { transform?: Matrix2D }
+  const roundText = round.features[0]
   assert(approx(round.featureDefinitions['def-text'].dimensions[0].value, 25.4, 1e-7), 'definition dimension round-trips')
   assert(round.featureDefinitions['def-text'].dimensions[0].segment_ids[0] === 'edge-a', 'dimension anchor round-trips')
-  assert(approx(roundText.transform?.e ?? 0, 25.4, 1e-7), 'instance translation round-trips')
+  assert(approx(roundText.transform.e, 25.4, 1e-7), 'instance translation round-trips')
   console.log('complete project unit conversion PASS')
 }
 

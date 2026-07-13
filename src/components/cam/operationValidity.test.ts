@@ -35,6 +35,7 @@ import {
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   newProject,
   rectProfile,
@@ -86,7 +87,7 @@ function makeFeature(
 }
 
 function projectWith(features: SketchFeature[]): Project {
-  return { ...newProject(), features }
+  return projectWithFeatures(newProject(), features)
 }
 
 function selectionFor(featureIds: string[]): SelectionState {

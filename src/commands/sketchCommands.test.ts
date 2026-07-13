@@ -22,6 +22,7 @@
 import type { Project, SketchFeature } from '../types/project'
 import { newProject } from '../types/project'
 import type { SelectionState } from '../store/types'
+import { projectWithFeatures } from '../test/projectFixtures'
 import { deriveSketchCommandState } from './sketchCommands'
 
 function assert(condition: boolean, message: string) {
@@ -64,10 +65,7 @@ function makeFeature(id: string, overrides: Partial<SketchFeature> = {}): Sketch
 }
 
 function makeProject(features: SketchFeature[]): Project {
-  return {
-    ...newProject('sketch-command-test', 'mm'),
-    features,
-  }
+  return projectWithFeatures(newProject('sketch-command-test', 'mm'), features)
 }
 
 function makeSelection(ids: string[], overrides: Partial<SelectionState> = {}): SelectionState {

@@ -29,6 +29,7 @@ import type { Operation, OperationKind, OperationPass, Project } from '../../typ
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry } from '../../text'
+import { resolvedFeatureMap, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
@@ -64,11 +65,12 @@ export function operationRequiresClosedProfiles(kind: OperationKind): boolean {
 }
 
 export function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
+  const featureById = resolvedFeatureMap(project)
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target, so any selection containing it is rejected up front
   // with one clear message (issue #199).
   if (selection.selectedFeatureIds.some((featureId) => {
-    const feature = project.features.find((entry) => entry.id === featureId)
+    const feature = featureById.get(featureId)
     return feature !== undefined && isConstruction(feature)
   })) {
     return 'Construction geometry is never machined — deselect construction features first'
@@ -80,8 +82,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
@@ -97,8 +99,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       return 'Select one or more open or closed features first; closed regions are optional filters'
     }
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0 && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
@@ -112,8 +114,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
@@ -138,8 +140,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
@@ -162,8 +164,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return 'One or more selected features not found'
@@ -189,8 +191,8 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     const features = selection.selectedFeatureIds
-      .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-      .filter((feature): feature is Project['features'][number] => feature !== null)
+      .map((featureId) => featureById.get(featureId))
+      .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
     if (features.length !== selection.selectedFeatureIds.length) {
       return 'One or more selected features not found'
@@ -220,12 +222,12 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   const features = selection.selectedFeatureIds
-    .map((featureId) => project.features.find((feature) => feature.id === featureId) ?? null)
-    .filter((feature): feature is Project['features'][number] => feature !== null)
+    .map((featureId) => featureById.get(featureId))
+    .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  const acceptsOperation = (feature: Project['features'][number]) => (
+  const acceptsOperation = (feature: ResolvedSketchFeature) => (
     feature.operation === expectedOperation
     || (kind === 'edge_route_outside' && feature.operation === 'model')
   )
@@ -337,7 +339,7 @@ function singleFeatureSelection(featureId: string): SelectionState {
  * the CAM panel's single-add behaviour) and a friendly menu label.
  */
 export function validQuickOperationsForFeature(project: Project, featureId: string): QuickOperation[] {
-  const feature = project.features.find((item) => item.id === featureId)
+  const feature = resolvedFeatureMap(project).get(featureId)
   if (!feature) {
     return []
   }
@@ -396,6 +398,7 @@ export function operationTargetsRegion(project: Project, operation: Operation): 
   if (operation.target.source !== 'features') {
     return false
   }
+  const featureById = resolvedFeatureMap(project)
   return operation.target.featureIds.some((featureId) =>
-    project.features.find((feature) => feature.id === featureId)?.operation === 'region')
+    featureById.get(featureId)?.operation === 'region')
 }

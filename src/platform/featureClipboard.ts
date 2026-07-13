@@ -15,11 +15,15 @@
  */
 
 import { getProfileBounds } from '../types/project'
-import type { Point, Project, SketchFeature } from '../types/project'
-import { buildCopiedFeatures } from '../store/helpers/copyFeatures'
+import type { FeatureDefinition, Point, Project } from '../types/project'
+import { buildCopiedFeatures, type ReferencedSketchFeature } from '../store/helpers/copyFeatures'
 import type { ProjectStore } from '../store/types'
+import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../store/helpers/resolveFeatures'
 
-export type FeatureClipboardPayload = SketchFeature[]
+export type FeatureClipboardPayload = ResolvedSketchFeature[] & {
+  /** Canonical definitions captured so Cut/Paste never depends on baked geometry. */
+  definitions?: Record<string, FeatureDefinition>
+}
 
 export const FEATURE_CLIPBOARD_PLACEMENT_EVENT = 'purecutcnc:place-feature-clipboard'
 
@@ -48,9 +52,19 @@ export function isEditableShortcutTarget(target: EventTarget | null): boolean {
 
 export function selectedVisibleClipboardFeatures(project: Project, selectedFeatureIds: string[]): FeatureClipboardPayload {
   const selectedIds = new Set(selectedFeatureIds)
-  return project.features
+  const features = resolvedProjectFeatures(project)
     .filter((feature) => selectedIds.has(feature.id) && feature.visible)
-    .map((feature) => JSON.parse(JSON.stringify(feature)) as SketchFeature)
+    .map((feature) => JSON.parse(JSON.stringify(feature)) as ResolvedSketchFeature)
+  const definitionIds = new Set(features.map((feature) => feature.definitionId))
+  const definitions = Object.fromEntries(
+    [...definitionIds].flatMap((definitionId) => {
+      const definition = project.featureDefinitions[definitionId]
+      return definition
+        ? [[definitionId, structuredClone(definition)] as const]
+        : []
+    }),
+  )
+  return Object.assign(features, { definitions })
 }
 
 export function featureClipboardBounds(clipboard: FeatureClipboardPayload): FeatureClipboardBounds | null {
@@ -85,10 +99,15 @@ export function buildPlacedClipboardFeatures(
   clipboard: FeatureClipboardPayload,
   project: Project,
   placementPoint: Point,
-): SketchFeature[] {
+): ReferencedSketchFeature[] {
   const anchor = featureClipboardAnchor(clipboard)
   if (!anchor) {
     return []
+  }
+
+  const definitions = {
+    ...(clipboard.definitions ?? {}),
+    ...project.featureDefinitions,
   }
 
   return buildCopiedFeatures(
@@ -97,9 +116,18 @@ export function buildPlacedClipboardFeatures(
     placementPoint.x - anchor.x,
     placementPoint.y - anchor.y,
     1,
-    project.featureDefinitions,
+    definitions,
     project.meta.copyMode,
-  )
+  ).map((feature) => {
+    if (project.featureDefinitions[feature.definitionId] || feature._clonedDefinition) {
+      return feature
+    }
+    const definition = definitions[feature.definitionId]
+    if (!definition) {
+      throw new Error(`Clipboard feature ${feature.id} is missing definition ${feature.definitionId}`)
+    }
+    return { ...feature, _clonedDefinition: definition }
+  })
 }
 
 export function copySelectedFeatures(store: ProjectStore): FeatureClipboardPayload | null {

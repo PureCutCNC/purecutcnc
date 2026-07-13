@@ -15,6 +15,7 @@
  */
 
 import type { Project, SketchProfile } from '../types/project';
+import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures';
 
 /**
  * Converts a SketchProfile to an SVG path string.
@@ -52,7 +53,7 @@ export function profileToSvgPath(profile: SketchProfile): string {
 export function projectToSvgSprite(project: Project): string {
   const icons: Record<string, string[]> = {};
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     const id = feature.name;
     if (!icons[id]) icons[id] = [];
 

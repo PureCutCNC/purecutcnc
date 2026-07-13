@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { IDENTITY_MATRIX, inferFeatureKind, profileVertices } from '../../types/project'
+import { inferFeatureKind, profileVertices } from '../../types/project'
 import type { BackdropImage, Matrix2D, Point, SketchFeature } from '../../types/project'
 import {
   addPoint,
@@ -96,12 +96,12 @@ function scaleNumericZSpan(
   }
 }
 
-export function resizeFeatureFromReference(
-  feature: SketchFeature,
+export function resizeFeatureFromReference<TFeature extends SketchFeature & { transform: Matrix2D }>(
+  feature: TFeature,
   referenceStart: Point,
   referenceEnd: Point,
   previewPoint: Point,
-): SketchFeature | null {
+): TFeature | null {
   const referenceVector = subtractPoint(referenceEnd, referenceStart)
   const referenceLength = pointLength(referenceVector)
   if (referenceLength <= 1e-9) {
@@ -158,8 +158,7 @@ export function resizeFeatureFromReference(
     translateMatrix(referenceStart.x, referenceStart.y),
     multiplyMatrix(linearPart, translateMatrix(-referenceStart.x, -referenceStart.y)),
   )
-  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
-  const nextTransform = multiplyMatrix(scaleTransform, currentTransform)
+  const nextTransform = multiplyMatrix(scaleTransform, feature.transform)
 
   return {
     ...feature,
@@ -181,15 +180,15 @@ export function resizeFeatureFromReference(
       profile,
     },
     transform: nextTransform,
-  } as SketchFeature & { transform: Matrix2D }
+  } as TFeature
 }
 
-export function rotateFeatureFromReference(
-  feature: SketchFeature,
+export function rotateFeatureFromReference<TFeature extends SketchFeature & { transform: Matrix2D }>(
+  feature: TFeature,
   referenceStart: Point,
   referenceEnd: Point,
   previewPoint: Point,
-): SketchFeature | null {
+): TFeature | null {
   const startVector = subtractPoint(referenceEnd, referenceStart)
   const endVector = subtractPoint(previewPoint, referenceStart)
   const startLength = pointLength(startVector)
@@ -205,8 +204,7 @@ export function rotateFeatureFromReference(
 
   const rotatePoint = (point: Point) => rotatePointAround(point, referenceStart, angle)
   const profile = transformProfile(feature.sketch.profile, rotatePoint)
-  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
-  const nextTransform = multiplyMatrix(rotateDelta(referenceStart, angle), currentTransform)
+  const nextTransform = multiplyMatrix(rotateDelta(referenceStart, angle), feature.transform)
   return {
     ...feature,
     kind: ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(profile),
@@ -220,14 +218,14 @@ export function rotateFeatureFromReference(
       profile,
     },
     transform: nextTransform,
-  } as SketchFeature & { transform: Matrix2D }
+  } as TFeature
 }
 
-export function mirrorFeatureFromReference(
-  feature: SketchFeature,
+export function mirrorFeatureFromReference<TFeature extends SketchFeature & { transform: Matrix2D }>(
+  feature: TFeature,
   referenceStart: Point,
   referenceEnd: Point,
-): SketchFeature | null {
+): TFeature | null {
   const axis = normalizePoint(subtractPoint(referenceEnd, referenceStart))
   if (!axis) {
     return null
@@ -247,8 +245,7 @@ export function mirrorFeatureFromReference(
   if (orientationAngle === null) {
     return null
   }
-  const currentTransform = (feature as SketchFeature & { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
-  const nextTransform = multiplyMatrix(mirrorDelta(referenceStart, referenceEnd), currentTransform)
+  const nextTransform = multiplyMatrix(mirrorDelta(referenceStart, referenceEnd), feature.transform)
 
   return {
     ...feature,
@@ -261,7 +258,7 @@ export function mirrorFeatureFromReference(
       profile,
     },
     transform: nextTransform,
-  } as SketchFeature & { transform: Matrix2D }
+  } as TFeature
 }
 
 function backdropResizeBasis(backdrop: BackdropImage): { u: Point; v: Point } {

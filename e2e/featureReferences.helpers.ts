@@ -58,32 +58,18 @@ function linkedFeature(
   definitionId: string,
   tx: number,
   ty: number,
-  defCx: number,
-  defCy: number,
-  defW: number,
-  defH: number,
 ) {
-  const rx = defCx + tx
-  const ry = defCy + ty
   return {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty },
+    constraints: [] as unknown[],
     folderId: null,
-    sketch: {
-      profile: resolvedRectProfile(rx, ry, defW, defH),
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [] as unknown[],
-      constraints: [] as unknown[],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId,
-    transform: { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty },
   }
 }
 
@@ -100,16 +86,16 @@ export function buildLinkedProjectJson(): string {
   defs['def-unique'] = rectDef('def-unique', 0, 0, 60, 40)
 
   const features = [
-    linkedFeature('f-linked-a', 'Linked A', 'def-linked', 0, 0, 0, 0, 60, 40),
-    linkedFeature('f-linked-b', 'Linked B', 'def-linked', 80, 0, 0, 0, 60, 40),
-    linkedFeature('f-independent', 'Independent', 'def-independent', 0, 80, 0, 0, 60, 40),
-    linkedFeature('f-unique', 'Former Link', 'def-unique', 80, 80, 0, 0, 60, 40),
+    linkedFeature('f-linked-a', 'Linked A', 'def-linked', 0, 0),
+    linkedFeature('f-linked-b', 'Linked B', 'def-linked', 80, 0),
+    linkedFeature('f-independent', 'Independent', 'def-independent', 0, 80),
+    linkedFeature('f-unique', 'Former Link', 'def-unique', 80, 80),
   ]
 
   const stockW = 200
   const stockH = 160
   return JSON.stringify({
-    version: '2.0',
+    version: '3.0',
     meta: {
       name: 'E2E Smoke Fixture',
       created: new Date().toISOString(),

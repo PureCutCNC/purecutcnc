@@ -16,8 +16,8 @@
 
 import type { ClassifiedShape, ImportedShape } from '../import'
 import { rectProfile } from '../types/project'
-import type { SketchFeature } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { LARGE_IMPORT_THRESHOLD } from './slices/importMergeSlice'
 
 function assert(condition: boolean, message: string): void {
@@ -77,7 +77,7 @@ function test2980RepeatedNamesBulkImport(): void {
   assert(new Set(ids).size === 2980, 'feature IDs are unique')
 
   const definitionIds = features.map(
-    (feature) => (feature as SketchFeature & { definitionId?: string }).definitionId,
+    (feature) => feature.definitionId,
   )
   const definedIds = definitionIds.filter((id): id is string => id !== undefined)
   assert(definedIds.length === 2980, 'every feature has a definition ID')
@@ -131,8 +131,9 @@ function testLegacySmallImportUnchanged(): void {
   const state = useProjectStore.getState()
   assert(ids.length === 5 && state.selection.selectedFeatureIds.length === 5, 'legacy small import selects all')
   assert(state.project.featureFolders.every((folder) => !folder.collapsed), 'legacy small folders remain expanded')
-  assert(state.project.features[0].operation === 'add', 'legacy closed profile remains Add')
-  assert(state.project.features[1].operation === 'line', 'legacy open profile remains Line')
+  const resolved = resolvedProjectFeatures(state.project)
+  assert(resolved[0].operation === 'add', 'legacy closed profile remains Add')
+  assert(resolved[1].operation === 'line', 'legacy open profile remains Line')
 }
 
 const tests = [

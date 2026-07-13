@@ -23,6 +23,7 @@
 
 import type { FeatureOperation, OperationTarget, Project, SketchFeature } from '../../types/project'
 import { newProject, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { isOperationTargetValid, fallbackOperationTarget } from './operationDefaults'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -64,7 +65,7 @@ function makeTarget(featureIds: string[]): OperationTarget {
 }
 
 function projectWith(features: SketchFeature[]): Project {
-  return { ...newProject(), features }
+  return projectWithFeatures(newProject(), features)
 }
 
 // ── isOperationTargetValid: V-carve + closed Line ──────────────────
