@@ -180,6 +180,16 @@ export const canvas = {
   any: (page: Page) => page.locator('canvas').first(),
 }
 
+// ── Overlap feature picker ─────────────────────────────────────────
+
+export const overlapFeaturePicker = {
+  root: (page: Page) => page.getByRole('dialog', { name: 'Select feature' }),
+  list: (page: Page) => overlapFeaturePicker.root(page).locator('.overlap-feature-picker__list'),
+  candidates: (page: Page) => overlapFeaturePicker.root(page).locator('.overlap-feature-picker__candidate'),
+  candidate: (page: Page, name: string) => overlapFeaturePicker.root(page).getByRole('button', { name: new RegExp(`Select ${name}`) }),
+  cancelButton: (page: Page) => overlapFeaturePicker.root(page).getByRole('button', { name: 'Cancel', exact: true }),
+}
+
 // ── Toolbar ─────────────────────────────────────────────────────────
 
 export const toolbar = {
