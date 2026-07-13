@@ -89,7 +89,7 @@ function convertPoint(point: Point, from: Units, to: Units): Point {
 }
 
 function convertSegment(segment: Segment, from: Units, to: Units): Segment {
-  if (segment.type === 'arc') {
+  if (segment.type === 'arc' || segment.type === 'circle') {
     return {
       ...segment,
       to: convertPoint(segment.to, from, to),

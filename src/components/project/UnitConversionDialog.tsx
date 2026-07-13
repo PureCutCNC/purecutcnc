@@ -84,7 +84,7 @@ export function UnitConversionDialog({
         <div className="dialog-body dialog-body--unit-conversion">
           <div className="unit-conversion-route" aria-label={`Changing from ${unitName(fromUnits)} to ${unitName(toUnits)}`}>
             <span>{fromShort}</span>
-            <span className="unit-conversion-route__line" aria-hidden="true" />
+            <span className="unit-conversion-route__arrow" aria-hidden="true">→</span>
             <span>{toShort}</span>
           </div>
 

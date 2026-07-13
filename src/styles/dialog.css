@@ -105,11 +105,6 @@
   max-width: 560px;
 }
 
-.dialog-body--unit-conversion {
-  grid-template-columns: 1fr;
-  gap: 18px;
-}
-
 .unit-conversion-eyebrow {
   display: block;
   margin-bottom: 3px;
@@ -127,7 +122,7 @@
   width: 100%;
 }
 
-.unit-conversion-route > span:not(.unit-conversion-route__line) {
+.unit-conversion-route > span:not(.unit-conversion-route__arrow) {
   display: grid;
   place-items: center;
   width: 52px;
@@ -147,29 +142,15 @@
   color: var(--accent-strong);
 }
 
-.unit-conversion-route__line {
-  position: relative;
+.unit-conversion-route__arrow {
   flex: 1;
-  height: 1px;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--line-bright) 0,
-    var(--line-bright) 5px,
-    transparent 5px,
-    transparent 9px
-  );
-}
-
-.unit-conversion-route__line::after {
-  content: '';
-  position: absolute;
-  right: -1px;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  border-top: 1px solid var(--line-bright);
-  border-right: 1px solid var(--line-bright);
-  transform: translateY(-50%) rotate(45deg);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0 12px color-mix(in oklab, var(--accent) 45%, transparent);
 }
 
 .unit-conversion-intro {
@@ -317,6 +298,11 @@
 
 .dialog-body--import-with-layers {
   grid-template-columns: 1fr 220px;
+}
+
+.dialog-body--unit-conversion {
+  grid-template-columns: 1fr;
+  gap: 18px;
 }
 
 .dialog-footer {

@@ -15,6 +15,7 @@
  */
 
 import { test, expect } from './fixtures'
+import { readFile } from 'node:fs/promises'
 import { getProject, seedProject } from './helpers'
 
 interface UnitProjectSnapshot {
@@ -24,6 +25,21 @@ interface UnitProjectSnapshot {
     a: { kind: string; target?: { source: string }; vertexIndex?: number }
     b?: { kind: string; point?: { x: number; y: number } }
     offset: number
+  }>
+}
+
+interface CircleProjectSnapshot {
+  meta: { units: 'mm' | 'inch' }
+  features: Array<{
+    sketch: {
+      profile: {
+        start: { x: number; y: number }
+        segments: Array<{
+          type: string
+          center?: { x: number; y: number }
+        }>
+      }
+    }
   }>
 }
 
@@ -75,6 +91,7 @@ test('unit change waits for Convert, Keep numeric values, or Cancel', async ({ a
   const dialog = ui.unitConversionDialog.root(app.page)
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('1 in becomes 25.4 mm')
+  await expect(ui.unitConversionDialog.directionArrow(app.page)).toHaveText('→')
   expect((await snapshot(app.page)).meta.units).toBe('inch')
 
   await ui.unitConversionDialog.cancelButton(app.page).click()
@@ -106,6 +123,36 @@ test('unit change waits for Convert, Keep numeric values, or Cancel', async ({ a
   expect(converted.annotations[0].b?.point?.x).toBeCloseTo(25.4)
   expect(converted.annotations[0].b?.point?.y).toBeCloseTo(50.8)
   expect(converted.annotations[0].offset).toBeCloseTo(12.7)
+})
+
+test('converts native circles in the T-style example without changing their shape', async ({ app, ui }) => {
+  const example = await readFile(
+    new URL('../public/examples/t-style-body.camj', import.meta.url),
+    'utf8',
+  )
+  await seedProject(app.page, example)
+  await ui.tree.projectRow(app.page).click()
+  await chooseUnits(app.page, ui, 'Millimeters')
+  await ui.unitConversionDialog.convertButton(app.page).click()
+
+  const converted = await getProject(app.page) as unknown as CircleProjectSnapshot
+  const circleProfile = converted.features
+    .map((feature) => feature.sketch.profile)
+    .find((profile) => profile.segments.some((segment) => segment.type === 'circle'))
+  const circle = circleProfile?.segments.find((segment) => segment.type === 'circle')
+
+  expect(converted.meta.units).toBe('mm')
+  expect(circleProfile).toBeDefined()
+  expect(circle?.center).toBeDefined()
+  if (!circleProfile || !circle?.center) return
+
+  const radius = Math.hypot(
+    circleProfile.start.x - circle.center.x,
+    circleProfile.start.y - circle.center.y,
+  )
+  expect(circle.center.x).toBeCloseTo(13.240586030257012 * 25.4)
+  expect(circle.center.y).toBeCloseTo(8.925006054020724 * 25.4)
+  expect(radius).toBeCloseTo(0.09375 * 25.4)
 })
 
 test.describe('tablet unit conversion dialog', () => {

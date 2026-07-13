@@ -16,7 +16,7 @@
  * Run with: npx tsx src/utils/units.test.ts
  */
 
-import { defaultTool, newProject, rectProfile } from '../types/project'
+import { circleProfile, defaultTool, newProject, rectProfile } from '../types/project'
 import type {
   DimensionAnnotation,
   FeatureDefinition,
@@ -91,6 +91,87 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(approx(a.offset, 12.7, 1e-7), 'round-trip offset')
   assert(a.labelOffset !== undefined && approx(a.labelOffset, 5, 1e-7), 'round-trip labelOffset')
   console.log('round-trip annotation conversion PASS')
+}
+
+// ── T-style native circles keep their center and radius through conversion ──
+{
+  const base = newProject('circle-units-test', 'inch')
+  const circleCenter = { x: 13.240586030257012, y: 8.925006054020724 }
+  const sourceProfile = circleProfile(circleCenter.x, circleCenter.y, 0.09375)
+  const definition: FeatureDefinition = {
+    id: 'def-circle',
+    kind: 'circle',
+    profile: sourceProfile,
+    dimensions: [],
+    text: null,
+    stl: null,
+    operation: 'subtract',
+  }
+  const feature = {
+    id: 'circle-1',
+    name: 'T-style mounting hole',
+    kind: 'circle',
+    text: null,
+    stl: null,
+    folderId: null,
+    sketch: {
+      profile: sourceProfile,
+      origin: circleCenter,
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -0.25,
+    visible: true,
+    locked: false,
+    definitionId: definition.id,
+  } as SketchFeature & { definitionId: string }
+  const project: Project = {
+    ...base,
+    featureDefinitions: { [definition.id]: definition },
+    features: [feature],
+  }
+
+  const mm = convertProjectUnits(project, 'mm')
+  const definitionProfile = mm.featureDefinitions[definition.id].profile
+  const definitionCircle = definitionProfile.segments[0]
+  const compatibilityProfile = mm.features[0].sketch.profile
+  const compatibilityCircle = compatibilityProfile.segments[0]
+
+  assert(definitionCircle.type === 'circle', 'definition circle remains native')
+  assert(compatibilityCircle.type === 'circle', 'compatibility circle remains native')
+  if (definitionCircle.type === 'circle' && compatibilityCircle.type === 'circle') {
+    const expectedRadius = 0.09375 * MM_PER_INCH
+    const definitionRadius = Math.hypot(
+      definitionProfile.start.x - definitionCircle.center.x,
+      definitionProfile.start.y - definitionCircle.center.y,
+    )
+    const compatibilityRadius = Math.hypot(
+      compatibilityProfile.start.x - compatibilityCircle.center.x,
+      compatibilityProfile.start.y - compatibilityCircle.center.y,
+    )
+
+    assert(approx(definitionCircle.center.x, 13.240586030257012 * MM_PER_INCH), 'definition circle center converts')
+    assert(approx(definitionRadius, expectedRadius), 'definition circle radius converts without distortion')
+    assert(approx(compatibilityCircle.center.y, 8.925006054020724 * MM_PER_INCH), 'compatibility circle center converts')
+    assert(approx(compatibilityRadius, expectedRadius), 'compatibility circle radius converts without distortion')
+  }
+
+  const round = convertProjectUnits(mm, 'inch')
+  const roundProfile = round.featureDefinitions[definition.id].profile
+  const roundCircle = roundProfile.segments[0]
+  assert(roundCircle.type === 'circle', 'round-trip circle remains native')
+  if (roundCircle.type === 'circle') {
+    const roundRadius = Math.hypot(
+      roundProfile.start.x - roundCircle.center.x,
+      roundProfile.start.y - roundCircle.center.y,
+    )
+    assert(approx(roundCircle.center.x, 13.240586030257012, 1e-7), 'circle center round-trips')
+    assert(approx(roundRadius, 0.09375, 1e-7), 'circle radius round-trips')
+  }
+  console.log('native circle unit conversion PASS')
 }
 
 // ── complete project conversion keeps definitions, instances, and anchors aligned ──

@@ -109,6 +109,7 @@ export const properties = {
 
 export const unitConversionDialog = {
   root: (page: Page) => page.getByRole('dialog', { name: 'Change project units?' }),
+  directionArrow: (page: Page) => page.locator('.unit-conversion-route__arrow'),
   convertButton: (page: Page) => page.getByRole('button', { name: /Convert values/ }),
   reinterpretButton: (page: Page) => page.getByRole('button', { name: /Keep numeric values/ }),
   cancelButton: (page: Page) => page.getByRole('button', { name: 'Cancel', exact: true }),
