@@ -202,3 +202,57 @@
   padding: 0 10px;
   font-size: 12px;
 }
+
+.overlap-feature-picker {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.overlap-feature-picker__panel {
+  width: min(360px, calc(100% - 24px));
+}
+
+.overlap-feature-picker__list {
+  display: grid;
+  gap: 6px;
+}
+
+.overlap-feature-picker__candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(200, 156, 98, 0.24);
+  border-radius: 6px;
+  background: rgba(7, 12, 17, 0.54);
+  color: var(--text);
+  padding: 0 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.overlap-feature-picker__candidate:hover,
+.overlap-feature-picker__candidate:focus-visible {
+  border-color: var(--accent);
+  background: rgba(220, 165, 106, 0.14);
+  outline: none;
+}
+
+.overlap-feature-picker__candidate-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlap-feature-picker__candidate-kind {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}

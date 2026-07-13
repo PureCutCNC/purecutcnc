@@ -49,6 +49,7 @@ import {
 import {
   findHitClampId,
   findHitFeatureId,
+  findHitFeatureIds,
   findHitTabId,
   segmentHitTest,
 } from './hitTest'
@@ -67,6 +68,7 @@ import type { MoveWorkflow } from './useMoveWorkflow'
 import type { TransformExactWorkflow } from './useTransformExactWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
 import type { UseSnapPreviewReturn } from './useSnapPreview'
+import type { OverlapFeatureCandidate } from './useOverlapFeaturePicker'
 
 const POLYGON_CLOSE_RADIUS = 12
 
@@ -102,6 +104,8 @@ export interface ClickPlacementCtx {
   isDraggingNodeRef: MutableRefObject<boolean>
   zoomWindowActive: boolean
   multiSelectMode: boolean
+  clearOverlapFeaturePicker: () => void
+  openOverlapFeaturePicker: (candidates: readonly OverlapFeatureCandidate[], additive: boolean) => void
   selectionRef: MutableRefObject<SelectionState>
   projectRef: MutableRefObject<Project>
   pendingAddRef: MutableRefObject<PendingAddTool | null>
@@ -235,6 +239,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     isDraggingNodeRef,
     zoomWindowActive,
     multiSelectMode,
+    clearOverlapFeaturePicker,
+    openOverlapFeaturePicker,
     selectionRef,
     projectRef,
     pendingAddRef,
@@ -352,6 +358,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     const point = canvasCoordinates(event)
     const canvas = canvasRef.current
     if (!canvas) return
+
+    clearOverlapFeaturePicker()
 
     const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
@@ -917,10 +925,20 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    const resolvedFeatures = resolvedProjectFeatures(project)
+    const featuresById = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))
+    const hitCandidates: OverlapFeatureCandidate[] = []
+    for (const id of findHitFeatureIds(world, resolvedFeatures, vt)) {
+      const feature = featuresById.get(id)
+      if (feature) {
+        hitCandidates.push({ id: feature.id, name: feature.name, kind: feature.kind })
+      }
+    }
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
-    if (hitId) {
-      selectFeature(hitId, additive)
+    if (hitCandidates.length > 1) {
+      openOverlapFeaturePicker(hitCandidates, additive)
+    } else if (hitCandidates.length === 1) {
+      selectFeature(hitCandidates[0].id, additive)
     } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
       selectBackdrop()
     } else if (!additive) {

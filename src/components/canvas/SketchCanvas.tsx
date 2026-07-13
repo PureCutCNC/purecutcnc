@@ -140,7 +140,9 @@ import { useStableEvent } from '../../hooks/useStableEvent'
 import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { OverlapFeaturePicker } from './OverlapFeaturePicker'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
+import { useOverlapFeaturePicker } from './useOverlapFeaturePicker'
 import {
   buildPlacedClipboardFeatures,
   FEATURE_CLIPBOARD_PLACEMENT_EVENT,
@@ -2518,6 +2520,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     })
   }
 
+  const overlapFeaturePicker = useOverlapFeaturePicker({
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+    selectFeature,
+  })
+
   const keyboard = useCanvasKeyboard({
     projectRef,
     selectionRef,
@@ -2544,6 +2553,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     originPreviewPointRef,
     hoveredEditControlRef,
     canvasRef,
+    overlapFeaturePickerOpen: overlapFeaturePicker.isOpen,
     dimEdit,
     constraint,
     move,
@@ -2566,6 +2576,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     confirmCutCutters,
     cancelPendingShapeAction,
     cancelPendingSketchEdit,
+    cancelOverlapFeaturePicker: overlapFeaturePicker.cancel,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -2668,6 +2679,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     isDraggingNodeRef,
     zoomWindowActive,
     multiSelectMode,
+    clearOverlapFeaturePicker: overlapFeaturePicker.dismiss,
+    openOverlapFeaturePicker: overlapFeaturePicker.open,
     selectionRef,
     projectRef,
     pendingAddRef,
@@ -2813,6 +2826,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         onContextMenu={contextMenu.handleContextMenu}
         tabIndex={0}
       />
+      <OverlapFeaturePicker picker={overlapFeaturePicker} />
       <CreationTargetBadge />
       {!depthLegendCollapsed ? <DepthLegend onToggleDepthLegend={onToggleDepthLegend} /> : null}
       {(toolpaths && toolpaths.some((tp) => tp.moves.length > 0)) && toolpathVisibility && onToolpathVisibilityChange && (
