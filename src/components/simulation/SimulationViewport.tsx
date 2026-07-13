@@ -18,9 +18,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
-import { createHeightfieldTexture, createStockPlaneGeometries, createDynamicProfileBoundaryGeometries, createShaderDrivenBoundaryGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
-import { createDynamicBoundaryMaterial, createHeightfieldMaterial, createShaderDrivenBoundaryMaterial } from '../../engine/simulation/heightfieldShader'
-import { createInstancedBoundaryGroup, wallInstanceCount } from '../../engine/simulation/instancedBoundary'
+import { createHeightfieldTexture, createStockPlaneGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
+import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
+import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -147,27 +147,6 @@ const SIMULATION_DETAIL_MIN = 240
 const SIMULATION_DETAIL_MAX = 1500
 const SIMULATION_DETAIL_STEP = 40
 
-// SPIKE FLAG: render boundary walls + floor with the zero-per-cell-attribute
-// instanced pipeline (instancedBoundary.ts) instead of the CPU-built meshes.
-// Instanced walls have no cell cap, no build stall, and O(1) memory; flip to
-// false to A/B against the previous pipeline.
-const USE_INSTANCED_BOUNDARY = true
-
-// SPIKE FLAG: print compact playback perf stats (advance/upload ms, fps,
-// dirty-rect size) to the console every ~2 s while playing.
-const PLAYBACK_PERF_LOG = true
-
-// Legacy pipeline only (USE_INSTANCED_BOUNDARY = false): above this cell count
-// the shader-driven playback boundary mesh (which emits ~18 vertices × ~48 B
-// per cell) would allocate hundreds of MB of typed arrays at build time. We
-// fall back to the static dynamic-profile mesh (walls only at material/empty
-// boundaries at build time, no cut-through rebuilds) for very high detail
-// playback. The cosmetic "missing walls at cut-through" issue from before #103
-// reappears at the upper end of the detail slider — but it's never a crash,
-// and the perf stays smooth.
-// 500×500 ≈ 250 000 cells → ~108 MB of shader-driven attribute buffers.
-const SHADER_DRIVEN_BOUNDARY_MAX_CELLS = 500 * 500
-
 /**
  * Playback speed is a multiplier of the operation's feed rate ("1×" means "play at
  * the real cutting feed"). The UI renders a log-scaled slider so the low end (where
@@ -244,38 +223,6 @@ function buildHeightfieldSurfaceObject(
   material: THREE.Material,
 ): THREE.Object3D {
   const geometries = createStockPlaneGeometries(grid)
-  if (geometries.length === 1) {
-    return new THREE.Mesh(geometries[0], material)
-  }
-
-  const group = new THREE.Group()
-  for (const geometry of geometries) {
-    group.add(new THREE.Mesh(geometry, material))
-  }
-  return group
-}
-
-function buildDynamicProfileBoundaryObject(
-  grid: SimulationGrid,
-  material: THREE.Material,
-): THREE.Object3D {
-  const geometries = createDynamicProfileBoundaryGeometries(grid)
-  if (geometries.length === 1) {
-    return new THREE.Mesh(geometries[0], material)
-  }
-
-  const group = new THREE.Group()
-  for (const geometry of geometries) {
-    group.add(new THREE.Mesh(geometry, material))
-  }
-  return group
-}
-
-function buildShaderDrivenBoundaryObject(
-  grid: SimulationGrid,
-  material: THREE.Material,
-): THREE.Object3D {
-  const geometries = createShaderDrivenBoundaryGeometries(grid)
   if (geometries.length === 1) {
     return new THREE.Mesh(geometries[0], material)
   }
@@ -955,19 +902,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     scene.add(surface)
     objectRef.current = surface
 
-    if (USE_INSTANCED_BOUNDARY) {
-      // Walls at every height step + underside, all shader-driven: nothing to
-      // rebuild on the CPU when the simulation result changes, and interior
-      // pocket walls render as true verticals instead of one-cell-wide slants.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-      scene.add(boundary)
-      boundaryMeshRef.current = boundary
-    } else {
-      const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
-      const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
-      scene.add(boundary)
-      boundaryMeshRef.current = boundary
-    }
+    // Walls at every height step + underside, all shader-driven: nothing to
+    // rebuild on the CPU when the simulation result changes, and interior
+    // pocket walls render as true verticals instead of one-cell-wide slants.
+    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
+    scene.add(boundary)
+    boundaryMeshRef.current = boundary
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
@@ -978,19 +918,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     }
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
-
-  // Spike instrumentation: per-frame cost accumulators, flushed to the console
-  // every ~2 s while playing (see PLAYBACK_PERF_LOG).
-  const playbackPerfRef = useRef({
-    frames: 0,
-    advanceMs: 0,
-    advanceMaxMs: 0,
-    uploadMs: 0,
-    partialUploads: 0,
-    fullUploads: 0,
-    dirtyCells: 0,
-    windowStart: 0,
-  })
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
@@ -1008,7 +935,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (!region) {
       return
     }
-    const uploadStart = performance.now()
     const renderer = rendererRef.current
     const uploaded = renderer
       ? uploadHeightfieldRegion(renderer, texture, controller.liveGrid, region)
@@ -1018,15 +944,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     controller.clearDirtyRegion()
     needsRenderRef.current = true
-
-    const perf = playbackPerfRef.current
-    perf.uploadMs += performance.now() - uploadStart
-    perf.dirtyCells += (region.colMax - region.colMin + 1) * (region.rowMax - region.rowMin + 1)
-    if (uploaded) {
-      perf.partialUploads += 1
-    } else {
-      perf.fullUploads += 1
-    }
   }, [])
 
 
@@ -1103,7 +1020,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const buildHandle = requestAnimationFrame(() => {
       if (cancelled) return
 
-      const buildStart = performance.now()
       const controller = new PlaybackController(
         playbackInput.getBaseGrid(),
         playbackInput.moves,
@@ -1132,39 +1048,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(surface)
       playbackMaterialMeshRef.current = surface
 
-      if (USE_INSTANCED_BOUNDARY) {
-        // Instanced walls: no per-cell attributes, so any detail level builds
-        // instantly and stays within memory — no cell cap needed.
-        const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-        scene.add(boundary)
-        playbackBoundaryMeshRef.current = boundary
-      } else {
-        // Legacy pipeline. Guarded fallback for very high detail: the
-        // shader-driven mesh emits ~18 verts/cell, so above the cap it would
-        // allocate hundreds of MB. Fall back to the static dynamic-profile
-        // boundary (build-once, no rebuilds) at the cost of cosmetic walls not
-        // appearing at brand-new cut-through cells. Better than OOMing.
-        const totalCells = grid.cols * grid.rows
-        if (totalCells <= SHADER_DRIVEN_BOUNDARY_MAX_CELLS) {
-          const boundaryMaterial = createShaderDrivenBoundaryMaterial(heightfieldTexture, grid, color)
-          const boundary = buildShaderDrivenBoundaryObject(grid, boundaryMaterial)
-          scene.add(boundary)
-          playbackBoundaryMeshRef.current = boundary
-        } else {
-          const boundaryMaterial = createDynamicBoundaryMaterial(heightfieldTexture, grid, color)
-          const boundary = buildDynamicProfileBoundaryObject(grid, boundaryMaterial)
-          scene.add(boundary)
-          playbackBoundaryMeshRef.current = boundary
-        }
-      }
-
-      if (PLAYBACK_PERF_LOG) {
-        console.log(
-          `[sim-playback] build ${(performance.now() - buildStart).toFixed(1)} ms | grid ${grid.cols}×${grid.rows}`
-          + ` | moves ${playbackInput.moves.length} → ${controller.getMoveCount()} subdivided`
-          + ` | boundary ${USE_INSTANCED_BOUNDARY ? `instanced (${wallInstanceCount(grid)} wall instances)` : 'legacy'}`,
-        )
-      }
+      // Instanced walls: no per-cell attributes, so any detail level builds
+      // instantly and stays within memory — no cell cap needed.
+      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
+      scene.add(boundary)
+      playbackBoundaryMeshRef.current = boundary
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,
@@ -1223,8 +1111,6 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     playbackLastTimeRef.current = performance.now()
-    const perf = playbackPerfRef.current
-    perf.windowStart = performance.now()
 
     const tick = () => {
       const controllerInner = playbackControllerRef.current
@@ -1245,33 +1131,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         ? Math.min(requested, playbackMaxStepRef.current)
         : requested
       controllerInner.advance(step)
-      const advanceMs = performance.now() - now
       updateToolMeshPose()
       flushPlaybackGridToGpu()
-
-      if (PLAYBACK_PERF_LOG) {
-        perf.frames += 1
-        perf.advanceMs += advanceMs
-        if (advanceMs > perf.advanceMaxMs) perf.advanceMaxMs = advanceMs
-        const windowMs = performance.now() - perf.windowStart
-        if (windowMs >= 2000) {
-          const uploads = perf.partialUploads + perf.fullUploads
-          console.log(
-            `[sim-playback] ${perf.frames} frames in ${Math.round(windowMs)} ms (${(perf.frames / (windowMs / 1000)).toFixed(1)} fps)`
-            + ` | advance avg ${(perf.advanceMs / perf.frames).toFixed(2)} ms max ${perf.advanceMaxMs.toFixed(2)} ms`
-            + ` | upload avg ${(uploads > 0 ? perf.uploadMs / uploads : 0).toFixed(2)} ms`
-            + ` (${perf.partialUploads} partial, ${perf.fullUploads} full, avg ${uploads > 0 ? Math.round(perf.dirtyCells / uploads) : 0} cells)`,
-          )
-          perf.frames = 0
-          perf.advanceMs = 0
-          perf.advanceMaxMs = 0
-          perf.uploadMs = 0
-          perf.partialUploads = 0
-          perf.fullUploads = 0
-          perf.dirtyCells = 0
-          perf.windowStart = performance.now()
-        }
-      }
 
       latestProgressRef.current = controllerInner.totalPathLength > 0
         ? controllerInner.getDistanceTraveled() / controllerInner.totalPathLength

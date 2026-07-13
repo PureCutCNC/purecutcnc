@@ -18,15 +18,17 @@
  * Instanced stock-boundary rendering: vertical walls at every grid edge plus
  * the stock underside, entirely GPU-driven.
  *
- * The CPU-built predecessor (`createShaderDrivenBoundaryGeometries`) emitted
- * ~18 vertices × ~48 B of attributes per cell — hundreds of MB of typed arrays
- * at high detail, a multi-second build stall on "Play Tool", and a hard cell
- * cap above which walls silently degraded. Here the per-edge wall quad carries
- * NO per-instance data at all: a 6-vertex template is instanced once per grid
- * edge, and the vertex shader derives the edge's position, its two adjacent
+ * The CPU-built predecessor emitted ~18 vertices × ~48 B of attributes per
+ * cell — hundreds of MB of typed arrays at high detail, a multi-second build
+ * stall on "Play Tool", and a hard cell cap above which walls silently
+ * degraded. Here the geometry carries NO per-cell attribute data: one indexed
+ * quad per edge is packed into a row-strip template and instanced once per grid
+ * row, and the vertex shader derives each edge's position, its two adjacent
  * cells, and their current heights from `gl_InstanceID` + the heightfield
- * texture (GLSL3 `texelFetch`). Memory is O(1) in grid size, build time is a
- * couple of small allocations, and any detail level is playable.
+ * texture (GLSL3 `texelFetch`). Template memory is O(cols), build time is a
+ * couple of small allocations, and any detail level is playable. (Row strips
+ * rather than one instance per edge: millions of 2-triangle instances bottleneck
+ * on per-instance dispatch — see `createWallStripTemplate`.)
  *
  * The underside is one full-grid quad whose fragments discard where the cell
  * has been cut through — replacing the old per-cell floor quads (which were
