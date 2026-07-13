@@ -778,6 +778,12 @@
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.3);
 }
 
+.tool-rail__target-btn--line.tool-rail__target-btn--active {
+  background: rgba(91, 144, 227, 0.2);
+  color: #8fb6f4;
+  box-shadow: inset 0 0 0 1.5px rgba(91, 144, 227, 0.4);
+}
+
 .tool-rail__target-btn--region.tool-rail__target-btn--active {
   background: rgba(100, 180, 255, 0.2);
   color: #7ec4ff;

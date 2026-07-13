@@ -35,6 +35,7 @@ import {
   type Tool,
   type ToolType,
 } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import type { ToolLibraryEntry } from '../../toolLibrary'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -87,7 +88,7 @@ function makeFeature(id: string, operation: SketchFeature['operation'], w: numbe
 
 function projectWith(tools: Tool[], features: SketchFeature[], units: 'mm' | 'inch' = 'inch'): Project {
   const base = newProject('t', units)
-  return { ...base, tools, features }
+  return projectWithFeatures({ ...base, tools }, features)
 }
 
 function featureTarget(...ids: string[]): OperationTarget {

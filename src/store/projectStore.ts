@@ -17,21 +17,12 @@
 import { create } from 'zustand'
 import { uniqueName } from '../import'
 import {
-  defaultOrigin,
-  defaultMaxTravelZ,
-  defaultOperationClearanceZ,
-  defaultClampClearanceXY,
-  defaultClampClearanceZ,
-  getStockBounds,
   inferFeatureKind,
   newProject,
-  circleProfile,
 } from '../types/project'
 import type {
-  FeatureDefinition,
-  Project,
+  FeatureInstance,
   SketchProfile,
-  PersistedImportedMesh,
 } from '../types/project'
 import type { ProfileBreakResult } from './helpers/profileEdit'
 import {
@@ -44,26 +35,17 @@ import {
   previewOffsetFeatures,
   type DerivedFeatureGroup,
 } from './helpers/derivedFeatures'
-import { getDefinitionId, rebakeAllInstances } from './helpers/featureDefinitions'
-import { syncIdCounter } from './helpers/ids'
+import { createFeatureInstance, getDefinitionId } from './helpers/featureDefinitions'
 import {
   cloneProject,
-  dedupeProjectIds,
-  normalizeFeatureDefinition,
-  normalizeClamp,
-  normalizeFeatureZRange,
-  normalizeMachineDefinitions,
-  normalizeOperation,
-  normalizeTab,
-  normalizeTool,
   projectsEqual,
   syncFeatureTreeProject,
-  syncStockFromSourceFeature,
+  syncFeatureBasedStock,
 } from './helpers/normalize'
 import {
   transformProfile,
 } from './helpers/transform'
-import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './helpers/modelAssets'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
@@ -77,7 +59,7 @@ import { createTreeVisibilitySlice } from './slices/treeVisibilitySlice'
 import { createToolsSlice } from './slices/toolsSlice'
 import { createClampsSlice } from './slices/clampsSlice'
 import { createTabsSlice } from './slices/tabsSlice'
-import { createBackdropSlice, normalizeBackdrop } from './slices/backdropSlice'
+import { createBackdropSlice } from './slices/backdropSlice'
 import { createMachineDefsSlice } from './slices/machineDefsSlice'
 import { createOperationsSlice } from './slices/operationsSlice'
 import { createImportMergeSlice } from './slices/importMergeSlice'
@@ -90,133 +72,8 @@ import {
   validateConstraintsOnFeature,
 } from '../sketch/constraintSolver'
 import type { ProjectStore } from './types'
-
-export function normalizeProject(project: Project): Project {
-  const modelAssets: Record<string, PersistedImportedMesh> = { ...(project.modelAssets ?? {}) }
-
-  // Legacy feature normalization runs before Feature References migration so
-  // definitions are built from fully-normalized feature data.
-  // Migration: convert 4-arc circles to native circle segments
-  const upgradedFeatures = project.features.map((feature) => {
-    let upgradedFeature = feature
-    if (feature.kind === 'circle' && feature.sketch.profile.segments.length === 4) {
-      const { profile } = feature.sketch
-      const firstArc = profile.segments[0]
-      if (firstArc.type === 'arc') {
-        const cx = firstArc.center.x
-        const cy = firstArc.center.y
-        const r = Math.hypot(profile.start.x - cx, profile.start.y - cy)
-        upgradedFeature = {
-          ...feature,
-          sketch: {
-            ...feature.sketch,
-            profile: circleProfile(cx, cy, r),
-          },
-        }
-      }
-    }
-    // Migration: convert open profiles from 'subtract'/'add' to 'line' operation
-    // (projects saved before the 'line' type was introduced). Construction
-    // geometry may legitimately be open — leave it untouched.
-    if (!feature.sketch.profile.closed && upgradedFeature.operation !== 'line' && upgradedFeature.operation !== 'model' && upgradedFeature.operation !== 'region' && upgradedFeature.operation !== 'construction') {
-      upgradedFeature = {
-        ...upgradedFeature,
-        operation: 'line',
-      }
-    }
-    return {
-      ...upgradedFeature,
-      stl: normalizeImportedModelStorage(upgradedFeature.id, upgradedFeature.stl, modelAssets),
-    }
-  })
-
-  const rawDefs = (project as unknown as Record<string, unknown>).featureDefinitions as
-    | Record<string, FeatureDefinition>
-    | undefined
-  const existingFeatureDefinitions: Record<string, FeatureDefinition> = Object.fromEntries(
-    Object.entries(rawDefs ?? {}).map(([id, definition]) => [id, normalizeFeatureDefinition(definition)]),
-  )
-  const needsFeatureReferenceMigration = Object.keys(existingFeatureDefinitions).length === 0
-  const projectVersion: Project['version'] = needsFeatureReferenceMigration ? '2.0' : project.version
-
-  const normalizedMachines = normalizeMachineDefinitions(project)
-  const meta = {
-    ...project.meta,
-    showFeatureInfo: project.meta.showFeatureInfo ?? true,
-    showDimensions: project.meta.showDimensions ?? true,
-    copyMode: project.meta.copyMode ?? 'reference',
-    maxTravelZ: project.meta.maxTravelZ ?? defaultMaxTravelZ(project.meta.units),
-    operationClearanceZ: project.meta.operationClearanceZ ?? defaultOperationClearanceZ(project.meta.units),
-    clampClearanceXY: project.meta.clampClearanceXY ?? defaultClampClearanceXY(project.meta.units),
-    clampClearanceZ: project.meta.clampClearanceZ ?? defaultClampClearanceZ(project.meta.units),
-    machineDefinitions: normalizedMachines.machineDefinitions,
-    selectedMachineId: normalizedMachines.selectedMachineId,
-  }
-
-  const stockBounds = getStockBounds(project.stock)
-  const legacyDefaultOrigin =
-    project.origin
-    && project.origin.name === 'Origin'
-    && project.origin.x === stockBounds.minX
-    && project.origin.y === stockBounds.minY
-    && project.origin.z === project.stock.thickness
-
-  const dedupedBase = dedupeProjectIds({
-    ...project,
-    version: projectVersion,
-    meta,
-    modelAssets,
-    featureDefinitions: existingFeatureDefinitions,
-    annotations: project.annotations ?? [],
-    stock: {
-      ...project.stock,
-      profile: {
-        ...project.stock.profile,
-        closed: project.stock.profile.closed ?? true,
-      },
-    },
-    features: upgradedFeatures.map(normalizeFeatureZRange),
-    featureFolders: project.featureFolders ?? [],
-    featureTree: project.featureTree ?? [],
-    tools: project.tools.map((tool, index) => normalizeTool(tool, project.meta.units, index)),
-    tabs: (project.tabs ?? []).map((tab, index) => normalizeTab(tab, project.meta.units, index)),
-    clamps: (project.clamps ?? []).map((clamp, index) => normalizeClamp(clamp, project.meta.units, index)),
-    origin: project.origin
-      ? (legacyDefaultOrigin ? defaultOrigin(project.stock) : project.origin)
-      : defaultOrigin(project.stock),
-  })
-
-  const normalizedBase = syncFeatureTreeProject(dedupedBase)
-
-  let featureDefinitions: Record<string, FeatureDefinition>
-  if (needsFeatureReferenceMigration) {
-    featureDefinitions = {}
-    for (const feature of normalizedBase.features) {
-      featureDefinitions[feature.id] = normalizeFeatureDefinition({
-        id: feature.id,
-        kind: feature.kind,
-        profile: feature.sketch.profile,
-        dimensions: feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-        text: feature.text ? { ...feature.text } : null,
-        stl: feature.stl ? { ...feature.stl } : null,
-        operation: feature.operation,
-        regionMaskMode: feature.regionMaskMode,
-      })
-    }
-  } else {
-    featureDefinitions = { ...existingFeatureDefinitions }
-  }
-
-  const normalizedProject = pruneUnusedModelAssets({
-    ...normalizedBase,
-    featureDefinitions,
-    backdrop: normalizeBackdrop(project.backdrop, normalizedBase),
-    operations: project.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
-  })
-
-  syncIdCounter(normalizedProject)
-  return normalizedProject
-}
+import { normalizeProject } from './helpers/projectFormat'
+export { normalizeProject } from './helpers/projectFormat'
 
 
 // ============================================================
@@ -258,12 +115,13 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     featureId: string,
     resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,
   ) => set((s) => {
-    const feature = s.project.features.find((entry) => entry.id === featureId) ?? null
-    if (!feature || feature.locked) {
+    const featureInstance = s.project.features.find((entry) => entry.id === featureId) ?? null
+    const feature = resolveFeatureInstance(s.project, featureId)
+    if (!featureInstance || !feature || featureInstance.locked) {
       return {}
     }
 
-    const definitionId = getDefinitionId(feature)
+    const definitionId = getDefinitionId(featureInstance)
     const definition = s.project.featureDefinitions[definitionId]
     if (!definition) {
       return {}
@@ -285,22 +143,11 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       : null
     const splitFeature = splitResult?.feature ?? null
     const splitDefinition = splitResult?.definition ?? null
+    const splitInstance = splitFeature && splitDefinition
+      ? createFeatureInstance(splitFeature, splitDefinition.id)
+      : null
 
     const editedFeatureKind = ['text', 'stl'].includes(feature.kind) ? feature.kind : inferFeatureKind(result.profile)
-    const baseFeaturesBeforeRebake = s.project.features.map((entry) => {
-      if (entry.id !== featureId) {
-        return entry
-      }
-
-      return {
-        ...entry,
-        kind: editedFeatureKind,
-        sketch: {
-          ...entry.sketch,
-          profile: result.profile,
-        },
-      }
-    })
     const nextDefinition = {
       ...definition,
       kind: editedFeatureKind,
@@ -317,28 +164,23 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     if (splitDefinition) {
       nextDefinitions[splitDefinition.id] = splitDefinition
     }
-    const baseFeatures = rebakeAllInstances(
-      {
-        ...s.project,
-        featureDefinitions: nextDefinitions,
-        features: baseFeaturesBeforeRebake,
-      },
-      definitionId,
-    )
-    const createdGroups: DerivedFeatureGroup[] = splitFeature ? [{ sourceId: featureId, features: [splitFeature] }] : []
+    const baseFeatures = s.project.features
+    const createdGroups: Array<DerivedFeatureGroup<FeatureInstance>> = splitInstance
+      ? [{ sourceId: featureId, features: [splitInstance] }]
+      : []
     let nextProject = syncFeatureTreeProject({
       ...s.project,
       featureDefinitions: nextDefinitions,
-      features: splitFeature
+      features: splitInstance
         ? insertDerivedFeaturesAfterSources(baseFeatures, createdGroups, new Set())
         : baseFeatures,
-      featureTree: splitFeature
+      featureTree: splitInstance
         ? insertDerivedFeatureTreeEntries(s.project.featureTree, baseFeatures, createdGroups, new Set())
         : s.project.featureTree,
       meta: { ...s.project.meta, modified: new Date().toISOString() },
     })
 
-    nextProject = syncStockFromSourceFeature(nextProject, featureId)
+    nextProject = syncFeatureBasedStock(nextProject)
     if (projectsEqual(nextProject, s.project)) {
       return {}
     }

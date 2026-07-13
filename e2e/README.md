@@ -38,7 +38,9 @@ Current smoke targets:
 
 - `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
 - `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
+- `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
+- `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.
 
 ## Adding a test
 

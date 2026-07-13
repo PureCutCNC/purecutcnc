@@ -27,11 +27,11 @@
  */
 
 import { defaultTextToolConfig } from '../text'
-import { newProject, type Project, type SketchFeature } from '../types/project'
+import { newProject, type Project } from '../types/project'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { buildCopiedFeatures } from './helpers/copyFeatures'
-import { getDefinitionId, getInstanceIdsForDefinition } from './helpers/featureDefinitions'
+import { createFeatureInstance, getDefinitionId, getInstanceIdsForDefinition } from './helpers/featureDefinitions'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { textFolderBaseName } from './helpers/naming'
 
@@ -62,11 +62,11 @@ function getProject(): Project {
 
   const project = getProject()
   const feature = project.features.find((f) => f.id === ids[0])!
-  assert(feature.kind === 'text', 'created feature is a text feature')
+  const resolved = resolveFeatureInstance(project, feature.id)
+  assert(resolved?.kind === 'text', 'created feature is a text feature')
 
-  const withRefs = feature as SketchFeature & { definitionId?: string }
-  assert(typeof withRefs.definitionId === 'string', 'text feature has an explicit definitionId')
-  const definition = project.featureDefinitions[withRefs.definitionId!]
+  assert(typeof feature.definitionId === 'string', 'text feature has an explicit definitionId')
+  const definition = project.featureDefinitions[feature.definitionId]
   assert(definition !== undefined, 'a FeatureDefinition was minted for the text feature')
   assert(definition.kind === 'text', 'minted definition is kind text')
   assert(definition.text?.text === config.text, 'definition carries the text data')
@@ -83,17 +83,20 @@ function getProject(): Project {
   const [originalId] = useProjectStore.getState().placePendingTextAt({ x: 10, y: 10 })
   const project = getProject()
   const original = project.features.find((f) => f.id === originalId)!
+  const resolvedOriginal = resolveFeatureInstance(project, originalId)
+  assert(resolvedOriginal, 'original text feature resolves')
   const defId = getDefinitionId(original)
 
   const copies = buildCopiedFeatures(
-    [original],
+    [resolvedOriginal],
     project.features,
     200, 0, 1,
     project.featureDefinitions,
     'reference',
   )
   assert(copies.length === 1, 'one reference copy built')
-  const copy = copies[0] as SketchFeature & { definitionId?: string }
+  const copyDraft = copies[0]
+  const copy = createFeatureInstance(copyDraft, copyDraft.definitionId, copyDraft.transform)
   assert(getDefinitionId(copy) === defId, 'reference copy shares the source definition')
 
   const copiedProject: Project = {
@@ -125,23 +128,27 @@ function getProject(): Project {
   const [originalId] = useProjectStore.getState().placePendingTextAt({ x: 10, y: 10 })
   let project = getProject()
   const original = project.features.find((f) => f.id === originalId)!
+  const resolvedOriginal = resolveFeatureInstance(project, originalId)
+  assert(resolvedOriginal, 'original text feature resolves')
   const defId = getDefinitionId(original)
 
   // Insert a reference copy directly so both rows live in the store.
-  const copy = buildCopiedFeatures(
-    [original], project.features, 200, 0, 1, project.featureDefinitions, 'reference',
-  )[0] as SketchFeature
+  const copyDraft = buildCopiedFeatures(
+    [resolvedOriginal], project.features, 200, 0, 1, project.featureDefinitions, 'reference',
+  )[0]
+  const copy = createFeatureInstance(copyDraft, copyDraft.definitionId, copyDraft.transform)
   resetStore({ ...project, features: [...project.features, copy] })
 
   // Edit the COPY's text.
-  const originalText = original.text!
+  const originalText = resolvedOriginal.text!
   useProjectStore.getState().updateFeature(copy.id, {
     text: { ...originalText, text: 'CHANGED' },
   })
 
   project = getProject()
-  const updatedOriginal = project.features.find((f) => f.id === originalId)!
-  const updatedCopy = project.features.find((f) => f.id === copy.id)!
+  const updatedOriginal = resolveFeatureInstance(project, originalId)
+  const updatedCopy = resolveFeatureInstance(project, copy.id)
+  assert(updatedOriginal && updatedCopy, 'linked text features resolve after edit')
   assert(updatedCopy.text?.text === 'CHANGED', 'edited copy carries the new text')
   assert(updatedOriginal.text?.text === 'CHANGED', 'linked original updated to the new text')
   assert(

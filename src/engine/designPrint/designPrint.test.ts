@@ -22,6 +22,7 @@
 
 import { newProject, rectProfile, circleProfile } from '../../types/project'
 import type { DimensionAnnotation, Project, SketchFeature } from '../../types/project'
+import { replaceProjectFeatures } from '../../test/projectFixtures'
 import {
   FOOTER_HEIGHT_MM,
   computeDesignPrintLayout,
@@ -73,6 +74,10 @@ function makeFeature(id: string, overrides: Partial<SketchFeature> = {}): Sketch
     locked: false,
     ...overrides,
   }
+}
+
+function appendFeature(project: Project, feature: SketchFeature): void {
+  replaceProjectFeatures(project, [...project.features, feature])
 }
 
 type TestOptionOverrides = Omit<Partial<DesignPrintOptions>, 'content'> & {
@@ -267,7 +272,7 @@ function makeOptions(project: Project, overrides: TestOptionOverrides = {}): Des
 
 {
   const project = newProject('Bounds', 'mm')
-  project.features.push(makeFeature('f1', {
+  appendFeature(project, makeFeature('f1', {
     sketch: {
       profile: rectProfile(-20, -10, 30, 20),
       origin: { x: 0, y: 0 },
@@ -332,8 +337,8 @@ function makeOptions(project: Project, overrides: TestOptionOverrides = {}): Des
 
 function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: TestOptionOverrides = {}) {
   const project = newProject('SvgTest', 'mm')
-  project.features.push(makeFeature('visible-rect'))
-  project.features.push(makeFeature('hidden-circle', {
+  appendFeature(project, makeFeature('visible-rect'))
+  appendFeature(project, makeFeature('hidden-circle', {
     kind: 'circle',
     visible: false,
     sketch: {
@@ -419,7 +424,7 @@ function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: Test
 {
   // Construction geometry prints as dashed, unfilled reference marks.
   const { svg } = buildTestSvg((project) => {
-    project.features.push(makeFeature('construction-line', {
+    appendFeature(project, makeFeature('construction-line', {
       operation: 'construction',
       sketch: {
         profile: { start: { x: 0, y: 40 }, segments: [{ type: 'line', to: { x: 100, y: 40 } }], closed: false },
@@ -438,7 +443,7 @@ function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: Test
 
   // Hidden construction geometry stays out of the printout.
   const hidden = buildTestSvg((project) => {
-    project.features.push(makeFeature('construction-hidden', { operation: 'construction', visible: false }))
+    appendFeature(project, makeFeature('construction-hidden', { operation: 'construction', visible: false }))
   })
   assert(count(hidden.svg, 'data-op="construction"') === 0, 'hidden construction geometry is omitted')
 }
@@ -486,8 +491,8 @@ function buildTestExportSvg(
   overrides: ExportOptionOverrides = {},
 ) {
   const project = newProject('SvgExportTest', units)
-  project.features.push(makeFeature('visible-rect'))
-  project.features.push(makeFeature('hidden-circle', {
+  appendFeature(project, makeFeature('visible-rect'))
+  appendFeature(project, makeFeature('hidden-circle', {
     kind: 'circle',
     visible: false,
     sketch: {
@@ -561,7 +566,7 @@ function buildTestExportSvg(
 {
   // Construction geometry: dashed, unfilled; hidden construction omitted.
   const { svg } = buildTestExportSvg('mm', (project) => {
-    project.features.push(makeFeature('construction-line', {
+    appendFeature(project, makeFeature('construction-line', {
       operation: 'construction',
       sketch: {
         profile: { start: { x: 0, y: 40 }, segments: [{ type: 'line', to: { x: 100, y: 40 } }], closed: false },
@@ -571,7 +576,7 @@ function buildTestExportSvg(
         constraints: [],
       },
     }))
-    project.features.push(makeFeature('construction-hidden', { operation: 'construction', visible: false }))
+    appendFeature(project, makeFeature('construction-hidden', { operation: 'construction', visible: false }))
   })
   assert(count(svg, 'data-op="construction"') === 1, 'hidden construction geometry is omitted')
   const constructionLine = svg.split('\n').find((line) => line.includes('data-op="construction"'))

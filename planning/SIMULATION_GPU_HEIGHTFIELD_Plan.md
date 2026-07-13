@@ -228,6 +228,46 @@ Files: `mesh.ts` (deleted), `index.ts`, `SimulationViewport.tsx`
 - Verify ball endmill and v-bit surface profiles look correct with smooth normals
 - Profile dirty-region upload size during playback to confirm it stays small
 
+## 2026-07 playback/boundary spike (branch `simulation-play-tool-spike-c9af36`)
+
+Follow-up work that completes or supersedes items above:
+
+- **Dirty-region texture upload is now real** (`uploadHeightfieldRegion` in
+  `gpuMesh.ts`): the playback flush uploads only the controller's accumulated
+  dirty rectangle via `texSubImage2D` + `UNPACK_ROW_LENGTH/SKIP_*`, falling
+  back to a full `needsUpdate` upload until the texture has a GL handle.
+  `PlaybackController.reset()` dirties the whole grid (restores raise cells),
+  so stop/replay/backward-seek flow through the same upload contract.
+- **Boundary walls are instanced row-strips** (`instancedBoundary.ts`),
+  replacing the per-cell shader-driven wall mesh for both static and playback
+  views (legacy path kept behind `USE_INSTANCED_BOUNDARY` in
+  `SimulationViewport.tsx`). One instance per grid row of edges; the vertex
+  shader derives each wall from `gl_InstanceID` + `texelFetch`. This removes
+  the `SHADER_DRIVEN_BOUNDARY_MAX_CELLS` cap, the multi-second Play Tool build
+  stall, and the ~864 B/cell attribute memory. Measured on an M-series Mac at
+  detail 1480 (1480×987 grid): build 79 ms, 60 fps during playback.
+  Instance granularity matters: one instance per *edge* (2 triangles) ran at
+  16 fps; the same vertex count as row strips runs at 60 fps.
+  It also resolves G5's open "interior wall case" — pocket walls render as
+  true verticals in the static view.
+- **The stock underside is one full-grid quad** whose fragments discard where
+  the cell is cut through — the per-cell floor quads were fragment-discarded
+  anyway.
+- **The viewport renders on demand**: the RAF loop draws only when playback is
+  running or something changed (camera, texture upload, scene mutation,
+  resize). Previously the full scene redrew at 60 fps while idle.
+- **Cut kernel + subdivision**: `applyMoveToGrid`'s cell loop is
+  allocation-free with per-move cutter dispatch (parity-tested against
+  `cutterSurfaceZ` in `replay.test.ts`), and playback subdivision widened from
+  0.4× to 2× tool radius (the end-cap overlap at 0.4× made ~5/6 of cell tests
+  redundant).
+- **Seeks**: forward seeks advance incrementally from the current grid (cuts
+  are monotonic, so the result equals a fresh replay); only backward seeks
+  reset + replay. The viewport coalesces scrub events to one seek per frame.
+- **Playback base grid is lazy**: `useSimulationModel` hands the viewport a
+  cached `getBaseGrid()` thunk, so prior operations replay when Play Tool is
+  toggled on — not on every project change while the simulation tab is open.
+
 ## Risks and Fallbacks
 
 - **WebGL float texture support**: `OES_texture_float` is required. All modern

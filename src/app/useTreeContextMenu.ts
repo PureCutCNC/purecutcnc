@@ -22,6 +22,7 @@ import { useProjectStore } from '../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import { commonSectionOfIds } from '../store/helpers/featureRoles'
 import type { Clamp, Project, SketchFeature, Tab } from '../types/project'
+import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 
 export interface TreeContextMenuState {
   entityType: 'feature' | 'tab' | 'clamp'
@@ -116,9 +117,9 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   const menuFeature = useMemo(
     () =>
       treeContextMenu?.entityType === 'feature'
-        ? project.features.find((feature) => feature.id === treeContextMenu.primaryId) ?? null
+        ? resolveFeatureInstance(project, treeContextMenu.primaryId)
         : null,
-    [treeContextMenu, project.features]
+    [treeContextMenu, project]
   )
 
   const menuClamp = useMemo(

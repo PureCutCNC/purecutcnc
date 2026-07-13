@@ -30,8 +30,8 @@
  *      never be (or become) an operation target.
  *   4. getOperationAddHint — a selection containing construction is rejected
  *      for every operation kind.
- *   5. isFirstFeatureValid — construction does not count as the first
- *      machining feature.
+ *   5. isFirstFeatureValid — construction and line features do not count as
+ *      the first solid feature.
  *   6. (structural) csg.ts buildScene and Viewport3D route their feature
  *      lists through modelFeatures(), which strips construction.
  *
@@ -49,6 +49,7 @@ import { fallbackOperationTarget, isOperationTargetValid } from '../store/helper
 import { isFirstFeatureValid } from '../store/helpers/normalize'
 import { getOperationAddHint } from '../components/cam/operationValidity'
 import type { SelectionState } from '../store/types'
+import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -83,15 +84,16 @@ function makeFeature(id: string, operation: SketchFeature['operation'], circle =
 }
 
 function makeProject(): Project {
-  const project = newProject('Construction Guard', 'mm')
-  project.features = [
+  const features = [
     makeFeature('f-add', 'add'),
     makeFeature('f-subtract', 'subtract'),
     makeFeature('f-region', 'region'),
     makeFeature('f-construction', 'construction'),
   ]
-  project.featureTree = project.features.map((feature) => ({ type: 'feature', featureId: feature.id }))
-  return project
+  return projectWithFeatures({
+    ...newProject('Construction Guard', 'mm'),
+    featureTree: features.map((feature) => ({ type: 'feature', featureId: feature.id })),
+  }, features)
 }
 
 const project = makeProject()
@@ -156,9 +158,11 @@ for (const kind of ALL_KINDS) {
 
 // fallbackOperationTarget never picks construction: in a construction-only
 // project every kind must fall back to stock or find nothing.
-const constructionOnly = newProject('Construction Only', 'mm')
-constructionOnly.features = [makeFeature('f-c1', 'construction'), makeFeature('f-c2', 'construction')]
-constructionOnly.featureTree = constructionOnly.features.map((feature) => ({ type: 'feature', featureId: feature.id }))
+const constructionOnlyFeatures = [makeFeature('f-c1', 'construction'), makeFeature('f-c2', 'construction')]
+const constructionOnly = projectWithFeatures({
+  ...newProject('Construction Only', 'mm'),
+  featureTree: constructionOnlyFeatures.map((feature) => ({ type: 'feature', featureId: feature.id })),
+}, constructionOnlyFeatures)
 for (const kind of ALL_KINDS) {
   const fallback = fallbackOperationTarget(constructionOnly, kind)
   if (fallback.source === 'features') {
@@ -192,7 +196,7 @@ assert(
   'pocket on a plain subtract feature stays valid',
 )
 
-// ── 5. isFirstFeatureValid skips construction ─────────────────────
+// ── 5. isFirstFeatureValid skips construction and line ────────────
 
 assert(
   isFirstFeatureValid([makeFeature('c', 'construction'), makeFeature('a', 'add')]),
@@ -200,7 +204,22 @@ assert(
 )
 assert(
   !isFirstFeatureValid([makeFeature('c', 'construction'), makeFeature('s', 'subtract')]),
-  'construction must not satisfy the first-machining-feature-is-add rule',
+  'construction must not satisfy the first-solid-feature-is-add rule',
+)
+// Line features are path geometry, not solid — they must not gate the
+// base-solid rule (issue #270).
+assert(
+  isFirstFeatureValid([makeFeature('l', 'line'), makeFeature('a', 'add')]),
+  'line first + add second is a valid tree',
+)
+assert(
+  !isFirstFeatureValid([makeFeature('l', 'line'), makeFeature('s', 'subtract')]),
+  'line must not satisfy the first-solid-feature-is-add rule',
+)
+// A Lines-only project is valid.
+assert(
+  isFirstFeatureValid([makeFeature('l', 'line')]),
+  'lines-only project is valid',
 )
 
 // ── 6. Structural: the CSG scene and 3D camera route through modelFeatures ──
@@ -213,12 +232,12 @@ assert(
   'csg.ts must import modelFeatures from featureRoles',
 )
 assert(
-  /const visibleFeatures = modelFeatures\(project\.features\)/.test(csgSource),
+  /const visibleFeatures = modelFeatures\(resolvedProjectFeatures\(project\)\)/.test(csgSource),
   'csg.ts buildScene must filter its feature list through modelFeatures()',
 )
 const viewportSource = readFileSync(resolve(root, 'src/components/viewport3d/Viewport3D.tsx'), 'utf8')
 assert(
-  viewportSource.includes('modelFeatures(project.features)'),
+  viewportSource.includes('modelFeatures(resolvedProjectFeatures(project))'),
   'Viewport3D camera-fit must exclude construction via modelFeatures()',
 )
 

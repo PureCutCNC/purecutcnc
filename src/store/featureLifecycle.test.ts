@@ -37,6 +37,7 @@ import {
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { getDefinitionId } from './helpers/featureDefinitions'
+import { resolvedProjectFeatures } from './helpers/resolveFeatures'
 
 // ── Assertion helpers ──────────────────────────────────────────────
 
@@ -70,8 +71,8 @@ function getProject(): Project {
   return useProjectStore.getState().project
 }
 
-function getFeatures(): SketchFeature[] {
-  return getProject().features
+function getFeatures() {
+  return resolvedProjectFeatures(getProject())
 }
 
 function getDefinitions(): Record<string, FeatureDefinition> {
@@ -242,7 +243,7 @@ for (const tc of CREATE_TEST_CASES) {
     const features = getFeatures()
     assert(features.length === 1, `[${tc.kind}] expected 1 feature, got ${features.length}`)
 
-    const f = features[0] as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+    const f = resolvedProjectFeatures(getProject())[0]
     assert(f.kind === tc.expectKind, `[${tc.kind}] expected kind ${tc.expectKind}, got ${f.kind}`)
 
     // Should have a definitionId set by addFeature
@@ -302,9 +303,11 @@ for (const tc of CREATE_TEST_CASES) {
       `[${tc.kind}] feature count: before=${before.features.length}, after=${after.features.length}`)
 
     // Feature kinds preserved
-    for (let i = 0; i < before.features.length; i++) {
-      assert(after.features[i].kind === before.features[i].kind,
-        `[${tc.kind}] feature[${i}] kind: before=${before.features[i].kind}, after=${after.features[i].kind}`)
+    const beforeResolved = resolvedProjectFeatures(before)
+    const afterResolved = resolvedProjectFeatures(after)
+    for (let i = 0; i < beforeResolved.length; i++) {
+      assert(afterResolved[i].kind === beforeResolved[i].kind,
+        `[${tc.kind}] feature[${i}] kind: before=${beforeResolved[i].kind}, after=${afterResolved[i].kind}`)
     }
 
     // Definitions preserved
@@ -329,15 +332,17 @@ for (const tc of CREATE_TEST_CASES) {
     assert(obj1.features.length === obj2.features.length,
       `[${tc.kind}] feature count mismatch after reload`)
 
-    // Compare features (ignoring sketch.origin/orientationAngle which get normalized)
+    // Compare lightweight instances. Geometry and machining role belong only
+    // to featureDefinitions in the 3.0 serialized format.
     for (let i = 0; i < obj1.features.length; i++) {
       const f1 = { ...obj1.features[i] }
       const f2 = { ...obj2.features[i] }
-      assert(f1.kind === f2.kind, `[${tc.kind}] feature[${i}] kind mismatch: ${f1.kind} vs ${f2.kind}`)
       assert(f1.id === f2.id, `[${tc.kind}] feature[${i}] id mismatch`)
-      // Profile segments should be equivalent
-      assert(f1.sketch.profile.segments.length === f2.sketch.profile.segments.length,
-        `[${tc.kind}] feature[${i}] segment count mismatch`)
+      assert(f1.definitionId === f2.definitionId, `[${tc.kind}] feature[${i}] definition mismatch`)
+      assert(JSON.stringify(f1.transform) === JSON.stringify(f2.transform),
+        `[${tc.kind}] feature[${i}] transform mismatch`)
+      assert(!('sketch' in f1) && !('kind' in f1) && !('operation' in f1),
+        `[${tc.kind}] feature[${i}] must not serialize baked definition data`)
     }
 
     // Compare definitions
@@ -423,9 +428,9 @@ test('mixed project: copyMode + linked relationships survive save/load', () => {
   assert(loadedDefIds.size === 3, `expected 3 distinct definitionIds after load, got ${loadedDefIds.size}`)
 
   // Verify the base feature still resolves correctly
-  const baseLoaded = loaded.features.find((f) => f.id === base.id) as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const baseLoaded = loaded.features.find((f) => f.id === base.id)
   assert(baseLoaded != null, 'base feature should survive load')
-  const baseLoadedDef = loaded.featureDefinitions[baseLoaded.definitionId!]
+  const baseLoadedDef = loaded.featureDefinitions[baseLoaded.definitionId]
   assert(baseLoadedDef != null, 'base definition should survive load')
   assert(baseLoadedDef.kind === 'circle', 'base definition should still be circle')
 })

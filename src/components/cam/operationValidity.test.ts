@@ -35,6 +35,7 @@ import {
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   newProject,
   rectProfile,
@@ -50,10 +51,19 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
+function openProfile() {
+  return {
+    start: { x: 0, y: 0 },
+    segments: [{ type: 'line' as const, to: { x: 10, y: 10 } }],
+    closed: false,
+  }
+}
+
 function makeFeature(
   id: string,
   operation: FeatureOperation,
   kind: FeatureKind = 'polygon',
+  closed = true,
 ): SketchFeature {
   return {
     id,
@@ -62,7 +72,7 @@ function makeFeature(
     stl: kind === 'stl' ? null : undefined,
     folderId: null,
     sketch: {
-      profile: rectProfile(0, 0, 10, 10),
+      profile: closed ? rectProfile(0, 0, 10, 10) : openProfile(),
       origin: { x: 0, y: 0 },
       orientationAngle: 90,
       dimensions: [],
@@ -77,7 +87,7 @@ function makeFeature(
 }
 
 function projectWith(features: SketchFeature[]): Project {
-  return { ...newProject(), features }
+  return projectWithFeatures(newProject(), features)
 }
 
 function selectionFor(featureIds: string[]): SelectionState {
@@ -214,7 +224,7 @@ function testGetOperationAddHintGoldenValues(): void {
   )
   assert(
     getOperationAddHint(project, selectionFor(['add']), 'v_carve')
-      === 'V-Carve offset only accepts subtract features plus optional closed regions',
+      === 'V-Carve offset only accepts closed subtract or line features plus optional closed regions',
     'add+v_carve hint mismatch',
   )
   assert(
@@ -343,6 +353,91 @@ function testOperationTargetsRegion(): void {
   )
 }
 
+// ── S2: closed Line V-carve eligibility ────────────────────────────
+
+function testClosedLineIsValidVCarveTarget(): void {
+  const project = projectWith([makeFeature('line1', 'line')])
+  assert(
+    getOperationAddHint(project, selectionFor(['line1']), 'v_carve') === null,
+    'closed line should be valid for v_carve',
+  )
+  assert(
+    getOperationAddHint(project, selectionFor(['line1']), 'v_carve_recursive') === null,
+    'closed line should be valid for v_carve_recursive',
+  )
+}
+
+function testOpenLineIsInvalidVCarveTarget(): void {
+  const project = projectWith([makeFeature('openLine', 'line', 'polygon', false)])
+  const hint = getOperationAddHint(project, selectionFor(['openLine']), 'v_carve')
+  assert(hint !== null, 'open line should be invalid for v_carve')
+  assert(
+    hint === 'V-Carve offset only accepts closed subtract or line features plus optional closed regions',
+    `open line v_carve hint mismatch: ${hint}`,
+  )
+}
+
+function testClosedLineInCompatibleFeatureIds(): void {
+  const project = projectWith([
+    makeFeature('sub', 'subtract'),
+    makeFeature('line1', 'line'),
+    makeFeature('add', 'add'),
+  ])
+  const vCarveIds = compatibleFeatureIdsForOperation(project, 'v_carve')
+  assert(vCarveIds.includes('sub'), 'subtract should be compatible with v_carve')
+  assert(vCarveIds.includes('line1'), 'closed line should be compatible with v_carve')
+  assert(!vCarveIds.includes('add'), 'add should not be compatible with v_carve')
+}
+
+function testClosedLineInQuickOperations(): void {
+  const project = projectWith([makeFeature('line1', 'line')])
+  const kinds = validQuickOperationsForFeature(project, 'line1').map((op) => op.kind)
+  assert(kinds.includes('v_carve'), 'closed line should offer v_carve quick op')
+  assert(kinds.includes('v_carve_recursive'), 'closed line should offer v_carve_recursive quick op')
+  assert(kinds.includes('follow_line'), 'closed line should offer engrave quick op')
+  assert(!kinds.includes('pocket'), 'line should not offer pocket')
+}
+
+function testOpenLineNotInQuickOperations(): void {
+  const project = projectWith([makeFeature('openLine', 'line', 'polygon', false)])
+  const kinds = validQuickOperationsForFeature(project, 'openLine').map((op) => op.kind)
+  assert(!kinds.includes('v_carve'), 'open line should not offer v_carve')
+  assert(!kinds.includes('v_carve_recursive'), 'open line should not offer v_carve_recursive')
+  assert(kinds.includes('follow_line'), 'open line should offer engrave')
+}
+
+function testVCarveSelectAllIncludesLines(): void {
+  const project = projectWith([
+    makeFeature('line1', 'line'),
+    makeFeature('line2', 'line'),
+  ])
+  const allIds = selectAllCompatibleFeatureIds(project, 'v_carve')
+  assert(
+    JSON.stringify(allIds) === JSON.stringify(['line1', 'line2']),
+    'v_carve select-all should include closed lines',
+  )
+}
+
+function testEmptySelectionVCarveHintMentionsLines(): void {
+  const project = projectWith([])
+  const hint = getOperationAddHint(project, selectionFor([]), 'v_carve')
+  assert(
+    hint === 'Select one or more closed subtract or line features first',
+    `empty selection v_carve hint should mention lines, got: ${hint}`,
+  )
+}
+
+function testMixedSubtractAndLineIsValid(): void {
+  const project = projectWith([
+    makeFeature('sub', 'subtract'),
+    makeFeature('line1', 'line'),
+  ])
+  assert(
+    getOperationAddHint(project, selectionFor(['sub', 'line1']), 'v_carve') === null,
+    'mixed subtract + closed line should be valid for v_carve',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -356,5 +451,13 @@ testSelectAllReturnsCompatibleIdsWhenJointlyValid()
 testSelectAllReturnsEmptyWhenNothingCompatible()
 testSelectAllReturnsEmptyWhenJointSelectionInvalid()
 testOperationTargetsRegion()
+testClosedLineIsValidVCarveTarget()
+testOpenLineIsInvalidVCarveTarget()
+testClosedLineInCompatibleFeatureIds()
+testClosedLineInQuickOperations()
+testOpenLineNotInQuickOperations()
+testVCarveSelectAllIncludesLines()
+testEmptySelectionVCarveHintMentionsLines()
+testMixedSubtractAndLineIsValid()
 
 console.log('operationValidity tests passed')

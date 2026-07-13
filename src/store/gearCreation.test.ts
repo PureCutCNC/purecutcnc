@@ -22,6 +22,7 @@
 
 import { IDENTITY_MATRIX, newProject, type Matrix2D, type Project, type SketchFeature } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -53,8 +54,8 @@ function resetStore(project?: Project): void {
 }
 
 function createdFeature(id: string): SketchFeature {
-  const feature = useProjectStore.getState().project.features.find((candidate) => candidate.id === id)
-  assert(feature !== undefined, `feature ${id} should exist`)
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature != null, `feature ${id} should exist`)
   return feature
 }
 

@@ -23,16 +23,16 @@
  * Skeleton fonts always produce open profiles (line features).
  */
 
-import type { FeatureDefinition, FeatureFolder, SketchFeature, Project } from '../../types/project'
-import { IDENTITY_MATRIX } from '../../types/project'
+import type { FeatureDefinition, FeatureFolder, FeatureInstance, SketchFeature, Project } from '../../types/project'
 import { resolveTextFeatureShapes } from '../../text'
 import { nextUniqueGeneratedId } from './ids'
+import { createFeatureInstance } from './featureDefinitions'
 
 interface TextExpansionResult {
   /** New letter group folders (one per unique letter, with 'grouped' flag set) */
   folders: FeatureFolder[]
   /** Exploded child features (with definitionId + identity transform) */
-  features: SketchFeature[]
+  features: FeatureInstance[]
   /** Feature definitions keyed by definition id */
   definitions: Record<string, FeatureDefinition>
 }
@@ -64,7 +64,7 @@ export function expandTextFeature(
 
   const textString = textFeature.text?.text || 'TEXT'
   const folders: FeatureFolder[] = []
-  const features: SketchFeature[] = []
+  const features: FeatureInstance[] = []
   const definitions: Record<string, FeatureDefinition> = {}
 
   // Group shapes by glyph index (letter position)
@@ -132,15 +132,7 @@ export function expandTextFeature(
         locked: textFeature.locked,
       }
 
-      // Attach definition ref (definitionId + identity transform)
-      const featureWithRefs = feature as SketchFeature & {
-        definitionId?: string
-        transform?: typeof IDENTITY_MATRIX
-      }
-      featureWithRefs.definitionId = definitionId
-      featureWithRefs.transform = IDENTITY_MATRIX
-
-      features.push(feature)
+      features.push(createFeatureInstance(feature, definitionId))
     }
   }
 

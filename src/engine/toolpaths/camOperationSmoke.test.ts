@@ -29,6 +29,7 @@
 
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
 import type { MachineDefinition } from '../gcode/types'
@@ -278,11 +279,10 @@ function makePocketOp(
 
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
   const project = newProject('test', 'mm')
-  return {
+  return projectWithFeatures({
     ...project,
     tools,
-    features,
-  }
+  }, features)
 }
 
 /** Post a toolpath through the real postprocessor and return the G-code string. */
@@ -529,6 +529,75 @@ test('follow_line: generates toolpath + posts to non-empty G-code', () => {
 
   const gcode = postToolpath(project, op, result)
   assert(gcode.length > 0, 'follow_line should produce non-empty G-code')
+})
+
+function makeClosedLineFeature(
+  id: string,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  zTop: number,
+  zBottom: number,
+): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(cx - w / 2, cy - h / 2, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'line',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
+test('v_carve: closed Line target generates toolpath + posts', () => {
+  const tool = makeVBit('t1')
+  const feat = makeClosedLineFeature('l1', 5, 5, 10, 10, 0, -2)
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'v_carve',
+    target: { source: 'features', featureIds: ['l1'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+
+  const result = generateVCarveToolpath(project, op)
+  assert(result.moves.length > 0, 'v_carve with closed line should produce moves')
+  const cuts = result.moves.filter((m) => m.kind === 'cut')
+  assert(cuts.length > 0, 'v_carve with closed line should produce cut moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'v_carve with closed line should produce non-empty G-code')
+})
+
+test('v_carve_recursive: closed Line target generates toolpath + posts', () => {
+  const tool = makeVBit('t1')
+  const feat = makeClosedLineFeature('l1', 5, 5, 10, 10, 0, -2)
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'v_carve_recursive',
+    target: { source: 'features', featureIds: ['l1'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+
+  const result = generateVCarveRecursiveToolpath(project, op)
+  assert(result.moves.length > 0, 'v_carve_recursive with closed line should produce moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'v_carve_recursive with closed line should produce non-empty G-code')
 })
 
 test('v_carve_recursive: generates toolpath + posts to non-empty G-code', () => {

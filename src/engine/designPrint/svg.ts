@@ -37,6 +37,7 @@ import { getProfileBounds, getStockBounds, rectProfile } from '../../types/proje
 import type { Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { formatAngle, formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import type { ToolpathResult } from '../toolpaths/types'
 import { PAPER_PRESETS, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
 import type {
@@ -462,7 +463,7 @@ function featureGroupId(id: string): string {
 function buildFeatures(project: Project, ctx: WorldContext, groupPerFeature = false): string[] {
   const parts: string[] = []
 
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (!feature.visible) continue
 
     const { stroke, dashed } = featureStroke(feature, ctx.palette)
@@ -510,7 +511,7 @@ function buildFeatures(project: Project, ctx: WorldContext, groupPerFeature = fa
 
 function buildFeatureLabels(project: Project, ctx: WorldContext): string[] {
   const parts: string[] = []
-  for (const feature of project.features) {
+  for (const feature of resolvedProjectFeatures(project)) {
     if (!feature.visible) continue
     const bounds = getFeatureGeometryBounds(feature)
     const cx = bounds.minX + (bounds.maxX - bounds.minX) / 2

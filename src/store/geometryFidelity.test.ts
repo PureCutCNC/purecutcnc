@@ -41,6 +41,7 @@ import {
   type TextFeatureData,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
+import { resolvedProjectFeatures } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 import { resolveProfile, applyMatrixToPoint } from './helpers/resolveFeatures'
 import {
@@ -96,7 +97,7 @@ function getProject(): Project {
 }
 
 function getFeatures(): SketchFeature[] {
-  return getProject().features
+  return resolvedProjectFeatures(getProject())
 }
 
 // ── Transform class matrix ─────────────────────────────────────────
@@ -1269,7 +1270,7 @@ test('transformProfileAffine transforms circle center (not just edge)', () => {
   assert(approx(radius, 10), `radius preserved at 10, got ${radius}`)
 })
 
-// Regression: arc segments in composites survive rebake
+// Regression: arc segments in composites survive resolver transforms.
 test('resolveProfile preserves arc segments under identity + translate', () => {
   const profile = {
     start: { x: 10, y: 0 },

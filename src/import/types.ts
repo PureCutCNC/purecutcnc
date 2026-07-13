@@ -14,16 +14,44 @@
  * limitations under the License.
  */
 
-import type { SketchProfile } from '../types/project'
+import type { FeatureOperation, SketchProfile } from '../types/project'
 import type { Units } from '../utils/units'
 
 export type ImportSourceType = 'svg' | 'dxf' | 'stl' | 'obj' | 'camj'
+
+/** Geometry import mode — how the importer assigns feature roles. */
+export type ImportGeometryMode = 'auto' | 'paths' | 'solid-regions'
 
 export interface ImportedShape {
   name: string
   sourceType: ImportSourceType
   layerName: string | null
   profile: SketchProfile
+  /** SVG paint intent: element has visible fill (including inherited). */
+  hasFill?: boolean
+  /** SVG paint intent: element has visible stroke (including inherited). */
+  hasStroke?: boolean
+}
+
+/** A shape with its resolved feature role after classification. */
+export interface ClassifiedShape {
+  name: string
+  sourceType: ImportSourceType
+  layerName: string | null
+  profile: SketchProfile
+  operation: FeatureOperation
+  /** Index in the original source array (stable ordering reference). */
+  sourceIndex: number
+}
+
+/** Pre-import analysis summary for the dialog. */
+export interface ClassificationResult {
+  totalImportable: number
+  openLineCount: number
+  closedLineCount: number
+  addCount: number
+  subtractCount: number
+  warnings: string[]
 }
 
 export interface ImportInspection {

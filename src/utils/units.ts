@@ -20,6 +20,8 @@ import type {
   DimensionAnchor,
   DimensionAnnotation,
   DimensionRef,
+  FeatureDefinition,
+  FeatureInstance,
   GlobalConstraint,
   GridSettings,
   LocalConstraint,
@@ -30,9 +32,11 @@ import type {
   Project,
   ProjectMeta,
   Segment,
-  SketchFeature,
   SketchProfile,
+  STLFeatureData,
   Stock,
+  Tab,
+  TextFeatureData,
   Tool,
 } from '../types/project'
 
@@ -84,7 +88,7 @@ function convertPoint(point: Point, from: Units, to: Units): Point {
 }
 
 function convertSegment(segment: Segment, from: Units, to: Units): Segment {
-  if (segment.type === 'arc') {
+  if (segment.type === 'arc' || segment.type === 'circle') {
     return {
       ...segment,
       to: convertPoint(segment.to, from, to),
@@ -208,16 +212,49 @@ function convertGlobalConstraint(constraint: GlobalConstraint, from: Units, to: 
   return constraint
 }
 
-function convertFeature(feature: SketchFeature, from: Units, to: Units): SketchFeature {
+function convertTextFeatureData(text: TextFeatureData | null | undefined, from: Units, to: Units): TextFeatureData | null | undefined {
+  return text ? { ...text, size: convertLength(text.size, from, to) } : text
+}
+
+function convertStlFeatureData(stl: STLFeatureData | null | undefined, from: Units, to: Units): STLFeatureData | null | undefined {
+  if (!stl) return stl
+  return {
+    ...stl,
+    // The persisted mesh asset remains in its source coordinate system. Its
+    // per-feature scale is the project-unit bridge and must change with units.
+    scale: convertLength(stl.scale, from, to),
+    silhouettePaths: stl.silhouettePaths?.map((path) =>
+      path.map((point) => convertPoint(point, from, to))),
+  }
+}
+
+function convertFeatureDefinition(
+  definition: FeatureDefinition,
+  from: Units,
+  to: Units,
+): FeatureDefinition {
+  return {
+    ...definition,
+    profile: convertProfile(definition.profile, from, to),
+    dimensions: definition.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
+    text: convertTextFeatureData(definition.text, from, to),
+    stl: convertStlFeatureData(definition.stl, from, to),
+  }
+}
+
+function convertFeatureInstance(
+  feature: FeatureInstance,
+  from: Units,
+  to: Units,
+): FeatureInstance {
   return {
     ...feature,
-    sketch: {
-      ...feature.sketch,
-      origin: convertPoint(feature.sketch.origin, from, to),
-      profile: convertProfile(feature.sketch.profile, from, to),
-      dimensions: feature.sketch.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
-      constraints: feature.sketch.constraints.map((constraint) => convertLocalConstraint(constraint, from, to)),
+    transform: {
+      ...feature.transform,
+      e: convertLength(feature.transform.e, from, to),
+      f: convertLength(feature.transform.f, from, to),
     },
+    constraints: feature.constraints.map((constraint) => convertLocalConstraint(constraint, from, to)),
     z_top: convertDimensionRef(feature.z_top, from, to),
     z_bottom: convertDimensionRef(feature.z_bottom, from, to),
   }
@@ -229,7 +266,9 @@ function convertStock(stock: Stock, from: Units, to: Units): Stock {
     profile: convertProfile(stock.profile, from, to),
     thickness: convertLength(stock.thickness, from, to),
     origin: convertPoint(stock.origin, from, to),
-    sourceFeature: stock.sourceFeature ? convertFeature(stock.sourceFeature, from, to) : stock.sourceFeature,
+    sourceFeature: stock.sourceFeature
+      ? convertFeatureInstance(stock.sourceFeature, from, to)
+      : stock.sourceFeature,
   }
 }
 
@@ -267,6 +306,14 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     plungeFeed: convertLength(operation.plungeFeed, from, to),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
     stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
+    carveDepth: convertLength(operation.carveDepth, from, to),
+    maxCarveDepth: convertLength(operation.maxCarveDepth, from, to),
+    peckDepth: operation.peckDepth === undefined
+      ? undefined
+      : convertLength(operation.peckDepth, from, to),
+    retractHeight: operation.retractHeight === undefined
+      ? undefined
+      : convertLength(operation.retractHeight, from, to),
     waterlineMicroStepover: operation.waterlineMicroStepover === undefined
       ? undefined
       : convertLength(operation.waterlineMicroStepover, from, to),
@@ -276,6 +323,18 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     waterlineTipStepdown: operation.waterlineTipStepdown === undefined
       ? undefined
       : convertLength(operation.waterlineTipStepdown, from, to),
+  }
+}
+
+function convertTab(tab: Tab, from: Units, to: Units): Tab {
+  return {
+    ...tab,
+    x: convertLength(tab.x, from, to),
+    y: convertLength(tab.y, from, to),
+    w: convertLength(tab.w, from, to),
+    h: convertLength(tab.h, from, to),
+    z_top: convertLength(tab.z_top, from, to),
+    z_bottom: convertLength(tab.z_bottom, from, to),
   }
 }
 
@@ -335,10 +394,17 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
       ]),
     ),
     annotations: project.annotations.map((annotation) => convertDimensionAnnotation(annotation, fromUnits, toUnits)),
-    features: project.features.map((feature) => convertFeature(feature, fromUnits, toUnits)),
+    featureDefinitions: Object.fromEntries(
+      Object.entries(project.featureDefinitions).map(([id, definition]) => [
+        id,
+        convertFeatureDefinition(definition, fromUnits, toUnits),
+      ]),
+    ),
+    features: project.features.map((feature) => convertFeatureInstance(feature, fromUnits, toUnits)),
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),
+    tabs: project.tabs.map((tab) => convertTab(tab, fromUnits, toUnits)),
     clamps: project.clamps.map((clamp) => convertClamp(clamp, fromUnits, toUnits)),
   }
 }

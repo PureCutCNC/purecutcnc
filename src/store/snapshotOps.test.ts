@@ -25,14 +25,14 @@ import {
   newProject,
   rectProfile,
   type FeatureDefinition,
+  type FeatureInstance,
   type Matrix2D,
   type Project,
-  type SketchFeature,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { getDefinitionId } from './helpers/featureDefinitions'
-import { resolveProfile, resolveFeatureInstance } from './helpers/resolveFeatures'
+import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { translateMatrix } from './helpers/instanceTransforms'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -59,10 +59,9 @@ function addRectFeature(
   w: number,
   h: number,
   opts?: { transform?: Matrix2D },
-): { feature: SketchFeature; definition: FeatureDefinition } {
+): { feature: FeatureInstance; definition: FeatureDefinition } {
   const profile = rectProfile(cx, cy, w, h)
   const transform = opts?.transform ?? IDENTITY_MATRIX
-  const resolvedProfile = transform === IDENTITY_MATRIX ? profile : resolveProfile({ id: `def-${id}`, kind: 'rect', profile, dimensions: [], text: null, stl: null, operation: 'add' }, transform)
 
   const definition: FeatureDefinition = {
     id: `def-${id}`,
@@ -74,32 +73,24 @@ function addRectFeature(
     operation: 'add',
   }
 
-  const feature = {
+  const feature: FeatureInstance = {
     id,
     name,
-    kind: 'rect' as const,
+    definitionId: `def-${id}`,
+    transform: { ...transform },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolvedProfile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: `def-${id}`,
-    transform,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   const state = useProjectStore.getState()
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, feature as SketchFeature],
+      features: [...state.project.features, feature],
       featureDefinitions: {
         ...state.project.featureDefinitions,
         [`def-${id}`]: definition,
@@ -107,7 +98,7 @@ function addRectFeature(
     },
   } as unknown as Partial<ProjectStore>)
 
-  return { feature: feature as SketchFeature, definition }
+  return { feature, definition }
 }
 
 /** Set the selected feature IDs in the store. */
@@ -130,8 +121,8 @@ function getProject(): Project {
 }
 
 /** Get feature rows from the store. */
-function getFeatures(): SketchFeature[] {
-  return getProject().features
+function getFeatures() {
+  return resolvedProjectFeatures(getProject())
 }
 
 /** Get feature definitions from the store. */
@@ -189,7 +180,7 @@ test('join result is a definition + instance with identity transform', () => {
   const resultFeature = project.features.find((f) => f.id === resultIds[0])
   assert(resultFeature != null, 'result feature should exist')
 
-  const withRefs = resultFeature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const withRefs = resultFeature
   assert(withRefs.definitionId != null, 'result feature must have explicit definitionId')
   assert(withRefs.definitionId !== resultFeature.id, 'definitionId should be a snapshot def, not the feature ID')
 
@@ -217,7 +208,7 @@ test('cut result is a definition + instance with identity transform', () => {
   const resultFeature = project.features.find((f) => f.id === resultIds[0])
   assert(resultFeature != null, 'result feature should exist')
 
-  const withRefs = resultFeature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const withRefs = resultFeature
   assert(withRefs.definitionId != null, 'result must have explicit definitionId')
   assert(withRefs.definitionId !== resultFeature.id, 'definitionId should be a snapshot def')
 
@@ -244,7 +235,7 @@ test('offset result is a definition + instance with identity transform', () => {
   const resultFeature = project.features.find((f) => f.id === resultIds[0])
   assert(resultFeature != null, 'result feature should exist')
 
-  const withRefs = resultFeature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const withRefs = resultFeature
   assert(withRefs.definitionId != null, 'result must have explicit definitionId')
 
   const def = project.featureDefinitions[withRefs.definitionId!]
@@ -332,32 +323,23 @@ test('GC preserves definition when sibling instance still exists', () => {
 
   // Add a second instance pointing at the same definition
   const state = useProjectStore.getState()
-  const resolvedProfile = resolveProfile(definition, IDENTITY_MATRIX)
-  const sibling: SketchFeature = {
+  const sibling: FeatureInstance = {
     id: 'f-0001b',
     name: 'Shared Def B',
-    kind: 'rect',
+    definitionId: definition.id,
+    transform: { ...IDENTITY_MATRIX },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolvedProfile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add',
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: definition.id,
-    transform: IDENTITY_MATRIX,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, sibling as SketchFeature],
+      features: [...state.project.features, sibling],
     },
   } as unknown as Partial<ProjectStore>)
 
@@ -379,33 +361,24 @@ test('snapshotting one instance does not alter sibling of shared definition', ()
 
   // Create a sibling instance with a translate transform
   const tMat = translateMatrix(50, 0)
-  const resolvedProfile = resolveProfile(sharedDef, tMat)
-  const sibling = {
+  const sibling: FeatureInstance = {
     id: 'f-0001b',
     name: 'Shared B',
-    kind: 'rect' as const,
+    definitionId: sharedDef.id,
+    transform: { ...tMat },
+    constraints: [],
     folderId: null,
-    sketch: {
-      profile: resolvedProfile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
-    },
-    operation: 'add' as const,
     z_top: 5,
     z_bottom: 0,
     visible: true,
     locked: false,
-    definitionId: sharedDef.id,
-    transform: tMat,
-  } as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  }
 
   const state = useProjectStore.getState()
   useProjectStore.setState({
     project: {
       ...state.project,
-      features: [...state.project.features, sibling as SketchFeature],
+      features: [...state.project.features, sibling],
     },
   } as unknown as Partial<ProjectStore>)
 
@@ -462,7 +435,7 @@ test('snapshot of a transformed input uses resolved world geometry', () => {
   assert(resultFeatures.length > 0, 'join should produce result features')
 
   const resultFeature = resultFeatures[0]
-  const withRefs = resultFeature as SketchFeature & { definitionId?: string; transform?: Matrix2D }
+  const withRefs = resultFeature
   const def = project.featureDefinitions[withRefs.definitionId!]
   assert(def != null, 'result must have a definition')
 

@@ -58,6 +58,7 @@ import {
 } from './pocket'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -228,7 +229,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     }
   }
 
-  const allAddFeatures = project.features
+  const allAddFeatures = resolvedProjectFeatures(project)
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
     .map((feature) => {

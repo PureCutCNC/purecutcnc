@@ -59,9 +59,11 @@ assert(layoutCss.includes('.tree-construction-badge'), 'layout.css must define .
 assert(layoutCss.includes('.tree-row--construction'), 'layout.css must define .tree-row--construction')
 assert(layoutCss.includes('.tree-row--constructions .tree-branch'), 'layout.css must style the Construction section root branch')
 assert(layoutCss.includes('.toolbar-target-btn--construction.toolbar-target-btn--active'), 'layout.css must style the active construction target button')
+assert(layoutCss.includes('.toolbar-target-btn--line.toolbar-target-btn--active'), 'layout.css must style the active line target button')
 assert(layoutCss.includes('.properties-construction-note'), 'layout.css must define .properties-construction-note')
 assert(layoutCss.includes('.properties-construction-note__badge'), 'layout.css must define .properties-construction-note__badge')
 assert(tabletCss.includes('.tool-rail__target-btn--construction.tool-rail__target-btn--active'), 'tablet.css must style the rail construction target button')
+assert(tabletCss.includes('.tool-rail__target-btn--line.tool-rail__target-btn--active'), 'tablet.css must style the rail line target button')
 
 // ── FeatureTree: section root + ref badge + conversion menu ──────
 
@@ -86,11 +88,20 @@ assert(
   'FeatureTree operation menu must offer converting open construction back to line',
 )
 
-// ── Creation toolbars: third target ──────────────────────────────
+// ── Creation toolbars: Line and Construction targets ─────────────
+
+assert(
+  creationActions.includes("renderCreationTargetButton('line', 'snap-line', 'Create lines')"),
+  'CreationActions must render the line creation target',
+)
 
 assert(
   creationActions.includes("renderCreationTargetButton('construction', 'construction', 'Create construction geometry')"),
   'CreationActions must render the construction creation target',
+)
+assert(
+  toolRail.includes('tool-rail__target-btn--line'),
+  'ToolRail must render the line creation target',
 )
 assert(
   toolRail.includes('tool-rail__target-btn--construction'),
@@ -108,8 +119,12 @@ assert(
   'drawFeature must render construction with a dashed stroke',
 )
 assert(
-  previewPrimitives.includes('profile.closed && !construction'),
-  'drawFeature must never fill construction profiles',
+  previewPrimitives.includes('profile.closed && featureUsesSketchFill(feature.operation)'),
+  'drawFeature must gate closed-profile fill by feature role',
+)
+assert(
+  previewPrimitives.includes("return operation !== 'line' && operation !== 'construction'"),
+  'drawFeature must never fill Line or Construction profiles',
 )
 
 // ── PropertiesPanel: Z lock + note ───────────────────────────────
@@ -136,14 +151,14 @@ assert(
   propertiesPanel.includes("{ value: 'line', label: 'Line' }"),
   'PropertiesPanel open-profile operation control must offer Line ↔ Construction',
 )
-// The base-solid lock tracks the first MACHINABLE feature, not row 0.
+// The base-solid lock tracks the first SOLID feature, not row 0.
 assert(
-  propertiesPanel.includes('project.features.find(isMachinable)'),
-  'PropertiesPanel first-machining lookup must use isMachinable',
+  propertiesPanel.includes('features.find(isSolid)'),
+  'PropertiesPanel first-solid lookup must use isSolid',
 )
 assert(
-  featureTree.includes('feature.id === firstMachiningFeature?.id'),
-  'FeatureTree first-feature lock must track the first machinable feature',
+  featureTree.includes('feature.id === firstSolidFeature?.id'),
+  'FeatureTree first-feature lock must track the first solid feature',
 )
 
 // ── AppShell: statusbar visibility toggle ────────────────────────
@@ -159,12 +174,16 @@ const creationTargetBadge = readSrc('src/components/canvas/CreationTargetBadge.t
 const sketchCanvas = readSrc('src/components/canvas/SketchCanvas.tsx')
 
 assert(
-  layoutCss.includes('.creation-target-badge') && layoutCss.includes('.creation-target-badge--construction'),
-  'layout.css must define the drawing-mode badge with a construction variant',
+  layoutCss.includes('.creation-target-badge') && layoutCss.includes('.creation-target-badge--construction') && layoutCss.includes('.creation-target-badge--line'),
+  'layout.css must define the drawing-mode badge with line and construction variants',
 )
 assert(
   /\.creation-target-badge \{[^}]*pointer-events: none/s.test(layoutCss),
   'the drawing-mode badge must not intercept canvas pointer events',
+)
+assert(
+  creationTargetBadge.includes("line: { icon: 'snap-line', label: 'Drawing lines' }"),
+  'CreationTargetBadge must present the line mode',
 )
 assert(
   creationTargetBadge.includes("construction: { icon: 'construction', label: 'Drawing construction' }"),

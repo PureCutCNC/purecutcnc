@@ -26,7 +26,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
 - `regions.ts` — region computation (which area belongs to which op)
-- `resolver.ts` — resolves features+operations into clipper input regions
+- `resolver.ts` — resolves features+operations into clipper input regions; V-carve accepts closed Subtract and Line features (S2), Pocket remains Subtract-only; Line paths use even-odd fill semantics for nested contour holes
 - `restRegions.ts` — rest-machining region computation (what a prior tool missed)
 - `silhouette.ts` — extracts 2D silhouette from 3D mesh for sketch projection
 - `meshSlicing.ts` — slices a mesh at Z heights (used by surface strategies)
@@ -36,8 +36,9 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 ## Tests
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
+- `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
-	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_recursive); also documents the stock-target resolver gap
+	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_recursive; S2: closed-Line V-carve smoke); also documents the stock-target resolver gap
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
 - arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
 

@@ -8,6 +8,7 @@ Older plans for shipped features and historical bug analyses live in [`archive/`
 
 ## Foundational / cross-cutting
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — detailed branch-owned handoff and slice-ledger template for sequential external implementation workers.
+- [ISSUE_270_INTEGRATION_HANDOFF.md](ISSUE_270_INTEGRATION_HANDOFF.md) — active integration ledger for closed-Line semantics, nesting-aware SVG/DXF import, V-carve targeting, and large-artwork performance.
 - [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — how regions filter rather than define machining targets. Read before touching operation/region logic.
 

@@ -32,9 +32,59 @@ import {
 } from './measurements'
 import { appendSplineDraftSegment } from './draftGeometry'
 import { pointsEqual } from './hitTest'
-import { traceProfilePath } from './profilePrimitives'
+import { appendProfilePath, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+
+export function featureUsesSketchFill(operation: SketchFeature['operation']): boolean {
+  return operation !== 'line' && operation !== 'construction'
+}
+
+export function drawLineFeatureBatch(
+  ctx: CanvasRenderingContext2D,
+  features: SketchFeature[],
+  vt: ViewTransform,
+): void {
+  if (features.length === 0) return
+  const batchSize = 128
+  ctx.strokeStyle = '#4e8dc1'
+  ctx.lineWidth = 1.8
+  ctx.setLineDash([])
+  for (let start = 0; start < features.length; start += batchSize) {
+    ctx.beginPath()
+    const end = Math.min(start + batchSize, features.length)
+    for (let index = start; index < end; index += 1) {
+      for (const profile of getFeatureGeometryProfiles(features[index])) {
+        appendProfilePath(ctx, profile, vt)
+      }
+    }
+    ctx.stroke()
+  }
+}
+
+export function drawFeatureInfo(
+  ctx: CanvasRenderingContext2D,
+  feature: SketchFeature,
+  vt: ViewTransform,
+  units: 'mm' | 'inch',
+): void {
+  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
+  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  const bounds = getFeatureGeometryBounds(feature)
+  const center = worldToCanvas(
+    { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
+    vt,
+  )
+
+  ctx.fillStyle = 'rgba(228, 236, 244, 0.9)'
+  ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.textAlign = 'center'
+  ctx.fillText(feature.name, center.cx, center.cy - 5)
+  if (feature.operation !== 'construction') {
+    ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
+    ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
+  }
+}
 
 export function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
   return {
@@ -138,7 +188,7 @@ export function drawFeature(
   const profiles = getFeatureGeometryProfiles(feature)
   for (const profile of profiles) {
     traceProfilePath(ctx, profile, vt)
-    if (profile.closed && !construction) {
+    if (profile.closed && featureUsesSketchFill(feature.operation)) {
       ctx.fillStyle = fill
       ctx.fill()
     }
@@ -153,20 +203,7 @@ export function drawFeature(
   }
 
   if (showInfo) {
-    const bounds = getFeatureGeometryBounds(feature)
-    const center = worldToCanvas(
-      { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
-      vt,
-    )
-
-    ctx.fillStyle = 'rgba(228, 236, 244, 0.9)'
-    ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText(feature.name, center.cx, center.cy - 5)
-    if (!construction) {
-      ctx.fillStyle = 'rgba(171, 194, 213, 0.9)'
-      ctx.fillText(`z ${formatLength(zTop, units)} → ${formatLength(zBottom, units)}`, center.cx, center.cy + 10)
-    }
+    drawFeatureInfo(ctx, feature, vt, units)
   }
 }
 

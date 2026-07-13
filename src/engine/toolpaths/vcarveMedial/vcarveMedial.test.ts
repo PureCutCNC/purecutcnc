@@ -22,6 +22,7 @@
 import type { Operation, Point, Project, SketchFeature, Tool } from '../../../types/project'
 import { defaultTool, newProject, polygonProfile, rectProfile } from '../../../types/project'
 import { getTextFontOptions } from '../../../text'
+import { projectWithFeatures } from '../../../test/projectFixtures'
 import type { ToolpathMove } from '../types'
 import {
   computeMedialAxis,
@@ -367,7 +368,7 @@ function makeVCarveMedialOp(featureIds: string[], overrides: Partial<Operation> 
 }
 
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
-  return { ...newProject('test', 'mm'), tools, features }
+  return projectWithFeatures({ ...newProject('test', 'mm'), tools }, features)
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -474,7 +475,12 @@ function testGeneratorMultipleFeatures(): void {
 
 function makeOutlineTextFeature(id: string, text: string, zBottom: number): SketchFeature {
   const font = getTextFontOptions('outline')[0]
-  const feature: SketchFeature = {
+  // A text draft that baseProject/projectWithFeatures turns into an
+  // authoritative text definition + instance (definitionId + transform),
+  // exactly like a saved project. Regression guard: an outline-text target
+  // must expand to per-glyph subtract geometry and produce a real toolpath —
+  // not flatten to empty paths ("Band ... resolved to empty subject geometry").
+  return {
     id,
     name: text,
     kind: 'text',
@@ -493,17 +499,10 @@ function makeOutlineTextFeature(id: string, text: string, zBottom: number): Sket
     visible: true,
     locked: false,
   }
-  // Reference-model rider fields as saved by the definition/instance format.
-  // Regression: these used to leak onto synthetic glyph children in
-  // expandFeatureGeometry, making the region resolver flatten every glyph to
-  // an empty path ("Band ... resolved to empty subject geometry").
-  ;(feature as SketchFeature & { definitionId?: string }).definitionId = 'def-text-regression'
-  ;(feature as SketchFeature & { transform?: unknown }).transform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
-  return feature
 }
 
 function testGeneratorTextFeatureTarget(): void {
-  console.log('Testing raw text feature target (definition-model rider fields)...')
+  console.log('Testing raw text feature target (authoritative instance model)...')
   const proj = baseProject([makeVBit()], [makeOutlineTextFeature('f-text', 'Rag', -5)])
   const result = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f-text'], { stepover: 0.25 }))
   const cuts = cutMoves(result.moves)

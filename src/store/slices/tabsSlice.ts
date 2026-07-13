@@ -22,6 +22,7 @@ import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { emptySelection, sanitizeSelection } from './selectionSlice'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 
 export type TabsSlice = Pick<
   ProjectStore,
@@ -261,8 +262,8 @@ export function createTabsSlice(
 
         const expectedOperation = operation.kind === 'edge_route_inside' ? 'subtract' : 'add'
         const targetFeatures = operation.target.featureIds
-          .map((featureId) => s.project.features.find((feature) => feature.id === featureId) ?? null)
-          .filter((feature): feature is SketchFeature => feature !== null)
+          .map((featureId) => resolveFeatureInstance(s.project, featureId))
+          .filter((feature) => feature !== null)
           .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')
 
         if (targetFeatures.length === 0) {

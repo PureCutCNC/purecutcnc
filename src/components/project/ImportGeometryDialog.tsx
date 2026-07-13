@@ -14,35 +14,27 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent } from 'react'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import {
-  importDxfString,
-  importSvgString,
   inspectCamjString,
   inspectDxfString,
   inspectSvgString,
   type CamjInspection,
+  type ImportGeometryMode,
   type ImportInspection,
   type ImportSourceType,
 } from '../../import'
-import {
-  clampImportedMeshSilhouetteZSteps,
-  extractImportedMeshProfileAndBounds,
-  renderImportedMeshTopViewToDataUrl,
-} from '../../import/stl'
 import { useProjectStore } from '../../store/projectStore'
 import {
-  clearImportedSourceCaches,
-  loadImportedTriangleMesh,
-  normalizeImportedMeshForStorage,
-  serializeImportedMesh,
-  splitMeshByConnectedComponents,
   type ImportedModelFormat,
   type ModelAxisOrientation,
 } from '../../engine/importedMesh'
 import type { Units } from '../../utils/units'
+import { useImportGeometryAnalysis } from './useImportGeometryAnalysis'
+import { ImportGeometryModeSection } from './ImportGeometryModeSection'
+import { importModelFile } from './importModelFile'
 
 interface LoadedImportFile {
   fileName: string
@@ -58,14 +50,6 @@ interface ImportGeometryDialogProps {
   onImportComplete?: () => void
 }
 
-/**
- * Maximum number of disjoint bodies the model importer will split into
- * individual features. Above this cap, the file is imported as a single
- * feature with a warning. Manifold's `project()` is run once per body, so an
- * uncapped import could be unboundedly slow for pathological inputs.
- */
-const MAX_IMPORT_BODIES = 64
-
 function sourceTypeLabel(sourceType: ImportSourceType): string {
   if (sourceType === 'svg') return 'SVG'
   if (sourceType === 'dxf') return 'DXF'
@@ -79,35 +63,12 @@ function isModelSourceType(sourceType: ImportSourceType): sourceType is Imported
   return sourceType === 'stl' || sourceType === 'obj'
 }
 
-function unitsLabel(units: Units): string {
-  return units === 'inch' ? 'Inch' : 'Millimeter'
-}
-
 function defaultJoinTolerance(units: Units): string {
   return units === 'inch' ? '0.01' : '0.25'
 }
 
 function joinToleranceStep(units: Units): string {
   return units === 'inch' ? '0.001' : '0.01'
-}
-
-function defaultSilhouetteZStepSize(units: Units): number {
-  return units === 'inch' ? 0.02 : 0.5
-}
-
-function recommendedSilhouetteZSteps(modelHeight: number, units: Units): number {
-  if (!(modelHeight > 0)) return clampImportedMeshSilhouetteZSteps(96)
-  return clampImportedMeshSilhouetteZSteps(Math.ceil(modelHeight / defaultSilhouetteZStepSize(units)))
-}
-
-function parseSilhouetteZStepsInput(value: string): number | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const parsed = Number(trimmed)
-  if (!Number.isInteger(parsed) || parsed < 8 || parsed > 512) {
-    throw new Error('Silhouette Z steps must be between 8 and 512.')
-  }
-  return parsed
 }
 
 function detectSourceType(fileName: string): ImportSourceType | null {
@@ -135,6 +96,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [axisSwap, setAxisSwap] = useState<'none' | 'yz' | 'xz' | 'xy'>('none')
   const [silhouetteZSteps, setSilhouetteZSteps] = useState('')
   const [importStock, setImportStock] = useState(false)
+  const [geometryMode, setGeometryMode] = useState<ImportGeometryMode>('auto')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -145,6 +107,60 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  // ── analysis hook (SVG/DXF parse + classify) ──────────────────────────
+  const sourceType = loadedFile?.sourceType
+  const fileText = loadedFile?.text
+  const parsedJoinTolerance = Number.parseFloat(joinTolerance)
+  const effectiveSourceUnitScale =
+    loadedFile?.inspection.detectedUnits === sourceUnits
+      ? (loadedFile?.inspection.sourceUnitScale ?? 1)
+      : 1
+
+  const {
+    cachedShapes,
+    parseWarnings,
+    parseError,
+    classification,
+  } = useImportGeometryAnalysis({
+    sourceType,
+    fileText,
+    fileName: loadedFile?.fileName ?? '',
+    sourceUnits,
+    targetUnits: project.meta.units,
+    joinTolerance: Number.isFinite(parsedJoinTolerance) && parsedJoinTolerance >= 0
+      ? parsedJoinTolerance
+      : 0,
+    allowCrossLayerJoins,
+    selectedLayers,
+    geometryMode,
+    sourceUnitScale: effectiveSourceUnitScale,
+    hasDxfLayers: (loadedFile?.inspection.layers?.length ?? 0) > 0,
+  })
+
+  // ── combined warnings (deduplicated parse + classifier) ───────────────
+  const combinedWarnings = useMemo(() => {
+    const classWarnings = classification?.result.warnings ?? []
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const w of [...parseWarnings, ...classWarnings]) {
+      if (!seen.has(w)) {
+        seen.add(w)
+        out.push(w)
+      }
+    }
+    return out
+  }, [parseWarnings, classification])
+
+  // ── file loading ──────────────────────────────────────────────────────
+  function resetDialogState() {
+    setSourceUnits('')
+    setJoinTolerance(defaultJoinTolerance(project.meta.units))
+    setAllowCrossLayerJoins(false)
+    setSelectedLayers(new Set())
+    setSilhouetteZSteps('')
+    setImportStock(false)
+  }
+
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
@@ -152,11 +168,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     const nextSourceType = detectSourceType(file.name)
     if (!nextSourceType) {
       setLoadedFile(null)
-      setSourceUnits('')
-      setJoinTolerance(defaultJoinTolerance(project.meta.units))
-      setAllowCrossLayerJoins(false)
-      setSelectedLayers(new Set())
-      setSilhouetteZSteps('')
+      resetDialogState()
       setDialogError('Unsupported import format. Use .svg, .dxf, .stl, .obj, or .camj.')
       return
     }
@@ -173,7 +185,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
             text: '',
             modelBuffer,
             sourceType: nextSourceType,
-            inspection: { layers: [], warnings: [], sourceUnitScale: 1, detectedUnits: null, unitsReliable: false, summary: `${label} file - 3D mesh imported by top-down silhouette projection` }
+            inspection: {
+              layers: [],
+              warnings: [],
+              sourceUnitScale: 1,
+              detectedUnits: null,
+              unitsReliable: false,
+              summary: `${label} file - 3D mesh imported by top-down silhouette projection`,
+            },
           })
           setSourceUnits(project.meta.units)
           setSelectedLayers(new Set())
@@ -213,12 +232,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
-        setSourceUnits('')
-        setJoinTolerance(defaultJoinTolerance(project.meta.units))
-        setAllowCrossLayerJoins(false)
-        setSelectedLayers(new Set())
-        setSilhouetteZSteps('')
-        setImportStock(false)
+        resetDialogState()
         setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
       }
     }
@@ -229,6 +243,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     }
   }
 
+  // ── layer / folder selection ──────────────────────────────────────────
   function toggleLayer(layer: string) {
     setSelectedLayers((prev) => {
       const next = new Set(prev)
@@ -242,6 +257,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     setSelectedLayers(value ? new Set(loadedFile?.inspection.layers ?? []) : new Set())
   }
 
+  // ── import ────────────────────────────────────────────────────────────
   async function handleImport() {
     if (!loadedFile) {
       setDialogError('Choose an SVG, DXF, STL, OBJ, or .camj file to import.')
@@ -258,17 +274,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     setDialogError(null)
 
     try {
-      const keepDetectedScale = loadedFile.inspection.detectedUnits === sourceUnits
-      const sourceUnitScale = keepDetectedScale ? loadedFile.inspection.sourceUnitScale : 1
-      const parsedJoinTolerance = Number.parseFloat(joinTolerance)
-      if (loadedFile.sourceType === 'dxf' && (!Number.isFinite(parsedJoinTolerance) || parsedJoinTolerance < 0)) {
+      const tolerance = Number.parseFloat(joinTolerance)
+      if (loadedFile.sourceType === 'dxf' && (!Number.isFinite(tolerance) || tolerance < 0)) {
         setDialogError('Join tolerance must be a non-negative number.')
         setBusy(false)
         return
       }
-
-      const hasDxfLayers = loadedFile.sourceType === 'dxf' && loadedFile.inspection.layers.length > 0
-      const layerFilter = hasDxfLayers ? [...selectedLayers] : null
 
       let createdIds: string[] = []
 
@@ -296,165 +307,46 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         }
         setLoadingProgress(100)
       } else if (isModelSourceType(loadedFile.sourceType)) {
-        const modelFormat = loadedFile.sourceType
-        const modelLabel = sourceTypeLabel(loadedFile.sourceType)
-        const modelScale = sourceUnits === project.meta.units ? 1 : (sourceUnits === 'inch' ? 25.4 : 1/25.4)
-        const requestedSilhouetteZSteps = parseSilhouetteZStepsInput(silhouetteZSteps)
-
-        const fileData = loadedFile.modelBuffer
-        if (!fileData) throw new Error('Missing file data')
-
-        setLoadingStage('Parsing mesh')
-        setLoadingProgress(5)
-        let parsedMesh = loadImportedTriangleMesh(modelFormat, fileData, axisSwap)
-        if (!parsedMesh) throw new Error(`Failed to parse ${modelLabel} mesh`)
-        setLoadingProgress(10)
-
-        setLoadingStage('Normalizing mesh')
-        const importedMesh = normalizeImportedMeshForStorage(parsedMesh, modelScale)
-        parsedMesh = null
-        clearImportedSourceCaches()
-        const automaticSilhouetteZSteps = recommendedSilhouetteZSteps(
-          importedMesh.bounds.maxZ - importedMesh.bounds.minZ,
-          project.meta.units,
-        )
-        const resolvedSilhouetteZSteps = requestedSilhouetteZSteps ?? automaticSilhouetteZSteps
-
-        setLoadingStage('Detecting bodies')
-        setLoadingProgress(13)
-        const detectedBodies = splitMeshByConnectedComponents(importedMesh)
-        let bodiesToImport: typeof detectedBodies
-        let truncationWarning: string | null = null
-        if (detectedBodies.length <= 1) {
-          bodiesToImport = [importedMesh]
-        } else if (detectedBodies.length > MAX_IMPORT_BODIES) {
-          bodiesToImport = [importedMesh]
-          truncationWarning = (
-            `The imported ${modelLabel} contains ${detectedBodies.length} disjoint bodies, ` +
-            `which exceeds the per-import limit of ${MAX_IMPORT_BODIES}. ` +
-            `Imported as a single feature; the bodies will not be individually selectable. ` +
-            `Split the file into smaller pieces or boolean-union it before importing if you need per-body features.`
-          )
-        } else {
-          bodiesToImport = detectedBodies
-        }
-        const splitIntoBodies = bodiesToImport.length > 1
-
-        const baseName = loadedFile.fileName.replace(/\.(stl|obj)$/i, '')
-        const { addFeature, addFeatureFolder, updateFeatureFolder } = useProjectStore.getState()
-
-        let importFolderId: string | null = null
-        if (splitIntoBodies) {
-          importFolderId = addFeatureFolder('features')
-          updateFeatureFolder(importFolderId, { name: baseName })
-        }
-
-        const newFeatureIds: string[] = []
-        const projectionBudget = 70
-        const projectionStart = 15
-
-        for (let bodyIndex = 0; bodyIndex < bodiesToImport.length; bodyIndex += 1) {
-          const bodyMesh = bodiesToImport[bodyIndex]
-          const bodyLabel = splitIntoBodies
-            ? `Body ${bodyIndex + 1} / ${bodiesToImport.length}`
-            : modelLabel
-          const bodyStart = projectionStart + (bodyIndex / bodiesToImport.length) * projectionBudget
-          const bodyEnd = projectionStart + ((bodyIndex + 1) / bodiesToImport.length) * projectionBudget
-
-          setLoadingStage(`Projecting silhouette — ${bodyLabel} (${resolvedSilhouetteZSteps} Z steps)`)
-          setLoadingProgress(Math.round(bodyStart))
-          const modelInfo = await extractImportedMeshProfileAndBounds(bodyMesh, (p) => {
-            setLoadingProgress(Math.round(bodyStart + (bodyEnd - bodyStart) * (p / 100)))
-          }, { silhouetteZSteps: resolvedSilhouetteZSteps })
-          if (!modelInfo) {
-            throw new Error(`Failed to generate silhouette for ${bodyLabel.toLowerCase()} of ${modelLabel} import`)
-          }
-
-          let bodyTopViewDataUrl: string | undefined
-          try {
-            const url = renderImportedMeshTopViewToDataUrl(bodyMesh)
-            if (url) bodyTopViewDataUrl = url
-          } catch {
-            // top-view rendering is best-effort
-          }
-
-          const featureId = crypto.randomUUID()
-          const featureName = bodyIndex === 0 ? baseName : `${baseName} (${bodyIndex + 1})`
-          addFeature({
-            id: featureId,
-            name: featureName,
-            kind: 'stl',
-            folderId: importFolderId,
-            stl: {
-              format: modelFormat,
-              filePath: undefined,
-              mesh: serializeImportedMesh(bodyMesh, modelFormat),
-              scale: 1,
-              axisSwap: 'none',
-              silhouettePaths: modelInfo.silhouettePaths,
-              topViewDataUrl: bodyTopViewDataUrl,
-            },
-            sketch: {
-              profile: modelInfo.profile,
-              origin: { x: 0, y: 0 },
-              orientationAngle: 0,
-              dimensions: [],
-              constraints: [],
-            },
-            operation: 'model',
-            z_top: modelInfo.z_top,
-            z_bottom: modelInfo.z_bottom,
-            visible: true,
-            locked: false,
-          })
-          newFeatureIds.push(featureId)
-        }
-
-        setLoadingProgress(100)
-        createdIds = newFeatureIds
-
-        if (truncationWarning) {
-          window.alert(truncationWarning)
-        }
+        const modelBuffer = loadedFile.modelBuffer
+        if (!modelBuffer) throw new Error('Missing file data')
+        createdIds = await importModelFile({
+          modelFormat: loadedFile.sourceType,
+          modelBuffer,
+          fileName: loadedFile.fileName,
+          projectUnits: project.meta.units,
+          sourceUnits: sourceUnits as Units,
+          axisSwap,
+          silhouetteZSteps,
+          onProgress: (stage, pct) => { setLoadingStage(stage); setLoadingProgress(pct) },
+        })
       } else {
+        // SVG / DXF import — use pre-parsed shapes and classification
         setLoadingStage('Importing geometry')
-        const result = loadedFile.sourceType === 'svg'
-          ? importSvgString(loadedFile.text, {
-              fileName: loadedFile.fileName,
-              targetUnits: project.meta.units,
-              sourceUnits,
-              sourceUnitScale,
-            })
-          : importDxfString(loadedFile.text, {
-              fileName: loadedFile.fileName,
-              targetUnits: project.meta.units,
-              sourceUnits,
-              sourceUnitScale,
-              joinTolerance: parsedJoinTolerance,
-              allowCrossLayerJoins,
-              layerFilter,
-            })
+        if (!cachedShapes || cachedShapes.length === 0) {
+          setDialogError('No importable geometry found in the selected file.')
+          setBusy(false)
+          return
+        }
 
         createdIds = importShapes({
           fileName: loadedFile.fileName,
           sourceType: loadedFile.sourceType,
-          shapes: result.shapes,
+          shapes: cachedShapes,
+          classified: classification?.classified,
         })
-        
-        if (result.warnings.length > 0) {
+
+        if (combinedWarnings.length > 0) {
           window.alert(
-            `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${result.warnings.join('\n')}`,
+            `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${combinedWarnings.join('\n')}`,
           )
         }
 
         if (createdIds.length === 0) {
-          setDialogError(result.warnings[0] ?? 'No importable geometry found in the selected file.')
+          setDialogError(combinedWarnings[0] ?? 'No importable geometry found in the selected file.')
           setBusy(false)
           return
         }
       }
-
-
 
       onImportComplete?.()
       onClose()
@@ -466,7 +358,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     }
   }
 
+  // ── derived display values ────────────────────────────────────────────
   const inspectionWarnings = loadedFile?.inspection.warnings ?? []
+  const isSvgDxf = sourceType === 'svg' || sourceType === 'dxf'
   const isCamj = loadedFile?.sourceType === 'camj'
   const showJoinTolerance = loadedFile?.sourceType === 'dxf'
   const dxfLayers = loadedFile?.sourceType === 'dxf' ? (loadedFile.inspection.layers ?? []) : []
@@ -523,6 +417,19 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               <div className="dialog-section-group">
                 <label className="dialog-section-title">Settings</label>
 
+                {/* Geometry mode — SVG/DXF only */}
+                {isSvgDxf ? (
+                  <ImportGeometryModeSection
+                    sourceType={sourceType}
+                    geometryMode={geometryMode}
+                    onGeometryModeChange={setGeometryMode}
+                    classification={classification}
+                    combinedWarnings={combinedWarnings}
+                    parseError={parseError}
+                    hasShapes={cachedShapes !== null && cachedShapes.length > 0}
+                  />
+                ) : null}
+
                 {/* Format */}
                 <div className="import-dialog__info-row">
                   <span>Format</span>
@@ -533,7 +440,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 <div className="import-dialog__info-row">
                   <span>Source Units</span>
                   {isCamj ? (
-                    <strong>{unitsLabel(sourceUnits as Units)}</strong>
+                    <strong>{sourceUnits === 'inch' ? 'Inch' : 'Millimeter'}</strong>
                   ) : (
                     <select
                       value={sourceUnits}
@@ -579,7 +486,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 {/* Project Units */}
                 <div className="import-dialog__info-row">
                   <span>Project Units</span>
-                  <strong>{unitsLabel(project.meta.units)}</strong>
+                  <strong>{project.meta.units === 'inch' ? 'Inch' : 'Millimeter'}</strong>
                 </div>
 
                 {/* Axis orientation for imported 3D models */}
@@ -640,7 +547,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                   </>
                 ) : null}
 
-                {/* Warnings */}
+                {/* Inspection warnings */}
                 {inspectionWarnings.length > 0 ? (
                   <div className="export-warning-list">
                     {inspectionWarnings.map((warning) => (

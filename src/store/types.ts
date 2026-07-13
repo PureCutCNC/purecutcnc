@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ImportedShape, ImportSourceType } from '../import'
+import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
 import type { SnapMode } from '../sketch/snapping'
 import type {
@@ -135,7 +135,7 @@ export type PendingAddTool =
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
-export type CreationTarget = 'feature' | 'region' | 'construction'
+export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
 
 /**
  * Transient tape-measure state. Not persisted, not in undo history.
@@ -342,7 +342,7 @@ export interface ProjectStore {
   /** Resize rectangular stock by changing width or height while holding one side fixed. */
   setRectStockDimension: (axis: 'width' | 'height', value: number, heldSide: 'left' | 'right' | 'top' | 'bottom') => void
   setGrid: (grid: GridSettings) => void
-  setUnits: (units: Project['meta']['units']) => void
+  setUnits: (units: Project['meta']['units'], mode: 'convert' | 'reinterpret') => void
   setCreationTarget: (target: CreationTarget) => void
 
   addFeatureFolder: (section?: 'features' | 'regions' | 'construction') => string
@@ -362,7 +362,7 @@ export interface ProjectStore {
   revealFeatureFolder: (folderId: string) => void
   groupSelectedFeaturesIntoNewFolder: () => string
   addFeature: (feature: SketchFeature) => void
-  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[] }) => string[]
+  importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[]; classified?: ClassifiedShape[] }) => string[]
   importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   updateFeatures: (ids: string[], patch: Partial<SketchFeature>) => void

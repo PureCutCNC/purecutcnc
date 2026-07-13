@@ -21,11 +21,11 @@
  */
 
 import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
-import { normalizeProject } from '../../store/projectStore'
 import { serializeImportedMesh } from '../importedMesh'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { transitionToCutEntry } from './pocket'
 import type { ToolpathMove, ToolpathPoint } from './types'
+import { projectWithFeatures, replaceProjectFeatures } from '../../test/projectFixtures'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -295,37 +295,34 @@ const TEST_STOCK_THICKNESS = 6
 function makeProject(featureIds: string[]): { project: Project; operation: Operation } {
   const model = makeModelFeature()
   const region = makeRegionFeature()
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('rough-surface-test', 'mm'),
     tools: [makeTool()],
-    features: [model, region],
-  }
+  }, [model, region])
   project.stock.thickness = TEST_STOCK_THICKNESS
-  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
+  return { project, operation: makeRoughOperation(featureIds) }
 }
 
 function makeLegacyProject(featureIds: string[]): { project: Project; operation: Operation } {
   const model = makeModelFeature(false)
   const region = makeRegionFeature()
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('rough-surface-legacy-test', 'mm'),
     tools: [makeTool()],
-    features: [model, region],
-  }
+  }, [model, region])
   project.stock.thickness = TEST_STOCK_THICKNESS
-  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
+  return { project, operation: makeRoughOperation(featureIds) }
 }
 
 function makeInvertedProject(featureIds: string[]): { project: Project; operation: Operation } {
   const model = makeModelFeature(true, true)
   const region = makeRegionFeature()
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('rough-surface-inverted-test', 'mm'),
     tools: [makeTool()],
-    features: [model, region],
-  }
+  }, [model, region])
   project.stock.thickness = TEST_STOCK_THICKNESS
-  return { project: normalizeProject(project), operation: makeRoughOperation(featureIds) }
+  return { project, operation: makeRoughOperation(featureIds) }
 }
 
 function appendMeshBox(
@@ -463,18 +460,17 @@ function makePocketBlockProject(): { project: Project; operation: Operation } {
     z_top: maxZ,
     z_bottom: minZ,
   }
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('rough-surface-pocket-block-test', 'mm'),
     tools: [makeTool()],
     modelAssets: { 'pocket-block': mesh },
-    features: [model],
-  }
+  }, [model])
   project.stock.thickness = maxZ
   const operation = {
     ...makeRoughOperation(['model1']),
     stepdown: 1,
   }
-  return { project: normalizeProject(project), operation }
+  return { project, operation }
 }
 
 function makeOpenSliceProject(): { project: Project; operation: Operation } {
@@ -518,18 +514,17 @@ function makeOpenSliceProject(): { project: Project; operation: Operation } {
       ]],
     },
   }
-  const project = {
+  const project = projectWithFeatures({
     ...newProject('rough-surface-open-shell-test', 'mm'),
     tools: [makeTool()],
     modelAssets: { 'open-shell': mesh },
-    features: [model],
-  }
+  }, [model])
   project.stock.thickness = TEST_STOCK_THICKNESS
   const operation = {
     ...makeRoughOperation(['model1']),
     stepdown: 2,
   }
-  return { project: normalizeProject(project), operation }
+  return { project, operation }
 }
 
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
@@ -694,7 +689,7 @@ function testRoughSurfaceProtectsOpenMeshSlicesConservatively(): void {
 function testRoughSurfaceAvoidsSurroundingAddFeature(): void {
   console.log('Testing rough_surface avoids surrounding add feature footprints...')
   const { project, operation } = makeProject(['model1'])
-  project.features = [...project.features, makeProtectedAddFeature()]
+  replaceProjectFeatures(project, [...project.features, makeProtectedAddFeature()])
   const result = generateRoughSurfaceToolpath(project, operation)
   const protectedCuts = cutMoves(result.moves).filter((move) => {
     const endpoints = [move.from, move.to]
@@ -712,7 +707,7 @@ function testRoughSurfaceAvoidsSurroundingAddFeature(): void {
 function testRoughSurfaceIgnoresContainingBaseFeature(): void {
   console.log('Testing rough_surface ignores containing base add feature...')
   const { project, operation } = makeProject(['model1'])
-  project.features = [makeContainingAddFeature(), ...project.features]
+  replaceProjectFeatures(project, [makeContainingAddFeature(), ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
 
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
@@ -722,7 +717,7 @@ function testRoughSurfaceIgnoresContainingBaseFeature(): void {
 function testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope(): void {
   console.log('Testing rough_surface ignores tight base when containing pocket limits envelope...')
   const { project, operation } = makeProject(['model1'])
-  project.features = [makeTightContainingAddFeature(), makeTightContainingSubtractFeature(), ...project.features]
+  replaceProjectFeatures(project, [makeTightContainingAddFeature(), makeTightContainingSubtractFeature(), ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
   const cuts = cutMoves(result.moves)
 
@@ -733,7 +728,7 @@ function testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope(): void {
 function testRoughSurfaceRespectsContainingPocketDepth(): void {
   console.log('Testing rough_surface respects containing subtract pocket depth...')
   const { project, operation } = makeProject(['model1'])
-  project.features = [makeContainingAddFeature(), makeContainingSubtractFeature(), ...project.features]
+  replaceProjectFeatures(project, [makeContainingAddFeature(), makeContainingSubtractFeature(), ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
   const minCutZ = Math.min(...cutMoves(result.moves).map((move) => move.to.z))
 
@@ -745,7 +740,7 @@ function testRoughSurfaceRespectsContainingPocketDepth(): void {
 function testRoughSurfaceRespectsSplitPocketDepths(): void {
   console.log('Testing rough_surface respects split subtract pocket depths...')
   const { project, operation } = makeProject(['model1'])
-  project.features = [makeContainingAddFeature(), makeContainingSubtractFeature(), makeRightHalfSubtractFeature(), ...project.features]
+  replaceProjectFeatures(project, [makeContainingAddFeature(), makeContainingSubtractFeature(), makeRightHalfSubtractFeature(), ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
   const cuts = cutMoves(result.moves)
   const belowShallow = cuts.filter((move) => move.to.z < 3 - 1e-9)

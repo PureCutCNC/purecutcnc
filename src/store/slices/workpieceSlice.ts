@@ -20,11 +20,12 @@ import {
   getStockBounds,
   rectProfile,
   stockFromFeature,
-  type SketchFeature,
+  type FeatureInstance,
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
+import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 
 export type WorkpieceSlice = Pick<
   ProjectStore,
@@ -165,7 +166,7 @@ export function createWorkpieceSlice(
             ...s.project.stock,
             profile: rectProfile(stockBounds.minX, stockBounds.minY, rectW, rectH),
             sourceFeatureId: null as string | null | undefined,
-            sourceFeature: null as SketchFeature | null | undefined,
+            sourceFeature: null as FeatureInstance | null | undefined,
           }
 
           const nextProject = syncFeatureTreeProject({
@@ -192,8 +193,9 @@ export function createWorkpieceSlice(
         }
 
         // Set a feature as stock source
-        const feature = s.project.features.find((f) => f.id === featureId)
-        if (!feature) return {}
+        const featureInstance = s.project.features.find((f) => f.id === featureId)
+        const feature = resolveFeatureInstance(s.project, featureId)
+        if (!featureInstance || !feature) return {}
         if (!feature.sketch.profile.closed) return {} // Only closed profiles can be stock
 
         // If another feature is already the stock source, restore it first
@@ -218,7 +220,7 @@ export function createWorkpieceSlice(
           profile: newStock.profile,
           thickness: newStock.thickness,
           sourceFeatureId: feature.id,
-          sourceFeature: feature,
+          sourceFeature: featureInstance,
         }
 
         const nextProject = syncFeatureTreeProject({
@@ -383,13 +385,15 @@ export function createWorkpieceSlice(
         }
       }),
 
-    setUnits: (units) =>
+    setUnits: (units, mode) =>
       set((s) => {
         if (s.project.meta.units === units) {
           return {}
         }
 
-        const convertedProject = convertProjectUnits(s.project, units)
+        const convertedProject = mode === 'convert'
+          ? convertProjectUnits(s.project, units)
+          : { ...s.project, meta: { ...s.project.meta, units } }
         const nextProject = {
           ...convertedProject,
           meta: { ...convertedProject.meta, modified: new Date().toISOString() },

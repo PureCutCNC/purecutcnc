@@ -20,10 +20,10 @@
  * Run with: npx tsx src/store/projectStoreTransform.test.ts
  */
 
-import { defaultGrid, defaultStock, getProfileBounds, rectProfile, type Matrix2D, type SketchFeature } from '../types/project'
+import { defaultGrid, defaultStock, getProfileBounds, IDENTITY_MATRIX, rectProfile, type Matrix2D, type SketchFeature } from '../types/project'
 import { normalizeProject } from './projectStore'
 import { mirrorFeatureFromReference, resizeFeatureFromReference, rotateFeatureFromReference } from './helpers/referenceTransforms'
-import { applyMatrixToPoint, isIdentityMatrix } from './helpers/resolveFeatures'
+import { applyMatrixToPoint, isIdentityMatrix, resolveFeatureInstance } from './helpers/resolveFeatures'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -33,10 +33,17 @@ function approx(left: number, right: number, epsilon = 1e-6): boolean {
   return Math.abs(left - right) <= epsilon
 }
 
-function makeFeature(kind: 'rect' | 'stl'): SketchFeature {
+type TransformableFeature = SketchFeature & {
+  definitionId: string
+  transform: Matrix2D
+}
+
+function makeFeature(kind: 'rect' | 'stl'): TransformableFeature {
   return {
     id: kind,
     name: kind,
+    definitionId: `def-${kind}`,
+    transform: { ...IDENTITY_MATRIX },
     kind,
     folderId: null,
     stl: kind === 'stl'
@@ -124,7 +131,7 @@ function testFeatureMirrorsAcrossVerticalLine(): void {
 function testMirrorFlipsArcHandedness(): void {
   console.log('Testing mirror flips arc handedness...')
   const feature = makeFeature('rect')
-  const source: SketchFeature = {
+  const source: TransformableFeature = {
     ...feature,
     kind: 'composite',
     sketch: {
@@ -222,7 +229,9 @@ endsolid tri
     ai_history: [],
   })
 
-  const model = project.features[0]
+  const model = resolveFeatureInstance(project, 'stl')
+  assert(model !== null, 'legacy model should resolve after migration')
+  if (!model) throw new Error('legacy model should resolve after migration')
   assert(model.stl?.meshAssetId !== undefined, 'legacy model should reference a model asset')
   assert(model.stl?.fileData === undefined, 'legacy source file should be removed after migration')
   assert(model.stl?.mesh === undefined, 'transient inline mesh should not be retained')
@@ -240,8 +249,7 @@ function testResizeSetsTransform(): void {
     { x: 20, y: 0 },
   )
   if (!resized) throw new Error('Assertion failed: expected resized feature')
-  const transform = (resized as SketchFeature & { transform?: Matrix2D }).transform
-  if (!transform) throw new Error('Assertion failed: resized feature should have transform')
+  const transform = resized.transform
   assert(!isIdentityMatrix(transform), 'resized feature transform should not be identity')
   const world = applyMatrixToPoint(transform, { x: 10, y: 5 })
   assert(approx(world.x, 20), `expected world x 20, got ${world.x}`)
@@ -258,8 +266,7 @@ function testRotateSetsTransform(): void {
     { x: 0, y: 10 },
   )
   if (!rotated) throw new Error('Assertion failed: expected rotated feature')
-  const transform = (rotated as SketchFeature & { transform?: Matrix2D }).transform
-  if (!transform) throw new Error('Assertion failed: rotated feature should have transform')
+  const transform = rotated.transform
   assert(!isIdentityMatrix(transform), 'rotated feature transform should not be identity')
   const world = applyMatrixToPoint(transform, { x: 10, y: 0 })
   assert(approx(world.x, 0, 1e-5), `expected world x 0, got ${world.x}`)
@@ -275,13 +282,12 @@ function testMirrorSetsTransform(): void {
     { x: 5, y: 10 },
   )
   if (!mirrored) throw new Error('Assertion failed: expected mirrored feature')
-  const transform = (mirrored as SketchFeature & { transform?: Matrix2D }).transform
-  if (!transform) throw new Error('Assertion failed: mirrored feature should have transform')
+  const transform = mirrored.transform
   assert(!isIdentityMatrix(transform), 'mirrored feature transform should not be identity')
 }
 
-function testIdentityMigratedResizeKeepsCompatibilityProfile(): void {
-  console.log('Testing identity-migrated resize keeps compatibility profile consistent...')
+function testIdentityResolvedResizeKeepsPreviewProfile(): void {
+  console.log('Testing identity-resolved resize keeps its preview profile consistent...')
   const feature = makeFeature('rect')
   const resized = resizeFeatureFromReference(
     feature,
@@ -295,9 +301,9 @@ function testIdentityMigratedResizeKeepsCompatibilityProfile(): void {
   assert(approx(bounds.maxY - bounds.minY, 5), `expected height 5, got ${bounds.maxY - bounds.minY}`)
 }
 
-function testResizeWithExplicitDefinitionIdDoesNotMutateDefinition(): void {
-  console.log('Testing resize with explicit definitionId sets only instance transform...')
-  const feature: SketchFeature & { definitionId?: string } = {
+function testResizeWithDefinitionReferenceDoesNotMutateDefinition(): void {
+  console.log('Testing resize with a definition reference sets the instance transform...')
+  const feature: TransformableFeature = {
     ...makeFeature('rect'),
     definitionId: 'def-1',
   }
@@ -308,8 +314,7 @@ function testResizeWithExplicitDefinitionIdDoesNotMutateDefinition(): void {
     { x: 20, y: 0 },
   )
   if (!resized) throw new Error('Assertion failed: expected resized feature')
-  const transform = (resized as SketchFeature & { transform?: Matrix2D }).transform
-  assert(transform !== undefined, 'resized feature with explicit definitionId should have transform')
+  assert(!isIdentityMatrix(resized.transform), 'resized feature should have a non-identity transform')
   const bounds = getProfileBounds(resized.sketch.profile)
   assert(approx(bounds.maxX - bounds.minX, 20), `expected width 20, got ${bounds.maxX - bounds.minX}`)
 }
@@ -323,7 +328,7 @@ testLegacyModelMovesToAssetTable()
 testResizeSetsTransform()
 testRotateSetsTransform()
 testMirrorSetsTransform()
-testIdentityMigratedResizeKeepsCompatibilityProfile()
-testResizeWithExplicitDefinitionIdDoesNotMutateDefinition()
+testIdentityResolvedResizeKeepsPreviewProfile()
+testResizeWithDefinitionReferenceDoesNotMutateDefinition()
 
 console.log('projectStore transform tests passed')

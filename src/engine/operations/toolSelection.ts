@@ -31,12 +31,13 @@
  * pure so it can be unit-tested without the store or the browser.
  */
 
-import type { OperationKind, OperationTarget, Project, SketchFeature, Tool, ToolType } from '../../types/project'
+import type { OperationKind, OperationTarget, Project, Tool, ToolType } from '../../types/project'
 import { getStockBounds } from '../../types/project'
 import { isMachinable } from '../../store/helpers/featureRoles'
 import { getFeatureGeometryBounds } from '../../text'
 import { convertToolUnits } from '../../utils/units'
 import type { ToolLibraryEntry } from '../../toolLibrary'
+import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 /** A tool's diameter may be at most this fraction of the feature's min dimension. */
 export const TOOL_SIZE_FRACTION = 0.5
@@ -82,9 +83,7 @@ export function targetFeatureSize(project: Project, target: OperationTarget): nu
     return dim > 0 ? dim : null
   }
 
-  const features = target.featureIds
-    .map((id) => project.features.find((feature) => feature.id === id) ?? null)
-    .filter((feature): feature is SketchFeature => feature !== null && isMachinable(feature))
+  const features = resolveFeatureInstances(project, target.featureIds).filter(isMachinable)
 
   if (features.length === 0) {
     return null

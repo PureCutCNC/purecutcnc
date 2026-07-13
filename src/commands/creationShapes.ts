@@ -55,8 +55,8 @@ function isPlacementShape(shape: CreationShape): shape is PlacementShape {
 }
 
 export function shapeEnabledForTarget(shape: CreationShape, creationTarget: CreationTarget): boolean {
-  // Text is only a feature-target shape: regions must be closed masks and
-  // construction geometry is plain reference geometry (points/lines/shapes).
+  // Text and Gear are only solid-feature shapes. Line, Region, and
+  // Construction targets use plain profile geometry.
   if (shape === 'text' || shape === 'gear') {
     return creationTarget === 'feature'
   }
