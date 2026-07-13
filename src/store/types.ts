@@ -342,7 +342,7 @@ export interface ProjectStore {
   /** Resize rectangular stock by changing width or height while holding one side fixed. */
   setRectStockDimension: (axis: 'width' | 'height', value: number, heldSide: 'left' | 'right' | 'top' | 'bottom') => void
   setGrid: (grid: GridSettings) => void
-  setUnits: (units: Project['meta']['units']) => void
+  setUnits: (units: Project['meta']['units'], mode: 'convert' | 'reinterpret') => void
   setCreationTarget: (target: CreationTarget) => void
 
   addFeatureFolder: (section?: 'features' | 'regions' | 'construction') => string

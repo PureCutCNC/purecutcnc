@@ -385,13 +385,15 @@ export function createWorkpieceSlice(
         }
       }),
 
-    setUnits: (units) =>
+    setUnits: (units, mode) =>
       set((s) => {
         if (s.project.meta.units === units) {
           return {}
         }
 
-        const convertedProject = convertProjectUnits(s.project, units)
+        const convertedProject = mode === 'convert'
+          ? convertProjectUnits(s.project, units)
+          : { ...s.project, meta: { ...s.project.meta, units } }
         const nextProject = {
           ...convertedProject,
           meta: { ...convertedProject.meta, modified: new Date().toISOString() },

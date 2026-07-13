@@ -29,7 +29,8 @@ import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
-import type { FeatureOperation, RegionMaskMode } from '../../types/project'
+import { UnitConversionDialog } from '../project/UnitConversionDialog'
+import type { FeatureOperation, Project, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 interface DraftTextInputProps {
@@ -344,6 +345,14 @@ export function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
+  const [pendingUnits, setPendingUnits] = useState<Project['meta']['units'] | null>(null)
+
+  function commitPendingUnits(mode: 'convert' | 'reinterpret') {
+    if (!pendingUnits || pendingUnits === project.meta.units) return
+    const nextUnits = pendingUnits
+    setPendingUnits(null)
+    setUnits(nextUnits, mode)
+  }
 
   function renderContent() {
 
@@ -385,7 +394,9 @@ export function PropertiesPanel() {
                 { value: 'mm', label: 'Millimeters' },
                 { value: 'inch', label: 'Inches' },
               ]}
-              onChange={(value) => setUnits(value)}
+              onChange={(value) => {
+                if (value !== project.meta.units) setPendingUnits(value)
+              }}
             />
           </label>
           <label className="properties-check">
@@ -1655,6 +1666,15 @@ export function PropertiesPanel() {
           onClose={() => setShowManager(false)}
         />
       )}
+      {pendingUnits && pendingUnits !== project.meta.units ? (
+        <UnitConversionDialog
+          fromUnits={project.meta.units}
+          toUnits={pendingUnits}
+          onConvert={() => commitPendingUnits('convert')}
+          onReinterpret={() => commitPendingUnits('reinterpret')}
+          onCancel={() => setPendingUnits(null)}
+        />
+      ) : null}
     </>
   )
 }
