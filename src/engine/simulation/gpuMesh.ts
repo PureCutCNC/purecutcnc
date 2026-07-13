@@ -140,8 +140,28 @@ function createStockPlaneGeometryChunk(
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
+
+  // The stored geometry is flat (Y = 0 everywhere); the vertex shader displaces
+  // each vertex up to its heightfield value at draw time. Computing bounds from
+  // the raw positions therefore yields a zero-height slab sitting at Y = 0 —
+  // roughly half the stock thickness BELOW where the surface actually renders.
+  // three's frustum culler tests that stale sphere, so on a tilted view the
+  // bottom-of-frame chunks fall outside the frustum and get wrongly culled,
+  // and the always-drawn boundary wall shows through as a sawtooth along the
+  // near edge. The error scales with detail: at low detail the chunk sphere is
+  // large enough to swallow the offset, but at high detail the chunks (and
+  // their spheres) shrink while the offset stays ~half the stock thickness, so
+  // the artifact only appears at high detail. Bound the true displacement
+  // range [stockBottomZ, stockTopZ] instead so culling stays correct.
+  const minX = originX + colStart * cellSize
+  const maxX = originX + (colStart + chunkCols) * cellSize
+  const minZ = originY + rowStart * cellSize
+  const maxZ = originY + (rowStart + chunkRows) * cellSize
+  geometry.boundingBox = new THREE.Box3(
+    new THREE.Vector3(minX, grid.stockBottomZ, minZ),
+    new THREE.Vector3(maxX, grid.stockTopZ, maxZ),
+  )
+  geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere())
   return geometry
 }
 
