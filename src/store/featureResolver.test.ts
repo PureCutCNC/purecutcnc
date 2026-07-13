@@ -33,6 +33,7 @@ import {
 import {
   applyMatrixToPoint,
   commitResolvedInstances,
+  createResolvedProjectFeatureCache,
   isCirclePreservingTransform,
   isIdentityMatrix,
   isMirrorTransform,
@@ -802,6 +803,38 @@ function testCommitResolvedSubsetPreservesOtherInstances(): void {
   console.log('   ✓ resolved subset commit preserves unrelated instances')
 }
 
+function testResolvedProjectFeatureCache(): void {
+  console.log('27. Resolved project feature cache invalidates by project identity...')
+
+  const project = makeMigratedProject([
+    makeRectFeature('f-cached', 'Cached', 0, 0, 10, 5),
+  ])
+  const cache = createResolvedProjectFeatureCache()
+
+  const initial = cache.resolve(project)
+  assert(cache.resolve(project) === initial, 'same project object should reuse resolved features')
+  assertApprox(initial[0].sketch.profile.start.x, 0, 'initial cached feature start.x')
+  assertApprox(initial[0].sketch.profile.start.y, 0, 'initial cached feature start.y')
+
+  const transformedProject: Project = {
+    ...project,
+    features: [{
+      ...project.features[0],
+      transform: { ...project.features[0].transform, e: 42, f: -7 },
+    }],
+  }
+  const transformed = cache.resolve(transformedProject)
+
+  assert(transformed !== initial, 'new project object should refresh resolved features')
+  assert(cache.resolve(transformedProject) === transformed, 'refreshed project should reuse its resolved features')
+  assertApprox(transformed[0].sketch.profile.start.x, 42, 'transformed cached feature start.x')
+  assertApprox(transformed[0].sketch.profile.start.y, -7, 'transformed cached feature start.y')
+  assertApprox(project.features[0].transform.e, 0, 'cache must not mutate source transform x')
+  assertApprox(project.features[0].transform.f, 0, 'cache must not mutate source transform y')
+
+  console.log('   ✓ cache reuses a project revision and refreshes transformed instances')
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 let passed = 0
@@ -834,6 +867,7 @@ const tests: Array<{ name: string; fn: () => void }> = [
   { name: 'missing definitionId has no fallback', fn: testMissingDefinitionIdDoesNotFallback },
   { name: 'instance constraints', fn: testInstanceConstraintsPreserved },
   { name: 'resolved subset commit', fn: testCommitResolvedSubsetPreservesOtherInstances },
+  { name: 'resolved project feature cache', fn: testResolvedProjectFeatureCache },
 ]
 
 for (const test of tests) {

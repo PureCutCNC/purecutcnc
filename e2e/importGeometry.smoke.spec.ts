@@ -38,6 +38,17 @@ function projectFeatureOperations(project: Record<string, unknown>): Array<strin
   return features.map((feature) => definitions[feature.definitionId]?.operation)
 }
 
+const LARGE_IMPORT_CONTOUR_COUNT = 501
+
+function largeSvgPaths(count: number): string {
+  const paths = Array.from({ length: count }, (_, index) => {
+    const x = (index % 40) * 3
+    const y = Math.floor(index / 40) * 3
+    return `<path d="M ${x} ${y} h 1 v 1 h -1 Z"/>`
+  })
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">${paths.join('')}</svg>`
+}
+
 // ── Dialog wiring ──────────────────────────────────────────────────────
 
 test('dialog opens and closes', async ({ app }) => {
@@ -165,6 +176,44 @@ test.describe('SVG import', () => {
     expect(ops).toHaveLength(2)
     expect(ops).toEqual(['add', 'line'])
   })
+})
+
+test('large SVG path import keeps folders collapsed and the canvas interactive', async ({ app }) => {
+  const dialog = await openImportDialog(app.page)
+
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: 'large-paths.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from(largeSvgPaths(LARGE_IMPORT_CONTOUR_COUNT)),
+  })
+  await selectSourceUnitsMm(dialog)
+
+  const summary = dialog.locator('[data-testid="import-analysis-summary"]')
+  await expect(summary).toBeVisible({ timeout: 30000 })
+  await dialog.locator('#import-geometry-mode').selectOption('paths')
+  await expect(summary.locator('[data-testid="import-summary-closed-line"] strong')).toHaveText(
+    String(LARGE_IMPORT_CONTOUR_COUNT),
+    { timeout: 30000 },
+  )
+
+  await dialog.locator('.dialog-footer .btn-primary').click()
+  await expect(dialog).not.toBeVisible({ timeout: 30000 })
+
+  const project = await getProject(app.page)
+  const features = project.features as Array<unknown>
+  const folders = project.featureFolders as Array<{ collapsed: boolean }>
+  expect(features).toHaveLength(LARGE_IMPORT_CONTOUR_COUNT)
+  expect(folders).toHaveLength(1)
+  expect(folders[0]?.collapsed).toBe(true)
+
+  // Pointer input and toolbar commands must still work after the real large-import flow.
+  const canvas = app.page.locator('canvas').first()
+  await expect(canvas).toBeVisible()
+  await canvas.hover({ position: { x: 10, y: 10 } })
+  const followUpDialog = await openImportDialog(app.page)
+  await expect(followUpDialog).toBeVisible()
+  await app.page.locator('.dialog-close').click()
+  await expect(followUpDialog).not.toBeVisible({ timeout: 3000 })
 })
 
 // ── DXF: Auto mode (nesting-aware solids) ──────────────────────────────
