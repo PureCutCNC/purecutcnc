@@ -48,12 +48,11 @@ export function arcControlPoint(start: Point, segment: Extract<Segment, { type: 
   }
 }
 
-export function traceProfilePath(
+export function appendProfilePath(
   ctx: CanvasRenderingContext2D,
   profile: SketchProfile,
   vt: ViewTransform,
 ): void {
-  ctx.beginPath()
   const start = worldToCanvas(profile.start, vt)
   ctx.moveTo(start.cx, start.cy)
 
@@ -98,4 +97,13 @@ export function traceProfilePath(
   if (profile.closed) {
     ctx.closePath()
   }
+}
+
+export function traceProfilePath(
+  ctx: CanvasRenderingContext2D,
+  profile: SketchProfile,
+  vt: ViewTransform,
+): void {
+  ctx.beginPath()
+  appendProfilePath(ctx, profile, vt)
 }

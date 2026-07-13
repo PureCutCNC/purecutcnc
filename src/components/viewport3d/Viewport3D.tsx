@@ -795,6 +795,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       cancelAnimationFrame(frameRef.current)
       controls.dispose()
       ro.disconnect()
+      for (const object of objectsRef.current) {
+        scene.remove(object)
+        disposeObject3D(object)
+      }
+      objectsRef.current = []
       renderer.dispose()
       mount.removeChild(renderer.domElement)
     }
@@ -936,6 +941,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             clampMesh.geometry.dispose()
             disposeObjectMaterial(clampMesh.material)
           }
+          for (const line of nextSceneObjects.batchedLines) {
+            disposeObject3D(line)
+          }
           return
         }
 
@@ -955,9 +963,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
           objectsRef.current.push(featureMesh)
         }
 
-        for (const openLine of nextSceneObjects.openFeatureLines.values()) {
-          scene.add(openLine)
-          objectsRef.current.push(openLine)
+        for (const line of nextSceneObjects.batchedLines) {
+          scene.add(line)
+          objectsRef.current.push(line)
         }
 
         for (const tabMesh of nextSceneObjects.tabMeshes.values()) {

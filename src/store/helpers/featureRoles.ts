@@ -57,6 +57,18 @@ export function isMachinable(entity: HasOperation): boolean {
 }
 
 /**
+ * A feature that is part of the solid tree for base-solid ordering (add,
+ * subtract) or a placeholder solid (imported model). Only add/subtract
+ * participate in Manifold boolean CSG; imported Model entries are rendered
+ * as overlays and skipped by the boolean pipeline. Line features are
+ * machinable path geometry that renders as flat 3D line overlays and never
+ * contributes to the solid model.
+ */
+export function isSolid(entity: HasOperation): boolean {
+  return entity.operation === 'add' || entity.operation === 'subtract' || entity.operation === 'model'
+}
+
+/**
  * Features the 3D model pipeline (CSG → preview/simulation) may consume.
  * Regions stay included — they render display-only walls — but construction
  * geometry is fully absent from the model.

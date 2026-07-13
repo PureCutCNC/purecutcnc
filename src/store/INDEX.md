@@ -33,9 +33,10 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `derivedFeatures.ts` — computes derived snapshot features from the feature tree; also previewOffsetFeatures, joinOpenProfiles, and clearStaleConstraints
   - `featureDefinitions.ts` — definition creation, orphan collection, instance rebaking, and make-unique support for feature references
   - `gearFeature.ts` — grouped gear+bore feature insertion helper used by the gear creation action
-  - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks.
+  - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction/isSolid predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks. `isSolid` (issue #270) returns true only for add/subtract/model — the base-solid invariant gate.
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
+  - `vcarveTargets.ts` — shared V-carve target eligibility predicate (issue #270 S2): `isVCarveCompatibleFeature` is the single source of truth for "can this feature be a V-carve machining target?"; used by UI hints, compatible selection, CAM panel validation, persisted target validation, and fallback target selection
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
@@ -45,6 +46,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `resolveFeatures.ts` — resolves definition and instance rows into world-space feature geometry for read paths
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
+  - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — normalizes incoming/legacy project data; project cloning, deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
@@ -56,6 +58,9 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior
 - `duplicateReference.test.ts` — copyMode default/normalize, Duplicate as Reference / Duplicate Independent semantics, no-double-bake invariant, select-linked query
 - `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
+- `importRoles.test.ts` — importShapes with typed `classified` array: explicit roles honored in classifier order, fallback to legacy closed→add/open→line, definitions created, history recorded, layer grouping preserved; child-first source → parent-before-child, degenerate prefix, and cross-layer ordering regressions (issue #270 S3)
+- `manualNestingDefaults.test.ts` — manual closed-feature defaults (issue #270 S5): Add/Subtract alternation, non-solid exclusion, explicit-operation precedence, no retroactive changes, and closed-composite completion
+- `importBulk.test.ts` — synthetic bulk-import coverage (issue #270 S4): one 2,980-contour repeated-name stress case plus the 499/500 expanded-selection boundary, many-layer folder naming, definitions/order/history, and legacy small-import behavior
 - `editOpFidelity.test.ts` — sketch-edit op segment-kind preservation + linked-instance propagation for insert/delete point, disconnect, and arc-handle edit (fills gaps editInPlace + H1 didn't cover)
 - `featureLifecycle.test.ts` — create→definition, save/load round-trip, undo/redo, delete→GC per FeatureKind
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
@@ -75,6 +80,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `snapshotOps.test.ts` — definition/instance snapshot boolean and offset operations
 - `textReference.test.ts` — issue #228: text-feature creation mints a definition, reference copies resolve (selectable), text edits propagate to definition + siblings, 16-char name truncation
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
+- `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

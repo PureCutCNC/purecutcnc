@@ -24,7 +24,7 @@ import { ZRangeSlider } from './ZRangeSlider'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
-import { isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
+import { isMachinable, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
@@ -1150,7 +1150,7 @@ export function PropertiesPanel() {
             </label>
             <label className="properties-field">
               <span>Operation</span>
-              {allSelectedFeatures.every((f) => !f.sketch.profile.closed || f.operation === 'line') && allSelectedFeatures.length > 0 ? (
+              {allSelectedFeatures.length > 0 && allSelectedFeatures.every((f) => !f.sketch.profile.closed) ? (
                 <div className="properties-locked-field" title="All selected features are open profiles — convert them individually in the tree">
                   <span>Open profiles</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
@@ -1167,6 +1167,7 @@ export function PropertiesPanel() {
                     ...(commonSelectedOperation === '__mixed__' ? [{ value: '__mixed__', label: 'Mixed operations' }] : []),
                     { value: 'subtract', label: 'Subtract' },
                     { value: 'add', label: 'Add' },
+                    { value: 'line', label: 'Line' },
                     { value: 'region', label: 'Region mask' },
                     { value: 'construction', label: 'Construction' },
                   ]}
@@ -1287,13 +1288,14 @@ export function PropertiesPanel() {
   const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
   const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
 
-  // First MACHINABLE feature in the tree must be 'add' (regions/construction
-  // don't count); imported STL models are locked as Model.
-  const firstMachiningFeature = project.features.find(isMachinable) ?? null
+  // First SOLID feature in the tree must be 'add' (lines/regions/construction
+  // don't count as base solids); imported STL models are locked as Model.
+  // The first Add can be converted to a non-solid role (Line, Region,
+  // Construction); only Subtract is disabled on that row.
+  const firstSolidFeature = project.features.find(isSolid) ?? null
   const isFirstFeature =
-    firstMachiningFeature?.id === selectedFeature.id
-  const isImportedModelFeature = selectedFeature.kind === 'stl' && selectedFeature.operation === 'model'
-  const operationLockedToAdd = isFirstFeature && !isImportedModelFeature
+    firstSolidFeature?.id === selectedFeature.id
+  const subtractDisabled = isFirstFeature && selectedFeature.operation === 'add'
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
@@ -1308,7 +1310,7 @@ export function PropertiesPanel() {
         >
           <label className="properties-field">
             <span>Operation</span>
-            {!selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+            {!selectedFeature.sketch.profile.closed ? (
               // Open profiles convert between Line (engraved path) and
               // Construction (sketch reference) only — mirrors the tree menu.
               <Select
@@ -1321,21 +1323,31 @@ export function PropertiesPanel() {
                   operation: value as import('../../types/project').FeatureOperation,
                 })}
               />
-            ) : operationLockedToAdd || selectedFeature.operation === 'model' ? (
-              <div className="properties-locked-field" title={
-                selectedFeature.operation === 'model'
-                  ? 'Model features are imported 3D objects and cannot change operation type'
-                  : 'The first 2.5D feature must be Add — it defines the base solid of the part model'
-              }>
-                <span>{selectedFeature.operation === 'model' ? 'Model' : 'Add'}</span>
+            ) : selectedFeature.operation === 'model' ? (
+              <div className="properties-locked-field" title="Model features are imported 3D objects and cannot change operation type">
+                <span>Model</span>
                 <span className="properties-locked-hint" aria-hidden="true">🔒</span>
               </div>
+            ) : subtractDisabled ? (
+              <Select
+                value={selectedFeature.operation}
+                options={[
+                  { value: 'add', label: 'Add' },
+                  { value: 'line', label: 'Line' },
+                  { value: 'region', label: 'Region mask' },
+                  { value: 'construction', label: 'Construction' },
+                ]}
+                onChange={(value) => updateFeature(selectedFeature.id, {
+                  operation: value as FeatureOperation,
+                })}
+              />
             ) : (
               <Select
                 value={selectedFeature.operation}
                 options={[
                   { value: 'subtract', label: 'Subtract' },
                   { value: 'add', label: 'Add' },
+                  { value: 'line', label: 'Line' },
                   { value: 'region', label: 'Region mask' },
                   { value: 'construction', label: 'Construction' },
                 ]}
@@ -1472,7 +1484,7 @@ export function PropertiesPanel() {
                 </div>
               </label>
             </>
-          ) : !selectedFeature.sketch.profile.closed ? (
+          ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
             <>
               <label className="properties-field">
                 <span>Z Top</span>

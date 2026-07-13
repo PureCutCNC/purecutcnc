@@ -41,6 +41,7 @@ import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
+import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry } from '../../text'
 import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
@@ -486,7 +487,7 @@ function getValidOperationTarget(project: Project, selection: SelectionState, ki
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => feature.operation === 'subtract' && featureHasClosedGeometry(feature))
+      && machiningFeatures.every((feature) => isVCarveCompatibleFeature(feature))
       && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
       ? { source: 'features', featureIds: features.map((feature) => feature.id) }
       : null

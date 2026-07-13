@@ -61,6 +61,8 @@ import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
   drawFeature,
+  drawFeatureInfo,
+  drawLineFeatureBatch,
   drawMoveGuide,
   drawPendingPathLoop,
   drawPendingPoint,
@@ -913,6 +915,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawOriginMarker(ctx, project.origin, vt)
     }
 
+    const batchedLineFeatures: (typeof project.features)[number][] = []
     for (const feature of project.features) {
       if (!feature.visible) continue
 
@@ -921,7 +924,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
 
-      drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+      const batchLine = feature.operation === 'line'
+        && !operationHighlightIds
+        && !selected
+        && !hovered
+        && !editing
+        && !groupSelected
+      if (batchLine) {
+        batchedLineFeatures.push(feature)
+      } else {
+        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+      }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
@@ -980,6 +993,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.textBaseline = 'middle'
         ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
         ctx.restore()
+      }
+    }
+    drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
+    if (project.meta.showFeatureInfo) {
+      for (const feature of batchedLineFeatures) {
+        drawFeatureInfo(ctx, feature, vt, project.meta.units)
       }
     }
 
