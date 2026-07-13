@@ -74,6 +74,61 @@ function bboxesOverlapOrTouch(a: BBox, b: BBox): boolean {
   )
 }
 
+/**
+ * Find contour pairs whose bounding boxes overlap or touch. Exact nesting
+ * checks remain responsible for geometry semantics; this only avoids invoking
+ * those checks for contours that cannot possibly relate to one another.
+ */
+function findOverlappingProfileCandidates(profiles: ProfileData[]): number[][] {
+  const candidates = profiles.map(() => [] as number[])
+  if (profiles.length < 2) return candidates
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const profile of profiles) {
+    minX = Math.min(minX, profile.bbox.minX)
+    maxX = Math.max(maxX, profile.bbox.maxX)
+    minY = Math.min(minY, profile.bbox.minY)
+    maxY = Math.max(maxY, profile.bbox.maxY)
+  }
+
+  // Sweep along the broader document dimension so regularly spaced rows and
+  // columns both keep a small active set.
+  const sweepX = maxX - minX >= maxY - minY
+  const ordered = profiles
+    .map((profile, index) => ({
+      index,
+      min: sweepX ? profile.bbox.minX : profile.bbox.minY,
+    }))
+    .sort((left, right) => left.min - right.min || left.index - right.index)
+  const active: number[] = []
+
+  for (const { index } of ordered) {
+    const current = profiles[index]
+    const currentMin = sweepX ? current.bbox.minX : current.bbox.minY
+    for (let position = active.length - 1; position >= 0; position -= 1) {
+      const otherIndex = active[position]
+      const other = profiles[otherIndex]
+      const otherMax = sweepX ? other.bbox.maxX : other.bbox.maxY
+      if (otherMax < currentMin) {
+        active.splice(position, 1)
+        continue
+      }
+      if (!bboxesOverlapOrTouch(current.bbox, other.bbox)) continue
+      candidates[index].push(otherIndex)
+      candidates[otherIndex].push(index)
+    }
+    active.push(index)
+  }
+
+  for (const candidateIndexes of candidates) {
+    candidateIndexes.sort((left, right) => left - right)
+  }
+  return candidates
+}
+
 function bboxesEqual(a: BBox, b: BBox): boolean {
   return (
     a.minX === b.minX &&
@@ -324,6 +379,7 @@ function buildNestingTree(
 ): NestingNode[] {
   const n = profiles.length
   const nodes: NestingNode[] = profiles.map((d) => ({ data: d, children: [] }))
+  const candidates = findOverlappingProfileCandidates(profiles)
   const ambiguous = new Set<number>()
   // parentOf[i] = j means profile j contains profile i (the chosen parent)
   const parentOf: Array<number | null> = new Array(n).fill(null)
@@ -348,7 +404,8 @@ function buildNestingTree(
   // so duplicates get their specific warning rather than a generic one).
   for (let i = 0; i < n; i++) {
     if (ambiguous.has(i)) continue
-    for (let j = i + 1; j < n; j++) {
+    for (const j of candidates[i]) {
+      if (j <= i) continue
       if (ambiguous.has(j)) continue
       if (areProfilesEqual(profiles[i], profiles[j])) {
         ambiguous.add(i)
@@ -371,8 +428,8 @@ function buildNestingTree(
   // specific and the edge warning stays deduplicated.
   const edgeContact = new Set<number>()
   for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      if (!bboxesOverlapOrTouch(profiles[i].bbox, profiles[j].bbox)) continue
+    for (const j of candidates[i]) {
+      if (j <= i) continue
       if (pathsEdgesIntersect(profiles[i].flattened, profiles[j].flattened)) {
         ambiguous.add(i)
         ambiguous.add(j)
@@ -412,8 +469,7 @@ function buildNestingTree(
     let bestParent: number | null = null
     let bestArea = Infinity
 
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
+    for (const j of candidates[i]) {
       // Self-invalid profiles can't be parents; others (including
       // edge-contact-ambiguous) are eligible as containers.
       if (profiles[j].selfInvalid) continue

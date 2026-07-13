@@ -14,6 +14,6 @@ Geometry file importers: SVG, DXF, STL, OBJ, and .camj.
 
 ## Tests
 - `svg.test.ts` — SVG paint-intent: inherited/default fill, stroke-only, fill+stroke, inline style precedence, open geometry intent
-- `classifier.test.ts` — nesting classifier: Paths/Solid regions/Auto modes, SVG paint intent, alternating nesting, smallest container, cross-layer nesting, ambiguity warnings, and manual-operation inference
+- `classifier.test.ts` — nesting classifier: Paths/Solid regions/Auto modes, SVG paint intent, alternating nesting, smallest container, cross-layer nesting, ambiguity warnings, manual-operation inference, and a 30,000-contour disjoint-solid performance regression
 - `camj.test.ts` — current-format .camj inspection plus folder, linked-instance, asset, constraint, operation, and stock merge coverage
 - `stl.test.ts`, `obj.test.ts` — mesh silhouette extraction
