@@ -2013,7 +2013,7 @@ export function CAMPanel({
                       }
                     }}
                   >
-                    <Icon id="export" />
+                    <Icon id="gcode" />
                   </button>
                   <button
                     className="tree-action-btn"
