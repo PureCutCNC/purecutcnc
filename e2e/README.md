@@ -41,7 +41,7 @@ Current smoke targets:
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
 - `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.
-- `overlapFeatureSelection.smoke.spec.ts` — overlapping sketch feature picker wiring, non-topmost selection, and landscape-tablet availability.
+- `overlapFeatureSelection.smoke.spec.ts` — overlapping sketch feature picker wiring, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
 
 ## Adding a test
 

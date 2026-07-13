@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { RefObject } from 'react'
 import type { FeatureKind } from '../../types/project'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -65,6 +65,23 @@ export function useOverlapFeaturePicker({
     canvasRef,
     clearTransientCanvasState,
   })
+
+  useEffect(() => {
+    if (!pendingSelection) return undefined
+
+    function dismissForOutsideAction(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && !workflowPanel.panelRef.current?.contains(target)) {
+        setPendingSelection(null)
+      }
+    }
+
+    document.addEventListener('pointerdown', dismissForOutsideAction, true)
+    return () => document.removeEventListener('pointerdown', dismissForOutsideAction, true)
+    // useCanvasWorkflowPanel keeps its panel ref stable, while its return object
+    // is intentionally recreated each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSelection])
 
   function open(candidates: readonly OverlapFeatureCandidate[], additive: boolean) {
     if (candidates.length < 2) return

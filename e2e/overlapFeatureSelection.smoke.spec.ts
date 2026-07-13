@@ -51,4 +51,40 @@ test.describe('Overlap feature selection browser smoke', () => {
     await expect(picker).not.toBeVisible()
     await expect(ui.tree.selectedRows(app.page)).toHaveCount(0)
   })
+
+  test('boxes and scrolls a long candidate list', async ({ app, ui }) => {
+    await seedOverlapFeatureProject(app.page, 17)
+
+    await clickCanvasCenter(ui.canvas.sketch(app.page))
+
+    const list = ui.overlapFeaturePicker.list(app.page)
+    await expect(list).toBeVisible()
+    await expect(ui.overlapFeaturePicker.candidates(app.page)).toHaveCount(17)
+    await expect(list).toHaveCSS('overflow-y', 'auto')
+
+    const dimensions = await list.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(dimensions.scrollHeight, 'long candidate list should scroll within its boxed viewport')
+      .toBeGreaterThan(dimensions.clientHeight)
+
+    await list.evaluate((element) => { element.scrollTop = element.scrollHeight })
+    expect(await list.evaluate((element) => element.scrollTop), 'candidate list should accept scrolling')
+      .toBeGreaterThan(0)
+  })
+
+  test('dismisses when the user starts a different action', async ({ app, ui }) => {
+    await seedOverlapFeatureProject(app.page)
+
+    await clickCanvasCenter(ui.canvas.sketch(app.page))
+
+    const picker = ui.overlapFeaturePicker.root(app.page)
+    await expect(picker).toBeVisible()
+
+    await ui.tree.rowByName(app.page, 'Bottom overlap').click()
+
+    await expect(picker).not.toBeVisible()
+    await expect(ui.tree.rowByName(app.page, 'Bottom overlap')).toHaveClass(/tree-row--selected/)
+  })
 })

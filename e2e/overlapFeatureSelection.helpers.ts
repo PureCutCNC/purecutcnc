@@ -57,7 +57,7 @@ function feature(id: string, name: string, definitionId: string) {
   }
 }
 
-function buildOverlapFeatureProjectJson(): string {
+function buildOverlapFeatureProjectJson(featureCount: number): string {
   const now = '2026-07-13T00:00:00.000Z'
   const stockWidth = 120
   const stockHeight = 90
@@ -100,14 +100,17 @@ function buildOverlapFeatureProjectJson(): string {
     dimensions: {},
     annotations: [],
     modelAssets: {},
-    featureDefinitions: {
-      'def-overlap-bottom': definition('def-overlap-bottom', stockWidth, stockHeight),
-      'def-overlap-top': definition('def-overlap-top', stockWidth, stockHeight),
-    },
-    features: [
-      feature('f-overlap-bottom', 'Bottom overlap', 'def-overlap-bottom'),
-      feature('f-overlap-top', 'Top overlap', 'def-overlap-top'),
-    ],
+    featureDefinitions: Object.fromEntries(Array.from({ length: featureCount }, (_, index) => {
+      const id = `overlap-${index + 1}`
+      return [`def-${id}`, definition(`def-${id}`, stockWidth, stockHeight)]
+    })),
+    features: Array.from({ length: featureCount }, (_, index) => {
+      const name = featureCount === 2
+        ? (index === 0 ? 'Bottom overlap' : 'Top overlap')
+        : `Overlap feature ${index + 1}`
+      const id = `overlap-${index + 1}`
+      return feature(`f-${id}`, name, `def-${id}`)
+    }),
     featureFolders: [],
     featureTree: [],
     global_constraints: [],
@@ -119,10 +122,8 @@ function buildOverlapFeatureProjectJson(): string {
   })
 }
 
-const OVERLAP_FEATURE_PROJECT_JSON = buildOverlapFeatureProjectJson()
-
-export async function seedOverlapFeatureProject(page: Page): Promise<void> {
-  await seedProject(page, OVERLAP_FEATURE_PROJECT_JSON)
+export async function seedOverlapFeatureProject(page: Page, featureCount = 2): Promise<void> {
+  await seedProject(page, buildOverlapFeatureProjectJson(featureCount))
 }
 
 export async function clickCanvasCenter(canvas: Locator): Promise<void> {
