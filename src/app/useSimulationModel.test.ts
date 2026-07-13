@@ -22,7 +22,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ToolpathResult } from '../engine/toolpaths'
-import type { Operation, Project } from '../types/project'
+import type { Operation, Project, Tool } from '../types/project'
 import { newProject } from '../types/project'
 import { useSimulationModel } from './useSimulationModel'
 
@@ -158,6 +158,52 @@ function testSelectedOperationCount() {
   console.log('selected simulation operation count: PASSED')
 }
 
+function makeTool(overrides: Partial<Tool> = {}): Tool {
+  return {
+    id: 'tool-1',
+    name: 'Test endmill',
+    units: 'mm',
+    type: 'flat_endmill',
+    diameter: 6,
+    vBitAngle: null,
+    flutes: 2,
+    material: 'carbide',
+    defaultRpm: 18000,
+    defaultFeed: 800,
+    defaultPlungeFeed: 300,
+    defaultStepdown: 2,
+    defaultStepover: 0.4,
+    maxCutDepth: 20,
+    ...overrides,
+  }
+}
+
+function testPlaybackBaseGridIsLazyAndCached() {
+  console.log('Testing playback base grid computes lazily and caches...')
+
+  const selectedOperation = makeOperation()
+  const project = { ...makeProject([selectedOperation]), tools: [makeTool()] }
+  const result = renderUseSimulationModel(makeArgs({
+    project,
+    centerTab: 'simulation',
+    simulationMode: 'selected',
+    selectedOperation,
+    selectedToolpath: makeToolpath(selectedOperation.id),
+  }))
+
+  const playbackInput = result.simulationPlaybackInput
+  assert(playbackInput !== null, 'playback input should exist for a selected op with a tool')
+
+  const first = playbackInput!.getBaseGrid()
+  assert(first.cols > 0 && first.rows > 0, 'base grid should have a real resolution')
+  assert(first.topZ.length === first.cols * first.rows, 'base grid heightfield should match its dimensions')
+
+  const second = playbackInput!.getBaseGrid()
+  assert(second === first, 'repeat calls must return the cached grid, not replay again')
+
+  console.log('lazy cached playback base grid: PASSED')
+}
+
 function testVisibleOperationCount() {
   console.log('Testing visible simulation operation count...')
 
@@ -183,6 +229,7 @@ function testVisibleOperationCount() {
 try {
   testSimulationResultIsNullOffSimulationTab()
   testSelectedOperationCount()
+  testPlaybackBaseGridIsLazyAndCached()
   testVisibleOperationCount()
   console.log('\nAll useSimulationModel tests PASSED.')
 } catch (e) {

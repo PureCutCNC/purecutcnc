@@ -20,10 +20,8 @@
  * Run with: npx tsx src/engine/simulation/gpuMesh.test.ts
  */
 
+import * as THREE from 'three'
 import {
-  SHADER_BOUNDARY_VERTICES_PER_CELL,
-  createDynamicProfileBoundaryGeometries,
-  createShaderDrivenBoundaryGeometries,
   createStockPlaneGeometries,
   createStockPlaneGeometry,
 } from './gpuMesh'
@@ -68,48 +66,53 @@ function testChunksLargePlanesIntoUint16Geometry(): void {
   }
 }
 
-function testChunksLargeDynamicProfileBoundaries(): void {
-  const geometries = createDynamicProfileBoundaryGeometries(makeGrid(280, 280))
-  assert(geometries.length > 1, 'expected high-detail dynamic profile boundary to be chunked')
+// The stock plane geometry is stored flat (Y = 0) and displaced up to the
+// heightfield in the vertex shader. Its bounding volume must therefore cover
+// the true displaced Y range [stockBottomZ, stockTopZ]; if it were computed
+// from the raw flat positions it would collapse to a zero-height slab at Y = 0,
+// and three's frustum culler would wrongly drop bottom-of-frame chunks at high
+// detail (surface teeth revealing the wall behind). Pin the Y span so that
+// regression can't return.
+function testStockPlaneChunkBoundsCoverDisplacedHeight(): void {
+  const grid = makeGrid(280, 280) // high enough to force chunking
+  const geometries = createStockPlaneGeometries(grid)
+  assert(geometries.length > 1, 'expected the plane to be chunked for this test to be meaningful')
 
   for (const geometry of geometries) {
-    const position = geometry.getAttribute('position')
-    assert(position.count <= 65535, `expected boundary chunk vertex count to stay small, got ${position.count}`)
-    geometry.dispose()
-  }
-}
-
-// The shader-driven playback boundary mesh emits a fixed number of vertices
-// per cell (3 quads × 6 un-indexed verts per cell + a small boundary term for
-// outer right/bottom walls). The viewport's high-detail guard
-// (SHADER_DRIVEN_BOUNDARY_MAX_CELLS in SimulationViewport.tsx) sizes itself
-// against SHADER_BOUNDARY_VERTICES_PER_CELL, so a regression that bumps the
-// per-cell vertex count would silently raise memory usage at every detail
-// level. Pin both the constant and the chunk shape.
-function testShaderDrivenBoundaryVertexCountScales(): void {
-  for (const size of [16, 24, 48]) {
-    const geometries = createShaderDrivenBoundaryGeometries(makeGrid(size, size))
-    const totalVerts = geometries.reduce((sum, g) => sum + g.getAttribute('position').count, 0)
-    const cells = size * size
-    const expectedMin = SHADER_BOUNDARY_VERTICES_PER_CELL * cells
-    // Boundary cells emit extra right/bottom walls; cap at 22 verts/cell to
-    // catch accidental quadratic growth without being so tight that the
-    // boundary surcharge for tiny grids fails the test.
-    const expectedMax = 22 * cells + 6 * 4 * size
+    const box = geometry.boundingBox
+    if (!box) throw new Error('Assertion failed: stock plane chunk must carry a bounding box')
     assert(
-      totalVerts >= expectedMin && totalVerts <= expectedMax,
-      `shader-driven boundary vertex count for ${size}x${size} should be in [${expectedMin}, ${expectedMax}], got ${totalVerts}`,
+      Math.abs(box.min.y - grid.stockBottomZ) < 1e-6,
+      `chunk bounding box min Y should sit at stockBottomZ (${grid.stockBottomZ}), got ${box.min.y}`,
     )
-    for (const geometry of geometries) {
-      const position = geometry.getAttribute('position')
-      assert(position.count <= 65535, `expected shader-driven chunk to stay under Uint16 limit, got ${position.count}`)
-      geometry.dispose()
-    }
+    assert(
+      Math.abs(box.max.y - grid.stockTopZ) < 1e-6,
+      `chunk bounding box max Y should reach stockTopZ (${grid.stockTopZ}), got ${box.max.y}`,
+    )
+    const sphere = geometry.boundingSphere
+    if (!sphere) throw new Error('Assertion failed: stock plane chunk must carry a bounding sphere')
+    // The sphere must be centered at the true mid-height, not at Y = 0 (the old
+    // flat-slab bug centered it half a thickness too low) — check the top-face
+    // center sits comfortably inside.
+    const midHeight = (grid.stockBottomZ + grid.stockTopZ) / 2
+    assert(
+      Math.abs(sphere.center.y - midHeight) < 1e-6,
+      `chunk bounding sphere should be centered at mid-height (${midHeight}), got ${sphere.center.y}`,
+    )
+    const topCenter = new THREE.Vector3(
+      (box.min.x + box.max.x) / 2,
+      grid.stockTopZ,
+      (box.min.z + box.max.z) / 2,
+    )
+    assert(
+      sphere.containsPoint(topCenter),
+      'chunk bounding sphere must contain the displaced top surface',
+    )
+    geometry.dispose()
   }
 }
 
 testUsesUint16WhenVertexIdsFit()
 testChunksLargePlanesIntoUint16Geometry()
-testChunksLargeDynamicProfileBoundaries()
-testShaderDrivenBoundaryVertexCountScales()
+testStockPlaneChunkBoundsCoverDisplacedHeight()
 console.log('gpu mesh tests passed')
