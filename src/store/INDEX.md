@@ -68,7 +68,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
 - `gearCreation.test.ts` — gear creation store flow: radius placement, optional bore as a grouped subtract feature, validation, selection, and definitions
 - `featureReferencesMigration.test.ts` — strict 3.0 serialization, 1.0/2.0/2.1 one-way conversion, malformed-row rejection, and linked-instance size regression
-- `featureResolver.test.ts` — matrix resolution, definition lookup, and canvas-owned derived-feature cache identity/invalidation behavior
+- `featureResolver.test.ts` — matrix resolution and definition lookup behavior
 - `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
 - `helpers/clipping.test.ts` — join-connectivity predicates (issue #271): shared-edge, corner-contact, disjoint, overlap, and hole-forming union cases for featuresOverlap and the grouping helpers
 - `instanceTransforms.test.ts` — instance transform matrix composition

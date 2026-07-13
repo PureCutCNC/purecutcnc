@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
@@ -149,7 +149,7 @@ import {
   pasteClipboardFeatures,
   type FeatureClipboardPayload,
 } from '../../platform/featureClipboard'
-import { createResolvedProjectFeatureCache, resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
+import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
 export type { SketchCanvasHandle }
 
@@ -335,11 +335,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingRectCorner,
     setRectStockDimension,
   } = useProjectStore()
-
-  // Derived world-space features stay outside project state and are refreshed
-  // only when the immutable project object changes.
-  const resolvedFeatureCache = useMemo(createResolvedProjectFeatureCache, [])
-  const resolvedFeatures = resolvedFeatureCache.resolve(project)
 
   const projectRef = useRef(project)
   const selectionRef = useRef(selection)
@@ -761,7 +756,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     const activeUrls = new Set(
-      resolvedFeatures
+      resolvedProjectFeatures(project)
         .map((feature) => feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null)
         .filter((url): url is string => !!url),
     )
@@ -787,7 +782,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       cache.set(url, image)
       image.src = url
     }
-  }, [resolvedFeatures])
+  }, [project])
 
   useEffect(() => {
     return () => {
@@ -870,7 +865,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (!ctx) return
 
     const project = projectRef.current
-    const features = resolvedFeatures
+    const features = resolvedProjectFeatures(project)
     const selection = selectionRef.current
     const pendingAdd = pendingAddRef.current
     const pendingMove = pendingMoveRef.current
@@ -1973,11 +1968,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       exclude?: OpenEndpointHit | null
     },
   ): OpenEndpointHit | null {
+    const project = projectRef.current
     const rawCanvas = worldToCanvas(rawPoint, vt)
     let best: OpenEndpointHit | null = null
     let bestDistance = OPEN_ENDPOINT_JOIN_HIT_RADIUS * OPEN_ENDPOINT_JOIN_HIT_RADIUS
 
-    const features = resolvedFeatures
+    const features = resolvedProjectFeatures(project)
     for (let index = features.length - 1; index >= 0; index -= 1) {
       const feature = features[index]
       if (

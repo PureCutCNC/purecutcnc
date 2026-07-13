@@ -485,40 +485,6 @@ export function resolvedProjectFeatures(project: Project): ResolvedSketchFeature
   })
 }
 
-/**
- * A canvas-owned cache for the current immutable project revision. This retains
- * derived geometry only; callers must never put its result into Project,
- * history, or serialized data.
- */
-export interface ResolvedProjectFeatureCache {
-  resolve(project: Project): ResolvedSketchFeature[]
-}
-
-/**
- * Create a one-project read cache for a rendering or interaction surface.
- *
- * The cache intentionally retains only the latest immutable Project object.
- * Replacing the project invalidates the result by identity, while redraw-only
- * state can reuse the same derived world-space features.
- */
-export function createResolvedProjectFeatureCache(): ResolvedProjectFeatureCache {
-  let cachedProject: Project | null = null
-  let cachedFeatures: ResolvedSketchFeature[] | null = null
-
-  return {
-    resolve(project: Project): ResolvedSketchFeature[] {
-      if (cachedProject === project && cachedFeatures !== null) {
-        return cachedFeatures
-      }
-
-      const features = resolvedProjectFeatures(project)
-      cachedProject = project
-      cachedFeatures = features
-      return features
-    },
-  }
-}
-
 /** Build an ephemeral geometry-bearing project view for legacy read APIs. */
 export function resolveProject(project: Project): ResolvedProject {
   return {
