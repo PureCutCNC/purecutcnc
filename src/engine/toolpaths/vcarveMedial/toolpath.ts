@@ -44,15 +44,12 @@ export interface MedialToolpathParams {
   /** XY-equivalent simplification tolerance (0 disables). */
   simplifyTolerance: number
   /**
-   * Baseline XY gap that may be bridged with a direct tool-down cut when the
-   * next chain starts at the same or deeper Z (0 disables all linking). On
-   * top of this, gaps within 90% of both endpoints' clearance are always
-   * linkable regardless of Z direction: both points then lie inside each
-   * other's medial ball, i.e. inside the groove opening already carved around
-   * that junction/terminal, so the connecting cut only shaves material that
-   * the final V-carve surface removes anyway.
+   * When true, two chain ends may be bridged with a direct tool-down cut
+   * instead of a retract when the connecting segment provably stays inside
+   * material the V-carve already removes (see the effective-clearance test in
+   * emitMedialToolpath). Disable to always retract between chains.
    */
-  linkBudget: number
+  enableChainLinks: boolean
   /**
    * Clearance slack for redundant-branch pruning: a leaf branch is dropped
    * when every point's groove protrudes at most this far (in clearance units)
@@ -70,6 +67,12 @@ interface Point3 {
 }
 
 const POSITION_EPS = 1e-6
+/**
+ * Safety margin on the effective-clearance link test. A value below 1 keeps
+ * the bridged segment strictly inside the already-carved disk rather than up
+ * to its rim, absorbing sampling/float error.
+ */
+const LINK_CLEARANCE_FRACTION = 0.9
 
 // ---------------------------------------------------------------------------
 // Chain extraction
@@ -259,6 +262,13 @@ export function emitMedialToolpath(
   startPosition: ToolpathPoint | null,
 ): ToolpathPoint | null {
   const depthOf = (clearance: number): number => Math.min(clearance / params.slope, params.maxDepth)
+  // Radius of the V-bit's carved footprint at the material surface for a
+  // skeleton point of the given clearance: the cone opens to depth·slope, and
+  // depth is clamped by maxDepth, so the surface disk is
+  // min(clearance, maxDepth·slope) — NOT the raw clearance. Using the raw
+  // clearance would treat clamped wide areas as fully cleared and let a link
+  // gouge across material the shallow groove never reaches.
+  const carvedRadius = (clearance: number): number => depthOf(clearance) * params.slope
   const toPoint3 = (node: number): Point3 => ({
     x: graph.nodes[node].x,
     y: graph.nodes[node].y,
@@ -307,11 +317,18 @@ export function emitMedialToolpath(
     const entry = chain[0]
 
     const gap = position ? Math.hypot(entry.x - position.x, entry.y - position.y) : Infinity
-    const withinMedialBalls = gap <= 0.9 * Math.min(positionClearance, entryClearance)
-    const linkable = params.linkBudget > 0
+    // Safe to bridge only when the whole segment stays inside the surface disk
+    // already carved at the tool's current point: that disk has radius
+    // carvedRadius(positionClearance), so any target within it (and, kept
+    // symmetric, within the destination's own carved disk) is over cleared
+    // material. This uses the clamped effective clearance, so a shallow groove
+    // in a wide region no longer authorises a wide cut across raw material.
+    const linkReach = LINK_CLEARANCE_FRACTION
+      * Math.min(carvedRadius(positionClearance), carvedRadius(entryClearance))
+    const linkable = params.enableChainLinks
       && position !== null
       && position.z < params.safeZ - 1e-6
-      && (withinMedialBalls || (gap <= params.linkBudget && entry.z <= position.z + 1e-3))
+      && gap <= linkReach
 
     if (position === null) {
       position = pushRapidAndPlunge(moves, null, entry, params.safeZ)

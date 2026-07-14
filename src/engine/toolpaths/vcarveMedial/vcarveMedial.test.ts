@@ -523,7 +523,7 @@ function testDotRegionCollapsesToSinglePlunge(): void {
   const moves: ToolpathMove[] = []
   emitMedialToolpath(
     graph,
-    { topZ: 0, maxDepth: 5, slope: Math.tan(Math.PI / 6), safeZ: 1, simplifyTolerance: 0.0875, linkBudget: 1.05, redundancyTolerance: 0 },
+    { topZ: 0, maxDepth: 5, slope: Math.tan(Math.PI / 6), safeZ: 1, simplifyTolerance: 0.0875, enableChainLinks: true, redundancyTolerance: 0 },
     moves,
     null,
   )
@@ -544,10 +544,12 @@ function testEmissionLinksNearbyChainEnds(): void {
     ],
     adjacency: [[1], [0], [3], [2]],
   }
+  // Wide clearance 1 (unclamped): carved radius = 1, link reach = 0.9, so the
+  // 0.2 gap between the chain ends is bridged tool-down.
   const moves: ToolpathMove[] = []
   emitMedialToolpath(
     graph,
-    { topZ: 0, maxDepth: 5, slope: 1, safeZ: 3, simplifyTolerance: 0, linkBudget: 0.5, redundancyTolerance: 0 },
+    { topZ: 0, maxDepth: 5, slope: 1, safeZ: 3, simplifyTolerance: 0, enableChainLinks: true, redundancyTolerance: 0 },
     moves,
     null,
   )
@@ -555,8 +557,8 @@ function testEmissionLinksNearbyChainEnds(): void {
   assert(plunges.length === 1, `expected a single plunge (link, not retract), got ${plunges.length}`)
   assert(cutMoves(moves).length === 3, `expected 2 chain cuts + 1 link cut, got ${cutMoves(moves).length}`)
 
-  // Outside the budget AND outside the endpoints' medial balls the emitter
-  // must retract instead of dragging the tool.
+  // Shallow clearance 0.05: the carved disk is only 0.045 across, smaller than
+  // the 0.2 gap, so the tool must retract instead of gouging across raw stock.
   const shallow: MedialGraph = {
     nodes: graph.nodes.map((n) => ({ ...n, clearance: 0.05 })),
     adjacency: graph.adjacency,
@@ -564,15 +566,50 @@ function testEmissionLinksNearbyChainEnds(): void {
   const farMoves: ToolpathMove[] = []
   emitMedialToolpath(
     shallow,
-    { topZ: 0, maxDepth: 5, slope: 1, safeZ: 3, simplifyTolerance: 0, linkBudget: 0.1, redundancyTolerance: 0 },
+    { topZ: 0, maxDepth: 5, slope: 1, safeZ: 3, simplifyTolerance: 0, enableChainLinks: true, redundancyTolerance: 0 },
     farMoves,
     null,
   )
   assert(
     farMoves.filter((m) => m.kind === 'plunge').length === 2,
-    'expected a retract + replunge when the gap exceeds budget and medial balls',
+    'expected a retract + replunge when the gap exceeds the carved-disk reach',
   )
   console.log('chain-end linking PASSED')
+}
+
+function testLinkRespectsClampedDepth(): void {
+  console.log('Testing links use clamped effective clearance (no gouge on shallow wide carve)...')
+  // Reviewer scenario: raw clearance 1 would authorise bridging an 0.8 gap,
+  // but maxDepth 0.1 (slope 1) means the groove only reaches 0.1 sideways, so
+  // an 0.8 link would gouge 0.7 of raw stock. The emitter must retract.
+  const graph: MedialGraph = {
+    nodes: [
+      { x: 0, y: 0, clearance: 1 },
+      { x: 2, y: 0, clearance: 1 },
+      { x: 2.8, y: 0, clearance: 1 },
+      { x: 4, y: 0, clearance: 1 },
+    ],
+    adjacency: [[1], [0], [3], [2]],
+  }
+  const moves: ToolpathMove[] = []
+  emitMedialToolpath(
+    graph,
+    { topZ: 0, maxDepth: 0.1, slope: 1, safeZ: 3, simplifyTolerance: 0, enableChainLinks: true, redundancyTolerance: 0 },
+    moves,
+    null,
+  )
+  // A gouging link would join the two chains with a single plunge; retracting
+  // between them yields two. (Raw-clearance logic would have linked here.)
+  assert(
+    moves.filter((m) => m.kind === 'plunge').length === 2,
+    'clamped depth must force a retract between the two chains, not a gouging link',
+  )
+  // The only cut moves are the two along-skeleton chain cuts; none bridges the
+  // uncarved 0.8 gap between the chains' facing ends (x≈2 to x≈2.8).
+  const bridges = cutMoves(moves).some((m) =>
+    Math.abs(m.from.x - 2) < 1e-6 && Math.abs(m.to.x - 2.8) < 1e-6)
+  assert(!bridges, 'a link cut bridged the uncarved inter-chain gap')
+  console.log('clamped-depth link guard PASSED')
 }
 
 function testGeneratorTriangle(): void {
@@ -611,6 +648,7 @@ try {
   testGeneratorTextFeatureTarget()
   testDotRegionCollapsesToSinglePlunge()
   testEmissionLinksNearbyChainEnds()
+  testLinkRespectsClampedDepth()
   testGeneratorTriangle()
   console.log('\nAll vcarveMedial tests PASSED.')
 } catch (e) {

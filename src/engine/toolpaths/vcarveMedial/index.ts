@@ -245,7 +245,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
           slope,
           safeZ,
           simplifyTolerance: resolution * 0.25,
-          linkBudget: resolution * 3,
+          enableChainLinks: true,
           redundancyTolerance: resolution * 0.75,
           debugSource: operation.debugToolpath === true ? 'medial-axis' : undefined,
         },
