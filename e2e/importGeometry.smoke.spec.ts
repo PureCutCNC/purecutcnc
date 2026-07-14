@@ -23,6 +23,7 @@
  * integration through the real import path.
  */
 
+import { chromium } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { getProject } from './helpers'
 import {
@@ -36,6 +37,27 @@ function projectFeatureOperations(project: Record<string, unknown>): Array<strin
   const features = project.features as Array<{ definitionId: string }>
   const definitions = project.featureDefinitions as Record<string, { operation?: string }>
   return features.map((feature) => definitions[feature.definitionId]?.operation)
+}
+
+const LARGE_PATH_COUNT = 2980
+const LARGE_PATH_SEGMENT_COUNT = 38
+
+function largeStrokeOnlySvg(): string {
+  const paths = Array.from({ length: LARGE_PATH_COUNT }, (_, index) => {
+    const centerX = (index % 60) * 3 + 1.5
+    const centerY = Math.floor(index / 60) * 3 + 1.5
+    const points = Array.from({ length: LARGE_PATH_SEGMENT_COUNT }, (_, pointIndex) => {
+      const angle = (pointIndex / LARGE_PATH_SEGMENT_COUNT) * Math.PI * 2
+      return {
+        x: (centerX + Math.cos(angle)).toFixed(3),
+        y: (centerY + Math.sin(angle)).toFixed(3),
+      }
+    })
+    const [start, ...rest] = points
+    if (!start) return ''
+    return `<path d="M ${start.x} ${start.y} ${rest.map((point) => `L ${point.x} ${point.y}`).join(' ')} Z" />`
+  }).join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="180mm" height="150mm" viewBox="0 0 180 150" fill="none" stroke="#000">${paths}</svg>`
 }
 
 // ── Dialog wiring ──────────────────────────────────────────────────────
@@ -164,6 +186,52 @@ test.describe('SVG import', () => {
     const ops = projectFeatureOperations(project).sort()
     expect(ops).toHaveLength(2)
     expect(ops).toEqual(['add', 'line'])
+  })
+
+  test('large path import completes and leaves the app interactive', async () => {
+    test.setTimeout(60_000)
+    const browser = await chromium.launch()
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    const errors: string[] = []
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text())
+    })
+    page.on('pageerror', (error) => errors.push(error.message))
+
+    try {
+      await page.goto('http://localhost:1420/')
+      await page.waitForSelector('canvas', { timeout: 15_000 })
+      const dialog = await openImportDialog(page)
+
+      await dialog.locator('input[type="file"]').setInputFiles({
+        name: 'large-path-import.svg',
+        mimeType: 'image/svg+xml',
+        buffer: Buffer.from(largeStrokeOnlySvg()),
+      })
+      await selectSourceUnitsMm(dialog)
+
+      const summary = dialog.locator('[data-testid="import-analysis-summary"]')
+      await expect(summary).toBeVisible({ timeout: 30_000 })
+      await dialog.locator('#import-geometry-mode').selectOption('paths')
+      await expect(summary.locator('[data-testid="import-summary-closed-line"] strong')).toHaveText(
+        `${LARGE_PATH_COUNT}`,
+        { timeout: 30_000 },
+      )
+
+      await dialog.locator('.dialog-footer .btn-primary').click()
+      await expect(dialog).not.toBeVisible({ timeout: 30_000 })
+
+      const project = await getProject(page)
+      expect(project.features as Array<unknown>).toHaveLength(LARGE_PATH_COUNT)
+      const followUpDialog = await openImportDialog(page)
+      await expect(followUpDialog).toBeVisible()
+      await followUpDialog.locator('.dialog-close').click()
+      await expect(followUpDialog).not.toBeVisible({ timeout: 3000 })
+
+      expect(errors, `browser errors: ${errors.join(' | ')}`).toHaveLength(0)
+    } finally {
+      await browser.close()
+    }
   })
 })
 

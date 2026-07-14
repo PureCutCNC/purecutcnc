@@ -27,7 +27,7 @@ import { rectProfile } from '../../types/project'
 import { newProject, type Matrix2D, type Project, type SketchFeature } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { findHitFeatureId, featureFullyInsideRect } from './hitTest'
+import { findHitFeatureId, findHitFeatureIds, featureFullyInsideRect } from './hitTest'
 import type { ViewTransform } from './viewTransform'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -114,13 +114,19 @@ function makeProject(
   assert(raw.definitionId === 'f0001', 'feature should have definitionId')
   assert(raw.transform?.e === 100 && raw.transform?.f === 50, 'feature should have translate transform')
 
+  const resolvedFeatures = resolvedProjectFeatures(project)
+
   // Point at world position (105, 53) — inside the transformed profile.
-  const hitWorld = findHitFeatureId({ x: 105, y: 53 }, resolvedProjectFeatures(project), vt)
+  const hitWorld = findHitFeatureId({ x: 105, y: 53 }, resolvedFeatures, vt)
   assert(hitWorld === 'f0001', 'point inside transformed world profile should hit')
+  assert(
+    findHitFeatureIds({ x: 105, y: 53 }, resolvedFeatures, vt).join(',') === 'f0001',
+    'candidate hits should use the transformed world profile',
+  )
 
   // Point at definition-local position (5, 3) — should NOT hit because the
   // world-space profile is at (100,50)-(110,56), and (5,3) is outside it.
-  const hitLocal = findHitFeatureId({ x: 5, y: 3 }, resolvedProjectFeatures(project), vt)
+  const hitLocal = findHitFeatureId({ x: 5, y: 3 }, resolvedFeatures, vt)
   assert(hitLocal === null, 'point at definition-local position should NOT hit transformed feature')
 
   console.log('   ✓ transformed feature hit test correct')
@@ -193,6 +199,28 @@ function makeProject(
   assert(resolvedList[0].instanceId === 'f0001', 'resolved instanceId = feature id')
 
   console.log('   ✓ instance IDs preserved')
+}
+
+// Overlapping feature picks retain topmost-first order and ignore hidden features.
+{
+  console.log('6. Overlap hit candidates...')
+
+  const bottom = makeFeature('bottom')
+  const hidden = makeFeature('hidden', undefined, { visible: false })
+  const top = makeFeature('top')
+  const project = makeProject([bottom, hidden, top])
+  const features = resolvedProjectFeatures(project)
+
+  const hitIds = findHitFeatureIds({ x: 5, y: 3 }, features, vt)
+  assert(hitIds.join(',') === 'top,bottom', `expected top,bottom candidates, got ${hitIds.join(',')}`)
+  assert(findHitFeatureId({ x: 5, y: 3 }, features, vt) === 'top', 'single-hit helper should keep returning topmost candidate')
+
+  // Closed-profile edge tolerance is part of ordinary selection and must apply
+  // to the full candidate list as well.
+  const edgeHitIds = findHitFeatureIds({ x: 14, y: 3 }, features, vt)
+  assert(edgeHitIds.join(',') === 'top,bottom', `expected edge candidates, got ${edgeHitIds.join(',')}`)
+
+  console.log('   ✓ overlap candidates retain hit-test semantics')
 }
 
 console.log('\nall hitTest.test.ts assertions passed')

@@ -93,6 +93,7 @@ export interface CanvasKeyboardCtx {
   originPreviewPointRef: MutableRefObject<PendingPreviewPoint | null>
   hoveredEditControlRef: MutableRefObject<SketchControlRef | null>
   canvasRef: RefObject<HTMLCanvasElement | null>
+  overlapFeaturePickerOpen: boolean
 
   dimEdit: DimensionEditWorkflow
   constraint: ConstraintWorkflow
@@ -117,6 +118,7 @@ export interface CanvasKeyboardCtx {
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
   cancelPendingSketchEdit: () => void
+  cancelOverlapFeaturePicker: () => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
   completePendingShapeAction: () => void
   beginHistoryTransaction: () => void
@@ -166,6 +168,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     originPreviewPointRef,
     hoveredEditControlRef,
     canvasRef,
+    overlapFeaturePickerOpen,
     dimEdit,
     constraint,
     move,
@@ -188,6 +191,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     confirmCutCutters,
     cancelPendingShapeAction,
     cancelPendingSketchEdit,
+    cancelOverlapFeaturePicker,
     completePendingMove,
     completePendingShapeAction,
     beginHistoryTransaction,
@@ -216,6 +220,12 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     const pendingOffset = pendingOffsetRef.current
     const pendingShapeAction = pendingShapeActionRef.current
     const viewState = viewStateRef.current
+
+    if (event.key === 'Escape' && overlapFeaturePickerOpen) {
+      event.preventDefault()
+      cancelOverlapFeaturePicker()
+      return
+    }
 
     // ── Measure & dimension tools ──
     if (event.key === 'Escape' && tapeMeasureRef.current) {

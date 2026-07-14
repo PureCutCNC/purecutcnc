@@ -248,14 +248,32 @@ export function segmentHitTest(
   return best
 }
 
+function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): boolean {
+  return pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)
+    || pointNearProfile(worldPoint, feature.sketch.profile, vt)
+}
+
+/**
+ * Returns every visible feature at a point in topmost-first draw order.
+ *
+ * The selection UI uses this to disambiguate overlaps. Callers that only need
+ * the topmost feature should keep using {@link findHitFeatureId}.
+ */
+export function findHitFeatureIds(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string[] {
+  const hitIds: string[] = []
+  for (let index = features.length - 1; index >= 0; index -= 1) {
+    const feature = features[index]
+    if (!feature.visible) continue
+    if (featureContainsPoint(feature, worldPoint, vt)) hitIds.push(feature.id)
+  }
+  return hitIds
+}
+
 export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (
-      pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)
-      || pointNearProfile(worldPoint, feature.sketch.profile, vt)
-    ) {
+    if (featureContainsPoint(feature, worldPoint, vt)) {
       return feature.id
     }
   }
