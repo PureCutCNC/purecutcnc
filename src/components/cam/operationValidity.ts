@@ -31,6 +31,8 @@ import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry } from '../../text'
 import { resolvedFeatureMap, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 
+type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
+
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
@@ -64,8 +66,43 @@ export function operationRequiresClosedProfiles(kind: OperationKind): boolean {
   return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
 }
 
-export function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
-  const featureById = resolvedFeatureMap(project)
+function emptySelectionHint(kind: OperationKind): string {
+  switch (kind) {
+    case 'drilling':
+      return 'Select one or more circle features first'
+    case 'follow_line':
+      return 'Select one or more open or closed features first; closed regions are optional filters'
+    case 'surface_clean':
+      return 'Select one or more add/model features first; closed regions are optional filters'
+    case 'v_carve':
+    case 'v_carve_recursive':
+      return 'Select one or more closed subtract or line features first'
+    case 'rough_surface':
+    case 'finish_surface':
+    case 'finish_surface_cleanup':
+      return 'Select an imported model feature first'
+    default:
+      return 'Select one or more compatible features first'
+  }
+}
+
+export function getOperationAddHint(
+  project: Project,
+  selection: SelectionState,
+  kind: OperationKind,
+): string | null {
+  if (selection.selectedFeatureIds.length === 0) {
+    return emptySelectionHint(kind)
+  }
+
+  return getOperationAddHintWithMap(selection, kind, resolvedFeatureMap(project))
+}
+
+function getOperationAddHintWithMap(
+  selection: SelectionState,
+  kind: OperationKind,
+  featureById: ResolvedFeatureMap,
+): string | null {
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target, so any selection containing it is rejected up front
   // with one clear message (issue #199).
@@ -77,10 +114,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'drilling') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more circle features first'
-    }
-
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -95,9 +128,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'follow_line') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more open or closed features first; closed regions are optional filters'
-    }
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -109,10 +139,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'surface_clean') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more add/model features first; closed regions are optional filters'
-    }
-
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -135,10 +161,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'v_carve' || kind === 'v_carve_recursive') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select one or more closed subtract or line features first'
-    }
-
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -159,10 +181,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'rough_surface') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select an imported model feature first'
-    }
-
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -186,10 +204,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
   }
 
   if (kind === 'finish_surface' || kind === 'finish_surface_cleanup') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return 'Select an imported model feature first'
-    }
-
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -215,10 +229,6 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
     }
 
     return null
-  }
-
-  if (selection.selectedFeatureIds.length === 0) {
-    return 'Select one or more compatible features first'
   }
 
   const features = selection.selectedFeatureIds
@@ -339,15 +349,30 @@ function singleFeatureSelection(featureId: string): SelectionState {
  * the CAM panel's single-add behaviour) and a friendly menu label.
  */
 export function validQuickOperationsForFeature(project: Project, featureId: string): QuickOperation[] {
-  const feature = resolvedFeatureMap(project).get(featureId)
+  const featureById = resolvedFeatureMap(project)
+  const feature = featureById.get(featureId)
   if (!feature) {
     return []
   }
 
   const selection = singleFeatureSelection(featureId)
   return QUICK_OPERATION_KINDS
-    .filter((kind) => getOperationAddHint(project, selection, kind) === null)
+    .filter((kind) => getOperationAddHintWithMap(selection, kind, featureById) === null)
     .map((kind) => ({ kind, pass: 'rough' as OperationPass, label: quickOperationLabel(kind) }))
+}
+
+function compatibleFeatureIdsForOperationWithMap(
+  project: Project,
+  kind: OperationKind,
+  featureById: ResolvedFeatureMap,
+): string[] {
+  return project.features
+    .filter((feature) => getOperationAddHintWithMap(
+      singleFeatureSelection(feature.id),
+      kind,
+      featureById,
+    ) === null)
+    .map((feature) => feature.id)
 }
 
 /**
@@ -358,9 +383,8 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
  * operation is armed in the "Add operation" menu.
  */
 export function compatibleFeatureIdsForOperation(project: Project, kind: OperationKind): string[] {
-  return project.features
-    .filter((feature) => getOperationAddHint(project, singleFeatureSelection(feature.id), kind) === null)
-    .map((feature) => feature.id)
+  const featureById = resolvedFeatureMap(project)
+  return compatibleFeatureIdsForOperationWithMap(project, kind, featureById)
 }
 
 /**
@@ -373,7 +397,8 @@ export function compatibleFeatureIdsForOperation(project: Project, kind: Operati
  * unambiguous "all" to select.
  */
 export function selectAllCompatibleFeatureIds(project: Project, kind: OperationKind): string[] {
-  const featureIds = compatibleFeatureIdsForOperation(project, kind)
+  const featureById = resolvedFeatureMap(project)
+  const featureIds = compatibleFeatureIdsForOperationWithMap(project, kind, featureById)
   if (featureIds.length === 0) {
     return []
   }
@@ -386,7 +411,7 @@ export function selectAllCompatibleFeatureIds(project: Project, kind: OperationK
     sketchEditTool: null,
     activeControl: null,
   }
-  return getOperationAddHint(project, selection, kind) === null ? featureIds : []
+  return getOperationAddHintWithMap(selection, kind, featureById) === null ? featureIds : []
 }
 
 /**

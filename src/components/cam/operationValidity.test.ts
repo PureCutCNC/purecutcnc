@@ -418,6 +418,30 @@ function testVCarveSelectAllIncludesLines(): void {
   )
 }
 
+function testLargeCompatibilityScanResolvesEachInstanceOnce(): void {
+  const featureCount = 250
+  const project = projectWith(Array.from(
+    { length: featureCount },
+    (_, index) => makeFeature(`line-${index}`, 'line'),
+  ))
+  const definitions = project.featureDefinitions
+  let definitionReads = 0
+  project.featureDefinitions = new Proxy(definitions, {
+    get(target, property, receiver) {
+      if (typeof property === 'string') definitionReads += 1
+      return Reflect.get(target, property, receiver)
+    },
+  })
+
+  const compatibleIds = selectAllCompatibleFeatureIds(project, 'v_carve')
+
+  assert(compatibleIds.length === featureCount, 'all closed lines should be compatible with V-carve')
+  assert(
+    definitionReads <= featureCount * 2,
+    `compatibility scan should resolve each instance once, got ${definitionReads} definition reads for ${featureCount} features`,
+  )
+}
+
 function testEmptySelectionVCarveHintMentionsLines(): void {
   const project = projectWith([])
   const hint = getOperationAddHint(project, selectionFor([]), 'v_carve')
@@ -457,6 +481,7 @@ testClosedLineInCompatibleFeatureIds()
 testClosedLineInQuickOperations()
 testOpenLineNotInQuickOperations()
 testVCarveSelectAllIncludesLines()
+testLargeCompatibilityScanResolvesEachInstanceOnce()
 testEmptySelectionVCarveHintMentionsLines()
 testMixedSubtractAndLineIsValid()
 
