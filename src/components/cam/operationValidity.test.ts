@@ -362,8 +362,8 @@ function testClosedLineIsValidVCarveTarget(): void {
     'closed line should be valid for v_carve',
   )
   assert(
-    getOperationAddHint(project, selectionFor(['line1']), 'v_carve_recursive') === null,
-    'closed line should be valid for v_carve_recursive',
+    getOperationAddHint(project, selectionFor(['line1']), 'v_carve_medial') === null,
+    'closed line should be valid for v_carve_medial',
   )
 }
 
@@ -393,7 +393,7 @@ function testClosedLineInQuickOperations(): void {
   const project = projectWith([makeFeature('line1', 'line')])
   const kinds = validQuickOperationsForFeature(project, 'line1').map((op) => op.kind)
   assert(kinds.includes('v_carve'), 'closed line should offer v_carve quick op')
-  assert(kinds.includes('v_carve_recursive'), 'closed line should offer v_carve_recursive quick op')
+  assert(kinds.includes('v_carve_medial'), 'closed line should offer v_carve_medial quick op')
   assert(kinds.includes('follow_line'), 'closed line should offer engrave quick op')
   assert(!kinds.includes('pocket'), 'line should not offer pocket')
 }
@@ -402,7 +402,7 @@ function testOpenLineNotInQuickOperations(): void {
   const project = projectWith([makeFeature('openLine', 'line', 'polygon', false)])
   const kinds = validQuickOperationsForFeature(project, 'openLine').map((op) => op.kind)
   assert(!kinds.includes('v_carve'), 'open line should not offer v_carve')
-  assert(!kinds.includes('v_carve_recursive'), 'open line should not offer v_carve_recursive')
+  assert(!kinds.includes('v_carve_medial'), 'open line should not offer v_carve_medial')
   assert(kinds.includes('follow_line'), 'open line should offer engrave')
 }
 

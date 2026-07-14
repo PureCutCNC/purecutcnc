@@ -37,8 +37,6 @@ export function operationKindLabel(kind: OperationKind): string {
       return 'Pocket'
     case 'v_carve':
       return 'V-Carve offset'
-    case 'v_carve_recursive':
-      return 'V-Carve skeleton'
     case 'v_carve_medial':
       return 'V-Carve medial'
     case 'edge_route_inside':
@@ -63,7 +61,7 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function operationRequiresClosedProfiles(kind: OperationKind): boolean {
-  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'v_carve_medial' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
 }
 
 export function getOperationAddHint(project: Project, selection: SelectionState, kind: OperationKind): string | null {
@@ -136,7 +134,7 @@ export function getOperationAddHint(project: Project, selection: SelectionState,
       : 'Surface clean only accepts closed profiles'
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'v_carve_medial') {
+  if (kind === 'v_carve' || kind === 'v_carve_medial') {
     if (selection.selectedFeatureIds.length === 0) {
       return 'Select one or more closed subtract or line features first'
     }
@@ -277,7 +275,6 @@ const QUICK_OPERATION_KINDS: OperationKind[] = [
   'edge_route_inside',
   'edge_route_outside',
   'v_carve',
-  'v_carve_recursive',
   'v_carve_medial',
   'surface_clean',
   'follow_line',
@@ -298,8 +295,6 @@ export function quickOperationLabel(kind: OperationKind): string {
       return 'Create Outside Route'
     case 'v_carve':
       return 'Create V-Carve (offset)'
-    case 'v_carve_recursive':
-      return 'Create V-Carve (skeleton)'
     case 'v_carve_medial':
       return 'Create V-Carve (medial)'
     case 'surface_clean':

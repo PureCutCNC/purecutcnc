@@ -54,20 +54,6 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     ],
     exampleImageName: 'vcarve-offset-example.png',
   },
-  v_carve_recursive: {
-    title: 'V-Carve Skeleton',
-    shortSummary: 'Variable-depth V-carve along the medial axis, clearing wide areas first',
-    fullDescription:
-      'V-Carve Skeleton computes the medial axis (skeleton) of a closed profile and cuts a V-groove whose depth tracks the local width — deeper where the shape is wide, shallower where it narrows. For wide regions, it recursively clears bulk material with larger cuts before refining narrow detail with the V-bit.',
-    keyPoints: [
-      'Requires one or more closed subtract profiles',
-      'Requires a V-bit tool (set the tip angle on the tool first)',
-      'Recursively clears wide areas with larger cuts before V-detailing narrow areas',
-      'Single-pass operation (no rough/finish split)',
-      'Optional closed regions act as XY filters',
-    ],
-    exampleImageName: 'vcarve-skeleton-example.png',
-  },
   v_carve_medial: {
     title: 'V-Carve Medial',
     shortSummary: 'Geometric medial-axis V-carve with exact depth from the true skeleton',

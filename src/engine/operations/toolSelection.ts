@@ -49,7 +49,6 @@ export const TOOL_SIZE_FRACTION = 0.5
 export function preferredToolTypes(kind: OperationKind): ToolType[] {
   switch (kind) {
     case 'v_carve':
-    case 'v_carve_recursive':
     case 'v_carve_medial':
       return ['v_bit']
     case 'drilling':

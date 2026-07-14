@@ -228,16 +228,13 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const project = resolveProject(authoritativeProject)
   const warnings: string[] = []
   const isPocketLike =
-    operation.kind === 'pocket' || operation.kind === 'v_carve' || operation.kind === 'v_carve_recursive'
-    || operation.kind === 'v_carve_medial'
+    operation.kind === 'pocket' || operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
   const operationLabel =
     operation.kind === 'pocket'
       ? 'Pocket'
-      : operation.kind === 'v_carve_recursive'
-        ? 'V-carve recursive'
-        : operation.kind === 'v_carve_medial'
-          ? 'V-carve medial'
-          : 'V-carve'
+      : operation.kind === 'v_carve_medial'
+        ? 'V-carve medial'
+        : 'V-carve'
 
   if (!isPocketLike) {
     return {
@@ -264,8 +261,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     .filter((feature) => feature.operation === 'region')
   const regionMask = buildRegionMask(regionFeatures)
 
-  const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_recursive'
-    || operation.kind === 'v_carve_medial'
+  const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
   const validTargetSourceFeatures = selectedTargetFeatures
     .filter((feature) => isVCarve
       ? (feature.operation === 'subtract' || feature.operation === 'line')

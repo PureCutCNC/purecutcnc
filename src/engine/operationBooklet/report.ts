@@ -25,7 +25,6 @@ function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket': return 'Pocket'
     case 'v_carve': return 'V-carve'
-    case 'v_carve_recursive': return 'V-carve Recursive'
     case 'v_carve_medial': return 'V-carve Medial'
     case 'edge_route_inside': return 'Inside Edge Route'
     case 'edge_route_outside': return 'Outside Edge Route'

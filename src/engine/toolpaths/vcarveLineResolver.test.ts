@@ -412,12 +412,12 @@ test('Pocket rejects Line targets', () => {
 
 // ── V-carve recursive with closed Line ─────────────────────────────────
 
-test('v_carve_recursive accepts closed Line', () => {
+test('v_carve_medial accepts closed Line', () => {
   const line = makeFeature('l1', 'line', closedProfile(20, 20))
   const project = makeProject([line])
-  const op = { ...makeVCarveOp('op1', ['l1']), kind: 'v_carve_recursive' as const }
+  const op = { ...makeVCarveOp('op1', ['l1']), kind: 'v_carve_medial' as const }
   const result = resolvePocketRegions(project, op)
-  assert(result.bands.length > 0, 'v_carve_recursive should produce bands for closed line')
+  assert(result.bands.length > 0, 'v_carve_medial should produce bands for closed line')
 })
 
 // ── Summary ────────────────────────────────────────────────────────────

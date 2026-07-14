@@ -40,7 +40,6 @@ import { generateDrillingToolpath } from './drilling'
 import { generateVCarveToolpath } from './vcarve'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
-import { generateVCarveRecursiveToolpath } from './vcarveRecursive'
 import { generateVCarveMedialToolpath } from './vcarveMedial'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -581,42 +580,23 @@ test('v_carve: closed Line target generates toolpath + posts', () => {
   assert(gcode.length > 0, 'v_carve with closed line should produce non-empty G-code')
 })
 
-test('v_carve_recursive: closed Line target generates toolpath + posts', () => {
+test('v_carve_medial: closed Line target generates toolpath + posts', () => {
   const tool = makeVBit('t1')
   const feat = makeClosedLineFeature('l1', 5, 5, 10, 10, 0, -2)
   const project = baseProject([tool], [feat])
   const op = makePocketOp({
-    kind: 'v_carve_recursive',
+    kind: 'v_carve_medial',
     target: { source: 'features', featureIds: ['l1'] },
     toolRef: 't1',
     maxCarveDepth: 2,
     stepover: 0.3,
   })
 
-  const result = generateVCarveRecursiveToolpath(project, op)
-  assert(result.moves.length > 0, 'v_carve_recursive with closed line should produce moves')
+  const result = generateVCarveMedialToolpath(project, op)
+  assert(result.moves.length > 0, 'v_carve_medial with closed line should produce moves')
 
   const gcode = postToolpath(project, op, result)
-  assert(gcode.length > 0, 'v_carve_recursive with closed line should produce non-empty G-code')
-})
-
-test('v_carve_recursive: generates toolpath + posts to non-empty G-code', () => {
-  const tool = makeVBit('t1')
-  const feat = makeRectFeature('a', 0, 0, 10, 10, 0, -2)
-  const project = baseProject([tool], [feat])
-  const op = makePocketOp({
-    kind: 'v_carve_recursive',
-    target: { source: 'features', featureIds: ['a'] },
-    toolRef: 't1',
-    maxCarveDepth: 2,
-    stepover: 0.3,
-  })
-
-  const result = generateVCarveRecursiveToolpath(project, op)
-  assert(result.moves.length > 0, 'v_carve_recursive should produce moves')
-
-  const gcode = postToolpath(project, op, result)
-  assert(gcode.length > 0, 'v_carve_recursive should produce non-empty G-code')
+  assert(gcode.length > 0, 'v_carve_medial with closed line should produce non-empty G-code')
 })
 
 test('v_carve_medial: generates toolpath + posts to non-empty G-code', () => {
