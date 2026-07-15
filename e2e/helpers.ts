@@ -44,6 +44,14 @@ export async function getProject(page: Page): Promise<Record<string, unknown>> {
   })
 }
 
+/** Return the feature currently preview-highlighted by the live store. */
+export async function getHoveredFeatureId(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { getHoveredFeatureId: () => Promise<string | null> } }
+    return w.__pcTest.getHoveredFeatureId()
+  })
+}
+
 /** Get the current pending move state (null if idle). */
 export async function getPendingMove(
   page: Page,

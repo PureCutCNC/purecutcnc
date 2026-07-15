@@ -27,7 +27,12 @@ import { rectProfile } from '../../types/project'
 import { newProject, type Matrix2D, type Project, type SketchFeature } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { findHitFeatureId, findHitFeatureIds, featureFullyInsideRect } from './hitTest'
+import {
+  findHitFeatureId,
+  findHitFeatureIds,
+  featureFullyInsideRect,
+  resolveFeatureSelectionHit,
+} from './hitTest'
 import type { ViewTransform } from './viewTransform'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -36,6 +41,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 // Simple view transform: scale=1, no offset → world coords = screen coords.
 const vt: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 }
+const preciseVt: ViewTransform = { scale: 10, offsetX: 0, offsetY: 0 }
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -221,6 +227,69 @@ function makeProject(
   assert(edgeHitIds.join(',') === 'top,bottom', `expected edge candidates, got ${edgeHitIds.join(',')}`)
 
   console.log('   ✓ overlap candidates retain hit-test semantics')
+}
+
+// A unique nearby outline wins over other containing profiles.
+{
+  console.log('7. Clear outline selection...')
+
+  const outlined = makeFeature('outlined', rectProfile(0, 0, 10, 10))
+  const containingTop = makeFeature('containing-top', rectProfile(-5, -5, 20, 20))
+  const features = resolvedProjectFeatures(makeProject([outlined, containingTop]))
+  const result = resolveFeatureSelectionHit({ x: 0.2, y: 5 }, features, preciseVt)
+
+  assert(result.kind === 'direct', `expected direct hit, got ${result.kind}`)
+  assert(result.featureId === 'outlined', `expected outlined feature, got ${result.featureId}`)
+  assert(
+    result.candidateIds.join(',') === 'containing-top,outlined',
+    `expected all candidates in topmost order, got ${result.candidateIds.join(',')}`,
+  )
+
+  console.log('   ✓ unique nearby outline resolves directly')
+}
+
+// Coincident outlines remain ambiguous.
+{
+  console.log('8. Coincident outline ambiguity...')
+
+  const bottom = makeFeature('bottom', rectProfile(0, 0, 20, 20))
+  const top = makeFeature('top', rectProfile(0, 0, 20, 20))
+  const features = resolvedProjectFeatures(makeProject([bottom, top]))
+  const result = resolveFeatureSelectionHit({ x: 0.2, y: 10 }, features, preciseVt)
+
+  assert(result.kind === 'ambiguous', `expected ambiguous coincident outlines, got ${result.kind}`)
+  assert(result.candidateIds.join(',') === 'top,bottom', 'coincident candidates should remain topmost-first')
+
+  console.log('   ✓ coincident outlines remain ambiguous')
+}
+
+// Shared interiors with no nearby outline remain ambiguous.
+{
+  console.log('9. Shared interior ambiguity...')
+
+  const bottom = makeFeature('bottom', rectProfile(0, 0, 20, 20))
+  const top = makeFeature('top', rectProfile(0, 0, 20, 20))
+  const features = resolvedProjectFeatures(makeProject([bottom, top]))
+  const result = resolveFeatureSelectionHit({ x: 10, y: 10 }, features, preciseVt)
+
+  assert(result.kind === 'ambiguous', `expected ambiguous shared interior, got ${result.kind}`)
+  assert(result.candidateIds.join(',') === 'top,bottom', 'interior candidates should remain topmost-first')
+
+  console.log('   ✓ shared interiors remain ambiguous')
+}
+
+// A lone hit keeps ordinary direct-selection behavior.
+{
+  console.log('10. Single candidate selection...')
+
+  const feature = makeFeature('only', rectProfile(0, 0, 20, 20))
+  const features = resolvedProjectFeatures(makeProject([feature]))
+  const result = resolveFeatureSelectionHit({ x: 10, y: 10 }, features, preciseVt)
+
+  assert(result.kind === 'direct', `expected single candidate to resolve directly, got ${result.kind}`)
+  assert(result.featureId === 'only', `expected only candidate, got ${result.featureId}`)
+
+  console.log('   ✓ single candidate still resolves directly')
 }
 
 console.log('\nall hitTest.test.ts assertions passed')

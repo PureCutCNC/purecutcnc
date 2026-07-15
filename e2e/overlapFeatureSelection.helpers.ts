@@ -42,12 +42,17 @@ function definition(id: string, width: number, height: number) {
   }
 }
 
-function feature(id: string, name: string, definitionId: string) {
+function feature(
+  id: string,
+  name: string,
+  definitionId: string,
+  transform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+) {
   return {
     id,
     name,
     definitionId,
-    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    transform,
     constraints: [] as unknown[],
     folderId: null,
     z_top: 5,
@@ -57,7 +62,7 @@ function feature(id: string, name: string, definitionId: string) {
   }
 }
 
-function buildOverlapFeatureProjectJson(featureCount: number): string {
+function buildOverlapFeatureProjectJson(featureCount: number, obviousOutline = false): string {
   const now = '2026-07-13T00:00:00.000Z'
   const stockWidth = 120
   const stockHeight = 90
@@ -102,14 +107,23 @@ function buildOverlapFeatureProjectJson(featureCount: number): string {
     modelAssets: {},
     featureDefinitions: Object.fromEntries(Array.from({ length: featureCount }, (_, index) => {
       const id = `overlap-${index + 1}`
-      return [`def-${id}`, definition(`def-${id}`, stockWidth, stockHeight)]
+      const isObviousTop = obviousOutline && featureCount === 2 && index === 1
+      return [`def-${id}`, definition(`def-${id}`, isObviousTop ? 50 : stockWidth, isObviousTop ? 30 : stockHeight)]
     })),
     features: Array.from({ length: featureCount }, (_, index) => {
       const name = featureCount === 2
         ? (index === 0 ? 'Bottom overlap' : 'Top overlap')
         : `Overlap feature ${index + 1}`
       const id = `overlap-${index + 1}`
-      return feature(`f-${id}`, name, `def-${id}`)
+      const isObviousTop = obviousOutline && featureCount === 2 && index === 1
+      return feature(
+        `f-${id}`,
+        name,
+        `def-${id}`,
+        isObviousTop
+          ? { a: 1, b: 0, c: 0, d: 1, e: 10, f: 30 }
+          : undefined,
+      )
     }),
     featureFolders: [],
     featureTree: [],
@@ -124,6 +138,10 @@ function buildOverlapFeatureProjectJson(featureCount: number): string {
 
 export async function seedOverlapFeatureProject(page: Page, featureCount = 2): Promise<void> {
   await seedProject(page, buildOverlapFeatureProjectJson(featureCount))
+}
+
+export async function seedObviousOverlapFeatureProject(page: Page): Promise<void> {
+  await seedProject(page, buildOverlapFeatureProjectJson(2, true))
 }
 
 export async function clickCanvasCenter(canvas: Locator): Promise<void> {

@@ -15,9 +15,24 @@
  */
 
 import { test, expect } from './fixtures'
-import { clickCanvasCenter, seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
+import { getHoveredFeatureId } from './helpers'
+import {
+  clickCanvasCenter,
+  seedObviousOverlapFeatureProject,
+  seedOverlapFeatureProject,
+} from './overlapFeatureSelection.helpers'
 
 test.describe('Overlap feature selection browser smoke', () => {
+  test('selects a uniquely indicated outline without opening the picker', async ({ app, ui }) => {
+    await seedObviousOverlapFeatureProject(app.page)
+
+    await clickCanvasCenter(ui.canvas.sketch(app.page))
+
+    await expect(ui.overlapFeaturePicker.root(app.page)).not.toBeVisible()
+    await expect(ui.tree.rowByName(app.page, 'Top overlap')).toHaveClass(/tree-row--selected/)
+    await expect(ui.tree.rowByName(app.page, 'Bottom overlap')).not.toHaveClass(/tree-row--selected/)
+  })
+
   test('shows overlapping candidates and lets the user select a non-topmost feature', async ({ app, ui }) => {
     await seedOverlapFeatureProject(app.page)
 
@@ -34,6 +49,29 @@ test.describe('Overlap feature selection browser smoke', () => {
     await expect(picker).not.toBeVisible()
     await expect(ui.tree.rowByName(app.page, 'Bottom overlap')).toHaveClass(/tree-row--selected/)
     await expect(ui.tree.rowByName(app.page, 'Top overlap')).not.toHaveClass(/tree-row--selected/)
+  })
+
+  test('previews a hovered or focused candidate without selecting it', async ({ app, ui }) => {
+    await seedOverlapFeatureProject(app.page)
+    await clickCanvasCenter(ui.canvas.sketch(app.page))
+
+    const bottomCandidate = ui.overlapFeaturePicker.candidate(app.page, 'Bottom overlap')
+    const topCandidate = ui.overlapFeaturePicker.candidate(app.page, 'Top overlap')
+    const cancelButton = ui.overlapFeaturePicker.cancelButton(app.page)
+
+    await bottomCandidate.hover()
+    await expect.poll(() => getHoveredFeatureId(app.page)).toBe('f-overlap-1')
+    await expect(ui.tree.selectedRows(app.page)).toHaveCount(0)
+
+    await cancelButton.hover()
+    await expect.poll(() => getHoveredFeatureId(app.page)).toBeNull()
+
+    await topCandidate.focus()
+    await expect.poll(() => getHoveredFeatureId(app.page)).toBe('f-overlap-2')
+    await expect(ui.tree.selectedRows(app.page)).toHaveCount(0)
+
+    await cancelButton.focus()
+    await expect.poll(() => getHoveredFeatureId(app.page)).toBeNull()
   })
 
   test('picker is usable in the landscape-tablet layout and Escape cancels it', async ({ app, ui }) => {

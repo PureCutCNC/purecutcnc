@@ -29,7 +29,7 @@ browser-free while PRs still exercise the browser smoke.
 |------|------|
 | `fixtures.ts` | Playwright `test` extension. Every spec imports `test` / `expect` from **here**, not `@playwright/test`. Provides `app` (booted page + error guard) and `ui` (selector module). |
 | `selectors.ts` | **Single source of truth** for DOM selectors. Logical name → `Locator`. When the UI moves a class, update it **here** — every spec picks it up. |
-| `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
+| `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getHoveredFeatureId`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
 | `featureReferences.helpers.ts` | FR-specific helpers (e.g. `seedLinkedProject`). Built on the generic primitives. A new feature area gets its own `<area>.helpers.ts`. |
 | `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
 | `gcodeExport.helpers.ts` | Export-dialog fixture: tool + two toolpath-producing operations + bundled GRBL machine selected. |
@@ -41,7 +41,7 @@ Current smoke targets:
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
 - `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.
-- `overlapFeatureSelection.smoke.spec.ts` — overlapping sketch feature picker wiring, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
+- `overlapFeatureSelection.smoke.spec.ts` — direct selection for clear outline clicks, ambiguous-overlap picker wiring, candidate hover/focus previews, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
 
 ## Adding a test
 
