@@ -7,8 +7,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `carving.ts` — engrave / carve along a path
 - `drilling.ts` — drill-cycle generation
 - `edge.ts` — edge / profile-following cuts (outside/inside contour)
-- `vcarve.ts` — V-bit carving from medial axis
-- `vcarveRecursive.ts` — recursive v-carve with larger tools (clears bulk first)
+- `vcarve.ts` — V-bit carving via inset-contour offset stepping (`v_carve`, "V-Carve offset")
+- `vcarveMedial/` — geometric medial-axis v-carve (`v_carve_medial`): Voronoi-of-boundary skeleton with exact clearances, corner tips, and contact-spread curve filtering (see its `INDEX.md`). Replaced the retired `v_carve_recursive` skeleton op (issue #279); saved projects using it migrate to this on load.
 - `roughSurface.ts` — 3D rough clearing of an imported mesh
 - `finishSurface.ts` — 3D finish pass dispatcher
 - `finishSurfaceCleanup.ts` — cleanup-style 3D imported-mesh finishing that emits deepest retained wall/floor paths from rough-surface-style levels
@@ -37,8 +37,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
-	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_recursive; S2: closed-Line V-carve smoke); also documents the stock-target resolver gap
-- `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveRecursive.test.ts` — strategy-specific
+	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_medial; closed-Line V-carve smoke); also documents the stock-target resolver gap
+- `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveMedial/vcarveMedial.test.ts` — strategy-specific
 - arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
 
 ## Adding a new strategy

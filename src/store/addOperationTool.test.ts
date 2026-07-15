@@ -134,7 +134,7 @@ function testVCarveDepthFallsBackToStockThickness(): void {
   }, [makeFeature('f', 'subtract', 2, 2)])
   seed(project)
 
-  const opId = useProjectStore.getState().addOperation('v_carve_recursive', 'rough', { source: 'features', featureIds: ['f'] }, [])
+  const opId = useProjectStore.getState().addOperation('v_carve_medial', 'rough', { source: 'features', featureIds: ['f'] }, [])
   const next = useProjectStore.getState().project
   const op = next.operations.find((operation) => operation.id === opId)
   assert(op !== undefined, 'expected the operation to exist')

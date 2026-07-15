@@ -74,8 +74,8 @@ export function operationKindLabel(kind: OperationKind): string {
       return 'Pocket'
     case 'v_carve':
       return 'V-Carve offset'
-    case 'v_carve_recursive':
-      return 'V-Carve skeleton'
+    case 'v_carve_medial':
+      return 'V-Carve medial'
     case 'edge_route_inside':
       return 'Edge route inside'
     case 'edge_route_outside':
@@ -205,7 +205,7 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_medial') {
     if (target.source !== 'features' || target.featureIds.length === 0) {
       return false
     }
@@ -253,7 +253,7 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
 }
 
 export function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
+  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
     || kind === 'finish_surface_cleanup'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
@@ -283,7 +283,7 @@ export function defaultOperationForTarget(
   const tool = resolved?.tool ?? project.tools[0] ?? defaultTool(project.meta.units, 1)
   const toolRef = resolved ? resolved.toolRef : (project.tools[0]?.id ?? null)
 
-  const isVCarve = kind === 'v_carve' || kind === 'v_carve_recursive'
+  const isVCarve = kind === 'v_carve' || kind === 'v_carve_medial'
   const vCarveMaxDepth = tool.maxCutDepth > 0
     ? tool.maxCutDepth
     : (project.stock.thickness > 0 ? project.stock.thickness : convertLength(1, 'mm', project.meta.units))
@@ -302,7 +302,11 @@ export function defaultOperationForTarget(
     stepdown: kind === 'finish_surface_cleanup'
       ? convertLength(1, 'mm', project.meta.units)
       : tool.defaultStepdown,
-    stepover: tool.defaultStepover,
+    // For the medial-axis v-carve, stepover is the skeleton sampling step —
+    // cap the tool default so the skeleton starts at engraving resolution.
+    stepover: kind === 'v_carve_medial'
+      ? Math.min(tool.defaultStepover, convertLength(0.4, 'mm', project.meta.units))
+      : tool.defaultStepover,
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
@@ -348,7 +352,7 @@ export function fallbackOperationTarget(authoritativeProject: Project, kind: Ope
       : { source: 'stock' }
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_medial') {
     const firstCompatibleFeature = project.features.find((feature) => isVCarveCompatibleFeature(feature))
     return firstCompatibleFeature
       ? { source: 'features', featureIds: [firstCompatibleFeature.id] }

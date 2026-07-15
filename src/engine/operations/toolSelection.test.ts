@@ -99,7 +99,7 @@ function featureTarget(...ids: string[]): OperationTarget {
 
 function testPreferredToolTypes(): void {
   assert(preferredToolTypes('v_carve')[0] === 'v_bit', 'v_carve prefers v_bit')
-  assert(preferredToolTypes('v_carve_recursive').join() === 'v_bit', 'v_carve_recursive only v_bit')
+  assert(preferredToolTypes('v_carve_medial').join() === 'v_bit', 'v_carve_medial only v_bit')
   assert(preferredToolTypes('finish_surface')[0] === 'ball_endmill', 'finish prefers ball')
   assert(preferredToolTypes('rough_surface')[0] === 'flat_endmill', 'rough prefers flat')
   assert(preferredToolTypes('drilling')[0] === 'drill', 'drilling prefers drill')

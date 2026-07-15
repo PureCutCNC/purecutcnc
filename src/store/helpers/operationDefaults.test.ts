@@ -77,8 +77,8 @@ function testClosedLineValidTargetForVCarve(): void {
     'closed line should be valid target for v_carve',
   )
   assert(
-    isOperationTargetValid(project, 'v_carve_recursive', makeTarget(['l1'])),
-    'closed line should be valid target for v_carve_recursive',
+    isOperationTargetValid(project, 'v_carve_medial', makeTarget(['l1'])),
+    'closed line should be valid target for v_carve_medial',
   )
 }
 

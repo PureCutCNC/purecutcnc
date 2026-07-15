@@ -441,7 +441,7 @@ export interface Tool {
 export type OperationKind =
   | 'pocket'
   | 'v_carve'
-  | 'v_carve_recursive'
+  | 'v_carve_medial'
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'

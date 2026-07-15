@@ -234,7 +234,13 @@ export function dedupeProjectIds(project: Project): Project {
   }
 }
 
-export function normalizeOperation(operation: Operation, project: Project, index: number): Operation {
+export function normalizeOperation(rawOperation: Operation, project: Project, index: number): Operation {
+  // Migrate the retired recursive skeleton op to the medial-axis op (issue
+  // #279). Parameters carry over unchanged: `stepover` is the step size for
+  // both, and `maxCarveDepth` plus the V-bit tool mean the same thing.
+  const operation: Operation = (rawOperation.kind as string) === 'v_carve_recursive'
+    ? { ...rawOperation, kind: 'v_carve_medial' }
+    : rawOperation
   const fallbackTarget = fallbackOperationTarget(project, operation.kind)
   const defaults = defaultOperationForTarget(project, operation.kind, 'rough', fallbackTarget, index)
   const normalized = {

@@ -577,9 +577,9 @@
     },
     {
       "id": "op0018",
-      "name": "V-Carve skeleton",
+      "name": "V-Carve medial",
       "description": "",
-      "kind": "v_carve_recursive",
+      "kind": "v_carve_medial",
       "pass": "rough",
       "enabled": true,
       "showToolpath": true,

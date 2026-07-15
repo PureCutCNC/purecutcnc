@@ -39,8 +39,8 @@ export function operationKindLabel(kind: OperationKind): string {
       return 'Pocket'
     case 'v_carve':
       return 'V-Carve offset'
-    case 'v_carve_recursive':
-      return 'V-Carve skeleton'
+    case 'v_carve_medial':
+      return 'V-Carve medial'
     case 'edge_route_inside':
       return 'Edge route inside'
     case 'edge_route_outside':
@@ -63,7 +63,7 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function operationRequiresClosedProfiles(kind: OperationKind): boolean {
-  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_recursive' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
+  return kind === 'pocket' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'edge_route_inside' || kind === 'edge_route_outside' || kind === 'surface_clean'
 }
 
 function emptySelectionHint(kind: OperationKind): string {
@@ -75,7 +75,7 @@ function emptySelectionHint(kind: OperationKind): string {
     case 'surface_clean':
       return 'Select one or more add/model features first; closed regions are optional filters'
     case 'v_carve':
-    case 'v_carve_recursive':
+    case 'v_carve_medial':
       return 'Select one or more closed subtract or line features first'
     case 'rough_surface':
     case 'finish_surface':
@@ -160,7 +160,7 @@ function getOperationAddHintWithMap(
       : 'Surface clean only accepts closed profiles'
   }
 
-  if (kind === 'v_carve' || kind === 'v_carve_recursive') {
+  if (kind === 'v_carve' || kind === 'v_carve_medial') {
     const features = selection.selectedFeatureIds
       .map((featureId) => featureById.get(featureId))
       .filter((feature): feature is ResolvedSketchFeature => feature !== undefined)
@@ -285,7 +285,7 @@ const QUICK_OPERATION_KINDS: OperationKind[] = [
   'edge_route_inside',
   'edge_route_outside',
   'v_carve',
-  'v_carve_recursive',
+  'v_carve_medial',
   'surface_clean',
   'follow_line',
   'drilling',
@@ -305,8 +305,8 @@ export function quickOperationLabel(kind: OperationKind): string {
       return 'Create Outside Route'
     case 'v_carve':
       return 'Create V-Carve (offset)'
-    case 'v_carve_recursive':
-      return 'Create V-Carve (skeleton)'
+    case 'v_carve_medial':
+      return 'Create V-Carve (medial)'
     case 'surface_clean':
       return 'Create Surface Clean'
     case 'follow_line':
