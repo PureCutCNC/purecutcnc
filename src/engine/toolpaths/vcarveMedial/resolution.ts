@@ -17,7 +17,7 @@
 import type { Point } from '../../../types/project'
 
 /** Keep similar shapes at a stable boundary-sample density as they scale. */
-export const MEDIAL_SAMPLES_ACROSS_SHORT_SPAN = 40
+export const MEDIAL_SAMPLES_ACROSS_SHORT_SPAN = 160
 /** Regions above this estimated boundary sample count are coarsened. */
 export const MEDIAL_SAMPLE_BUDGET_PER_REGION = 40_000
 

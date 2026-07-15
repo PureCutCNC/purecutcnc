@@ -16,8 +16,8 @@ the robust successor to the offset-stepping skeleton experiments (issue #177).
   mirroring the other v-carve generators (bands/regions via
   `resolvePocketRegions`, v-bit validation, per-region sample budget and
   empty-result auto-refinement). Re-exports the module surface.
-- `resolution.ts` — pure region-scale sampling resolver: targets a stable
-  density across the shorter XY span and enforces the per-region sample budget
+- `resolution.ts` — pure region-scale sampling resolver: targets 160 boundary
+  samples across the shorter XY span and enforces the per-region sample budget
   without an absolute project-unit ceiling.
 - `resolution.test.ts` — scale, unit-equivalence, large-shape, degenerate-region,
   and sample-budget coverage for the automatic resolver.
@@ -26,6 +26,9 @@ the robust successor to the offset-stepping skeleton experiments (issue #177).
   L-shape junction/reflex behavior, acute-corner preservation, scale-stable
   lowercase-`g` filtering, generator depth math (60°/90°), clamping,
   determinism, and multi-feature separation.
+- `noiseRegression.test.ts` — loads the user-reported linked small/large `gA`
+  project fixture and locks its automatic resolution, corner count, leaves,
+  and chain topology against flattened-font noise.
 
 ## Parameters
 - Boundary sampling resolution is internal and derived independently from each

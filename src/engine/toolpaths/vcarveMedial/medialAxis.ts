@@ -92,7 +92,7 @@ export interface MedialGraph {
 }
 
 const DEFAULT_PRUNE_FACTOR = 1.5
-const DEFAULT_CORNER_ANGLE_RAD = (15 * Math.PI) / 180
+const DEFAULT_CORNER_ANGLE_RAD = (25 * Math.PI) / 180
 const DEFAULT_CONTACT_SPREAD_ANGLE_RAD = (60 * Math.PI) / 180
 const MAX_PRUNE_ITERATIONS = 32
 

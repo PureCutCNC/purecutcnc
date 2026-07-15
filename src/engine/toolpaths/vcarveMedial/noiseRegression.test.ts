@@ -1,0 +1,113 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { readFileSync } from 'node:fs'
+
+import { normalizeProject } from '../../../store/helpers/projectFormat'
+import { resolvePocketRegions } from '../resolver'
+import {
+  computeMedialAxis,
+  extractChains,
+  regionConvexCorners,
+  resolveMedialResolution,
+} from './index'
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function approx(a: number, b: number, epsilon = 1e-9): boolean {
+  return Math.abs(a - b) < epsilon
+}
+
+interface RegionStats {
+  resolution: number
+  cornerCount: number
+  nonCornerLeaves: number
+  chainCount: number
+}
+
+function loadNoiseRegressionProject(): ReturnType<typeof normalizeProject> {
+  const url = new URL('../../test-fixtures/v-carve-noise-test.camj', import.meta.url)
+  const input = JSON.parse(readFileSync(url, 'utf8')) as Parameters<typeof normalizeProject>[0]
+  return normalizeProject(input)
+}
+
+function regionStats(
+  region: ReturnType<typeof resolvePocketRegions>['bands'][number]['regions'][number],
+): RegionStats {
+  const resolved = resolveMedialResolution(region)
+  assert(resolved !== null, 'fixture region should have a valid automatic resolution')
+  const graph = computeMedialAxis(region, { resolution: resolved.resolution })
+  const leaves = graph.adjacency.filter((neighbors) => neighbors.length === 1).length
+  const zeroClearanceLeaves = graph.nodes.filter((node, index) =>
+    node.clearance < 1e-9 && graph.adjacency[index].length === 1).length
+  return {
+    resolution: resolved.resolution,
+    cornerCount: regionConvexCorners(region).length,
+    nonCornerLeaves: leaves - zeroClearanceLeaves,
+    chainCount: extractChains(graph).length,
+  }
+}
+
+function testSavedGlyphProjectRejectsNoiseAcrossLinkedScales(): void {
+  console.log('Testing saved linked gA project rejects medial noise across scales...')
+  const project = loadNoiseRegressionProject()
+  const operations = project.operations.filter((operation) => operation.kind === 'v_carve_medial')
+  assert(operations.length === 2, `expected 2 medial operations, got ${operations.length}`)
+
+  const stats = operations.map((operation) => {
+    const regions = resolvePocketRegions(project, operation).bands.flatMap((band) => band.regions)
+    assert(regions.length === 2, `${operation.name} should resolve the g and A regions separately`)
+    return regions.map(regionStats)
+  })
+
+  const expectedResolutions = [
+    [0.00241, 0.00248],
+    [0.004403125, 0.004828125],
+  ]
+  const expectedTopology = [
+    { cornerCount: 3, nonCornerLeaves: 2, chainCount: 13 },
+    { cornerCount: 10, nonCornerLeaves: 0, chainCount: 20 },
+  ]
+
+  for (const [operationIndex, operationStats] of stats.entries()) {
+    for (const [regionIndex, actual] of operationStats.entries()) {
+      assert(
+        approx(actual.resolution, expectedResolutions[operationIndex][regionIndex]),
+        `operation ${operationIndex} region ${regionIndex} resolution was ${actual.resolution}`,
+      )
+      assert(actual.resolution <= 0.005, 'fixture glyph resolution must stay in the proven clean range')
+      const expected = expectedTopology[regionIndex]
+      assert(actual.cornerCount === expected.cornerCount, `unexpected corner count for region ${regionIndex}`)
+      assert(
+        actual.nonCornerLeaves === expected.nonCornerLeaves,
+        `unexpected non-corner leaves for region ${regionIndex}`,
+      )
+      assert(actual.chainCount === expected.chainCount, `unexpected chain count for region ${regionIndex}`)
+    }
+  }
+
+  console.log('saved linked gA noise regression PASSED')
+}
+
+try {
+  testSavedGlyphProjectRejectsNoiseAcrossLinkedScales()
+  console.log('noiseRegression.test.ts: all tests PASSED')
+} catch (error) {
+  console.error(error)
+  throw error
+}

@@ -42,8 +42,8 @@ function testResolutionScalesWithShortSpan(): void {
   const large = resolveMedialResolution({ outer: rect(20, 10), islands: [] })
   const small = resolveMedialResolution({ outer: rect(2, 1), islands: [] })
   assert(large !== null && small !== null, 'expected valid rectangle resolutions')
-  assert(approx(large.resolution, 0.25), `expected 0.25 mm, got ${large.resolution}`)
-  assert(approx(small.resolution, 0.025), `expected 0.025 mm, got ${small.resolution}`)
+  assert(approx(large.resolution, 0.0625), `expected 0.0625 mm, got ${large.resolution}`)
+  assert(approx(small.resolution, 0.00625), `expected 0.00625 mm, got ${small.resolution}`)
   assert(approx(large.resolution / small.resolution, 10), 'resolution should follow geometry scale')
 }
 
@@ -51,8 +51,8 @@ function testLargeShapeKeepsScaleRelativeResolution(): void {
   const result = resolveMedialResolution({ outer: rect(100, 100), islands: [] })
   assert(result !== null, 'expected a valid large-shape resolution')
   assert(
-    approx(result.resolution, 2.5),
-    `expected 2.5 project-unit resolution, got ${result.resolution}`,
+    approx(result.resolution, 0.625),
+    `expected 0.625 project-unit resolution, got ${result.resolution}`,
   )
   assert(!result.budgetLimited, 'ordinary large square should not hit the sample budget')
 }
