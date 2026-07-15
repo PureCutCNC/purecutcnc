@@ -49,8 +49,8 @@ import {
 import {
   findHitClampId,
   findHitFeatureId,
-  findHitFeatureIds,
   findHitTabId,
+  resolveFeatureSelectionHit,
   segmentHitTest,
 } from './hitTest'
 import { hitBackdrop } from './scenePrimitives'
@@ -926,19 +926,21 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     const resolvedFeatures = resolvedProjectFeatures(project)
-    const featuresById = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))
-    const hitCandidates: OverlapFeatureCandidate[] = []
-    for (const id of findHitFeatureIds(world, resolvedFeatures, vt)) {
-      const feature = featuresById.get(id)
-      if (feature) {
-        hitCandidates.push({ id: feature.id, name: feature.name, kind: feature.kind })
-      }
-    }
+    const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
-    if (hitCandidates.length > 1) {
+
+    if (featureHit.kind === 'direct') {
+      selectFeature(featureHit.featureId, additive)
+    } else if (featureHit.kind === 'ambiguous') {
+      const featuresById = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))
+      const hitCandidates: OverlapFeatureCandidate[] = []
+      for (const id of featureHit.candidateIds) {
+        const feature = featuresById.get(id)
+        if (feature) {
+          hitCandidates.push({ id: feature.id, name: feature.name, kind: feature.kind })
+        }
+      }
       openOverlapFeaturePicker(hitCandidates, additive)
-    } else if (hitCandidates.length === 1) {
-      selectFeature(hitCandidates[0].id, additive)
     } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
       selectBackdrop()
     } else if (!additive) {

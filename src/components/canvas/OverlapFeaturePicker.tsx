@@ -67,6 +67,18 @@ export function OverlapFeaturePicker({ picker }: OverlapFeaturePickerProps) {
                 className="overlap-feature-picker__candidate"
                 aria-label={`Select ${candidate.name}, ${kindLabel}`}
                 onClick={() => picker.selectCandidate(candidate.id)}
+                onPointerEnter={() => picker.previewCandidate(candidate.id)}
+                onPointerLeave={(event) => {
+                  if (document.activeElement !== event.currentTarget) {
+                    picker.previewCandidate(null)
+                  }
+                }}
+                onFocus={() => picker.previewCandidate(candidate.id)}
+                onBlur={(event) => {
+                  if (!event.currentTarget.matches(':hover')) {
+                    picker.previewCandidate(null)
+                  }
+                }}
               >
                 <span className="overlap-feature-picker__candidate-name">{candidate.name}</span>
                 <span className="overlap-feature-picker__candidate-kind">{kindLabel}</span>

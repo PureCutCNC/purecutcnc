@@ -95,6 +95,10 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       return JSON.parse(useProjectStore.getState().saveProject())
     },
+    getHoveredFeatureId: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      return useProjectStore.getState().selection.hoveredFeatureId
+    },
     loadProject: async (json: string) => {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().openProjectFromText(json, null)
@@ -134,6 +138,7 @@ declare global {
     __pcBootWatchdog?: number
     __pcTest?: {
       getProject: () => Promise<Record<string, unknown>>
+      getHoveredFeatureId: () => Promise<string | null>
       loadProject: (json: string) => Promise<void>
       getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null>
       completePendingMove: (x: number, y: number) => Promise<void>

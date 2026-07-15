@@ -27,6 +27,11 @@ export interface FeatureLike {
   sketch: { profile: SketchProfile }
 }
 
+export type FeatureSelectionHit =
+  | { kind: 'none'; candidateIds: [] }
+  | { kind: 'direct'; featureId: string; candidateIds: string[] }
+  | { kind: 'ambiguous'; candidateIds: string[] }
+
 export interface SegmentHitResult {
   featureId: string
   segmentIndex: number
@@ -267,6 +272,44 @@ export function findHitFeatureIds(worldPoint: Point, features: readonly FeatureL
     if (featureContainsPoint(feature, worldPoint, vt)) hitIds.push(feature.id)
   }
   return hitIds
+}
+
+/**
+ * Resolves ordinary feature selection without interrupting a clear outline
+ * click. Interior-only and coincident-outline hits remain ambiguous so the
+ * overlap picker can expose every candidate.
+ */
+export function resolveFeatureSelectionHit(
+  worldPoint: Point,
+  features: readonly FeatureLike[],
+  vt: ViewTransform,
+): FeatureSelectionHit {
+  const candidateIds: string[] = []
+  const nearbyOutlineIds: string[] = []
+
+  for (let index = features.length - 1; index >= 0; index -= 1) {
+    const feature = features[index]
+    if (!feature.visible) continue
+
+    const nearOutline = pointNearProfile(worldPoint, feature.sketch.profile, vt)
+    if (!nearOutline && !pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)) {
+      continue
+    }
+
+    candidateIds.push(feature.id)
+    if (nearOutline) nearbyOutlineIds.push(feature.id)
+  }
+
+  if (candidateIds.length === 0) {
+    return { kind: 'none', candidateIds: [] }
+  }
+  if (candidateIds.length === 1) {
+    return { kind: 'direct', featureId: candidateIds[0], candidateIds }
+  }
+  if (nearbyOutlineIds.length === 1) {
+    return { kind: 'direct', featureId: nearbyOutlineIds[0], candidateIds }
+  }
+  return { kind: 'ambiguous', candidateIds }
 }
 
 export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {

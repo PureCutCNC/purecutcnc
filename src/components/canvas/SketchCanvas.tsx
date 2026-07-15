@@ -2525,6 +2525,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
     selectFeature,
+    hoverFeature,
   })
 
   const keyboard = useCanvasKeyboard({

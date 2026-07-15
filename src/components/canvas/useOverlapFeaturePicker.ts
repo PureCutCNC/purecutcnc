@@ -35,6 +35,7 @@ interface UseOverlapFeaturePickerOptions {
   canvasRef: RefObject<HTMLCanvasElement | null>
   clearTransientCanvasState: () => void
   selectFeature: (id: string | null, additive?: boolean) => void
+  hoverFeature: (id: string | null) => void
 }
 
 export interface OverlapFeaturePickerController {
@@ -45,6 +46,7 @@ export interface OverlapFeaturePickerController {
   dismiss: () => void
   cancel: () => void
   selectCandidate: (id: string) => void
+  previewCandidate: (id: string | null) => void
 }
 
 /**
@@ -56,6 +58,7 @@ export function useOverlapFeaturePicker({
   canvasRef,
   clearTransientCanvasState,
   selectFeature,
+  hoverFeature,
 }: UseOverlapFeaturePickerOptions): OverlapFeaturePickerController {
   const [pendingSelection, setPendingSelection] = useState<PendingOverlapFeatureSelection | null>(null)
   const workflowPanel = useCanvasWorkflowPanel({
@@ -72,16 +75,20 @@ export function useOverlapFeaturePicker({
     function dismissForOutsideAction(event: PointerEvent) {
       const target = event.target
       if (target instanceof Node && !workflowPanel.panelRef.current?.contains(target)) {
+        hoverFeature(null)
         setPendingSelection(null)
       }
     }
 
     document.addEventListener('pointerdown', dismissForOutsideAction, true)
-    return () => document.removeEventListener('pointerdown', dismissForOutsideAction, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismissForOutsideAction, true)
+      hoverFeature(null)
+    }
     // useCanvasWorkflowPanel keeps its panel ref stable, while its return object
     // is intentionally recreated each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSelection])
+  }, [hoverFeature, pendingSelection])
 
   function open(candidates: readonly OverlapFeatureCandidate[], additive: boolean) {
     if (candidates.length < 2) return
@@ -89,6 +96,7 @@ export function useOverlapFeaturePicker({
   }
 
   function dismiss() {
+    hoverFeature(null)
     setPendingSelection(null)
   }
 
@@ -96,6 +104,11 @@ export function useOverlapFeaturePicker({
     if (!pendingSelection?.candidates.some((candidate) => candidate.id === id)) return
     selectFeature(id, pendingSelection.additive)
     dismiss()
+  }
+
+  function previewCandidate(id: string | null) {
+    if (id !== null && !pendingSelection?.candidates.some((candidate) => candidate.id === id)) return
+    hoverFeature(id)
   }
 
   return {
@@ -106,5 +119,6 @@ export function useOverlapFeaturePicker({
     dismiss,
     cancel: dismiss,
     selectCandidate,
+    previewCandidate,
   }
 }
