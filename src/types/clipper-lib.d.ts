@@ -35,6 +35,7 @@ declare module 'clipper-lib' {
   interface ClipperStatic {
     new (): ClipperLike
     Area(poly: IntPoint[]): number
+    SimplifyPolygon(poly: IntPoint[], fillType?: number): IntPoint[][]
   }
 
   interface ClipperOffsetLike {

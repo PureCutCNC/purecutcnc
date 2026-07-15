@@ -13,7 +13,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [engine/](engine/INDEX.md) — pure-logic CAM core: toolpaths, G-code, simulation, CSG, mesh import
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
 - [import/](import/) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`; `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
-- [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed `parseFontJson` font-parse seam
+- [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
