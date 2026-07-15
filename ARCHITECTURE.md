@@ -1,6 +1,11 @@
 # PureCutCNC — Foundational Architecture & Standards (ARCHITECTURE.md)
 
-This document is the primary source of truth for the architectural vision, coding standards, and operational constraints of the PureCutCNC project. It takes absolute precedence over general defaults. Always refer to this file and the `planning/` directory for detailed design and implementation context. For tablet UI/UX-specific architecture and design decisions, see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md).
+This document owns the current technical architecture, data model, and
+cross-cutting implementation invariants. [`PROJECT.md`](PROJECT.md) owns product
+purpose, scope, safety, and terminology; [`AGENTS.md`](AGENTS.md) owns assigned
+work and verification; [`planning/INDEX.md`](planning/INDEX.md) routes to
+narrow area-specific design references. For tablet interaction architecture,
+see [`planning/TABLET_UX_DESIGN.md`](planning/TABLET_UX_DESIGN.md).
 
 ## 1. Project Vision & Purpose
 PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enthusiasts.
@@ -29,7 +34,7 @@ Defined in `src/types/project.ts`:
 
 ## 4. Feature References (Definitions & Instances)
 
-PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape updates every copy, while placement (move/rotate/resize/mirror), name, visibility, lock, and Z stay per-copy. The former monolithic feature is split into a **definition** (the shared shape) and **instances** (placed copies). Full design, the operation-semantics matrix, and slice-by-slice history live in [`planning/FEATURE_REFERENCES_Plan.md`](planning/FEATURE_REFERENCES_Plan.md); live status is in [`planning/FEATURE_REFERENCES_Ledger.md`](planning/FEATURE_REFERENCES_Ledger.md).
+PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape updates every copy, while placement (move/rotate/resize/mirror), name, visibility, lock, and Z stay per-copy. The former monolithic feature is split into a **definition** (the shared shape) and **instances** (placed copies). The contract below is current; the completed migration plan and slice ledger are retained only as historical context in [`planning/archive/FEATURE_REFERENCES_Plan.md`](planning/archive/FEATURE_REFERENCES_Plan.md) and [`planning/archive/FEATURE_REFERENCES_Ledger.md`](planning/archive/FEATURE_REFERENCES_Ledger.md).
 
 - **`FeatureDefinition`** (`project.featureDefinitions: Record<id, def>`): the shared, canonical, *untransformed* shape — `kind`, `profile`, `dimensions`, `text`, `stl`, `operation`.
 - **`FeatureInstance`** (`project.features: FeatureInstance[]`) = every feature-tree row: `definitionId` + `transform` (a `Matrix2D` mapping definition-local geometry into world space), plus per-instance `name`, `folderId`, `visible`, `locked`, `z_top`/`z_bottom`, and `constraints`.
@@ -50,7 +55,7 @@ PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape upd
 - `src/components/canvas/`: Complex 2D interaction logic, snapping, and viewport transformations.
 - `src/import/`: DXF and SVG parsers that normalize external geometry into the `.camj` format.
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
-- `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_COMBINED_PLAN.md`](planning/TABLET_UX_COMBINED_PLAN.md) for the full tablet UX design).
+- `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_DESIGN.md`](planning/TABLET_UX_DESIGN.md) for the current tablet UX contract).
 
 ## 6. Icon System
 

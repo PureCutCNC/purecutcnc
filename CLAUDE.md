@@ -1,17 +1,16 @@
-Read and follow `AGENTS.md` for project overview, build commands, coding standards, directory layout, and key conventions.
-Read `ARCHITECTURE.md` for deeper architectural detail.
-Tasks are tracked on the [GitHub Project board](https://github.com/orgs/PureCutCNC/projects/1): open an issue, write the plan in the issue, get approval, then implement (see the workflow in `AGENTS.md`). Consult `planning/` for durable feature-specific **design docs** before starting work.
+# Claude Entry Point
 
-## Codex MCP Delegation
+Start with `INDEX.md`, then read `PROJECT.md` for the product contract and
+`AGENTS.md` for the assigned-task workflow, task router, coding rules, and
+verification. Read `ARCHITECTURE.md` only for technical contracts and the one
+matching `planning/*.md` document for a durable design reference.
 
-When implementation, tests, repo inspection, build failures, or PR review would benefit from Codex, delegate to the Codex MCP server.
+Every task plan and acceptance criteria live in an approved GitHub issue.
+`planning/` contains durable design references, not implementation plans.
 
-When calling Codex:
-- Set `cwd` to the active repo/worktree root for the task.
-- For PureCutCNC, use `/Users/frankp/Projects/purecutcnc` only when working in the main checkout; use the task-specific worktree path when one exists.
-- Use `sandbox=workspace-write` for implementation and `sandbox=read-only` for review.
-- Use `approval-policy=on-request` or `approval-policy=untrusted`.
-- Ask Codex to follow the repo `AGENTS.md`.
-- Do not have Claude and Codex edit the same files concurrently.
-- For larger edits, prefer a separate branch or worktree.
-- Ask Codex to return a concise summary of files changed and verification run.
+Delegation to Codex or a project worker is optional, not the default. Use it
+only when the user authorizes delegation and the approved work divides into
+bounded slices. Never have multiple agents edit the same files concurrently;
+the owning agent must inspect the real diff and run the required verification.
+For the DeepSeek integration-manager flow, follow the `manager-delegate` skill
+instead of duplicating its credential and worktree procedure here.

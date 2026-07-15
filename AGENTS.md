@@ -2,7 +2,7 @@
 
 ## What This Is
 
-PureCutCNC is a browser-based 2.5D CAD/CAM application for CNC hobbyists. It collapses CAD sketching and CAM operation definition into a single workflow. Built with Vite + React + TypeScript, state managed by Zustand, with a Tauri wrapper for desktop builds.
+PureCutCNC is a browser-based 2.5D CAD/CAM application for CNC hobbyists. It collapses CAD sketching and CAM operation definition into a single workflow. Built with Vite + React + TypeScript, state managed by Zustand, with a Tauri wrapper for desktop builds. Read [`PROJECT.md`](PROJECT.md) for the product contract and safety boundaries.
 
 ## Code Map (read first)
 
@@ -32,7 +32,8 @@ Abandoned work: close the issue with a short reason; the board moves it to `Done
 ## Build & Verify
 
 ```bash
-npm run build          # Full build (lint + icon generation + tsc + tests + vite). Run this before committing.
+npm run docs:check     # Active-doc links, planning metadata, and agent entrypoints.
+npm run build          # Full build (docs + lint + icons + tsc + tests + vite). Run this before committing.
 npm test               # Run the structural test suite (every src/**/*.test.ts via tsx)
 npm run test:e2e       # Playwright browser smoke (PR CI gate; starts its own Vite dev server)
 npm run dev            # Vite dev server (do NOT start this unless asked — the user runs it themselves)
@@ -52,38 +53,53 @@ Always run `npm run build` from the project root to verify changes compile befor
 - **Enforcement (Claude Code):** a `PreToolUse` hook — [`.claude/hooks/block-default-branch-commit.sh`](.claude/hooks/block-default-branch-commit.sh), wired in [`.claude/settings.json`](.claude/settings.json) — blocks any `git commit` while `HEAD` is on `main`/`master`. Commits on other branches pass through untouched.
 - **Other tools (Codex, plain `git`, humans):** that hook only binds Claude Code sessions. Codex must follow this rule by reading this file (AGENTS.md). For tool-agnostic enforcement, a native git `pre-commit` hook can be added under a committed `.githooks/` dir + `git config core.hooksPath .githooks` — not set up yet.
 
-## DeepSeek implementation workers
+## Execution Modes
 
-The project-local launcher is `scripts/run-claude-deepseek-agent.sh`. It runs one non-interactive Claude Code session against the DeepSeek Anthropic-compatible endpoint for a **user-authorized, bounded slice** — it is not a general-purpose autonomous command. The management session dispatches it directly (filling the prompt template, piping it in, reading the worker's completion block back) so the user is not a copy/paste middleman.
+Delegation is optional. Use the simplest mode that fits the approved issue and
+the user's direction:
 
-The full manager loop (plan → dispatch → review → merge) is packaged as the **`manager-delegate` skill** (`.agents/skills/manager-delegate/SKILL.md`, symlinked into `.claude/skills/`; both Claude Code and Codex read it). It wraps the leaf launcher with two orchestrators: `scripts/dispatch-task.sh` (create worktree+branch, run the worker, run an independent `npm run build` gate, report — never merges) and `scripts/finish-task.sh` (merge an approved slice `--no-ff` into the integration branch and tear down the worktree). The skill spells out the elevated permissions dispatch needs (credential read, network, bypass worker) and requires explicit approval before dispatching.
+- **Direct implementation (default):** one agent owns discovery, edits,
+  verification, and delivery on the issue branch.
+- **Isolated worktree:** use when the user requests isolation or concurrent work
+  would otherwise disturb the active checkout.
+- **Delegated slices:** use only when the user explicitly authorizes delegation
+  and the task divides into bounded, independently reviewable slices. Follow
+  [`.agents/skills/manager-delegate/SKILL.md`](.agents/skills/manager-delegate/SKILL.md);
+  the manager owns the real diff, verification, integration, and credentials.
+- **Review/diagnosis:** stay read-only unless the user separately authorizes a
+  fix. Report evidence and exact checks; do not turn review into implementation.
 
-### How to run it (integration manager workflow)
+Regardless of mode, one owner remains accountable for the issue plan, scope,
+repository state, test evidence, and final handoff. A worker report or generated
+patch is input to review, not proof of completion.
 
-1. **Create the task worktree first.** Each slice runs in its own git worktree under `/Users/frankp/Projects/worktrees/purecutcnc/`, never in the primary checkout or on `main`:
-   ```
-   git worktree add /Users/frankp/Projects/worktrees/purecutcnc/<slice> -b <slice-branch>
-   ```
-2. **Fill the prompt template.** Copy `scripts/claude-deepseek-agent-prompt.md`, replace the bracketed fields for this slice, and save it to a temp file (e.g. `work/slice-prompt.md`).
-3. **Dispatch.** Point `DEEPSEEK_AGENT_ENV_FILE` at the one canonical credential file in the primary checkout and pass the worktree explicitly:
-   ```
-   DEEPSEEK_AGENT_ENV_FILE=/Users/frankp/Projects/purecutcnc/.env.agent \
-     scripts/run-claude-deepseek-agent.sh \
-     --mode implement --allow-bypass \
-     --worktree /Users/frankp/Projects/worktrees/purecutcnc/<slice> \
-     --output-format json < work/slice-prompt.md
-   ```
-   - `--worktree DIR` is **required for `--mode implement`**: the launcher `cd`s into it so the worker operates there by default. This sets the working directory only — it is **not** a sandbox; a `bypassPermissions` worker can still reach any absolute path, so staying in the worktree is a prompt-and-review convention, not a technical boundary. Bound the real risk with a capped, rotatable key and the post-hoc review in step 4. `--worktree` is optional for `--mode review` (read-only, `--permission-mode plan`), which is the safer default — prefer it whenever the slice doesn't need to write.
-   - For slices that run for minutes, dispatch in the background rather than blocking on a foreground call. Pass `--progress-log FILE` (`dispatch-task.sh` sets one automatically at `$PURECUT_WORKTREE_BASE/SLUG.progress.log`) and poll `scripts/worker-status.sh --slug SLUG` — judge the worker by idle time since its last progress entry, never by total runtime, and never kill a worker whose status is `running`.
-4. **Review the real artifacts, not the report.** The worker ends with a `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` completion block — that is a *report, not acceptance*. Inspect the actual worktree diff, the commit, and the test output before accepting or merging.
+## Assigned-Task Intake
 
-### Credential & token handling
+Before editing:
 
-- Keep exactly one canonical, untracked credential file in the primary checkout: `<primary-worktree>/.env.agent`. It is gitignored and must be `chmod 600` (owner-only). The launcher **refuses to run** if it is group/other-readable. Never add it, print it, copy it into a task worktree, or read a fallback credential from `~/Documents`.
-- The launcher passes the DeepSeek key to the worker via the environment (`ANTHROPIC_AUTH_TOKEN`), never on the command line. A `--mode implement` worker is an autonomous agent that necessarily has that key in its env; the prompt's "do not echo the credential" rule is a guardrail, not enforcement. Bound the residual risk by using a capped, easily-rotatable DeepSeek key, preferring `--mode review`, and confining writes to the worktree.
-- A task worker must not inspect, edit, echo, log, or commit the credential file. It only receives the authenticated Claude process needed for its assigned slice.
-- Require the user's explicit approval before any credential-backed dispatch.
-- The integration manager owns task-worktree creation, review, verification, merge, cleanup, and PR decisions. Worker-reported completion is not acceptance.
+1. Identify the requested outcome, acceptance criteria, and explicit stop point
+   from the approved GitHub issue and current user direction.
+2. Load only the authoritative context listed in the task router below.
+3. Inspect the current implementation and repository state; do not implement
+   from an old plan or assumed architecture.
+4. State any scope-changing assumption. Ordinary implementation details can be
+   resolved with best judgment.
+5. Choose focused checks before editing and run the full required gate before
+   delivery.
+
+## Task Router
+
+| Question or task | Read first | Required evidence |
+| --- | --- | --- |
+| Product scope, users, terminology, safety | [`PROJECT.md`](PROJECT.md) | Product contract plus current UI/tests when claiming shipped behavior |
+| Repository orientation | [`INDEX.md`](INDEX.md), then nearest area `INDEX.md` | Current files and graph results |
+| Architecture, data model, cross-cutting invariant | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Live types/implementation and focused tests |
+| Area-specific design | [`planning/INDEX.md`](planning/INDEX.md), then one matching current design reference | Design metadata and current implementation |
+| One task's scope or plan | Approved GitHub issue | Issue body/comments and board status |
+| React UI or canvas interaction | Component area index and relevant current tablet design | Focused logic tests; e2e/manual tablet checks when rendered behavior changes |
+| CAM, geometry, simulation, or G-code | Engine area index and relevant current design | Focused engine fixtures plus `npm run build`; safety-sensitive assertions |
+| Desktop/platform integration | [`planning/DESKTOP_DESIGN.md`](planning/DESKTOP_DESIGN.md) and `src/platform/` | Browser fallback plus affected native check |
+| Agent harness or delegated execution | This file, [`scripts/INDEX.md`](scripts/INDEX.md), and the named skill | Actual diff, independent verification, and explicit dispatch approval |
 
 ## Key Architecture
 
@@ -97,7 +113,7 @@ Read `ARCHITECTURE.md` for the full picture. The critical points:
 
 ## Structural Conventions (apply to all new work)
 
-These are the patterns the `feat/core-arch-simplification` effort established (see `planning/CORE_STATE_CANVAS_REFACTOR_Plan.md`). Build new code this way from the start so we don't have to refactor "files too big to touch safely" later — the `max-lines` ESLint guards on `App.tsx`/`src/app`, `src/store`, and `src/components/canvas` are ratchets (don't grow past them), **not** targets to fill.
+These are the patterns the `feat/core-arch-simplification` effort established. Build new code this way from the start so we don't have to refactor "files too big to touch safely" later — the `max-lines` ESLint guards on `App.tsx`/`src/app`, `src/store`, and `src/components/canvas` are ratchets (don't grow past them), **not** targets to fill. Historical migration detail is available in [`planning/archive/CORE_STATE_CANVAS_REFACTOR_Plan.md`](planning/archive/CORE_STATE_CANVAS_REFACTOR_Plan.md) when specifically needed.
 
 - **Keep modules single-responsibility and small.** A file approaching its `max-lines` cap is a design smell — split before adding, don't bump the cap.
 - **Big stores = composition root + slices.** `projectStore.ts` is a thin root that spreads per-domain `store/slices/*Slice.ts` (`createXxxSlice(set, get, deps)`) and pure `store/helpers/*`. The public `ProjectStore` interface in `store/types.ts` is a **frozen contract** — add behavior in a slice, don't widen the interface casually.
@@ -148,5 +164,11 @@ Active tasks, backlog, and tech-debt live on the [GitHub Project board](https://
 ## Data Format
 
 The native file format is `.camj`. Core types are in `src/types/project.ts`:
-- **Project** — root object (metadata, stock, features, tools, operations)
-- **SketchFeature** — atomic design unit with sketch geometry, operation (add/subtract), and Z bounds (z_top/z_bottom)
+- **Project** — root object containing metadata, stock, feature definitions,
+  feature instances, tools, operations, and machine setup.
+- **FeatureDefinition** — canonical untransformed geometry and shared kind,
+  operation, text, mesh, and dimension data.
+- **FeatureInstance** — lightweight tree row with `definitionId`, placement,
+  visibility/lock/name, constraints, and Z bounds.
+- **ResolvedSketchFeature** — derived world-space runtime view used by geometry,
+  rendering, editing, CAM, and export reads; never serialize it into format 3.0.

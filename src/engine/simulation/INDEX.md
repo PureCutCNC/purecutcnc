@@ -27,4 +27,4 @@ builders — no React.
 - `replay.test.ts` — optimized cut-kernel parity against the `cutterSurfaceZ` reference
 
 ## Related plan
-- [`planning/SIMULATION_GPU_HEIGHTFIELD_Plan.md`](../../../planning/SIMULATION_GPU_HEIGHTFIELD_Plan.md)
+- [`planning/SIMULATION_GPU_HEIGHTFIELD_DESIGN.md`](../../../planning/SIMULATION_GPU_HEIGHTFIELD_DESIGN.md)

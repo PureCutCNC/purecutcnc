@@ -1,37 +1,45 @@
 # INDEX — planning/
 
-**Durable design & reference docs.** Read the one that matches your area before starting feature work; do not load everything. These are living reference (the "why" behind the data shapes, algorithm references, area-specific design) — update them in the same commit when you change the behavior they describe.
+This directory contains durable design references: the area-specific contracts
+and rationale that should survive one implementation task. Read only the entry
+for the area you are changing, then update it in the same change when its
+contract moves.
 
-**Tasks are not tracked here.** Active work, backlog, and tech-debt live on the [GitHub Project board](https://github.com/orgs/PureCutCNC/projects/1). To start work: open an issue, write the plan in the issue, get approval, branch, and open a PR with `Closes #NN` when done. See the workflow section in [AGENTS.md](../AGENTS.md).
+Tasks are not tracked here. Active work, backlog, acceptance criteria, and the
+approved plan live in a [GitHub issue](https://github.com/PureCutCNC/purecutcnc/issues)
+on the [project board](https://github.com/orgs/PureCutCNC/projects/1). Follow the
+workflow in [AGENTS.md](../AGENTS.md).
 
-Older plans for shipped features and historical bug analyses live in [`archive/`](archive/). Do **not** read files under `archive/` unless you have a specific reason — they are kept for git history and reference, not for ongoing work.
+## Lifecycle metadata
 
-## Foundational / cross-cutting
-- [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — detailed branch-owned handoff and slice-ledger template for sequential external implementation workers.
-- [ISSUE_270_INTEGRATION_HANDOFF.md](ISSUE_270_INTEGRATION_HANDOFF.md) — active integration ledger for closed-Line semantics, nesting-aware SVG/DXF import, V-carve targeting, and large-artwork performance.
-- [CAM_App_Design.md](CAM_App_Design.md) — high-level CAM design (feature model, operation model, workflow). The "why" behind the data shapes.
-- [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — how regions filter rather than define machining targets. Read before touching operation/region logic.
+Every top-level design reference except this index declares:
 
-## Export / machine
-- [G-code_Export_Design.md](G-code_Export_Design.md) — post-processor architecture and machine-definition model.
-- [DESKTOP_Implementation_Plan.md](DESKTOP_Implementation_Plan.md) — Tauri desktop packaging design (partially realized via `src-tauri/`). Remaining work is tracked on the board.
+- `status`: `current` for implemented contracts or `proposed` for an unshipped
+  design;
+- `authoritative-for`: the narrow decisions the document owns;
+- `last-verified`: the date it was checked against the repository.
 
-## V-carve
-- [RECURSIVE_SKELETON_design.md](RECURSIVE_SKELETON_design.md) — core algorithm design for V-carve recursive.
-- [VCARVE_ClipperSkeleton_Design.md](VCARVE_ClipperSkeleton_Design.md) — hybrid skeleton algorithm.
-- [VCARVE_RECURSIVE_Z_CALCULATION_ANALYSIS.md](VCARVE_RECURSIVE_Z_CALCULATION_ANALYSIS.md) — comprehensive Z-calc reference for the skeleton solver.
-- [SAME_CHILD_BRIDGE_Algorithm.md](SAME_CHILD_BRIDGE_Algorithm.md) — V-carve recursive split/bridge algorithm.
-- [VCARVE_RECURSIVE_TESTING_SCRIPTS.md](VCARVE_RECURSIVE_TESTING_SCRIPTS.md) — testing methodology and diagnostic scripts.
-- [DEBUG_MARKER_LEGEND.md](DEBUG_MARKER_LEGEND.md) — legend for V-carve diagnostic markers in the canvas.
+Superseded plans, completed execution ledgers, and historical analyses belong
+in [`archive/`](archive/). Do not use archived documents as current authority.
+Reviews under [`reviews/`](reviews/) are dated assessments, not product or
+architecture contracts.
 
-## Simulation
-- [SIMULATION_GPU_HEIGHTFIELD_Plan.md](SIMULATION_GPU_HEIGHTFIELD_Plan.md) — proposed GPU-based heightfield rendering (CPU mesh rebuild still in use today).
+## Product surfaces and cross-cutting contracts
 
-## Tablet / mobile UX
-- [TABLET_UX_COMBINED_PLAN.md](TABLET_UX_COMBINED_PLAN.md) — primary tablet design plan; referenced from `ARCHITECTURE.md`. Read before tablet UI work.
+- [DESKTOP_DESIGN.md](DESKTOP_DESIGN.md) — desktop shell and platform-adapter boundaries.
+- [TABLET_UX_DESIGN.md](TABLET_UX_DESIGN.md) — tablet interaction, command-surface, layout, and focus contracts.
+- [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — regions as machining filters rather than material or standalone targets.
+- [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
 
-## UI / toolbar
-- [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — design notes on the current (temporary) always-left toolbar and the intended structural split. Reference for the redesign tracked on the board.
+## Export and simulation
 
-## UI / icons
-- [../src/assets/icons/README.md](../src/assets/icons/README.md) — how to edit icons (SVG-first source, sizing, monochrome vs colour, regenerating the sprite, cross-repo note). Read before adding/changing icons.
+- [G-code_Export_Design.md](G-code_Export_Design.md) — machine origin, machine definitions, postprocessing, and export.
+- [SIMULATION_GPU_HEIGHTFIELD_DESIGN.md](SIMULATION_GPU_HEIGHTFIELD_DESIGN.md) — CPU simulation state and GPU heightfield rendering boundary.
+
+## UI
+
+- [TOOLBAR_REVISIT.md](TOOLBAR_REVISIT.md) — proposed toolbar interaction and structural redesign constraints.
+- [../src/assets/icons/README.md](../src/assets/icons/README.md) — SVG icon sources, sizing, colour, and sprite generation.
+
+For the current medial-axis V-carve implementation, start with
+[`src/engine/toolpaths/vcarveMedial/INDEX.md`](../src/engine/toolpaths/vcarveMedial/INDEX.md).

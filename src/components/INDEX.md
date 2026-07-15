@@ -32,4 +32,4 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 ## Conventions
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).
 - Mutations go through `projectStore` actions only — never mutate Zustand state directly from components.
-- For touch/tablet styling see `src/styles/tablet.css` and `planning/TABLET_UX_COMBINED_PLAN.md`.
+- For touch/tablet styling see `src/styles/tablet.css` and [`planning/TABLET_UX_DESIGN.md`](../../planning/TABLET_UX_DESIGN.md).
