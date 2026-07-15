@@ -2,6 +2,10 @@
 
 `PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export. The core focus is 2.5D, but the app also handles 3D surface machining of imported meshes (rough and finish passes).
 
+The durable product scope, supported surfaces, terminology, and CNC safety
+contract are defined in [`PROJECT.md`](PROJECT.md). Contributors and AI agents
+should start at [`INDEX.md`](INDEX.md) and follow [`AGENTS.md`](AGENTS.md).
+
 It is aimed at the kind of work where you want one place to:
 
 - draw or import geometry
@@ -152,8 +156,19 @@ http://localhost:5173
 npm run build
 ```
 
+The build includes the active-document check, lint, icon generation, TypeScript,
+structural tests, and the Vite production build. Documentation-only changes can
+run `npm run docs:check` first for faster feedback.
+
 ### Preview the production build locally
 
 ```bash
 npm run preview
 ```
+
+## CNC Safety
+
+Preview and simulation are verification aids, not guarantees that a job is safe
+to run. The operator is responsible for the machine, stock, workholding, tool,
+controller setup, feeds/speeds, and physical test procedure. See
+[`PROJECT.md`](PROJECT.md) for the engineering safety contract.

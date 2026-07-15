@@ -1,6 +1,7 @@
 ---
-status: Backlog
-created: 2026-06-10
+status: proposed
+authoritative-for: toolbar redesign constraints and unresolved interaction decisions
+last-verified: 2026-07-15
 ---
 
 # Toolbar — revisit (tech debt)
@@ -29,7 +30,7 @@ structural split + width-based overflow that introduced regressions and was scra
 - Discoverability of scrolled-off tools relies on a subtle fade hint.
 - `Toolbar.tsx` remains a ~1.6k-line monolith with triplicated wiring
   (`Toolbar` / `GlobalToolbar` / `CreationToolbar`) — the merge-conflict hot spot called
-  out in [`REFACTORING_Plan.md`](REFACTORING_Plan.md) §5.
+  out in [`archive/REFACTORING_Plan.md`](archive/REFACTORING_Plan.md) §5.
 
 ## When revisiting
 

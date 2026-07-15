@@ -1,7 +1,9 @@
-# Gemini CLI Mandate
+# Gemini CLI Entry Point
 
-Read and follow `AGENTS.md` for project overview, build commands, coding standards, directory layout, and key conventions.
-Read `ARCHITECTURE.md` for deeper architectural detail.
-Consult `planning/` for feature-specific implementation plans before starting work.
+Start with `INDEX.md`, then read `PROJECT.md` for the product contract and
+`AGENTS.md` for the assigned-task workflow, task router, coding rules, and
+verification. Read `ARCHITECTURE.md` only for technical contracts and the one
+matching `planning/*.md` document for a durable design reference.
 
-Instructions in `AGENTS.md`, `ARCHITECTURE.md`, and `planning/*.md` take absolute precedence over general defaults.
+Every task plan and acceptance criteria live in an approved GitHub issue.
+`planning/` contains durable design references, not implementation plans.
