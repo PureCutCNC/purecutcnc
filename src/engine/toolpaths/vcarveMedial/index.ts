@@ -186,7 +186,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
 
     const sortedRegions = sortRegionsNearestNeighbor(band.regions, currentPosition)
     for (const region of sortedRegions) {
-      const resolvedResolution = resolveMedialResolution(region, project.meta.units)
+      const resolvedResolution = resolveMedialResolution(region)
       if (!resolvedResolution) {
         warnings.push('A region has degenerate XY bounds and produced no medial axis')
         continue

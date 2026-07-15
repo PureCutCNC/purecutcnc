@@ -28,6 +28,7 @@ import type { ToolpathMove } from '../types'
 import {
   computeMedialAxis,
   emitMedialToolpath,
+  extractChains,
   generateVCarveMedialToolpath,
   pointInRegionLoops,
   regionConvexCorners,
@@ -289,12 +290,30 @@ function testRegionConvexCorners(): void {
   console.log('regionConvexCorners PASSED')
 }
 
+function testAcuteCornerTipsSurviveContactFiltering(): void {
+  console.log('Testing acute corner tips survive contact-spread filtering...')
+  const apexAngle = (20 * Math.PI) / 180
+  const halfBase = 20 * Math.tan(apexAngle / 2)
+  const triangle: Point[] = [
+    { x: 0, y: 0 },
+    { x: halfBase, y: 20 },
+    { x: -halfBase, y: 20 },
+  ]
+  const graph = computeMedialAxis({ outer: triangle, islands: [] }, { resolution: 0.2 })
+  const cornerTips = graph.nodes
+    .map((node, index) => ({ node, degree: graph.adjacency[index].length }))
+    .filter(({ node }) => node.clearance < 1e-9)
+  assert(cornerTips.length === 3, `20° triangle should retain 3 corner tips, got ${cornerTips.length}`)
+  assert(cornerTips.every(({ degree }) => degree === 1), 'each acute-triangle corner tip should connect once')
+  console.log('acute corner tips PASSED')
+}
+
 function testAutomaticResolutionKeepsScaledTopologyStable(): void {
   console.log('Testing automatic resolution keeps scaled geometry topology stable...')
   const largeOuter = rectLoop(0, 0, 40, 10)
   const smallOuter = rectLoop(0, 0, 4, 1)
-  const largeResolution = resolveMedialResolution({ outer: largeOuter, islands: [] }, 'mm')
-  const smallResolution = resolveMedialResolution({ outer: smallOuter, islands: [] }, 'mm')
+  const largeResolution = resolveMedialResolution({ outer: largeOuter, islands: [] })
+  const smallResolution = resolveMedialResolution({ outer: smallOuter, islands: [] })
   assert(largeResolution !== null && smallResolution !== null, 'expected valid automatic resolutions')
   assert(
     approx(largeResolution.resolution / smallResolution.resolution, 10),
@@ -511,7 +530,13 @@ function testGeneratorMultipleFeatures(): void {
   console.log(`multi-feature: ${cuts.length} cuts PASSED`)
 }
 
-function makeOutlineTextFeature(id: string, text: string, zBottom: number, size = 10): SketchFeature {
+function makeOutlineTextFeature(
+  id: string,
+  text: string,
+  zBottom: number,
+  size = 10,
+  bounds = { width: size * 6, height: size * 1.4 },
+): SketchFeature {
   const font = getTextFontOptions('outline')[0]
   // A text draft that baseProject/projectWithFeatures turns into an
   // authoritative text definition + instance (definitionId + transform),
@@ -525,7 +550,7 @@ function makeOutlineTextFeature(id: string, text: string, zBottom: number, size 
     text: { text, style: 'outline', fontId: font.id, size },
     folderId: null,
     sketch: {
-      profile: rectProfile(0, 0, size * 6, size * 1.4),
+      profile: rectProfile(0, 0, bounds.width, bounds.height),
       origin: { x: 0, y: 0 },
       orientationAngle: 0,
       dimensions: [],
@@ -569,8 +594,8 @@ function testScaledOutlineTextTopologyStaysStable(): void {
       islands: region.islands.map((island) =>
         island.map((point) => ({ x: point.x * scale, y: point.y * scale }))),
     }
-    const largeResolution = resolveMedialResolution(region, 'mm')
-    const smallResolution = resolveMedialResolution(scaledRegion, 'mm')
+    const largeResolution = resolveMedialResolution(region)
+    const smallResolution = resolveMedialResolution(scaledRegion)
     assert(largeResolution !== null && smallResolution !== null, `region ${index} resolution missing`)
     assert(
       approx(largeResolution.resolution * scale, smallResolution.resolution),
@@ -593,6 +618,43 @@ function testScaledOutlineTextTopologyStaysStable(): void {
     )
   }
   console.log(`scaled outline text: ${regions.length} regions PASSED`)
+}
+
+function testOutlineGRejectsFlatteningSpokesAcrossScales(): void {
+  console.log('Testing lowercase g rejects flattened-curve spokes at different sizes...')
+  const stats = [10, 30].map((size) => {
+    const project = baseProject(
+      [makeVBit()],
+      [makeOutlineTextFeature('f-text', 'g', -5, size, { width: size * 2, height: size * 2 })],
+    )
+    const operation = makeVCarveMedialOp(['f-text'])
+    const regions = resolvePocketRegions(project, operation).bands.flatMap((band) => band.regions)
+    assert(regions.length === 1, `expected one lowercase-g region at size ${size}, got ${regions.length}`)
+    const resolution = resolveMedialResolution(regions[0])
+    assert(resolution !== null, `lowercase-g resolution missing at size ${size}`)
+    const graph = computeMedialAxis(regions[0], { resolution: resolution.resolution })
+    const leafCount = graph.adjacency.filter((neighbors) => neighbors.length === 1).length
+    const cornerTipCount = graph.nodes.filter((node) => node.clearance < 1e-9).length
+    return {
+      resolution: resolution.resolution,
+      nonCornerLeafCount: leafCount - cornerTipCount,
+      chainCount: extractChains(graph).length,
+    }
+  })
+
+  assert(approx(stats[1].resolution / stats[0].resolution, 3), 'g resolution did not follow size ratio')
+  for (const [index, result] of stats.entries()) {
+    assert(
+      result.nonCornerLeafCount <= 3,
+      `g size ${[10, 30][index]} retained ${result.nonCornerLeafCount} non-corner leaf branches`,
+    )
+    assert(
+      result.chainCount <= 18,
+      `g size ${[10, 30][index]} retained ${result.chainCount} medial chains`,
+    )
+  }
+  assert(stats[0].chainCount === stats[1].chainCount, 'g topology changed across font sizes')
+  console.log(`lowercase g: ${stats[0].chainCount} chains at both sizes PASSED`)
 }
 
 function testDotRegionCollapsesToSinglePlunge(): void {
@@ -721,6 +783,7 @@ try {
   testRingWithIsland()
   testLShapeJunctionAndReflexCorner()
   testRegionConvexCorners()
+  testAcuteCornerTipsSurviveContactFiltering()
   testAutomaticResolutionKeepsScaledTopologyStable()
   testGeneratorSquare()
   testGeneratorDepthMatchesVBitGeometry()
@@ -730,6 +793,7 @@ try {
   testGeneratorMultipleFeatures()
   testGeneratorTextFeatureTarget()
   testScaledOutlineTextTopologyStaysStable()
+  testOutlineGRejectsFlatteningSpokesAcrossScales()
   testDotRegionCollapsesToSinglePlunge()
   testEmissionLinksNearbyChainEnds()
   testLinkRespectsClampedDepth()

@@ -14,13 +14,10 @@
  * limitations under the License.
  */
 
-import type { Point, ProjectMeta } from '../../../types/project'
-import { convertLength } from '../../../utils/units'
+import type { Point } from '../../../types/project'
 
 /** Keep similar shapes at a stable boundary-sample density as they scale. */
 export const MEDIAL_SAMPLES_ACROSS_SHORT_SPAN = 40
-/** Large shapes need no finer default than the established engraving step. */
-export const MAX_MEDIAL_RESOLUTION_MM = 0.4
 /** Regions above this estimated boundary sample count are coarsened. */
 export const MEDIAL_SAMPLE_BUDGET_PER_REGION = 40_000
 
@@ -66,23 +63,20 @@ function shortSpan(loop: readonly Point[]): number | null {
 
 export function resolveMedialResolution(
   region: MedialResolutionRegion,
-  units: ProjectMeta['units'],
 ): MedialResolution | null {
   const span = shortSpan(region.outer)
   if (span === null) return null
 
   const shapeResolution = span / MEDIAL_SAMPLES_ACROSS_SHORT_SPAN
-  const maxResolution = convertLength(MAX_MEDIAL_RESOLUTION_MM, 'mm', units)
-  const cappedResolution = Math.min(shapeResolution, maxResolution)
   const perimeter = loopPerimeter(region.outer)
     + region.islands.reduce((sum, island) => sum + loopPerimeter(island), 0)
   const budgetFloor = perimeter / MEDIAL_SAMPLE_BUDGET_PER_REGION
-  const resolution = Math.max(cappedResolution, budgetFloor)
+  const resolution = Math.max(shapeResolution, budgetFloor)
 
   if (!(resolution > 0) || !Number.isFinite(resolution)) return null
   return {
     resolution,
     budgetFloor,
-    budgetLimited: budgetFloor > cappedResolution,
+    budgetLimited: budgetFloor > shapeResolution,
   }
 }
