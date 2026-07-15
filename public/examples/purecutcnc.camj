@@ -3,7 +3,7 @@
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
-    "modified": "2026-06-04T12:25:40.291Z",
+    "modified": "2026-07-15T13:25:59.626Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -592,7 +592,7 @@
       },
       "toolRef": "t0012",
       "stepdown": 0.05,
-      "stepover": 0.005,
+      "stepover": 0.002,
       "feed": 18,
       "plungeFeed": 8,
       "rpm": 18000,
