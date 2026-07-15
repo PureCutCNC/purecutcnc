@@ -236,8 +236,8 @@ export function dedupeProjectIds(project: Project): Project {
 
 export function normalizeOperation(rawOperation: Operation, project: Project, index: number): Operation {
   // Migrate the retired recursive skeleton op to the medial-axis op (issue
-  // #279). Parameters carry over unchanged: `stepover` is the step size for
-  // both, and `maxCarveDepth` plus the V-bit tool mean the same thing.
+  // #279). Legacy parameters stay serialized for compatibility; the current
+  // medial generator derives resolution from geometry and ignores `stepover`.
   const operation: Operation = (rawOperation.kind as string) === 'v_carve_recursive'
     ? { ...rawOperation, kind: 'v_carve_medial' }
     : rawOperation

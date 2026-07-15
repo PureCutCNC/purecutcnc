@@ -16,12 +16,19 @@ the robust successor to the offset-stepping skeleton experiments (issue #177).
   mirroring the other v-carve generators (bands/regions via
   `resolvePocketRegions`, v-bit validation, per-region sample budget and
   empty-result auto-refinement). Re-exports the module surface.
+- `resolution.ts` — pure region-scale sampling resolver: targets a stable
+  density across the shorter XY span, caps ordinary large shapes at the
+  0.4 mm engraving step, and enforces the per-region sample budget.
+- `resolution.test.ts` — scale, unit-equivalence, ceiling, degenerate-region,
+  and sample-budget coverage for the automatic resolver.
 - `vcarveMedial.test.ts` — canonical-shape suite: rectangle spine + exact
   clearances, square diagonals, circle spoke filtering, ring with island,
   L-shape junction/reflex behavior, corner classification, generator depth
   math (60°/90°), clamping, determinism, multi-feature separation.
 
 ## Parameters
-- `operation.stepover` — boundary sampling step (skeleton resolution, project units)
+- Boundary sampling resolution is internal and derived independently from each
+  resolved region's size; legacy `operation.stepover` values remain serialized
+  for compatibility but do not affect medial toolpaths.
 - `operation.maxCarveDepth` — depth clamp for wide areas
 - `operation.debugToolpath` — tags cut moves with `source: 'medial-axis'`

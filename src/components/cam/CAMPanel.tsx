@@ -1273,14 +1273,13 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'drilling'
+                    && selectedOperation.kind !== 'v_carve_medial'
                     && !(selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline') ? (
                     <label className="properties-field">
                       <span>
-                        {selectedOperation.kind === 'v_carve_medial'
-                          ? 'Step Size'
-                          : selectedOperation.kind === 'v_carve'
-                            ? 'Contour Spacing'
-                            : 'Stepover Ratio'}
+                        {selectedOperation.kind === 'v_carve'
+                          ? 'Contour Spacing'
+                          : 'Stepover Ratio'}
                       </span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}

@@ -302,11 +302,7 @@ export function defaultOperationForTarget(
     stepdown: kind === 'finish_surface_cleanup'
       ? convertLength(1, 'mm', project.meta.units)
       : tool.defaultStepdown,
-    // For the medial-axis v-carve, stepover is the skeleton sampling step —
-    // cap the tool default so the skeleton starts at engraving resolution.
-    stepover: kind === 'v_carve_medial'
-      ? Math.min(tool.defaultStepover, convertLength(0.4, 'mm', project.meta.units))
-      : tool.defaultStepover,
+    stepover: tool.defaultStepover,
     feed: tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
