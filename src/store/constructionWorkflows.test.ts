@@ -157,6 +157,32 @@ function testSectionIntegrity(): void {
   assert(getFeature(constructionId).visible, 'setAllFeaturesVisible leaves construction alone')
 }
 
+function testRoleConversionRestoresRootTreeEntry(): void {
+  console.log('Testing role conversion restores root tree entries...')
+  freshStore()
+  useProjectStore.getState().addRectFeature('Foldered feature', 0, 0, 10, 10, 5)
+  const featureId = lastFeature().id
+  const folderId = useProjectStore.getState().addFeatureFolder('features')
+  useProjectStore.getState().assignFeaturesToFolder([featureId], folderId)
+
+  assert(
+    !useProjectStore.getState().project.featureTree.some(
+      (entry) => entry.type === 'feature' && entry.featureId === featureId,
+    ),
+    'foldered feature has no root tree entry',
+  )
+
+  useProjectStore.getState().updateFeature(featureId, { operation: 'construction' })
+
+  assert(getFeature(featureId).folderId === null, 'conversion clears the incompatible folder')
+  assert(
+    useProjectStore.getState().project.featureTree.some(
+      (entry) => entry.type === 'feature' && entry.featureId === featureId,
+    ),
+    'conversion restores the feature at its new section root',
+  )
+}
+
 // ── Grouping stays within one section ────────────────────────────
 
 function testGrouping(): void {
@@ -422,6 +448,7 @@ function testSaveVersionStamping(): void {
 testConstructionCreation()
 testConversions()
 testSectionIntegrity()
+testRoleConversionRestoresRootTreeEntry()
 testGrouping()
 testCopyIntoGroup()
 testFirstSolidRule()

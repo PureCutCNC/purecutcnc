@@ -597,6 +597,7 @@ export function createFeatureSlice(
           featureDefinitions: updated.featureDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
+        nextProject = syncFeatureTreeProject(nextProject)
         nextProject = syncFeatureBasedStock(nextProject)
         if (projectsEqual(nextProject, s.project)) {
           return {}
@@ -627,6 +628,7 @@ export function createFeatureSlice(
           featureDefinitions: updated.featureDefinitions,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
+        nextProject = syncFeatureTreeProject(nextProject)
         nextProject = syncFeatureBasedStock(nextProject)
         if (projectsEqual(nextProject, s.project)) {
           return {}
