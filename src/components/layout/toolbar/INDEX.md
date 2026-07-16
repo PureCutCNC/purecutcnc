@@ -20,3 +20,4 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `SnapActions.tsx` — snapping mode action group.
 - `MeasureActions.tsx` — tape measure and dimension action group.
 - `GlobalToolbar.tsx`, `CreationToolbar.tsx`, `Toolbar.tsx`, `SnapToolbar.tsx` — assembly components exported by the public barrel.
+- `../AppearanceControl.tsx` — shared Dark/Light/System selector rendered by desktop and tablet command bars.

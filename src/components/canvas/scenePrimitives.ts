@@ -23,6 +23,7 @@ import { hexToRgba } from './previewPrimitives'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import type { CanvasThemePalette } from '../../theme/palette'
 
 const NODE_RADIUS = 5
 const HANDLE_RADIUS = 4
@@ -46,6 +47,7 @@ export function drawSketchControls(
   profile: SketchProfile,
   vt: ViewTransform,
   activeControl: SketchControlRef | null,
+  palette: CanvasThemePalette,
 ): void {
   const vertices = profileVertices(profile)
 
@@ -116,7 +118,7 @@ export function drawSketchControls(
     ctx.beginPath()
     ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, seg.clockwise)
     ctx.setLineDash([5, 5])
-    ctx.strokeStyle = 'rgba(210, 221, 230, 0.3)'
+    ctx.strokeStyle = palette.mutedGeometry
     ctx.lineWidth = 1
     ctx.stroke()
     ctx.setLineDash([])
@@ -129,7 +131,7 @@ export function drawSketchControls(
     ctx.lineTo(center.cx + crossSize, center.cy)
     ctx.moveTo(center.cx, center.cy - crossSize)
     ctx.lineTo(center.cx, center.cy + crossSize)
-    ctx.strokeStyle = active ? '#f2b95c' : '#d2dde6'
+    ctx.strokeStyle = active ? '#f2b95c' : palette.mutedGeometry
     ctx.lineWidth = active ? 2 : 1.2
     ctx.stroke()
   }
@@ -141,7 +143,7 @@ export function drawSketchControls(
 
     ctx.beginPath()
     ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
-    ctx.fillStyle = active ? '#f2b95c' : '#d2dde6'
+    ctx.fillStyle = active ? '#f2b95c' : palette.mutedGeometry
     ctx.fill()
     ctx.strokeStyle = active ? '#f7d394' : '#3f708f'
     ctx.lineWidth = 2
@@ -221,6 +223,7 @@ export function drawGrid(
   canvasH: number,
   stock: Stock,
   grid: GridSettings,
+  palette: CanvasThemePalette,
 ): void {
   if (!grid.visible) return
 
@@ -248,7 +251,7 @@ export function drawGrid(
     ctx.beginPath()
     ctx.moveTo(p0.cx, 0)
     ctx.lineTo(p1.cx, canvasH)
-    ctx.strokeStyle = isMajor ? 'rgba(104, 132, 154, 0.34)' : 'rgba(88, 112, 130, 0.18)'
+    ctx.strokeStyle = isMajor ? palette.gridMajor : palette.gridMinor
     ctx.lineWidth = isMajor ? 1.2 : 1
     ctx.stroke()
   }
@@ -261,7 +264,7 @@ export function drawGrid(
     ctx.beginPath()
     ctx.moveTo(0, p0.cy)
     ctx.lineTo(canvasW, p1.cy)
-    ctx.strokeStyle = isMajor ? 'rgba(104, 132, 154, 0.34)' : 'rgba(88, 112, 130, 0.18)'
+    ctx.strokeStyle = isMajor ? palette.gridMajor : palette.gridMinor
     ctx.lineWidth = isMajor ? 1.2 : 1
     ctx.stroke()
   }
@@ -284,14 +287,15 @@ function drawStockDimensionLabel(
   text: string,
   cx: number,
   cy: number,
+  palette: CanvasThemePalette,
 ): void {
   ctx.font = '11px sans-serif'
   const metrics = ctx.measureText(text)
   const halfW = metrics.width / 2 + 4
   const halfH = 9
-  ctx.fillStyle = 'rgba(18, 26, 36, 0.85)'
+  ctx.fillStyle = palette.labelBackground
   ctx.fillRect(cx - halfW, cy - halfH, halfW * 2, halfH * 2)
-  ctx.fillStyle = 'rgba(200, 220, 240, 0.95)'
+  ctx.fillStyle = palette.labelText
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, cx, cy)
@@ -303,6 +307,7 @@ export function drawStockOutline(
   vt: ViewTransform,
   units: Units,
   exceeded: boolean,
+  palette: CanvasThemePalette,
   stockLabelRects?: StockLabelRect[],
 ): void {
   traceProfilePath(ctx, stock.profile, vt)
@@ -341,6 +346,7 @@ export function drawStockOutline(
     widthLabelText,
     widthCx,
     widthCy,
+    palette,
   )
   const heightCx = maxCx + 8 + ctx.measureText(heightLabelText).width / 2
   const heightCy = (minCy + maxCy) / 2
@@ -349,6 +355,7 @@ export function drawStockOutline(
     heightLabelText,
     heightCx,
     heightCy,
+    palette,
   )
   ctx.restore()
 
@@ -418,6 +425,7 @@ export function drawOriginMarker(
   ctx: CanvasRenderingContext2D,
   origin: { x: number; y: number; name: string },
   vt: ViewTransform,
+  palette: CanvasThemePalette,
 ): void {
   const anchor = worldToCanvas({ x: origin.x, y: origin.y }, vt)
   const axisLength = 20
@@ -459,7 +467,7 @@ export function drawOriginMarker(
   ctx.arc(anchor.cx, anchor.cy, 4, 0, Math.PI * 2)
   ctx.fillStyle = '#5b90e3'
   ctx.fill()
-  ctx.strokeStyle = 'rgba(230, 237, 245, 0.95)'
+  ctx.strokeStyle = palette.labelText
   ctx.lineWidth = 1.5
   ctx.stroke()
 
@@ -469,7 +477,7 @@ export function drawOriginMarker(
   ctx.fillStyle = '#63c07a'
   ctx.fillText('Y', anchor.cx - 3, anchor.cy - axisLength - 4)
 
-  ctx.fillStyle = 'rgba(230, 237, 245, 0.95)'
+  ctx.fillStyle = palette.labelText
   ctx.fillText(origin.name, anchor.cx + 10, anchor.cy - 8)
   ctx.restore()
 }
@@ -484,6 +492,7 @@ export function drawBackdropImage(
   image: HTMLImageElement,
   vt: ViewTransform,
   selected: boolean,
+  palette: CanvasThemePalette,
   label = 'Backdrop',
 ): void {
   const center = worldToCanvas(backdrop.center, vt)
@@ -513,9 +522,9 @@ export function drawBackdropImage(
     ctx.fill()
     ctx.restore()
 
-    ctx.fillStyle = 'rgba(18, 22, 29, 0.8)'
+    ctx.fillStyle = palette.labelBackground
     ctx.fillRect(center.cx - 38, center.cy - 14, 76, 18)
-    ctx.fillStyle = '#d8e4f0'
+    ctx.fillStyle = palette.labelText
     ctx.font = '11px monospace'
     ctx.textAlign = 'center'
     ctx.fillText(label, center.cx, center.cy - 1)

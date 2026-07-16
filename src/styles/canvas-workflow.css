@@ -134,7 +134,7 @@
   height: 34px;
   border: 1px solid rgba(200, 156, 98, 0.22);
   border-radius: 6px;
-  background: rgba(7, 12, 17, 0.72);
+  background: var(--surface-input);
 }
 
 .gear-reference__outline,
@@ -177,7 +177,7 @@
   height: 32px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #0f1820;
+  background: var(--surface-panel);
   color: var(--text);
   padding: 0 8px;
   outline: none;
@@ -226,7 +226,7 @@
   touch-action: pan-y;
   border: 1px solid rgba(200, 156, 98, 0.38);
   border-radius: 8px;
-  background: rgba(7, 12, 17, 0.4);
+  background: var(--surface-input);
   box-shadow: inset 0 1px 0 rgba(229, 235, 238, 0.04);
   padding: 6px;
 }
@@ -240,7 +240,7 @@
   min-height: 44px;
   border: 1px solid rgba(200, 156, 98, 0.24);
   border-radius: 6px;
-  background: rgba(7, 12, 17, 0.54);
+  background: var(--surface-input);
   color: var(--text);
   padding: 0 10px;
   text-align: left;

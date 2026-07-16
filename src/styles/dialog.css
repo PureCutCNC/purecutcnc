@@ -29,10 +29,10 @@
   width: 100%;
   max-width: 800px;
   max-height: 90vh;
-  background: #121a24;
+  background: var(--bg-elev-1);
   border: 1px solid var(--line-strong);
   border-radius: 14px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 24px 48px var(--shadow-strong);
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
@@ -129,8 +129,8 @@
   height: 38px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #0b1219;
-  color: #fff;
+  background: var(--surface-subtle);
+  color: var(--on-accent);
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 700;
@@ -172,7 +172,7 @@
   padding: 14px 16px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: rgba(8, 14, 20, 0.62);
+  background: var(--surface-translucent);
   color: var(--text-dim);
   cursor: pointer;
   font: inherit;
@@ -184,7 +184,7 @@
 
 .unit-conversion-option:hover {
   border-color: var(--line-bright);
-  background: rgba(17, 25, 34, 0.9);
+  background: var(--surface-raised);
   transform: translateY(-1px);
 }
 
@@ -210,7 +210,7 @@
 }
 
 .unit-conversion-option__heading strong {
-  color: #fff;
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 650;
 }
@@ -229,7 +229,7 @@
 .unit-conversion-option code {
   justify-self: start;
   padding: 3px 7px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--surface-sheen-strong);
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.24);
   color: #d8e2ea;
@@ -264,7 +264,7 @@
 .dialog-title {
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .dialog-close {
@@ -280,8 +280,8 @@
 }
 
 .dialog-close:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: var(--surface-sheen-mid);
+  color: var(--on-accent);
 }
 
 .dialog-body {
@@ -342,7 +342,7 @@
 }
 
 .dialog-preview {
-  background: #090f16;
+  background: var(--surface-subtle);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: 12px;
@@ -509,7 +509,7 @@
   padding: 12px 14px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: rgba(18, 24, 33, 0.82);
+  background: var(--surface-translucent);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -546,7 +546,7 @@
 }
 
 .project-template-preview__title {
-  color: #fff;
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 600;
 }
@@ -601,7 +601,7 @@
 .import-dialog__info-row input[type="number"] {
   width: 130px;
   flex-shrink: 0;
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -643,7 +643,7 @@
 .import-progress-track {
   width: 100%;
   height: 6px;
-  background: #090f16;
+  background: var(--surface-subtle);
   border-radius: 3px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -663,7 +663,7 @@
 .import-dialog__analysis {
   margin-top: 8px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-sheen-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
@@ -720,7 +720,7 @@
   margin: 0;
   flex: 0 0 auto;
   accent-color: var(--accent);
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   cursor: pointer;
@@ -839,7 +839,7 @@
 
 .btn-secondary:hover {
   border-color: var(--line-bright);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-sheen-soft);
 }
 
 /* ── Print Design dialog ──────────────────── */
@@ -853,7 +853,7 @@
 }
 
 .print-preview {
-  background: #0b1119;
+  background: var(--surface-subtle);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: 18px;
@@ -870,7 +870,7 @@
   max-height: 56vh;
   height: auto;
   width: 100%;
-  background: #fff;
+  background: var(--on-accent);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -907,7 +907,7 @@
 .print-dialog__row input[type="number"] {
   width: 84px;
   flex-shrink: 0;
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -943,7 +943,7 @@
 
 .print-dialog__scale-input {
   width: 96px;
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -1189,7 +1189,7 @@
 }
 
 .machine-editor-input {
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -1207,7 +1207,7 @@
 }
 
 .machine-editor-textarea {
-  background: #0f1820;
+  background: var(--surface-panel);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -1228,7 +1228,7 @@
 }
 
 .machine-editor-json {
-  background: #090f16;
+  background: var(--surface-subtle);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--text);
@@ -1334,11 +1334,11 @@
 }
 
 .machine-manager-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-sheen);
 }
 
 .machine-manager-item--selected {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
 }
 
 .machine-manager-item--active .machine-manager-item-name {
@@ -1372,7 +1372,7 @@
 .machine-manager-detail-name {
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-accent);
   margin: 0;
 }
 
@@ -1394,7 +1394,7 @@
 }
 
 .machine-manager-badge--custom {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text-dim);
 }
 

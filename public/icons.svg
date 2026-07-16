@@ -35,6 +35,17 @@
     <path d="M 8 12 L 16 12" />
     <path d="M 5 17 L 19 17" />
   </symbol>
+  <symbol id="appearance" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="3.5" />
+    <path d="M12 2.75v2" />
+    <path d="M12 19.25v2" />
+    <path d="M2.75 12h2" />
+    <path d="M19.25 12h2" />
+    <path d="m5.46 5.46 1.42 1.42" />
+    <path d="m17.12 17.12 1.42 1.42" />
+    <path d="m18.54 5.46-1.42 1.42" />
+    <path d="m6.88 17.12-1.42 1.42" />
+  </symbol>
   <symbol id="chamfer" viewBox="0 0 24 24">
     <path d="M 20 5 L 11 5" />
     <path d="M 11 5 L 5 11" />

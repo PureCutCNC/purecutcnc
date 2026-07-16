@@ -36,6 +36,7 @@ browser-free while PRs still exercise the browser smoke.
 
 Current smoke targets:
 
+- `appearance.smoke.spec.ts` — Dark/Light/System switching, persistence, system-media response, project-state isolation, and tablet touch targets.
 - `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
 - `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.

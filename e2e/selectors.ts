@@ -26,6 +26,15 @@
 
 import type { Locator, Page } from '@playwright/test'
 
+// ── Appearance ─────────────────────────────────────────────────────
+
+export const appearance = {
+  trigger: (page: Page) => page.getByRole('button', { name: /^Appearance:/ }),
+  menu: (page: Page) => page.getByRole('menu', { name: 'Appearance theme' }),
+  option: (page: Page, label: 'Dark' | 'Light' | 'System') =>
+    appearance.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 export const tree = {

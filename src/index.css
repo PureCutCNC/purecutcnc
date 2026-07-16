@@ -20,6 +20,7 @@
 @import './styles/tablet.css';
 
 :root {
+  color-scheme: dark;
   --bg: #0a1016;
   --bg-elev-1: #101821;
   --bg-elev-2: #16222d;
@@ -31,14 +32,79 @@
   --accent-strong: #eab982;
   --add: #6abb81;
   --cut: #5a8fcc;
+  --surface-app: #0a1016;
+  --surface-canvas: #0f151d;
+  --surface-panel: #0f1820;
+  --surface-subtle: #0d141c;
+  --surface-raised: rgba(16, 24, 33, 0.94);
+  --surface-popover: rgba(12, 18, 26, 0.96);
+  --surface-translucent: rgba(10, 18, 27, 0.85);
+  --surface-input: rgba(7, 12, 17, 0.72);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-control-top: #2a3a4c;
+  --surface-control-bottom: #17232f;
+  --surface-button-top: #24374a;
+  --surface-button-bottom: #13202c;
+  --surface-sheen: rgba(255, 255, 255, 0.04);
+  --surface-sheen-soft: rgba(255, 255, 255, 0.03);
+  --surface-sheen-mid: rgba(255, 255, 255, 0.05);
+  --surface-sheen-strong: rgba(255, 255, 255, 0.08);
+  --surface-inset: rgba(0, 0, 0, 0.28);
+  --shadow: rgba(0, 0, 0, 0.35);
+  --shadow-strong: rgba(0, 0, 0, 0.45);
+  --accent-soft: rgba(220, 165, 106, 0.12);
+  --surface-active-top: #3d4f61;
+  --surface-active-bottom: #202d3a;
+  --on-accent: #fff;
+  --danger-text: #f0bbb6;
 
   font-family: 'Avenir Next', 'IBM Plex Sans', 'Segoe UI', sans-serif;
   color: var(--text);
-  background: radial-gradient(circle at 18% -10%, #1c2a37, #0a1016 58%);
+  background: radial-gradient(circle at 18% -10%, var(--bg-elev-2), var(--surface-app) 58%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #eee8dd;
+  --bg-elev-1: #f8f4ec;
+  --bg-elev-2: #e5ddcf;
+  --line: #c9bdab;
+  --line-strong: #a99a84;
+  --text: #253039;
+  --text-dim: #657078;
+  --accent: #a66126;
+  --accent-strong: #874717;
+  --add: #39794d;
+  --cut: #356f9d;
+  --surface-app: #eee8dd;
+  --surface-canvas: #f6f1e7;
+  --surface-panel: #f9f5ed;
+  --surface-subtle: #e9e1d4;
+  --surface-raised: rgba(252, 249, 242, 0.97);
+  --surface-popover: rgba(252, 249, 242, 0.98);
+  --surface-translucent: rgba(247, 243, 235, 0.94);
+  --surface-input: rgba(255, 252, 247, 0.94);
+  --surface-hover: rgba(88, 70, 46, 0.08);
+  --surface-control-top: #fdfaf4;
+  --surface-control-bottom: #e5dccd;
+  --surface-button-top: #f8f3e9;
+  --surface-button-bottom: #ddd3c3;
+  --surface-sheen: rgba(255, 255, 255, 0.54);
+  --surface-sheen-soft: rgba(255, 255, 255, 0.34);
+  --surface-sheen-mid: rgba(255, 255, 255, 0.46);
+  --surface-sheen-strong: rgba(255, 255, 255, 0.72);
+  --surface-inset: rgba(69, 54, 36, 0.13);
+  --shadow: rgba(55, 43, 28, 0.18);
+  --shadow-strong: rgba(55, 43, 28, 0.24);
+  --accent-soft: rgba(166, 97, 38, 0.12);
+  --surface-active-top: #ead6bf;
+  --surface-active-bottom: #cbb293;
+  --on-accent: #fffaf3;
+  --danger-text: #91443e;
 }
 
 * {
@@ -73,6 +139,7 @@ body,
 
 body {
   min-height: 100svh;
+  background: var(--surface-app);
 }
 
 button,
@@ -88,7 +155,7 @@ input {
   padding: 1.5rem;
   background:
     radial-gradient(circle at top, rgba(90, 143, 204, 0.22), transparent 36%),
-    linear-gradient(180deg, #091018 0%, #0a1016 100%);
+    linear-gradient(180deg, var(--surface-subtle) 0%, var(--surface-app) 100%);
 }
 
 .unsupported-mobile-card {
@@ -96,8 +163,8 @@ input {
   padding: 1.5rem;
   border: 1px solid var(--line);
   border-radius: 1rem;
-  background: rgba(16, 24, 33, 0.94);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  background: var(--surface-raised);
+  box-shadow: 0 24px 60px var(--shadow);
 }
 
 .unsupported-mobile-eyebrow {
@@ -155,7 +222,7 @@ input {
   padding: 1.5rem;
   background:
     radial-gradient(circle at top, rgba(204, 90, 90, 0.16), transparent 36%),
-    linear-gradient(180deg, #091018 0%, #0a1016 100%);
+    linear-gradient(180deg, var(--surface-subtle) 0%, var(--surface-app) 100%);
 }
 
 .app-error-card {
@@ -163,8 +230,8 @@ input {
   padding: 1.75rem;
   border: 1px solid var(--line);
   border-radius: 1rem;
-  background: rgba(16, 24, 33, 0.94);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  background: var(--surface-raised);
+  box-shadow: 0 24px 60px var(--shadow);
 }
 
 .app-error-eyebrow {
@@ -207,7 +274,7 @@ input {
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 0.6rem;
-  background: rgba(9, 14, 20, 0.7);
+  background: var(--surface-input);
   color: var(--text-dim);
   font-size: 0.78rem;
   line-height: 1.5;

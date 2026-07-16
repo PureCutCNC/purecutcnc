@@ -24,6 +24,10 @@ import { UnsupportedMobileScreen } from './components/UnsupportedMobileScreen'
 import { isDesktop } from './platform'
 import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
+import { ThemeProvider } from './theme/ThemeProvider'
+import { bootstrapTheme } from './theme/theme'
+
+bootstrapTheme()
 
 // Swap #root for a static error card if something throws before React mounts.
 // Once React is alive, AppErrorBoundary takes over — this flag prevents the
@@ -69,12 +73,18 @@ const isIconGalleryRoute =
   window.location.hash === '#icons'
 
 function rootElement() {
-  if (isPhoneSizedTouchDevice()) return <UnsupportedMobileScreen />
-  if (isIconGalleryRoute) return <IconGalleryRoute />
   return (
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
+    <ThemeProvider>
+      {isPhoneSizedTouchDevice()
+        ? <UnsupportedMobileScreen />
+        : isIconGalleryRoute
+          ? <IconGalleryRoute />
+          : (
+              <AppErrorBoundary>
+                <App />
+              </AppErrorBoundary>
+            )}
+    </ThemeProvider>
   )
 }
 

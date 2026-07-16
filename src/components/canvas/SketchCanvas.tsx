@@ -150,6 +150,8 @@ import {
   type FeatureClipboardPayload,
 } from '../../platform/featureClipboard'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { useTheme } from '../../theme/themeContext'
+import { THEME_PALETTES } from '../../theme/palette'
 
 export type { SketchCanvasHandle }
 
@@ -173,6 +175,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   },
   ref
 ) {
+  const { resolvedTheme } = useTheme()
+  const canvasPalette = THEME_PALETTES[resolvedTheme].canvas
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDraggingNodeRef = useRef(false)
@@ -797,7 +801,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, resolvedTheme])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -889,10 +893,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const collidingClampIdSet = new Set(collidingClampIds)
 
     ctx.clearRect(0, 0, width, height)
-    ctx.fillStyle = '#0f151d'
+    ctx.fillStyle = canvasPalette.background
     ctx.fillRect(0, 0, width, height)
 
-    drawGrid(ctx, vt, width, height, project.stock, project.grid)
+    drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette)
 
     if (project.backdrop?.visible && backdropImage) {
       drawBackdropImage(
@@ -901,6 +905,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         backdropImage,
         vt,
         selection.selectedNode?.type === 'backdrop',
+        canvasPalette,
         project.backdrop.name,
       )
     }
@@ -912,11 +917,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           && feature.kind !== 'text'
           && profileExceedsStock(feature.sketch.profile, project.stock),
       )
-      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock, stockLabelRectsRef.current)
+      drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock, canvasPalette, stockLabelRectsRef.current)
     }
 
     if (project.origin.visible) {
-      drawOriginMarker(ctx, project.origin, vt)
+      drawOriginMarker(ctx, project.origin, vt, canvasPalette)
     }
 
     const batchedLineFeatures: SketchFeature[] = []
@@ -952,7 +957,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           ctx.shadowBlur = 8
           ctx.stroke()
         } else if (feature.sketch.profile.closed) {
-          ctx.fillStyle = 'rgba(8, 12, 18, 0.5)'
+          ctx.fillStyle = canvasPalette.veil
           ctx.fill()
         }
         ctx.restore()
@@ -973,7 +978,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           isDraggingNodeRef.current
             ? selection.activeControl
             : (dimEdit.dimensionEditControlRef.current ?? selection.activeControl ?? hoveredEditControl)
-        drawSketchControls(ctx, feature.sketch.profile, vt, editControl)
+        drawSketchControls(ctx, feature.sketch.profile, vt, editControl, canvasPalette)
         if (editControl && (isDraggingNodeRef.current || dimEdit.dimensionEditControlRef.current || hoveredEditControl)) {
           drawActiveEditMeasurements(ctx, feature.sketch.profile, vt, project.meta.units, editControl)
         }
@@ -1067,7 +1072,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const isInvalid = !!c.is_invalid
         const lineColor = isInvalid ? 'rgba(220, 60, 60, 0.85)' : 'rgba(91, 165, 216, 0.8)'
         const dotColor = isInvalid ? 'rgba(220, 60, 60, 0.9)' : 'rgba(91, 165, 216, 0.9)'
-        const labelColor = isInvalid ? 'rgba(255, 180, 180, 0.95)' : 'rgba(200, 220, 240, 0.95)'
+        const labelColor = isInvalid ? 'rgba(255, 180, 180, 0.95)' : canvasPalette.labelText
         const aC = worldToCanvas(c.anchor_point, vt)
         const rC = worldToCanvas(c.reference_point, vt)
         ctx.save()
@@ -1098,7 +1103,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const padY = 2
           const halfW = metrics.width / 2 + padX
           const halfH = 7 + padY
-          ctx.fillStyle = isInvalid ? 'rgba(80, 20, 20, 0.9)' : 'rgba(18, 26, 36, 0.85)'
+          ctx.fillStyle = isInvalid ? 'rgba(80, 20, 20, 0.9)' : canvasPalette.labelBackground
           ctx.fillRect(midX - halfW, midY - halfH, halfW * 2, halfH * 2)
           ctx.fillStyle = labelColor
           ctx.textAlign = 'center'
@@ -1123,7 +1128,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const selected = selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
-        drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl)
+        drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)
       }
     }
 
@@ -1132,7 +1137,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const selected = selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id
       drawTabFootprint(ctx, tab, vt, selected)
       if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id) {
-        drawSketchControls(ctx, rectProfile(tab.x, tab.y, tab.w, tab.h), vt, selection.activeControl)
+        drawSketchControls(ctx, rectProfile(tab.x, tab.y, tab.w, tab.h), vt, selection.activeControl, canvasPalette)
       }
     }
 
@@ -1343,6 +1348,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             backdropImage,
             vt,
             true,
+            canvasPalette,
             'Move preview',
           )
         } else if (currentMovePreviewPoint) {
@@ -1536,6 +1542,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
               backdropImage,
               vt,
               true,
+              canvasPalette,
               pendingTransform.mode === 'resize' ? 'Resize preview' : 'Rotate preview',
             )
           }
