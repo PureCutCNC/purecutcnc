@@ -23,8 +23,8 @@
  * therefore exact V-bit depths, natural junctions without topology-event
  * heuristics, and zero-depth tips in sharp convex corners.
  *
- * `operation.stepover` is the boundary sampling step (skeleton resolution) in
- * project units; `operation.maxCarveDepth` clamps the depth in wide areas.
+ * Boundary sampling resolution is derived from each resolved region's scale;
+ * `operation.maxCarveDepth` clamps the depth in wide areas.
  */
 
 import type { Operation, Point, Project } from '../../../types/project'
@@ -39,14 +39,14 @@ import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from '../m
 import { updateBounds } from '../pocket'
 import { resolvePocketRegions } from '../resolver'
 import { computeMedialAxis } from './medialAxis'
+import { resolveMedialResolution } from './resolution'
 import { emitMedialToolpath } from './toolpath'
 
 export * from './medialAxis'
+export * from './resolution'
 export { emitMedialToolpath, extractChains } from './toolpath'
 export type { MedialToolpathParams } from './toolpath'
 
-/** Regions whose boundary would exceed this many samples get a coarser step. */
-const SAMPLE_BUDGET_PER_REGION = 40_000
 /** Empty-result refinement: halve the step at most this many times. */
 const MAX_AUTO_REFINEMENTS = 2
 
@@ -57,15 +57,6 @@ function computeBounds(moves: ToolpathMove[]): ToolpathBounds | null {
     bounds = updateBounds(bounds, move.to)
   }
   return bounds
-}
-
-function loopPerimeter(loop: Point[]): number {
-  let length = 0
-  for (let i = 0; i < loop.length; i += 1) {
-    const next = loop[(i + 1) % loop.length]
-    length += Math.hypot(next.x - loop[i].x, next.y - loop[i].y)
-  }
-  return length
 }
 
 function regionCentroid(region: { outer: Point[] }): { x: number; y: number } {
@@ -165,15 +156,6 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     }
   }
 
-  if (!(operation.stepover > 0)) {
-    return {
-      operationId: operation.id,
-      moves: [],
-      warnings: [...resolved.warnings, 'Step size must be greater than zero'],
-      bounds: null,
-    }
-  }
-
   const halfAngleRadians = (tool.vBitAngle * Math.PI) / 360
   const slope = Math.tan(halfAngleRadians)
   if (!(slope > 1e-9)) {
@@ -204,17 +186,18 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
 
     const sortedRegions = sortRegionsNearestNeighbor(band.regions, currentPosition)
     for (const region of sortedRegions) {
-      const perimeter = loopPerimeter(region.outer)
-        + region.islands.reduce((sum, island) => sum + loopPerimeter(island), 0)
+      const resolvedResolution = resolveMedialResolution(region)
+      if (!resolvedResolution) {
+        warnings.push('A region has degenerate XY bounds and produced no medial axis')
+        continue
+      }
 
-      let resolution = operation.stepover
-      const budgetFloor = perimeter / SAMPLE_BUDGET_PER_REGION
-      if (resolution < budgetFloor) {
-        resolution = budgetFloor
+      let resolution = resolvedResolution.resolution
+      if (resolvedResolution.budgetLimited) {
         if (!budgetWarned) {
           budgetWarned = true
           warnings.push(
-            `Step size raised to ${resolution.toFixed(3)} on large regions to bound computation`,
+            `Sampling resolution raised to ${resolution.toFixed(3)} on large regions to bound computation`,
           )
         }
       }
@@ -226,7 +209,9 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
       // A region narrower than the sampling step can miss interior Voronoi
       // vertices entirely — retry at a finer step before giving up.
       for (let attempt = 0; graph.nodes.length === 0 && attempt < MAX_AUTO_REFINEMENTS; attempt += 1) {
-        resolution /= 2
+        const refinedResolution = Math.max(resolvedResolution.budgetFloor, resolution / 2)
+        if (!(refinedResolution < resolution)) break
+        resolution = refinedResolution
         graph = computeMedialAxis(
           { outer: region.outer, islands: region.islands },
           { resolution },

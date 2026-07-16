@@ -23,17 +23,20 @@ import type { Operation, Point, Project, SketchFeature, Tool } from '../../../ty
 import { defaultTool, newProject, polygonProfile, rectProfile } from '../../../types/project'
 import { getTextFontOptions } from '../../../text'
 import { projectWithFeatures } from '../../../test/projectFixtures'
+import { resolvePocketRegions } from '../resolver'
 import type { ToolpathMove } from '../types'
 import {
   computeMedialAxis,
   emitMedialToolpath,
+  extractChains,
   generateVCarveMedialToolpath,
   pointInRegionLoops,
   regionConvexCorners,
+  resolveMedialResolution,
 } from './index'
 import type { MedialGraph } from './medialAxis'
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
@@ -287,6 +290,50 @@ function testRegionConvexCorners(): void {
   console.log('regionConvexCorners PASSED')
 }
 
+function testAcuteCornerTipsSurviveContactFiltering(): void {
+  console.log('Testing acute corner tips survive contact-spread filtering...')
+  const apexAngle = (20 * Math.PI) / 180
+  const halfBase = 20 * Math.tan(apexAngle / 2)
+  const triangle: Point[] = [
+    { x: 0, y: 0 },
+    { x: halfBase, y: 20 },
+    { x: -halfBase, y: 20 },
+  ]
+  const graph = computeMedialAxis({ outer: triangle, islands: [] }, { resolution: 0.2 })
+  const cornerTips = graph.nodes
+    .map((node, index) => ({ node, degree: graph.adjacency[index].length }))
+    .filter(({ node }) => node.clearance < 1e-9)
+  assert(cornerTips.length === 3, `20° triangle should retain 3 corner tips, got ${cornerTips.length}`)
+  assert(cornerTips.every(({ degree }) => degree === 1), 'each acute-triangle corner tip should connect once')
+  console.log('acute corner tips PASSED')
+}
+
+function testAutomaticResolutionKeepsScaledTopologyStable(): void {
+  console.log('Testing automatic resolution keeps scaled geometry topology stable...')
+  const largeOuter = rectLoop(0, 0, 40, 10)
+  const smallOuter = rectLoop(0, 0, 4, 1)
+  const largeResolution = resolveMedialResolution({ outer: largeOuter, islands: [] })
+  const smallResolution = resolveMedialResolution({ outer: smallOuter, islands: [] })
+  assert(largeResolution !== null && smallResolution !== null, 'expected valid automatic resolutions')
+  assert(
+    approx(largeResolution.resolution / smallResolution.resolution, 10),
+    'resolution should scale with similar geometry',
+  )
+
+  const largeGraph = computeMedialAxis(
+    { outer: largeOuter, islands: [] },
+    { resolution: largeResolution.resolution },
+  )
+  const smallGraph = computeMedialAxis(
+    { outer: smallOuter, islands: [] },
+    { resolution: smallResolution.resolution },
+  )
+  assert(largeGraph.nodes.length === smallGraph.nodes.length, 'scaled rectangles should have equal node counts')
+  assert(edgeCount(largeGraph) === edgeCount(smallGraph), 'scaled rectangles should have equal edge counts')
+  assert(componentCount(largeGraph) === componentCount(smallGraph), 'scaled rectangles should stay equally connected')
+  console.log(`scaled topology: ${largeGraph.nodes.length} nodes PASSED`)
+}
+
 // ---------------------------------------------------------------------------
 // Generator integration tests
 // ---------------------------------------------------------------------------
@@ -452,6 +499,16 @@ function testGeneratorDeterminism(): void {
   console.log(`determinism: ${a.moves.length} moves PASSED`)
 }
 
+function testGeneratorIgnoresLegacyStepover(): void {
+  console.log('Testing legacy medial stepover no longer affects generation...')
+  const proj = baseProject([makeVBit()], [makeRectFeature('f1', 0, 0, 20, 8, -5)])
+  const zero = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f1'], { stepover: 0 }))
+  const huge = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f1'], { stepover: 10_000 }))
+  assert(zero.moves.length > 0, `expected moves with legacy zero stepover: ${zero.warnings.join(', ')}`)
+  assert(JSON.stringify(zero.moves) === JSON.stringify(huge.moves), 'legacy stepover changed the medial toolpath')
+  console.log(`legacy stepover ignored: ${zero.moves.length} moves PASSED`)
+}
+
 function testGeneratorMultipleFeatures(): void {
   console.log('Testing multiple target features (retract between letters)...')
   const proj = baseProject(
@@ -473,7 +530,13 @@ function testGeneratorMultipleFeatures(): void {
   console.log(`multi-feature: ${cuts.length} cuts PASSED`)
 }
 
-function makeOutlineTextFeature(id: string, text: string, zBottom: number): SketchFeature {
+function makeOutlineTextFeature(
+  id: string,
+  text: string,
+  zBottom: number,
+  size = 10,
+  bounds = { width: size * 6, height: size * 1.4 },
+): SketchFeature {
   const font = getTextFontOptions('outline')[0]
   // A text draft that baseProject/projectWithFeatures turns into an
   // authoritative text definition + instance (definitionId + transform),
@@ -484,10 +547,10 @@ function makeOutlineTextFeature(id: string, text: string, zBottom: number): Sket
     id,
     name: text,
     kind: 'text',
-    text: { text, style: 'outline', fontId: font.id, size: 10 },
+    text: { text, style: 'outline', fontId: font.id, size },
     folderId: null,
     sketch: {
-      profile: rectProfile(0, 0, 60, 14),
+      profile: rectProfile(0, 0, bounds.width, bounds.height),
       origin: { x: 0, y: 0 },
       orientationAngle: 0,
       dimensions: [],
@@ -504,7 +567,7 @@ function makeOutlineTextFeature(id: string, text: string, zBottom: number): Sket
 function testGeneratorTextFeatureTarget(): void {
   console.log('Testing raw text feature target (authoritative instance model)...')
   const proj = baseProject([makeVBit()], [makeOutlineTextFeature('f-text', 'Rag', -5)])
-  const result = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f-text'], { stepover: 0.25 }))
+  const result = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f-text']))
   const cuts = cutMoves(result.moves)
   assert(cuts.length > 0, `expected cuts for text feature, got 0 (warnings: ${result.warnings.join(', ')})`)
   assert(
@@ -512,6 +575,86 @@ function testGeneratorTextFeatureTarget(): void {
     `text target resolved empty: ${result.warnings.join(', ')}`,
   )
   console.log(`text feature target: ${cuts.length} cuts PASSED`)
+}
+
+function testScaledOutlineTextTopologyStaysStable(): void {
+  console.log('Testing scaled outline-text geometry keeps stable medial topology...')
+  const project = baseProject(
+    [makeVBit()],
+    [makeOutlineTextFeature('f-text', 'Rag', -5, 10)],
+  )
+  const operation = makeVCarveMedialOp(['f-text'])
+  const regions = resolvePocketRegions(project, operation).bands.flatMap((band) => band.regions)
+  assert(regions.length > 0, 'expected resolved outline-text regions')
+
+  const scale = 0.2
+  for (const [index, region] of regions.entries()) {
+    const scaledRegion = {
+      outer: region.outer.map((point) => ({ x: point.x * scale, y: point.y * scale })),
+      islands: region.islands.map((island) =>
+        island.map((point) => ({ x: point.x * scale, y: point.y * scale }))),
+    }
+    const largeResolution = resolveMedialResolution(region)
+    const smallResolution = resolveMedialResolution(scaledRegion)
+    assert(largeResolution !== null && smallResolution !== null, `region ${index} resolution missing`)
+    assert(
+      approx(largeResolution.resolution * scale, smallResolution.resolution),
+      `region ${index} resolution did not follow text scale`,
+    )
+
+    const largeGraph = computeMedialAxis(region, { resolution: largeResolution.resolution })
+    const smallGraph = computeMedialAxis(scaledRegion, { resolution: smallResolution.resolution })
+    assert(
+      largeGraph.nodes.length === smallGraph.nodes.length,
+      `region ${index} gained or lost nodes when scaled: ${largeGraph.nodes.length} vs ${smallGraph.nodes.length}`,
+    )
+    assert(
+      edgeCount(largeGraph) === edgeCount(smallGraph),
+      `region ${index} gained or lost branches when scaled`,
+    )
+    assert(
+      componentCount(largeGraph) === componentCount(smallGraph),
+      `region ${index} connectivity changed when scaled`,
+    )
+  }
+  console.log(`scaled outline text: ${regions.length} regions PASSED`)
+}
+
+function testOutlineGRejectsFlatteningSpokesAcrossScales(): void {
+  console.log('Testing lowercase g rejects flattened-curve spokes at different sizes...')
+  const stats = [10, 30].map((size) => {
+    const project = baseProject(
+      [makeVBit()],
+      [makeOutlineTextFeature('f-text', 'g', -5, size, { width: size * 2, height: size * 2 })],
+    )
+    const operation = makeVCarveMedialOp(['f-text'])
+    const regions = resolvePocketRegions(project, operation).bands.flatMap((band) => band.regions)
+    assert(regions.length === 1, `expected one lowercase-g region at size ${size}, got ${regions.length}`)
+    const resolution = resolveMedialResolution(regions[0])
+    assert(resolution !== null, `lowercase-g resolution missing at size ${size}`)
+    const graph = computeMedialAxis(regions[0], { resolution: resolution.resolution })
+    const leafCount = graph.adjacency.filter((neighbors) => neighbors.length === 1).length
+    const cornerTipCount = graph.nodes.filter((node) => node.clearance < 1e-9).length
+    return {
+      resolution: resolution.resolution,
+      nonCornerLeafCount: leafCount - cornerTipCount,
+      chainCount: extractChains(graph).length,
+    }
+  })
+
+  assert(approx(stats[1].resolution / stats[0].resolution, 3), 'g resolution did not follow size ratio')
+  for (const [index, result] of stats.entries()) {
+    assert(
+      result.nonCornerLeafCount <= 3,
+      `g size ${[10, 30][index]} retained ${result.nonCornerLeafCount} non-corner leaf branches`,
+    )
+    assert(
+      result.chainCount <= 18,
+      `g size ${[10, 30][index]} retained ${result.chainCount} medial chains`,
+    )
+  }
+  assert(stats[0].chainCount === stats[1].chainCount, 'g topology changed across font sizes')
+  console.log(`lowercase g: ${stats[0].chainCount} chains at both sizes PASSED`)
 }
 
 function testDotRegionCollapsesToSinglePlunge(): void {
@@ -640,12 +783,17 @@ try {
   testRingWithIsland()
   testLShapeJunctionAndReflexCorner()
   testRegionConvexCorners()
+  testAcuteCornerTipsSurviveContactFiltering()
+  testAutomaticResolutionKeepsScaledTopologyStable()
   testGeneratorSquare()
   testGeneratorDepthMatchesVBitGeometry()
   testGeneratorRequiresVBit()
   testGeneratorDeterminism()
+  testGeneratorIgnoresLegacyStepover()
   testGeneratorMultipleFeatures()
   testGeneratorTextFeatureTarget()
+  testScaledOutlineTextTopologyStaysStable()
+  testOutlineGRejectsFlatteningSpokesAcrossScales()
   testDotRegionCollapsesToSinglePlunge()
   testEmissionLinksNearbyChainEnds()
   testLinkRespectsClampedDepth()

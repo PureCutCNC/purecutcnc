@@ -17,7 +17,8 @@
 /**
  * Operation-kind migration on project load. The retired v_carve_recursive
  * skeleton op (issue #279) is rewritten to v_carve_medial with its parameters
- * preserved, so saved projects keep working after the op was removed.
+ * preserved for compatibility, so saved projects keep working after the op
+ * was removed. The medial generator now ignores the legacy stepover value.
  */
 
 import {

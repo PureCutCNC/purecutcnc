@@ -73,7 +73,7 @@ export interface MedialAxisOptions {
   pruneFactor?: number
   /**
    * Minimum turn angle (radians) for a boundary vertex to count as a convex
-   * corner that receives a zero-clearance skeleton tip. Default 15°.
+   * corner that receives a zero-clearance skeleton tip. Default 50°.
    */
   cornerAngleRad?: number
 }
@@ -92,7 +92,11 @@ export interface MedialGraph {
 }
 
 const DEFAULT_PRUNE_FACTOR = 1.5
-const DEFAULT_CORNER_ANGLE_RAD = (15 * Math.PI) / 180
+// Clipper's fixed integer grid turns shallow curves into repeatable 26.565°
+// and 45° stair steps at small project-unit sizes. Those are quantization
+// corners, not places where the V-bit should receive an explicit surface tip.
+const DEFAULT_CORNER_ANGLE_RAD = (50 * Math.PI) / 180
+const DEFAULT_CONTACT_SPREAD_ANGLE_RAD = (60 * Math.PI) / 180
 const MAX_PRUNE_ITERATIONS = 32
 
 export function emptyMedialGraph(): MedialGraph {
@@ -351,6 +355,8 @@ export interface RegionCorner {
   point: Point
   /** Turn angle in radians (0 = straight). */
   turnRad: number
+  /** Unit vector along the corner bisector pointing into machinable area. */
+  bisector: Point
 }
 
 /**
@@ -400,7 +406,19 @@ export function regionConvexCorners(
       const cos = (dx1 * dx2 + dy1 * dy2) / (len1 * len2)
       const turnRad = Math.acos(Math.max(-1, Math.min(1, cos)))
       if (turnRad <= angleThresholdRad) continue
-      corners.push({ point: { x: curr.x, y: curr.y }, turnRad })
+      let bisectorX = (-dx1 / len1) + (dx2 / len2)
+      let bisectorY = (-dy1 / len1) + (dy2 / len2)
+      if (island) {
+        bisectorX *= -1
+        bisectorY *= -1
+      }
+      const bisectorLength = Math.hypot(bisectorX, bisectorY)
+      if (bisectorLength < 1e-12) continue
+      corners.push({
+        point: { x: curr.x, y: curr.y },
+        turnRad,
+        bisector: { x: bisectorX / bisectorLength, y: bisectorY / bisectorLength },
+      })
     }
   }
   return corners
@@ -517,11 +535,12 @@ export function computeMedialAxis(region: MedialAxisRegion, options: MedialAxisO
   }
 
   // --- 4. Contact-spread filter (λ-medial axis on exact geometry) ----------
-  // Slightly below the corner threshold so sampling wobble on a borderline
-  // corner branch cannot fragment it. The tolerance ratio covers the node
-  // position error caused by sampling a curved wall with chords (sagitta
-  // h²/8R with R >= clearance) plus a small constant floor.
-  const spreadThreshold = cornerAngleRad * 0.75
+  // Require materially separated contact directions for ordinary medial
+  // nodes. Adjacent chords on a flattened curve can be almost equidistant but
+  // do not represent opposing walls; the explicit corner-extension pass below
+  // restores genuine sharp convex tips independently. The tolerance ratio
+  // covers node-position error caused by chord sagitta plus a small floor.
+  const spreadThreshold = DEFAULT_CONTACT_SPREAD_ANGLE_RAD
   const builder: GraphBuilder = { xs: [], ys: [], clearances: [], edges: new Set(), edgeCapacity: 0 }
   const keptIndex = new Int32Array(rawXs.length).fill(-1)
   for (let i = 0; i < rawXs.length; i += 1) {
@@ -706,24 +725,37 @@ function extendIntoCorners(
   resolution: number,
 ): void {
   for (const corner of corners) {
-    let best = -1
-    let bestDist = Infinity
+    const candidates: Array<{ node: number; aligned: boolean; score: number }> = []
     for (let i = 0; i < graph.xs.length; i += 1) {
       if (graph.adjacency[i].size === 0 && graph.xs.length > 1) continue
-      const d = Math.hypot(graph.xs[i] - corner.point.x, graph.ys[i] - corner.point.y)
-      if (d < bestDist) {
-        bestDist = d
-        best = i
-      }
+      const dx = graph.xs[i] - corner.point.x
+      const dy = graph.ys[i] - corner.point.y
+      const distance = Math.hypot(dx, dy)
+      const projection = dx * corner.bisector.x + dy * corner.bisector.y
+      const offAxis = Math.abs(dx * corner.bisector.y - dy * corner.bisector.x)
+      const aligned = projection > 0 && offAxis <= Math.max(1.5 * resolution, projection * 0.1)
+      const touchesMedialBall = distance <= graph.clearances[i] + 1.5 * resolution
+      if (!aligned && !touchesMedialBall) continue
+      candidates.push({
+        node: i,
+        aligned,
+        score: aligned ? projection + 4 * offAxis : distance,
+      })
     }
+    candidates.sort((a, b) => Number(b.aligned) - Number(a.aligned) || a.score - b.score)
+
+    const best = candidates.find(({ node }) => {
+      const dx = graph.xs[node] - corner.point.x
+      const dy = graph.ys[node] - corner.point.y
+      const distance = Math.hypot(dx, dy)
+      const sampleCount = Math.max(2, Math.min(64, Math.ceil(distance / resolution)))
+      for (let sample = 1; sample < sampleCount; sample += 1) {
+        const t = sample / sampleCount
+        if (!pointInRegionLoops(corner.point.x + dx * t, corner.point.y + dy * t, loops)) return false
+      }
+      return true
+    })?.node ?? -1
     if (best < 0) continue
-    // The corner must lie on (or near) the candidate node's medial ball —
-    // otherwise this corner's branch was absorbed elsewhere and a link would
-    // cut across foreign geometry.
-    if (bestDist > graph.clearances[best] + 1.5 * resolution) continue
-    const mx = (graph.xs[best] + corner.point.x) / 2
-    const my = (graph.ys[best] + corner.point.y) / 2
-    if (bestDist > resolution * 0.05 && !pointInRegionLoops(mx, my, loops)) continue
 
     const tip = graph.xs.length
     graph.xs.push(corner.point.x)

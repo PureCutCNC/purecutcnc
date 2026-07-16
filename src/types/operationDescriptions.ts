@@ -58,11 +58,12 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'V-Carve Medial',
     shortSummary: 'Geometric medial-axis V-carve with exact depth from the true skeleton',
     fullDescription:
-      'V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Step Size controls the skeleton sampling resolution.',
+      'V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Sampling resolution adjusts automatically to each shape\'s size.',
     keyPoints: [
       'Requires one or more closed subtract profiles',
       'Requires a V-bit tool (set the tip angle on the tool first)',
       'Exact depth: V flanks touch both walls everywhere along the skeleton',
+      'Automatic shape-scaled sampling keeps small lettering clean',
       'Crisp zero-depth tips in sharp corners; no artifacts on smooth curves',
       'Single-pass operation (no rough/finish split)',
       'Optional closed regions act as XY filters',
