@@ -87,6 +87,23 @@ test('keeps New Project template hover states within the light palette', async (
   await expect(imperialTemplate).toHaveCSS('color', 'rgb(37, 48, 57)')
 })
 
+test('keeps shared positive workflow actions legible in the light theme', async ({ app, ui }) => {
+  await ui.appearance.trigger(app.page).click()
+  await ui.appearance.option(app.page, 'Light').click()
+
+  await app.page.evaluate(() => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'tablet-cmd-btn tablet-cmd-btn--confirm'
+    button.textContent = 'Positive action contrast probe'
+    document.body.appendChild(button)
+  })
+
+  const positiveAction = ui.appearance.positiveActionProbe(app.page)
+  await expect(positiveAction).toHaveCSS('color', 'rgb(57, 121, 77)')
+  await expect(positiveAction).toHaveCSS('font-weight', '650')
+})
+
 test.describe('tablet appearance', () => {
   test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
 

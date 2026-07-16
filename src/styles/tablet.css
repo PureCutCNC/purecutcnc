@@ -446,9 +446,16 @@
 }
 
 .tablet-cmd-btn--confirm {
-  background: rgba(60, 180, 60, 0.15);
-  border-color: rgba(60, 180, 60, 0.4);
-  color: #7ddf7d;
+  background: color-mix(in oklab, var(--add) 18%, var(--surface-raised));
+  border-color: color-mix(in oklab, var(--add) 72%, var(--line-strong));
+  color: var(--add);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--add) 12%, transparent);
+}
+
+.tablet-cmd-btn--confirm:hover {
+  background: color-mix(in oklab, var(--add) 24%, var(--surface-raised));
+  border-color: var(--add);
 }
 
 .tablet-cmd-btn--cancel {
@@ -926,9 +933,9 @@
 }
 
 .snap-popover-enable-btn--active {
-  background: rgba(60, 180, 60, 0.12);
-  border-color: rgba(60, 180, 60, 0.4);
-  color: #7ddf7d;
+  background: color-mix(in oklab, var(--add) 14%, var(--surface-raised));
+  border-color: color-mix(in oklab, var(--add) 62%, var(--line-strong));
+  color: var(--add);
 }
 
 .snap-popover-grid {

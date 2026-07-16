@@ -33,6 +33,8 @@ export const appearance = {
   menu: (page: Page) => page.getByRole('menu', { name: 'Appearance theme' }),
   option: (page: Page, label: 'Dark' | 'Light' | 'System') =>
     appearance.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+  positiveActionProbe: (page: Page) =>
+    page.getByRole('button', { name: 'Positive action contrast probe' }),
 }
 
 // ── Status bar and About dialog ────────────────────────────────────
