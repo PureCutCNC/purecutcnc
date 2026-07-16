@@ -48,6 +48,23 @@ test.describe('Feature references browser smoke', () => {
     await expect(ui.tree.rows(app.page).first()).toBeAttached()
   })
 
+  test('HTML5 drag reorders project features and folders', async ({ app, ui }) => {
+    await seedLinkedProject(app.page)
+
+    await rowByName(app.page, 'Linked B').dragTo(rowByName(app.page, 'Linked A'))
+    await expect(ui.tree.featureRows(app.page).nth(0)).toContainText('Linked B')
+    await expect(ui.tree.featureRows(app.page).nth(1)).toContainText('Linked A')
+
+    await ui.tree.addFolderButton(app.page).click()
+    await ui.tree.addFolderButton(app.page).click()
+    await expect(ui.tree.folderRows(app.page)).toHaveCount(2)
+
+    await ui.tree.folderRowByName(app.page, 'Folder 2')
+      .dragTo(ui.tree.folderRowByName(app.page, 'Folder 1'))
+    await expect(ui.tree.folderRows(app.page).nth(0)).toContainText('Folder 2')
+    await expect(ui.tree.folderRows(app.page).nth(1)).toContainText('Folder 1')
+  })
+
   // ── 2. Linked badge renders on the right rows ──────────────────
 
   test('linked badge visible on linked rows, absent on independent/unique', async ({ app, ui }) => {

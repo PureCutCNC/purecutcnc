@@ -16,7 +16,6 @@
 
 import { useEffect, useRef } from 'react'
 import type { MutableRefObject } from 'react'
-import { readTextFile } from '@tauri-apps/plugin-fs'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
 import { checkDesktopUpdate, loadChannel, saveChannel } from '../utils/updateCheck'
@@ -140,7 +139,6 @@ function runFeatureClipboardCommand(
  *  - document.title + Tauri window title updated with file name + dirty indicator
  *  - window close prompt when there are unsaved changes
  *  - native app menu event routing
- *  - drag-and-drop .camj open
  *
  * Safe to call in the browser — all Tauri-specific listeners are guarded by
  * `platform.isDesktop` and loaded lazily so the web bundle is not affected.
@@ -210,7 +208,7 @@ export function useDesktopIntegration({ onExportGcode, onPrintDesign, onShowAbou
   }, [])
 
   // -------------------------------------------------------------------------
-  // Desktop-only: window close prompt, menu events, drag-and-drop
+  // Desktop-only: window close prompt and menu events
   //
   // Runs ONCE on mount. Uses:
   //  - isCancelled flag — prevents late-resolving async setup from
@@ -380,36 +378,6 @@ export function useDesktopIntegration({ onExportGcode, onPrintDesign, onShowAbou
       // The native menu defaults to "snapshot"; reflect a previously saved
       // choice so the checkmark is correct from launch.
       invoke('set_update_channel', { channel: loadChannel() }).catch(() => {})
-
-      // -- Drag-and-drop .camj open ------------------------------------------
-      const unlistenDrop = await win.onDragDropEvent(async (event) => {
-        if (event.payload.type !== 'drop') return
-        const camjPath = event.payload.paths.find((p) =>
-          p.toLowerCase().endsWith('.camj')
-        )
-        if (!camjPath) return
-
-        const { dirty: currentDirty } = useProjectStore.getState()
-        if (currentDirty) {
-          const ok = await platform.confirmDiscardChanges()
-          if (!ok) return
-        }
-
-        try {
-          const content = await readTextFile(camjPath)
-          useProjectStore.setState({ projectLoading: true })
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-          )
-          useProjectStore.getState().openProjectFromText(content, camjPath)
-        } catch {
-          alert('Failed to open dropped file.')
-        } finally {
-          useProjectStore.setState({ projectLoading: false })
-        }
-      })
-      if (isCancelled) { unlistenDrop(); return }
-      cleanups.push(unlistenDrop)
     }
 
     setup()

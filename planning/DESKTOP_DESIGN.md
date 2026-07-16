@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: desktop shell and platform-abstraction design
-last-verified: 2026-07-15
+last-verified: 2026-07-16
 ---
 
 # Desktop Design
@@ -56,6 +56,10 @@ Those remain in the shared TypeScript application.
   and browser e2e tests.
 - Native paths and filesystem capabilities are never serialized into portable
   project data unless the schema explicitly defines them.
+- The main window keeps Tauri native drag/drop disabled so the shared frontend
+  HTML5 drag interaction remains available for Project-tree and CAM-operation
+  reordering. Finder-to-window `.camj` dropping is intentionally unsupported;
+  projects open through File > Open or macOS file association instead.
 
 ## Security and distribution
 
@@ -71,5 +75,6 @@ Desktop/platform changes should cover:
 - focused platform or store tests;
 - `npm run build`;
 - browser fallback boot and the relevant `npm run test:e2e` smoke;
+- Project-tree feature/folder and CAM-operation reordering;
 - native file/close/menu testing on the affected desktop platform;
 - tablet impact when shared commands or dialogs change.
