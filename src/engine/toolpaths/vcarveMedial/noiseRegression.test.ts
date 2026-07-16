@@ -46,6 +46,28 @@ function loadNoiseRegressionProject(): ReturnType<typeof normalizeProject> {
   return normalizeProject(input)
 }
 
+function quarterInchNoiseRegressionProject(): ReturnType<typeof normalizeProject> {
+  const project = structuredClone(loadNoiseRegressionProject())
+  const definition = project.featureDefinitions['f-0004']
+  assert(definition?.text !== null && definition.text !== undefined, 'fixture text definition missing')
+  const scale = 0.25 / definition.text.size
+  const origin = definition.profile.start
+  const scalePoint = (point: { x: number; y: number }): { x: number; y: number } => ({
+    x: origin.x + (point.x - origin.x) * scale,
+    y: origin.y + (point.y - origin.y) * scale,
+  })
+  definition.text = { ...definition.text, size: 0.25 }
+  definition.profile = {
+    ...definition.profile,
+    start: scalePoint(definition.profile.start),
+    segments: definition.profile.segments.map((segment) => ({
+      ...segment,
+      to: scalePoint(segment.to),
+    })),
+  }
+  return project
+}
+
 function regionStats(
   region: ReturnType<typeof resolvePocketRegions>['bands'][number]['regions'][number],
 ): RegionStats {
@@ -80,7 +102,7 @@ function testSavedGlyphProjectRejectsNoiseAcrossLinkedScales(): void {
     [0.004403125, 0.004828125],
   ]
   const expectedTopology = [
-    { cornerCount: 3, nonCornerLeaves: 2, chainCount: 13 },
+    { cornerCount: 1, nonCornerLeaves: 2, chainCount: 9 },
     { cornerCount: 10, nonCornerLeaves: 0, chainCount: 20 },
   ]
 
@@ -104,8 +126,30 @@ function testSavedGlyphProjectRejectsNoiseAcrossLinkedScales(): void {
   console.log('saved linked gA noise regression PASSED')
 }
 
+function testFreshQuarterInchGlyphRejectsGridCornerNoise(): void {
+  console.log('Testing freshly generated 0.25-inch gA rejects fixed-grid corner noise...')
+  const project = quarterInchNoiseRegressionProject()
+  const operation = project.operations.find((candidate) => candidate.id === 'op0005')
+  assert(operation !== undefined, 'fixture small-glyph operation missing')
+  const regions = resolvePocketRegions(project, operation).bands.flatMap((band) => band.regions)
+  assert(regions.length === 2, `quarter-inch operation should resolve g and A, got ${regions.length}`)
+  const stats = regions.map(regionStats)
+
+  assert(approx(stats[0].resolution, 0.001506875), `quarter-inch g resolution was ${stats[0].resolution}`)
+  assert(approx(stats[1].resolution, 0.00155), `quarter-inch A resolution was ${stats[1].resolution}`)
+  assert(stats[0].cornerCount === 1, `quarter-inch g retained ${stats[0].cornerCount} corner tips`)
+  assert(stats[1].cornerCount === 10, `quarter-inch A retained ${stats[1].cornerCount} corner tips`)
+  assert(stats[0].nonCornerLeaves <= 2, `quarter-inch g retained ${stats[0].nonCornerLeaves} non-corner leaves`)
+  assert(stats[1].nonCornerLeaves <= 2, `quarter-inch A retained ${stats[1].nonCornerLeaves} non-corner leaves`)
+  assert(stats[0].chainCount <= 15, `quarter-inch g retained ${stats[0].chainCount} chains`)
+  assert(stats[1].chainCount <= 24, `quarter-inch A retained ${stats[1].chainCount} chains`)
+
+  console.log('fresh quarter-inch gA noise regression PASSED')
+}
+
 try {
   testSavedGlyphProjectRejectsNoiseAcrossLinkedScales()
+  testFreshQuarterInchGlyphRejectsGridCornerNoise()
   console.log('noiseRegression.test.ts: all tests PASSED')
 } catch (error) {
   console.error(error)

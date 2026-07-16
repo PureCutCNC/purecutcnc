@@ -8,7 +8,8 @@ the robust successor to the offset-stepping skeleton experiments (issue #177).
   interior-circumcenter medial graph, exact clearance via a segment grid,
   contact-spread filtering of curve-flattening spokes (λ-medial axis on the
   exact boundary), micro-edge contraction, spur pruning, small-component
-  cleanup, and inward-bisector tip extension into sharp convex corners.
+  cleanup, fixed-grid kink rejection, and inward-bisector tip extension into
+  sharp convex corners.
 - `toolpath.ts` — graph → chains (junction-to-junction paths, cycles, plunge
   points), depth-aware Douglas-Peucker simplification, greedy chain ordering
   with junction continuation, ToolpathMove emission.
@@ -27,8 +28,9 @@ the robust successor to the offset-stepping skeleton experiments (issue #177).
   lowercase-`g` filtering, generator depth math (60°/90°), clamping,
   determinism, and multi-feature separation.
 - `noiseRegression.test.ts` — loads the user-reported linked small/large `gA`
-  project fixture and locks its automatic resolution, corner count, leaves,
-  and chain topology against flattened-font noise.
+  project fixture, derives a freshly generated 0.25-inch case, and locks their
+  automatic resolution, corner count, leaves, and chain topology against
+  flattened-font and fixed-grid noise.
 
 ## Parameters
 - Boundary sampling resolution is internal and derived independently from each

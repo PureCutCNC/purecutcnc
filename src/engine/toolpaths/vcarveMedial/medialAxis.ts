@@ -73,7 +73,7 @@ export interface MedialAxisOptions {
   pruneFactor?: number
   /**
    * Minimum turn angle (radians) for a boundary vertex to count as a convex
-   * corner that receives a zero-clearance skeleton tip. Default 15°.
+   * corner that receives a zero-clearance skeleton tip. Default 50°.
    */
   cornerAngleRad?: number
 }
@@ -92,7 +92,10 @@ export interface MedialGraph {
 }
 
 const DEFAULT_PRUNE_FACTOR = 1.5
-const DEFAULT_CORNER_ANGLE_RAD = (25 * Math.PI) / 180
+// Clipper's fixed integer grid turns shallow curves into repeatable 26.565°
+// and 45° stair steps at small project-unit sizes. Those are quantization
+// corners, not places where the V-bit should receive an explicit surface tip.
+const DEFAULT_CORNER_ANGLE_RAD = (50 * Math.PI) / 180
 const DEFAULT_CONTACT_SPREAD_ANGLE_RAD = (60 * Math.PI) / 180
 const MAX_PRUNE_ITERATIONS = 32
 
