@@ -27,6 +27,8 @@ import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } 
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
 import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
+import { useTheme } from '../../theme/themeContext'
+import { THEME_PALETTES } from '../../theme/palette'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -669,6 +671,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   toolpathVisibility,
   onToolpathVisibilityChange,
 }, ref) {
+  const { resolvedTheme } = useTheme()
+  const threePalette = THEME_PALETTES[resolvedTheme].three
+  const threePaletteRef = useRef(threePalette)
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -694,9 +699,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   // pointer handlers (which read them outside render). Write after commit, not
   // during render, so we don't touch refs while rendering.
   useLayoutEffect(() => {
+    threePaletteRef.current = threePalette
     zoomWindowActiveRef.current = zoomWindowActive
     zoomWindowBoxRef.current = zoomWindowBox
-  }, [zoomWindowActive, zoomWindowBox])
+  }, [threePalette, zoomWindowActive, zoomWindowBox])
 
   // Reset the zoom-window box during render when the tool deactivates (React-
   // recommended adjust-state-during-render; the ref mirror above nulls
@@ -739,7 +745,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
-    renderer.setClearColor(0x141820, 1)
+    renderer.setClearColor(threePaletteRef.current.background, 1)
     renderer.domElement.style.display = 'block'
     renderer.domElement.style.touchAction = 'none'
     mount.appendChild(renderer.domElement)
@@ -839,8 +845,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     const minorDivisions = Math.max(1, Math.round(extent / project.grid.minorSpacing))
     const majorDivisions = Math.max(1, Math.round(extent / project.grid.majorSpacing))
 
-    const minorGrid = new THREE.GridHelper(extent, minorDivisions, 0x223344, 0x223344)
-    const majorGrid = new THREE.GridHelper(extent, majorDivisions, 0x334455, 0x51657a)
+    const palette = threePaletteRef.current
+    const minorGrid = new THREE.GridHelper(extent, minorDivisions, palette.gridMinorCenter, palette.gridMinor)
+    const majorGrid = new THREE.GridHelper(extent, majorDivisions, palette.gridMajorCenter, palette.gridMajor)
     configureGridMaterial(minorGrid.material)
     configureGridMaterial(majorGrid.material)
     majorGrid.position.y = 0.001
@@ -848,6 +855,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     gridGroup.add(minorGrid)
     gridGroup.add(majorGrid)
   }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible, project.stock, syncGridVisibility])
+
+  useEffect(() => {
+    rendererRef.current?.setClearColor(threePalette.background, 1)
+    rebuildGridHelpers()
+  }, [rebuildGridHelpers, threePalette])
 
   const clearRenderedObjects = useCallback((scene: THREE.Scene) => {
     for (const object of objectsRef.current) {

@@ -26,6 +26,40 @@
 
 import type { Locator, Page } from '@playwright/test'
 
+// ── Appearance ─────────────────────────────────────────────────────
+
+export const appearance = {
+  trigger: (page: Page) => page.getByRole('button', { name: /^Appearance:/ }),
+  menu: (page: Page) => page.getByRole('menu', { name: 'Appearance theme' }),
+  option: (page: Page, label: 'Dark' | 'Light' | 'System') =>
+    appearance.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+  positiveActionProbe: (page: Page) =>
+    page.getByRole('button', { name: 'Positive action contrast probe' }),
+}
+
+// ── Status bar and About dialog ────────────────────────────────────
+
+export const statusBar = {
+  root: (page: Page) => page.locator('.app-statusbar'),
+  toggle: (page: Page, label: string) =>
+    statusBar.root(page).getByRole('button', { name: label, exact: true }),
+  about: (page: Page) => statusBar.root(page).locator('.statusbar-about'),
+}
+
+export const aboutDialog = {
+  root: (page: Page) => page.getByRole('dialog', { name: 'About PureCutCNC' }),
+  title: (page: Page) => aboutDialog.root(page).locator('.dialog-title'),
+  productName: (page: Page) => aboutDialog.root(page).locator('.about-name'),
+}
+
+// ── New Project dialog ─────────────────────────────────────────────
+
+export const newProjectDialog = {
+  root: (page: Page) => page.locator('.dialog--new-project'),
+  template: (page: Page, label: string) =>
+    newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 export const tree = {
@@ -133,6 +167,12 @@ export const operations = {
   headerExportButton: (page: Page) =>
     page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Export', exact: true }),
 
+  /** The "Add" button and menu in the Operations panel header. */
+  headerAddButton: (page: Page) =>
+    page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Add', exact: true }),
+  addMenu: (page: Page) => page.locator('.cam-add-menu--vertical'),
+  addMenuHint: (page: Page) => page.locator('.cam-add-menu--vertical .cam-operation-hint').first(),
+
   /** The Properties-header "Export G-code" action for the selected operation. */
   propertiesExportButton: (page: Page, name: string) =>
     page
@@ -198,4 +238,7 @@ export const toolbar = {
 
   /** Add-point button (visible during sketch edit). */
   addPointButton: (page: Page) => page.locator('button[aria-label="Add point"]'),
+
+  /** Opens the New Project dialog. */
+  newProjectButton: (page: Page) => page.getByRole('button', { name: 'New project' }),
 }

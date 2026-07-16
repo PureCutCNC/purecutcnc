@@ -37,6 +37,14 @@
   }
 }
 
+[data-shell-mode="tablet"] .appearance-control__trigger,
+[data-shell-mode="tablet-compact"] .appearance-control__trigger {
+  width: var(--touch-target, 44px);
+  height: var(--touch-target, 44px);
+  min-width: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
+}
+
 /* ── Tablet layout: right panel becomes a slide-in drawer ─── */
 
 @media (pointer: coarse), (max-width: 960px) {
@@ -52,7 +60,7 @@
     flex-direction: column;
     background: var(--bg-elev-1);
     border-left: 1px solid var(--line);
-    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+    box-shadow: -8px 0 32px var(--shadow-strong);
     transform: translateX(100%);
     transition: transform 0.22s ease;
     /* Override the grid-area assignment from the narrow desktop breakpoint */
@@ -70,7 +78,7 @@
     position: fixed;
     inset: 0;
     z-index: 49;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--shadow-strong);
   }
 
   /* The main body no longer needs to reserve a column for the right panel */
@@ -282,7 +290,7 @@
   flex-direction: column;
   background: var(--bg-elev-1);
   border-left: 1px solid var(--line);
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+  box-shadow: -8px 0 32px var(--shadow-strong);
   transform: translateX(100%);
   transition: transform 0.22s ease;
   pointer-events: none;
@@ -400,7 +408,7 @@
   gap: 6px;
   padding: 6px;
   border-radius: 10px;
-  background: rgba(16, 24, 33, 0.88);
+  background: var(--surface-raised);
   border: 1px solid var(--line);
   backdrop-filter: blur(8px);
   pointer-events: auto;
@@ -428,7 +436,7 @@
 }
 
 .tablet-cmd-btn:active {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-sheen-strong);
 }
 
 .tablet-cmd-btn--active {
@@ -438,9 +446,16 @@
 }
 
 .tablet-cmd-btn--confirm {
-  background: rgba(60, 180, 60, 0.15);
-  border-color: rgba(60, 180, 60, 0.4);
-  color: #7ddf7d;
+  background: color-mix(in oklab, var(--add) 18%, var(--surface-raised));
+  border-color: color-mix(in oklab, var(--add) 72%, var(--line-strong));
+  color: var(--add);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--add) 12%, transparent);
+}
+
+.tablet-cmd-btn--confirm:hover {
+  background: color-mix(in oklab, var(--add) 24%, var(--surface-raised));
+  border-color: var(--add);
 }
 
 .tablet-cmd-btn--cancel {
@@ -500,7 +515,7 @@
 }
 
 .top-command-bar__name:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
 }
 
 .top-command-bar__save-state {
@@ -538,7 +553,7 @@
 }
 
 .top-cmd-group--tabs {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-sheen);
   border-radius: 8px;
   padding: 2px;
 }
@@ -557,7 +572,7 @@
 }
 
 .top-cmd-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -674,7 +689,7 @@
   align-items: center;
   gap: 2px;
   padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--surface-hover);
   width: 100%;
 }
 
@@ -704,7 +719,7 @@
 }
 
 .tool-rail__btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -756,7 +771,7 @@
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-sheen);
 }
 
 .tool-rail__target-btn {
@@ -840,7 +855,7 @@
 }
 
 .tool-rail__popover button:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -918,9 +933,9 @@
 }
 
 .snap-popover-enable-btn--active {
-  background: rgba(60, 180, 60, 0.12);
-  border-color: rgba(60, 180, 60, 0.4);
-  color: #7ddf7d;
+  background: color-mix(in oklab, var(--add) 14%, var(--surface-raised));
+  border-color: color-mix(in oklab, var(--add) 62%, var(--line-strong));
+  color: var(--add);
 }
 
 .snap-popover-grid {
@@ -946,7 +961,7 @@
 }
 
 .snap-popover-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -987,7 +1002,7 @@
   flex-direction: column;
   background: var(--bg-elev-1);
   border-right: 1px solid var(--line);
-  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 8px 0 32px var(--shadow-strong);
   transform: translateX(-100%);
   transition: transform 0.22s ease;
   pointer-events: none;
@@ -1128,14 +1143,14 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--status-text);
   cursor: pointer;
   font-size: 10px;
   flex-shrink: 0;
 }
 
 .statusbar-expand-btn:active {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-sheen-strong);
 }
 
 .statusbar-visibility--hidden {
@@ -1283,7 +1298,7 @@
     position: fixed;
     inset: 0;
     z-index: 99999;
-    background: #0b1219;
+    background: var(--surface-subtle);
     color: var(--text-dim);
     font-size: 18px;
     text-align: center;

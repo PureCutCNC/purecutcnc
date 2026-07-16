@@ -18,11 +18,10 @@
   position: absolute;
   z-index: 26;
   width: min(340px, calc(100% - 24px));
-  border: 1px solid rgba(200, 156, 98, 0.7);
+  border: 1px solid color-mix(in oklab, var(--accent) 62%, var(--line-strong));
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(29, 35, 38, 0.96), rgba(15, 21, 27, 0.94));
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
+  background: linear-gradient(180deg, var(--surface-popover), var(--surface-raised));
+  box-shadow: 0 18px 44px var(--shadow-strong);
   color: var(--text);
   overflow: hidden;
   pointer-events: auto;
@@ -35,7 +34,7 @@
   gap: 8px;
   min-height: 40px;
   padding: 0 12px;
-  border-bottom: 1px solid rgba(200, 156, 98, 0.24);
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 25%, var(--line));
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -93,7 +92,7 @@
   align-items: center;
   gap: 8px;
   min-height: 32px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -104,7 +103,7 @@
   gap: 10px;
   width: 100%;
   min-height: 32px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -132,9 +131,9 @@
 .canvas-workflow-panel__parameter-reference {
   width: 50px;
   height: 34px;
-  border: 1px solid rgba(200, 156, 98, 0.22);
+  border: 1px solid color-mix(in oklab, var(--accent) 24%, var(--line));
   border-radius: 6px;
-  background: rgba(7, 12, 17, 0.72);
+  background: var(--surface-input);
 }
 
 .gear-reference__outline,
@@ -147,12 +146,12 @@
 }
 
 .gear-reference__outline {
-  stroke: rgba(229, 235, 238, 0.68);
+  stroke: var(--text-dim);
   stroke-width: 1.7;
 }
 
 .gear-reference__guide {
-  stroke: rgba(148, 163, 172, 0.48);
+  stroke: color-mix(in oklab, var(--text-dim) 58%, transparent);
   stroke-width: 1.1;
 }
 
@@ -177,7 +176,7 @@
   height: 32px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #0f1820;
+  background: var(--surface-panel);
   color: var(--text);
   padding: 0 8px;
   outline: none;
@@ -221,13 +220,13 @@
   max-height: min(26rem, calc(100cqh - 164px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-color: rgba(200, 156, 98, 0.68) rgba(7, 12, 17, 0.42);
+  scrollbar-color: color-mix(in oklab, var(--accent) 70%, var(--line-strong)) var(--surface-input);
   scrollbar-gutter: stable;
   touch-action: pan-y;
-  border: 1px solid rgba(200, 156, 98, 0.38);
+  border: 1px solid color-mix(in oklab, var(--accent) 38%, var(--line));
   border-radius: 8px;
-  background: rgba(7, 12, 17, 0.4);
-  box-shadow: inset 0 1px 0 rgba(229, 235, 238, 0.04);
+  background: var(--surface-input);
+  box-shadow: inset 0 1px 0 var(--surface-sheen);
   padding: 6px;
 }
 
@@ -238,9 +237,9 @@
   gap: 12px;
   width: 100%;
   min-height: 44px;
-  border: 1px solid rgba(200, 156, 98, 0.24);
+  border: 1px solid color-mix(in oklab, var(--accent) 24%, var(--line));
   border-radius: 6px;
-  background: rgba(7, 12, 17, 0.54);
+  background: var(--surface-input);
   color: var(--text);
   padding: 0 10px;
   text-align: left;
@@ -250,7 +249,7 @@
 .overlap-feature-picker__candidate:hover,
 .overlap-feature-picker__candidate:focus-visible {
   border-color: var(--accent);
-  background: rgba(220, 165, 106, 0.14);
+  background: var(--accent-soft);
   outline: none;
 }
 

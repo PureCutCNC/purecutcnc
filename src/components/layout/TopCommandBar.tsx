@@ -23,6 +23,7 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { SnapPopover } from './SnapPopover'
 import { DimensionPopover } from './DimensionPopover'
 import { useFileCommands } from '../../commands/fileCommands'
+import { AppearanceControl } from './AppearanceControl'
 
 interface TopCommandBarProps {
   centerTab: 'sketch' | 'preview3d' | 'simulation'
@@ -224,6 +225,7 @@ export function TopCommandBar({
             onToggleSnapMode={onToggleSnapMode}
           />
           <DimensionPopover />
+          <AppearanceControl />
           <button
             className="top-cmd-btn top-cmd-btn--operations"
             type="button"
