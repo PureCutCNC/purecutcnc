@@ -75,9 +75,19 @@ export const tree = {
   /** Feature rows only (excludes folders, section headers, etc.). */
   featureRows: (page: Page) => page.locator('.tree-row.tree-row--feature'),
 
+  /** Feature-folder rows only. */
+  folderRows: (page: Page) => page.locator('.tree-row.tree-row--folder'),
+
   /** A specific feature row by its label text. */
   rowByName: (page: Page, name: string) =>
     page.locator('.tree-row--feature').filter({ hasText: name }),
+
+  /** A specific feature-folder row by its label text. */
+  folderRowByName: (page: Page, name: string) =>
+    page.locator('.tree-row--folder').filter({ hasText: name }),
+
+  /** Adds a folder to the machining-features section. */
+  addFolderButton: (page: Page) => page.getByRole('button', { name: 'Add folder', exact: true }),
 
   /** Rows that are currently selected. */
   selectedRows: (page: Page) => page.locator('.tree-row--selected'),
