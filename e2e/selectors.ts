@@ -35,6 +35,29 @@ export const appearance = {
     appearance.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
 }
 
+// ── Status bar and About dialog ────────────────────────────────────
+
+export const statusBar = {
+  root: (page: Page) => page.locator('.app-statusbar'),
+  toggle: (page: Page, label: string) =>
+    statusBar.root(page).getByRole('button', { name: label, exact: true }),
+  about: (page: Page) => statusBar.root(page).locator('.statusbar-about'),
+}
+
+export const aboutDialog = {
+  root: (page: Page) => page.getByRole('dialog', { name: 'About PureCutCNC' }),
+  title: (page: Page) => aboutDialog.root(page).locator('.dialog-title'),
+  productName: (page: Page) => aboutDialog.root(page).locator('.about-name'),
+}
+
+// ── New Project dialog ─────────────────────────────────────────────
+
+export const newProjectDialog = {
+  root: (page: Page) => page.locator('.dialog--new-project'),
+  template: (page: Page, label: string) =>
+    newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 export const tree = {
@@ -207,4 +230,7 @@ export const toolbar = {
 
   /** Add-point button (visible during sketch edit). */
   addPointButton: (page: Page) => page.locator('button[aria-label="Add point"]'),
+
+  /** Opens the New Project dialog. */
+  newProjectButton: (page: Page) => page.getByRole('button', { name: 'New project' }),
 }

@@ -31,7 +31,7 @@
 .about-name {
   font-size: 20px;
   font-weight: 700;
-  color: #fff;
+  color: var(--text);
 }
 
 .about-version {

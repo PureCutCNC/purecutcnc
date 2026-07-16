@@ -143,22 +143,22 @@
 }
 
 .toolbar-target-btn--active {
-  color: var(--on-accent);
+  color: var(--accent-strong);
 }
 
 .toolbar-target-btn--line.toolbar-target-btn--active {
-  border-color: rgba(91, 144, 227, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(91, 144, 227, 0.42);
+  border-color: color-mix(in oklab, var(--role-line) 88%, var(--line-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--role-line) 42%, transparent);
 }
 
 .toolbar-target-btn--region.toolbar-target-btn--active {
-  border-color: rgba(153, 102, 204, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(153, 102, 204, 0.42);
+  border-color: color-mix(in oklab, var(--role-region) 88%, var(--line-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--role-region) 42%, transparent);
 }
 
 .toolbar-target-btn--construction.toolbar-target-btn--active {
-  border-color: rgba(138, 154, 171, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(138, 154, 171, 0.42);
+  border-color: color-mix(in oklab, var(--role-construction) 88%, var(--line-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--role-construction) 42%, transparent);
 }
 
 .toolbar--creation.toolbar--vertical .toolbar-group {
@@ -378,7 +378,8 @@
 .toolbar-project-name:hover,
 .toolbar-icon-btn:hover {
   border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--surface-hover);
+  color: var(--accent-strong);
 }
 
 .toolbar-icon-btn:disabled {
@@ -395,13 +396,13 @@
 
 .toolbar-btn--active {
   border-color: var(--accent);
-  color: var(--on-accent);
+  color: var(--accent-strong);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
 }
 
 .toolbar-icon-btn--active {
   border-color: var(--accent);
-  color: var(--on-accent);
+  color: var(--accent-strong);
   background: linear-gradient(180deg, var(--surface-active-top), var(--surface-active-bottom));
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, var(--accent) 42%, transparent),
@@ -409,12 +410,12 @@
 }
 
 .toolbar-icon-btn--live {
-  border-color: #7bc7f6;
-  color: #dff5ff;
+  border-color: var(--cut);
+  color: var(--cut);
   box-shadow:
-    inset 0 0 0 1px rgba(123, 199, 246, 0.48),
-    0 0 0 1px rgba(123, 199, 246, 0.12),
-    0 0 12px rgba(123, 199, 246, 0.12);
+    inset 0 0 0 1px color-mix(in oklab, var(--cut) 48%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--cut) 12%, transparent),
+    0 0 12px color-mix(in oklab, var(--cut) 12%, transparent);
 }
 
 .toolbar-tooltip {
@@ -899,8 +900,8 @@
 .simulation-viewport__spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid rgba(255, 255, 255, 0.15);
-  border-top-color: rgba(255, 255, 255, 0.7);
+  border: 3px solid color-mix(in oklab, var(--text-dim) 22%, transparent);
+  border-top-color: var(--text-dim);
   border-radius: 50%;
   animation: sim-spin 0.7s linear infinite;
 }
@@ -923,10 +924,10 @@
 .simulation-viewport__webgl-message {
   max-width: 360px;
   padding: 16px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: var(--surface-raised);
-  color: rgba(255, 255, 255, 0.85);
+  background: var(--surface-popover);
+  color: var(--text);
   font-size: 13px;
   text-align: center;
 }
@@ -940,7 +941,7 @@
 .simulation-viewport__webgl-message p {
   margin: 0;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
 }
 
 .simulation-detail-control {
@@ -1387,10 +1388,10 @@
   align-items: center;
   gap: 6px;
   padding: 3px 9px 3px 7px;
-  border: 1px solid rgba(91, 117, 138, 0.55);
+  border: 1px solid color-mix(in oklab, var(--accent) 62%, var(--line-strong));
   border-radius: 999px;
-  background: var(--surface-translucent);
-  color: rgba(203, 216, 227, 0.85);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1404,21 +1405,21 @@
 }
 
 .creation-target-badge--line {
-  border-color: rgba(91, 144, 227, 0.65);
-  background: rgba(25, 39, 61, 0.85);
-  color: #8fb6f4;
+  border-color: color-mix(in oklab, var(--role-line) 70%, var(--line-strong));
+  background: color-mix(in oklab, var(--role-line) 16%, var(--surface-translucent));
+  color: var(--role-line-text);
 }
 
 .creation-target-badge--region {
-  border-color: rgba(153, 102, 204, 0.65);
-  background: rgba(41, 28, 56, 0.85);
-  color: #c4a6e0;
+  border-color: color-mix(in oklab, var(--role-region) 70%, var(--line-strong));
+  background: color-mix(in oklab, var(--role-region) 16%, var(--surface-translucent));
+  color: var(--role-region-text);
 }
 
 .creation-target-badge--construction {
-  border-color: rgba(138, 154, 171, 0.65);
-  background: rgba(31, 38, 46, 0.85);
-  color: #a9b6c4;
+  border-color: color-mix(in oklab, var(--role-construction) 70%, var(--line-strong));
+  background: color-mix(in oklab, var(--role-construction) 16%, var(--surface-translucent));
+  color: var(--role-construction-text);
 }
 
 .axis-lock-chip {
@@ -1468,7 +1469,7 @@
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 8px;
-  color: rgba(230, 238, 245, 0.94);
+  color: var(--text);
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1484,6 +1485,10 @@
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
 }
 
+.statusbar-depth-legend {
+  color: var(--status-text-muted);
+}
+
 .sketch-depth-legend__toggle {
   width: 20px;
   height: 20px;
@@ -1496,7 +1501,7 @@
 .sketch-depth-legend__toggle:hover,
 .statusbar-depth-legend:hover {
   border-color: var(--accent);
-  color: var(--text);
+  color: var(--status-text);
 }
 
 .sketch-depth-legend__items {
@@ -1508,7 +1513,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgba(206, 220, 231, 0.95);
+  color: var(--text-dim);
   font-size: 11px;
 }
 
@@ -1668,7 +1673,7 @@
 }
 
 .tree-row--selected .tree-label {
-  color: var(--on-accent);
+  color: var(--text);
 }
 
 .tree-row--group-selected {
@@ -1712,13 +1717,13 @@
 }
 
 .tree-row--regions .tree-branch {
-  border-color: rgba(153, 102, 204, 0.75);
-  background: rgba(153, 102, 204, 0.13);
+  border-color: color-mix(in oklab, var(--role-region) 76%, var(--line));
+  background: color-mix(in oklab, var(--role-region) 13%, transparent);
 }
 
 .tree-row--constructions .tree-branch {
-  border-color: rgba(138, 154, 171, 0.75);
-  background: rgba(138, 154, 171, 0.13);
+  border-color: color-mix(in oklab, var(--role-construction) 76%, var(--line));
+  background: color-mix(in oklab, var(--role-construction) 13%, transparent);
 }
 
 .tree-row--folder .tree-branch {
@@ -1751,11 +1756,11 @@
 }
 
 .tree-row--regions .tree-branch::before {
-  background: #b98add;
+  background: var(--role-region);
 }
 
 .tree-row--constructions .tree-branch::before {
-  background: #9dadbe;
+  background: var(--role-construction);
 }
 
 .tree-branch--folder::before {
@@ -1895,7 +1900,7 @@
 }
 
 .tree-action-btn--grouped {
-  color: var(--on-accent);
+  color: var(--accent-strong);
   border-color: rgba(220, 165, 106, 0.65);
   background: rgba(220, 165, 106, 0.28);
   box-shadow: inset 0 0 0 1px rgba(220, 165, 106, 0.25);
@@ -2223,7 +2228,8 @@
 
 .properties-actions button:hover {
   border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--surface-hover);
+  color: var(--accent-strong);
 }
 
 .properties-actions button:disabled {
@@ -2318,7 +2324,7 @@
 }
 
 .feat-btn:hover {
-  color: var(--on-accent);
+  color: var(--accent-strong);
   border-color: var(--accent);
   background: linear-gradient(180deg, var(--surface-control-top) 0%, var(--surface-control-bottom) 100%);
   box-shadow:
@@ -2341,10 +2347,11 @@
 .feat-btn--primary:hover {
   border-color: #e3b374;
   background: linear-gradient(180deg, #8b6742 0%, #573f2d 100%);
+  color: #fff3de;
 }
 
 .feat-btn--active {
-  color: var(--on-accent);
+  color: var(--accent-strong);
   border-color: var(--accent);
   background: rgba(37, 82, 136, 0.24);
 }
@@ -2666,7 +2673,7 @@
 
 .app-statusbar {
   border-top: 1px solid var(--line);
-  color: var(--text-dim);
+  color: var(--status-text);
   font-size: 12px;
   display: flex;
   flex-wrap: nowrap;
@@ -2687,7 +2694,7 @@
   flex: 0 0 auto;
   background: transparent;
   border: none;
-  color: var(--text-dim);
+  color: var(--status-text);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -2718,10 +2725,11 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: color-mix(in oklab, var(--text-dim) 72%, transparent);
+  color: var(--status-text-muted);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -2747,7 +2755,7 @@
 }
 
 .statusbar-toggle--active {
-  color: var(--text);
+  color: var(--status-text);
 }
 
 .statusbar-toggle--active::before {
@@ -3061,9 +3069,9 @@
   gap: 6px;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px dashed rgba(153, 102, 204, 0.5);
-  background: rgba(153, 102, 204, 0.1);
-  color: #c4a6e0;
+  border: 1px dashed color-mix(in oklab, var(--role-region) 58%, transparent);
+  background: color-mix(in oklab, var(--role-region) 10%, transparent);
+  color: var(--role-region-text);
   font-size: 11px;
   line-height: 1.35;
   text-transform: none;
@@ -3076,8 +3084,8 @@
   height: 14px;
   line-height: 14px;
   border-radius: 3px;
-  border: 1px dashed rgba(153, 102, 204, 0.7);
-  background: rgba(153, 102, 204, 0.16);
+  border: 1px dashed color-mix(in oklab, var(--role-region) 72%, transparent);
+  background: color-mix(in oklab, var(--role-region) 16%, transparent);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3158,7 +3166,7 @@
 }
 
 .cam-operation-tree .tree-row--selected .tree-label {
-  color: var(--on-accent);
+  color: var(--text);
 }
 
 .cam-operation-tree .tree-row:not(.tree-row--selected) .tree-label {
@@ -3250,7 +3258,7 @@
 }
 
 .cam-tool-tree .tree-row--selected .cam-tool-label__name {
-  color: var(--on-accent);
+  color: var(--text);
 }
 
 .cam-tool-tree .tree-label {
@@ -3447,20 +3455,20 @@
 }
 
 .tree-action-btn--region {
-  color: #9966cc;
-  border-color: rgba(153, 102, 204, 0.45);
+  color: var(--role-region);
+  border-color: color-mix(in oklab, var(--role-region) 48%, var(--line));
 }
 
 /* ── Region rows read as filters/masks, not machinable geometry ─── */
 
 .tree-row--region {
   /* Dashed accent so a region reads as a non-solid filter, not a cut target. */
-  box-shadow: inset 2px 0 0 0 rgba(153, 102, 204, 0.55);
+  box-shadow: inset 2px 0 0 0 color-mix(in oklab, var(--role-region) 62%, transparent);
 }
 
 .tree-row--region .tree-label {
   font-style: italic;
-  color: #c4a6e0;
+  color: var(--role-region-text);
 }
 
 .tree-region-badge {
@@ -3470,9 +3478,9 @@
   height: 14px;
   line-height: 14px;
   border-radius: 3px;
-  border: 1px dashed rgba(153, 102, 204, 0.7);
-  background: rgba(153, 102, 204, 0.12);
-  color: #c4a6e0;
+  border: 1px dashed color-mix(in oklab, var(--role-region) 72%, transparent);
+  background: color-mix(in oklab, var(--role-region) 12%, transparent);
+  color: var(--role-region-text);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3482,25 +3490,25 @@
 
 .tree-region-badge--exclude {
   border-style: solid;
-  background: rgba(153, 102, 204, 0.08);
-  color: #d2b8ee;
+  background: color-mix(in oklab, var(--role-region) 8%, transparent);
+  color: var(--role-region-text);
 }
 
 /* ── Construction rows read as sketch reference geometry (issue #199) ─── */
 
 .tree-action-btn--construction {
-  color: #8a9aab;
-  border-color: rgba(138, 154, 171, 0.45);
+  color: var(--role-construction);
+  border-color: color-mix(in oklab, var(--role-construction) 48%, var(--line));
 }
 
 .tree-row--construction {
   /* Muted accent so construction reads as reference marks, not material. */
-  box-shadow: inset 2px 0 0 0 rgba(138, 154, 171, 0.55);
+  box-shadow: inset 2px 0 0 0 color-mix(in oklab, var(--role-construction) 62%, transparent);
 }
 
 .tree-row--construction .tree-label {
   font-style: italic;
-  color: #a9b6c4;
+  color: var(--role-construction-text);
 }
 
 .tree-construction-badge {
@@ -3510,9 +3518,9 @@
   height: 14px;
   line-height: 14px;
   border-radius: 3px;
-  border: 1px dashed rgba(138, 154, 171, 0.7);
-  background: rgba(138, 154, 171, 0.12);
-  color: #a9b6c4;
+  border: 1px dashed color-mix(in oklab, var(--role-construction) 72%, transparent);
+  background: color-mix(in oklab, var(--role-construction) 12%, transparent);
+  color: var(--role-construction-text);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3607,7 +3615,7 @@
 }
 
 .tree-operation-menu__icon--region {
-  color: #b98add;
+  color: var(--role-region);
 }
 
 .tree-operation-icon {
@@ -3624,9 +3632,9 @@
   margin: 2px 0 4px;
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px dashed rgba(153, 102, 204, 0.5);
-  background: rgba(153, 102, 204, 0.1);
-  color: #c4a6e0;
+  border: 1px dashed color-mix(in oklab, var(--role-region) 58%, transparent);
+  background: color-mix(in oklab, var(--role-region) 10%, transparent);
+  color: var(--role-region-text);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -3637,8 +3645,8 @@
   height: 14px;
   line-height: 14px;
   border-radius: 3px;
-  border: 1px dashed rgba(153, 102, 204, 0.7);
-  background: rgba(153, 102, 204, 0.16);
+  border: 1px dashed color-mix(in oklab, var(--role-region) 72%, transparent);
+  background: color-mix(in oklab, var(--role-region) 16%, transparent);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3652,9 +3660,9 @@
   margin: 2px 0 4px;
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px dashed rgba(138, 154, 171, 0.5);
-  background: rgba(138, 154, 171, 0.1);
-  color: #a9b6c4;
+  border: 1px dashed color-mix(in oklab, var(--role-construction) 58%, transparent);
+  background: color-mix(in oklab, var(--role-construction) 10%, transparent);
+  color: var(--role-construction-text);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -3665,8 +3673,8 @@
   height: 14px;
   line-height: 14px;
   border-radius: 3px;
-  border: 1px dashed rgba(138, 154, 171, 0.7);
-  background: rgba(138, 154, 171, 0.16);
+  border: 1px dashed color-mix(in oklab, var(--role-construction) 72%, transparent);
+  background: color-mix(in oklab, var(--role-construction) 16%, transparent);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3688,7 +3696,7 @@
   padding: 7px 2px;
   border: none;
   background: none;
-  color: var(--text-muted, #9bb0c0);
+  color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;

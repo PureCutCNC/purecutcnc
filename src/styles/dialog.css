@@ -130,7 +130,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--surface-subtle);
-  color: var(--on-accent);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 700;
@@ -195,7 +195,7 @@
 
 .unit-conversion-option--recommended {
   border-color: color-mix(in oklab, var(--accent) 62%, var(--line-strong));
-  background: linear-gradient(120deg, rgba(220, 165, 106, 0.13), rgba(8, 14, 20, 0.76) 62%);
+  background: linear-gradient(120deg, var(--accent-soft), var(--surface-translucent) 62%);
 }
 
 .unit-conversion-option--reinterpret:hover {
@@ -210,7 +210,7 @@
 }
 
 .unit-conversion-option__heading strong {
-  color: var(--on-accent);
+  color: var(--text);
   font-size: 14px;
   font-weight: 650;
 }
@@ -231,8 +231,8 @@
   padding: 3px 7px;
   border: 1px solid var(--surface-sheen-strong);
   border-radius: 5px;
-  background: rgba(0, 0, 0, 0.24);
-  color: #d8e2ea;
+  background: var(--surface-input);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -264,7 +264,7 @@
 .dialog-title {
   font-size: 18px;
   font-weight: 600;
-  color: var(--on-accent);
+  color: var(--text);
 }
 
 .dialog-close {
@@ -281,7 +281,7 @@
 
 .dialog-close:hover {
   background: var(--surface-sheen-mid);
-  color: var(--on-accent);
+  color: var(--text);
 }
 
 .dialog-body {
@@ -311,7 +311,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--surface-subtle);
 }
 
 .dialog-section {
@@ -348,7 +348,7 @@
   padding: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #a5b4c0;
+  color: var(--text-dim);
   white-space: pre;
   overflow: auto;
   user-select: text;
@@ -460,7 +460,7 @@
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--surface-subtle);
 }
 
 .export-option--disabled {
@@ -492,7 +492,7 @@
   background: rgba(255, 130, 30, 0.08);
   border: 1px solid rgba(255, 160, 60, 0.4);
   border-radius: 8px;
-  color: #f7b86a;
+  color: var(--warning-text);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -517,12 +517,12 @@
 
 .project-template-card:hover {
   border-color: var(--line-bright);
-  background: rgba(24, 31, 43, 0.9);
+  background: var(--surface-hover);
 }
 
 .project-template-card--active {
   border-color: var(--accent);
-  background: rgba(74, 53, 27, 0.26);
+  background: var(--accent-soft);
 }
 
 .project-template-card__title {
@@ -546,7 +546,7 @@
 }
 
 .project-template-preview__title {
-  color: var(--on-accent);
+  color: var(--text);
   font-size: 14px;
   font-weight: 600;
 }
@@ -619,13 +619,13 @@
 
 .import-dialog__field-note {
   margin-top: -2px;
-  color: color-mix(in oklab, var(--text-dim) 88%, #d6e2f0 12%);
+  color: var(--text-dim);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .import-dialog__field-note--warn {
-  color: #f7b86a;
+  color: var(--warning-text);
 }
 
 .import-progress-container {
@@ -764,10 +764,10 @@
   gap: 1px;
   max-height: 180px;
   overflow-y: auto;
-  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border: 1px solid var(--line);
   border-radius: 6px;
   padding: 4px 0;
-  background: var(--surface-raised, rgba(0,0,0,0.15));
+  background: var(--surface-raised);
 }
 
 /* When layers are in their own column, let the list fill all available height */
@@ -787,7 +787,7 @@
 }
 
 .import-dialog__layer-row:hover {
-  background: rgba(255,255,255,0.05);
+  background: var(--surface-hover);
 }
 
 .import-dialog__layer-row input[type="checkbox"] {
@@ -1255,7 +1255,7 @@
   background: rgba(255, 80, 60, 0.08);
   border: 1px solid rgba(255, 100, 80, 0.4);
   border-radius: 7px;
-  color: #f7726a;
+  color: var(--danger-text);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1372,7 +1372,7 @@
 .machine-manager-detail-name {
   font-size: 16px;
   font-weight: 600;
-  color: var(--on-accent);
+  color: var(--text);
   margin: 0;
 }
 
@@ -1400,7 +1400,7 @@
 
 .machine-manager-badge--builtin {
   background: rgba(100, 160, 220, 0.12);
-  color: #7eb8e0;
+  color: var(--cut);
 }
 
 /* Meta */
@@ -1452,7 +1452,7 @@
   align-self: flex-start;
   background: transparent;
   border: none;
-  color: #f7726a;
+  color: var(--danger-text);
   cursor: pointer;
   font: inherit;
   font-size: 12px;

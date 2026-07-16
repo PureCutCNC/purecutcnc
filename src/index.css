@@ -28,6 +28,8 @@
   --line-strong: #3c5265;
   --text: #d8e4ef;
   --text-dim: #94aabc;
+  --status-text: #d8e4ef;
+  --status-text-muted: #aebfcd;
   --accent: #dca56a;
   --accent-strong: #eab982;
   --add: #6abb81;
@@ -57,6 +59,13 @@
   --surface-active-bottom: #202d3a;
   --on-accent: #fff;
   --danger-text: #f0bbb6;
+  --warning-text: #f7b86a;
+  --role-line: #5a8fcc;
+  --role-line-text: #8fb6f4;
+  --role-region: #9966cc;
+  --role-region-text: #c4a6e0;
+  --role-construction: #8a9aab;
+  --role-construction-text: #a9b6c4;
 
   font-family: 'Avenir Next', 'IBM Plex Sans', 'Segoe UI', sans-serif;
   color: var(--text);
@@ -76,6 +85,8 @@
   --line-strong: #a99a84;
   --text: #253039;
   --text-dim: #657078;
+  --status-text: #253039;
+  --status-text-muted: #4f5a61;
   --accent: #a66126;
   --accent-strong: #874717;
   --add: #39794d;
@@ -105,6 +116,13 @@
   --surface-active-bottom: #cbb293;
   --on-accent: #fffaf3;
   --danger-text: #91443e;
+  --warning-text: #8b4c17;
+  --role-line: #356f9d;
+  --role-line-text: #285d87;
+  --role-region: #7947a5;
+  --role-region-text: #673b8c;
+  --role-construction: #60778b;
+  --role-construction-text: #4e6477;
 }
 
 * {

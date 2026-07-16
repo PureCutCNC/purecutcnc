@@ -56,6 +56,37 @@ test('system appearance follows prefers-color-scheme changes', async ({ app, ui 
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('system')
 })
 
+test('keeps status and dialog text legible in both themes', async ({ app, ui }) => {
+  await expect(ui.statusBar.root(app.page)).toHaveCSS('color', 'rgb(216, 228, 239)')
+
+  await ui.statusBar.toggle(app.page, 'Grid').click()
+  await expect(ui.statusBar.toggle(app.page, 'Grid')).toHaveAttribute('aria-pressed', 'false')
+  await app.page.mouse.move(0, 0)
+  await expect(ui.statusBar.toggle(app.page, 'Grid')).toHaveCSS('color', 'rgb(174, 191, 205)')
+
+  await ui.appearance.trigger(app.page).click()
+  await ui.appearance.option(app.page, 'Light').click()
+
+  await expect(ui.statusBar.root(app.page)).toHaveCSS('color', 'rgb(37, 48, 57)')
+  await expect(ui.statusBar.toggle(app.page, 'Grid')).toHaveCSS('color', 'rgb(79, 90, 97)')
+
+  await ui.statusBar.about(app.page).click()
+  await expect(ui.aboutDialog.title(app.page)).toHaveCSS('color', 'rgb(37, 48, 57)')
+  await expect(ui.aboutDialog.productName(app.page)).toHaveCSS('color', 'rgb(37, 48, 57)')
+})
+
+test('keeps New Project template hover states within the light palette', async ({ app, ui }) => {
+  await ui.appearance.trigger(app.page).click()
+  await ui.appearance.option(app.page, 'Light').click()
+
+  await ui.toolbar.newProjectButton(app.page).click()
+  const imperialTemplate = ui.newProjectDialog.template(app.page, 'Blank Imperial')
+  await imperialTemplate.hover()
+
+  await expect(imperialTemplate).toHaveCSS('background-color', 'rgba(88, 70, 46, 0.08)')
+  await expect(imperialTemplate).toHaveCSS('color', 'rgb(37, 48, 57)')
+})
+
 test.describe('tablet appearance', () => {
   test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
 
