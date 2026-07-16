@@ -104,6 +104,18 @@ test('keeps shared positive workflow actions legible in the light theme', async 
   await expect(positiveAction).toHaveCSS('font-weight', '650')
 })
 
+test('keeps the operation add menu opaque and its guidance legible in the light theme', async ({ app, ui }) => {
+  await ui.appearance.trigger(app.page).click()
+  await ui.appearance.option(app.page, 'Light').click()
+
+  await ui.operations.headerAddButton(app.page).click()
+
+  await expect(ui.operations.addMenu(app.page)).toBeVisible()
+  await expect(ui.operations.addMenu(app.page)).toHaveCSS('background-color', 'rgb(248, 244, 236)')
+  await expect(ui.operations.addMenuHint(app.page)).toHaveCSS('color', 'rgb(139, 76, 23)')
+  await expect(ui.operations.addMenuHint(app.page)).toHaveCSS('font-weight', '500')
+})
+
 test.describe('tablet appearance', () => {
   test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
 

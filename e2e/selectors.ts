@@ -167,6 +167,12 @@ export const operations = {
   headerExportButton: (page: Page) =>
     page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Export', exact: true }),
 
+  /** The "Add" button and menu in the Operations panel header. */
+  headerAddButton: (page: Page) =>
+    page.locator('.cam-panel .cam-section-toolbar').getByRole('button', { name: 'Add', exact: true }),
+  addMenu: (page: Page) => page.locator('.cam-add-menu--vertical'),
+  addMenuHint: (page: Page) => page.locator('.cam-add-menu--vertical .cam-operation-hint').first(),
+
   /** The Properties-header "Export G-code" action for the selected operation. */
   propertiesExportButton: (page: Page, name: string) =>
     page
