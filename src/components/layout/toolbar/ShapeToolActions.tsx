@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../../i18n/i18nContext'
 import { ToolbarActionButton } from './primitives'
 
 function ShapeToolActions({
@@ -27,18 +28,20 @@ function ShapeToolActions({
   onJoin: () => void
   onCut: () => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="merge"
-        label={pendingShapeAction === 'join' ? 'Cancel join' : 'Join closed features'}
+        label={pendingShapeAction === 'join' ? t('sketch.boolean.cancelJoin') : t('sketch.boolean.join')}
         active={pendingShapeAction === 'join'}
         tooltipSide={tooltipSide}
         onClick={onJoin}
       />
       <ToolbarActionButton
         icon="cut"
-        label={pendingShapeAction === 'cut' ? 'Cancel cut' : 'Cut features'}
+        label={pendingShapeAction === 'cut' ? t('sketch.boolean.cancelCut') : t('sketch.boolean.cut')}
         active={pendingShapeAction === 'cut'}
         tooltipSide={tooltipSide}
         onClick={onCut}

@@ -15,16 +15,17 @@
  */
 
 import { shellEn } from './shell'
+import { sketchEn } from './sketch'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
- * area contributes one module (`shell.ts` now; `sketch.ts`, `cam.ts`, … as
- * later extraction phases land) so concurrent area work never edits the same
- * file. `MessageKey` is derived from this merge; every other locale is typed
- * against it.
+ * area contributes one module (`shell.ts`, `sketch.ts`, … as extraction
+ * phases land) so concurrent area work never edits the same file. `MessageKey`
+ * is derived from this merge; every other locale is typed against it.
  */
 export const en = {
   ...shellEn,
+  ...sketchEn,
 } as const
 
 export type MessageKey = keyof typeof en

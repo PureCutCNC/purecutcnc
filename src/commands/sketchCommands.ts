@@ -15,6 +15,7 @@
  */
 
 import type { DimensionType, Project, SketchFeature } from '../types/project'
+import { useI18n } from '../i18n/i18nContext'
 import { useProjectStore } from '../store/projectStore'
 import type {
   FeatureAlignment,
@@ -301,6 +302,7 @@ export function useSketchCommands(): SketchCommandState & {
     dimensionCount: number
   }
 } {
+  const { t, tPlural } = useI18n()
   const store = useProjectStore()
   const state = deriveSketchCommandState(store)
 
@@ -434,48 +436,50 @@ export function useSketchCommands(): SketchCommandState & {
   return {
     ...state,
     transform: {
-      copy: command('copy', 'copy', state.transform.copy.active ? 'Cancel copy' : 'Copy selected features', state.transform.copy, () => startFeatureMove('copy')),
-      move: command('move', 'move', state.transform.move.active ? 'Cancel move' : 'Move selected features', state.transform.move, () => startFeatureMove('move')),
-      delete: command('delete', 'trash', 'Delete selected features', state.transform.delete, () => {
+      copy: command('copy', 'copy', state.transform.copy.active ? t('sketch.transform.cancelCopy') : t('sketch.transform.copy'), state.transform.copy, () => startFeatureMove('copy')),
+      move: command('move', 'move', state.transform.move.active ? t('sketch.transform.cancelMove') : t('sketch.transform.move'), state.transform.move, () => startFeatureMove('move')),
+      delete: command('delete', 'trash', t('sketch.transform.delete'), state.transform.delete, () => {
         if (state.predicates.hasSelectedFeatures) {
           store.deleteFeatures(state.predicates.selectedFeatureIds)
         }
       }),
-      resize: command('resize', 'resize', state.transform.resize.active ? 'Cancel resize' : 'Resize selected features', state.transform.resize, () => startFeatureTransform('resize')),
-      rotate: command('rotate', 'rotate', state.transform.rotate.active ? 'Cancel rotate' : 'Rotate selected features', state.transform.rotate, () => startFeatureTransform('rotate')),
-      mirror: command('mirror', 'mirror', state.transform.mirror.active ? 'Cancel mirror' : 'Mirror selected features', state.transform.mirror, () => startFeatureTransform('mirror')),
+      resize: command('resize', 'resize', state.transform.resize.active ? t('sketch.transform.cancelResize') : t('sketch.transform.resize'), state.transform.resize, () => startFeatureTransform('resize')),
+      rotate: command('rotate', 'rotate', state.transform.rotate.active ? t('sketch.transform.cancelRotate') : t('sketch.transform.rotate'), state.transform.rotate, () => startFeatureTransform('rotate')),
+      mirror: command('mirror', 'mirror', state.transform.mirror.active ? t('sketch.transform.cancelMirror') : t('sketch.transform.mirror'), state.transform.mirror, () => startFeatureTransform('mirror')),
     },
     boolean: {
-      join: command('join', 'merge', state.boolean.join.active ? 'Cancel join' : 'Join closed features', state.boolean.join, () => toggleShapeAction('join')),
-      cut: command('cut', 'cut', state.boolean.cut.active ? 'Cancel cut' : 'Cut features', state.boolean.cut, () => toggleShapeAction('cut')),
-      offset: command('offset', 'offset', state.boolean.offset.active ? 'Cancel offset' : 'Create offset feature', state.boolean.offset, toggleOffset),
+      join: command('join', 'merge', state.boolean.join.active ? t('sketch.boolean.cancelJoin') : t('sketch.boolean.join'), state.boolean.join, () => toggleShapeAction('join')),
+      cut: command('cut', 'cut', state.boolean.cut.active ? t('sketch.boolean.cancelCut') : t('sketch.boolean.cut'), state.boolean.cut, () => toggleShapeAction('cut')),
+      offset: command('offset', 'offset', state.boolean.offset.active ? t('sketch.boolean.cancelOffset') : t('sketch.boolean.offset'), state.boolean.offset, toggleOffset),
     },
     arrange: {
-      align: command('align', 'align', 'Align selected features', state.arrange.align, () => undefined),
-      distribute: command('distribute', 'distribute', 'Distribute selected features', state.arrange.distribute, () => undefined),
+      align: command('align', 'align', t('sketch.arrange.align'), state.arrange.align, () => undefined),
+      distribute: command('distribute', 'distribute', t('sketch.arrange.distribute'), state.arrange.distribute, () => undefined),
       alignFeature,
       distributeFeatures,
     },
     sketchEdit: {
-      add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? 'Cancel add point' : 'Add point', state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),
-      delete_point: command('delete_point', 'point-delete', state.sketchEdit.delete_point.active ? 'Cancel delete point' : 'Delete point', state.sketchEdit.delete_point, () => toggleSketchEditTool('delete_point')),
-      delete_segment: command('delete_segment', 'segment-delete', state.sketchEdit.delete_segment.active ? 'Cancel delete segment' : 'Delete segment', state.sketchEdit.delete_segment, () => toggleSketchEditTool('delete_segment')),
-      disconnect: command('disconnect', 'disconnect', state.sketchEdit.disconnect.active ? 'Cancel disconnect' : 'Disconnect point', state.sketchEdit.disconnect, () => toggleSketchEditTool('disconnect')),
-      fillet: command('fillet', 'fillet', state.sketchEdit.fillet.active ? 'Cancel fillet' : 'Round corner / fillet', state.sketchEdit.fillet, () => toggleSketchEditTool('fillet')),
-      chamfer: command('chamfer', 'chamfer', state.sketchEdit.chamfer.active ? 'Cancel chamfer' : 'Chamfer corner', state.sketchEdit.chamfer, () => toggleSketchEditTool('chamfer')),
-      trim: command('trim', 'trim', state.sketchEdit.trim.active ? 'Cancel trim' : 'Trim segment', state.sketchEdit.trim, () => toggleSketchEditTool('trim')),
-      extend: command('extend', 'extend', state.sketchEdit.extend.active ? 'Cancel extend' : 'Extend segment', state.sketchEdit.extend, () => toggleSketchEditTool('extend')),
+      add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint'), state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),
+      delete_point: command('delete_point', 'point-delete', state.sketchEdit.delete_point.active ? t('sketch.edit.cancelDeletePoint') : t('sketch.edit.deletePoint'), state.sketchEdit.delete_point, () => toggleSketchEditTool('delete_point')),
+      delete_segment: command('delete_segment', 'segment-delete', state.sketchEdit.delete_segment.active ? t('sketch.edit.cancelDeleteSegment') : t('sketch.edit.deleteSegment'), state.sketchEdit.delete_segment, () => toggleSketchEditTool('delete_segment')),
+      disconnect: command('disconnect', 'disconnect', state.sketchEdit.disconnect.active ? t('sketch.edit.cancelDisconnect') : t('sketch.edit.disconnect'), state.sketchEdit.disconnect, () => toggleSketchEditTool('disconnect')),
+      fillet: command('fillet', 'fillet', state.sketchEdit.fillet.active ? t('sketch.edit.cancelFillet') : t('sketch.edit.fillet'), state.sketchEdit.fillet, () => toggleSketchEditTool('fillet')),
+      chamfer: command('chamfer', 'chamfer', state.sketchEdit.chamfer.active ? t('sketch.edit.cancelChamfer') : t('sketch.edit.chamfer'), state.sketchEdit.chamfer, () => toggleSketchEditTool('chamfer')),
+      trim: command('trim', 'trim', state.sketchEdit.trim.active ? t('sketch.edit.cancelTrim') : t('sketch.edit.trim'), state.sketchEdit.trim, () => toggleSketchEditTool('trim')),
+      extend: command('extend', 'extend', state.sketchEdit.extend.active ? t('sketch.edit.cancelExtend') : t('sketch.edit.extend'), state.sketchEdit.extend, () => toggleSketchEditTool('extend')),
     },
-    constraint: command('constraint', 'constraint', state.constraint.active ? 'Cancel constraint' : 'Add constraint', state.constraint, toggleConstraint),
+    constraint: command('constraint', 'constraint', state.constraint.active ? t('sketch.constraint.cancel') : t('sketch.constraint.add'), state.constraint, toggleConstraint),
     dimension: {
-      tapeMeasure: command('tapeMeasure', 'tape-measure', state.dimension.tapeMeasure.active ? 'Tape measure (on)' : 'Tape measure', state.dimension.tapeMeasure, toggleTapeMeasure),
-      deleteDimension: command('deleteDimension', 'trash', state.dimension.deleteDimension.active ? 'Delete dimension (click one)' : 'Delete dimension', state.dimension.deleteDimension, toggleDimensionDelete),
+      tapeMeasure: command('tapeMeasure', 'tape-measure', state.dimension.tapeMeasure.active ? t('shell.measure.tapeMeasureOn') : t('shell.measure.tapeMeasure'), state.dimension.tapeMeasure, toggleTapeMeasure),
+      deleteDimension: command('deleteDimension', 'trash', state.dimension.deleteDimension.active ? t('shell.measure.deleteDimensionArmed') : t('shell.measure.deleteDimension'), state.dimension.deleteDimension, toggleDimensionDelete),
       showDimensions: command(
         'showDimensions',
         store.project.meta.showDimensions ? 'eye' : 'eye-off',
         store.project.annotations.length === 0
-          ? 'Show/hide dimensions'
-          : store.project.meta.showDimensions ? `Hide dimensions (${store.project.annotations.length})` : `Show dimensions (${store.project.annotations.length})`,
+          ? t('shell.measure.showHideDimensions')
+          : store.project.meta.showDimensions
+            ? tPlural(store.project.annotations.length, 'shell.measure.hideDimensionsCount.one', 'shell.measure.hideDimensionsCount.other')
+            : tPlural(store.project.annotations.length, 'shell.measure.showDimensionsCount.one', 'shell.measure.showDimensionsCount.other'),
         state.dimension.showDimensions,
         () => store.setShowDimensions(!store.project.meta.showDimensions),
       ),

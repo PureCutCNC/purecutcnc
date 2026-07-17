@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../../i18n/i18nContext'
 import { ToolbarActionButton } from './primitives'
 
 function BackdropEditActions({
@@ -35,33 +36,35 @@ function BackdropEditActions({
   onResize: () => void
   onRotate: () => void
 }) {
+  const { t } = useI18n()
+
   if (!enabled) return null
 
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="move"
-        label={pendingMoveMode === 'move' ? 'Cancel move backdrop' : 'Move backdrop'}
+        label={pendingMoveMode === 'move' ? t('sketch.backdrop.cancelMove') : t('sketch.backdrop.move')}
         active={pendingMoveMode === 'move'}
         tooltipSide={tooltipSide}
         onClick={onMove}
       />
       <ToolbarActionButton
         icon="trash"
-        label="Delete backdrop"
+        label={t('sketch.backdrop.delete')}
         tooltipSide={tooltipSide}
         onClick={onDelete}
       />
       <ToolbarActionButton
         icon="resize"
-        label={pendingTransformMode === 'resize' ? 'Cancel resize backdrop' : 'Resize backdrop'}
+        label={pendingTransformMode === 'resize' ? t('sketch.backdrop.cancelResize') : t('sketch.backdrop.resize')}
         active={pendingTransformMode === 'resize'}
         tooltipSide={tooltipSide}
         onClick={onResize}
       />
       <ToolbarActionButton
         icon="rotate"
-        label={pendingTransformMode === 'rotate' ? 'Cancel rotate backdrop' : 'Rotate backdrop'}
+        label={pendingTransformMode === 'rotate' ? t('sketch.backdrop.cancelRotate') : t('sketch.backdrop.rotate')}
         active={pendingTransformMode === 'rotate'}
         tooltipSide={tooltipSide}
         onClick={onRotate}
