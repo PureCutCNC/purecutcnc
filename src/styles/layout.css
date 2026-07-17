@@ -585,7 +585,9 @@
 
 .appearance-menu__option--manage {
   grid-template-columns: 1fr;
-  min-height: 44px;
+  /* Above the 44px touch minimum with margin so fractional device-pixel
+     rounding cannot render it a sub-pixel short on tablet. */
+  min-height: 48px;
 }
 
 .appearance-menu .theme-swatch {
