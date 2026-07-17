@@ -964,8 +964,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
       const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null
       const stlTopViewImage = stlTopViewUrl ? stlImageCacheRef.current.get(stlTopViewUrl) : null
-      if (feature.kind === 'stl' && stlTopViewImage) {
-        drawStlTopViewImage(ctx, feature, stlTopViewImage, vt, selected, hovered, editing)
+      const stlDefinition = feature.kind === 'stl'
+        ? project.featureDefinitions[feature.definitionId]
+        : null
+      if (feature.kind === 'stl' && stlTopViewImage && stlDefinition) {
+        drawStlTopViewImage(
+          ctx,
+          feature,
+          stlDefinition.profile,
+          stlTopViewImage,
+          vt,
+          selected,
+          hovered,
+          editing,
+        )
       }
 
       if (editing) {

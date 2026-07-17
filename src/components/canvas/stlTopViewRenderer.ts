@@ -14,11 +14,56 @@
  * limitations under the License.
  */
 
-import type { SketchFeature } from '../../types/project'
+import type { Matrix2D, SketchProfile } from '../../types/project'
 import { profileVertices } from '../../types/project'
+import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { ViewTransform } from './viewTransform'
-import { worldToCanvas } from './viewTransform'
 import { traceProfilePath } from './profilePrimitives'
+
+export interface StlTopViewPlacement {
+  localBounds: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  canvasTransform: [number, number, number, number, number, number]
+}
+
+/** Map a definition-local imported-model image through its instance and view transforms. */
+export function resolveStlTopViewPlacement(
+  definitionProfile: SketchProfile,
+  instanceTransform: Matrix2D,
+  vt: ViewTransform,
+): StlTopViewPlacement | null {
+  const verts = profileVertices(definitionProfile)
+  if (verts.length < 3) return null
+
+  let minX = Infinity, maxX = -Infinity
+  let minY = Infinity, maxY = -Infinity
+  for (const point of verts) {
+    if (point.x < minX) minX = point.x
+    if (point.x > maxX) maxX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.y > maxY) maxY = point.y
+  }
+
+  const width = maxX - minX
+  const height = maxY - minY
+  if (!(width > 1e-9) || !(height > 1e-9)) return null
+
+  return {
+    localBounds: { x: minX, y: minY, width, height },
+    canvasTransform: [
+      instanceTransform.a * vt.scale,
+      instanceTransform.b * vt.scale,
+      instanceTransform.c * vt.scale,
+      instanceTransform.d * vt.scale,
+      vt.offsetX + instanceTransform.e * vt.scale,
+      vt.offsetY + instanceTransform.f * vt.scale,
+    ],
+  }
+}
 
 /**
  * Draw an STL/imported-model feature's top-view silhouette image —
@@ -27,7 +72,8 @@ import { traceProfilePath } from './profilePrimitives'
  */
 export function drawStlTopViewImage(
   ctx: CanvasRenderingContext2D,
-  feature: SketchFeature,
+  feature: ResolvedSketchFeature,
+  definitionProfile: SketchProfile,
   image: HTMLImageElement,
   vt: ViewTransform,
   selected: boolean,
@@ -36,46 +82,21 @@ export function drawStlTopViewImage(
 ): void {
   if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return
 
-  const verts = profileVertices(feature.sketch.profile)
-  if (verts.length < 3) return
-
-  const angle = ((feature.sketch.orientationAngle ?? 0) * Math.PI) / 180
-  const ux = Math.cos(angle)
-  const uy = Math.sin(angle)
-  const vx = -Math.sin(angle)
-  const vy = Math.cos(angle)
-
-  let minU = Infinity, maxU = -Infinity
-  let minV = Infinity, maxV = -Infinity
-  for (const point of verts) {
-    const projectedU = point.x * ux + point.y * uy
-    const projectedV = point.x * vx + point.y * vy
-    if (projectedU < minU) minU = projectedU
-    if (projectedU > maxU) maxU = projectedU
-    if (projectedV < minV) minV = projectedV
-    if (projectedV > maxV) maxV = projectedV
-  }
-
-  const width = maxU - minU
-  const height = maxV - minV
-  if (!(width > 1e-9) || !(height > 1e-9)) return
-
-  const centerU = minU + width / 2
-  const centerV = minV + height / 2
-  const center = worldToCanvas({
-    x: ux * centerU + vx * centerV,
-    y: uy * centerU + vy * centerV,
-  }, vt)
-  const drawW = width * vt.scale
-  const drawH = height * vt.scale
+  const placement = resolveStlTopViewPlacement(definitionProfile, feature.transform, vt)
+  if (!placement) return
 
   ctx.save()
   traceProfilePath(ctx, feature.sketch.profile, vt)
   ctx.clip('evenodd')
-  ctx.translate(center.cx, center.cy)
-  ctx.rotate(angle)
+  ctx.transform(...placement.canvasTransform)
   ctx.globalAlpha = selected || hovered || editing ? 0.72 : 0.86
-  ctx.drawImage(image, -drawW / 2, -drawH / 2, drawW, drawH)
+  ctx.drawImage(
+    image,
+    placement.localBounds.x,
+    placement.localBounds.y,
+    placement.localBounds.width,
+    placement.localBounds.height,
+  )
   ctx.restore()
 
   ctx.save()
