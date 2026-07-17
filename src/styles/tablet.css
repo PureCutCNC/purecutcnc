@@ -1129,8 +1129,32 @@
   font-size: 11px;
 }
 
-.app-statusbar--tablet-expanded {
+[data-shell-mode="tablet"] .app-statusbar--tablet-expanded,
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded {
+  position: relative;
+  z-index: 6;
+  height: max-content;
+  min-height: var(--touch-target, 44px);
+  max-height: none;
+  align-content: flex-start;
   flex-wrap: wrap;
+  overflow: visible;
+  white-space: normal;
+}
+
+[data-shell-mode="tablet"] .app-statusbar--tablet-expanded .statusbar-visibility,
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-visibility {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+[data-shell-mode="tablet"] .app-statusbar--tablet-expanded .statusbar-toggle,
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-toggle {
+  height: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .app-statusbar--tablet-compact .statusbar-expand-btn,
