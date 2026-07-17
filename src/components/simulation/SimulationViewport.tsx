@@ -29,7 +29,6 @@ import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 import { useTheme } from '../../theme/themeContext'
-import { THEME_PALETTES } from '../../theme/palette'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -577,8 +576,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   isActive = true,
   projectKey,
 }, ref) {
-  const { resolvedTheme } = useTheme()
-  const threePalette = THEME_PALETTES[resolvedTheme].three
+  const { palette } = useTheme()
+  const threePalette = palette.three
   const initialThreePaletteRef = useRef(threePalette)
   const playbackUnits = playbackInput?.units ?? 'mm'
   const fallbackFeed = playbackUnits === 'in' ? PLAYBACK_FALLBACK_FEED_IN : PLAYBACK_FALLBACK_FEED_MM

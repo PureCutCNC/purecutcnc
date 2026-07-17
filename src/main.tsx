@@ -25,7 +25,7 @@ import { isDesktop } from './platform'
 import { installAnalytics } from './utils/analytics'
 import { applyVersionToTitle } from './utils/version'
 import { ThemeProvider } from './theme/ThemeProvider'
-import { bootstrapTheme } from './theme/theme'
+import { bootstrapTheme } from './theme/bootstrap'
 
 bootstrapTheme()
 

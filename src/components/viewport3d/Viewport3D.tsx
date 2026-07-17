@@ -28,7 +28,6 @@ import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
 import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
-import { THEME_PALETTES } from '../../theme/palette'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -671,8 +670,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   toolpathVisibility,
   onToolpathVisibilityChange,
 }, ref) {
-  const { resolvedTheme } = useTheme()
-  const threePalette = THEME_PALETTES[resolvedTheme].three
+  const { palette } = useTheme()
+  const threePalette = palette.three
   const threePaletteRef = useRef(threePalette)
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)

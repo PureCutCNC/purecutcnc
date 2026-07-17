@@ -577,6 +577,26 @@
   text-align: center;
 }
 
+.appearance-menu__heading--section {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.appearance-menu__option--manage {
+  grid-template-columns: 1fr;
+  min-height: 44px;
+}
+
+.appearance-menu .theme-swatch {
+  justify-self: center;
+}
+
+.appearance-menu .theme-swatch__chip {
+  width: 6px;
+  height: 26px;
+}
+
 .toolbar-action:hover .toolbar-tooltip,
 .toolbar-action:focus-within .toolbar-tooltip {
   opacity: 1;

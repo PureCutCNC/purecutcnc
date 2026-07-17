@@ -16,8 +16,11 @@
 
 import { useId, useRef, useState } from 'react'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { resolveCustomTheme } from '../../theme/registry'
 import { THEME_PREFERENCES, type ThemePreference } from '../../theme/theme'
 import { useTheme } from '../../theme/themeContext'
+import { ThemeManagerDialog } from '../theme/ThemeManagerDialog'
+import { ThemeSwatch } from '../theme/ThemeSwatch'
 import { Icon } from '../Icon'
 
 const THEME_LABELS: Record<ThemePreference, { label: string; detail: string }> = {
@@ -27,18 +30,28 @@ const THEME_LABELS: Record<ThemePreference, { label: string; detail: string }> =
 }
 
 export function AppearanceControl() {
-  const { preference, resolvedTheme, setPreference } = useTheme()
+  const { resolvedTheme, selection, customThemes, activeTheme, setPreference, activateTheme } = useTheme()
   const [open, setOpen] = useState(false)
+  const [managerOpen, setManagerOpen] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuId = useId()
 
   useOutsideDismiss({ open, refs: hostRef, onDismiss: () => setOpen(false) })
 
-  const currentLabel = THEME_LABELS[preference].label
+  const currentLabel = selection.mode === 'system'
+    ? THEME_LABELS.system.label
+    : activeTheme.builtin
+      ? THEME_LABELS[activeTheme.family].label
+      : activeTheme.name
 
-  const chooseTheme = (nextPreference: ThemePreference) => {
-    setPreference(nextPreference)
+  const isQuickOptionSelected = (option: ThemePreference): boolean => {
+    if (option === 'system') return selection.mode === 'system'
+    return selection.mode === 'fixed' && selection.fixedThemeId === option
+  }
+
+  const chooseTheme = (apply: () => void) => {
+    apply()
     setOpen(false)
     triggerRef.current?.focus({ preventScroll: true })
   }
@@ -71,7 +84,7 @@ export function AppearanceControl() {
           <div className="appearance-menu__heading">Appearance</div>
           <div className="appearance-menu__options">
             {THEME_PREFERENCES.map((option) => {
-              const selected = preference === option
+              const selected = isQuickOptionSelected(option)
               const copy = THEME_LABELS[option]
               return (
                 <button
@@ -80,7 +93,7 @@ export function AppearanceControl() {
                   type="button"
                   role="menuitemradio"
                   aria-checked={selected}
-                  onClick={() => chooseTheme(option)}
+                  onClick={() => chooseTheme(() => setPreference(option))}
                 >
                   <span className={`appearance-menu__swatch appearance-menu__swatch--${option}`} aria-hidden="true" />
                   <span className="appearance-menu__copy">
@@ -91,9 +104,55 @@ export function AppearanceControl() {
                 </button>
               )
             })}
+
+            {customThemes.length > 0 && (
+              <>
+                <div className="appearance-menu__heading appearance-menu__heading--section">Custom themes</div>
+                {customThemes.map((custom) => {
+                  const selected = selection.mode === 'fixed' && selection.fixedThemeId === custom.id
+                  const resolved = resolveCustomTheme(custom)
+                  return (
+                    <button
+                      key={custom.id}
+                      className={`appearance-menu__option ${selected ? 'appearance-menu__option--selected' : ''}`}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      onClick={() => chooseTheme(() => activateTheme(custom.id))}
+                    >
+                      <ThemeSwatch values={resolved.values} />
+                      <span className="appearance-menu__copy">
+                        <span className="appearance-menu__label">{custom.name}</span>
+                        <span className="appearance-menu__detail">
+                          {custom.family === 'dark' ? 'Dark family' : 'Light family'}
+                        </span>
+                      </span>
+                      <span className="appearance-menu__check" aria-hidden="true">{selected ? '✓' : ''}</span>
+                    </button>
+                  )
+                })}
+              </>
+            )}
+
+            <button
+              className="appearance-menu__option appearance-menu__option--manage"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false)
+                setManagerOpen(true)
+              }}
+            >
+              <span className="appearance-menu__copy">
+                <span className="appearance-menu__label">Manage themes…</span>
+                <span className="appearance-menu__detail">Create, edit, import, export</span>
+              </span>
+            </button>
           </div>
         </div>
       )}
+
+      {managerOpen && <ThemeManagerDialog onClose={() => setManagerOpen(false)} />}
     </div>
   )
 }
