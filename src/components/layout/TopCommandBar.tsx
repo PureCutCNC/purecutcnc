@@ -23,7 +23,9 @@ import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { SnapPopover } from './SnapPopover'
 import { DimensionPopover } from './DimensionPopover'
 import { useFileCommands } from '../../commands/fileCommands'
+import { useI18n } from '../../i18n/i18nContext'
 import { AppearanceControl } from './AppearanceControl'
+import { LanguageControl } from './LanguageControl'
 
 interface TopCommandBarProps {
   centerTab: 'sketch' | 'preview3d' | 'simulation'
@@ -63,6 +65,7 @@ export function TopCommandBar({
     dirty,
     setProjectName,
   } = useProjectStore()
+  const { t } = useI18n()
 
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(project.meta.name)
@@ -93,7 +96,7 @@ export function TopCommandBar({
           <button
             className="top-cmd-btn"
             type="button"
-            aria-label="Open project panel"
+            aria-label={t('shell.topBar.openProjectPanel')}
             onClick={onOpenLeftDrawer}
           >
             <Icon id="project" />
@@ -124,7 +127,7 @@ export function TopCommandBar({
               <button
                 className="top-command-bar__name"
                 type="button"
-                title="Rename project"
+                title={t('shell.topBar.renameProject')}
                 onClick={() => {
                   setNameVal(project.meta.name)
                   setEditingName(true)
@@ -136,7 +139,7 @@ export function TopCommandBar({
             <span
               className={`top-command-bar__save-state ${dirty ? 'top-command-bar__save-state--dirty' : ''}`}
             >
-              {dirty ? 'Unsaved' : 'Saved'}
+              {dirty ? t('shell.topBar.unsaved') : t('shell.topBar.saved')}
             </span>
           </div>
         </div>
@@ -144,25 +147,25 @@ export function TopCommandBar({
         {/* Center section: file ops + undo/redo + view tabs */}
         <div className="top-command-bar__center">
           <div className="top-cmd-group">
-            <button className="top-cmd-btn" type="button" aria-label="New project" onClick={fileCommands.commands.newProject.onActivate}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.newProject.label} onClick={fileCommands.commands.newProject.onActivate}>
               <Icon id="new" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Open project" onClick={fileCommands.commands.openProject.onActivate}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.openProject.label} onClick={fileCommands.commands.openProject.onActivate}>
               <Icon id="open" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Import geometry" onClick={fileCommands.commands.importGeometry.onActivate}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.importGeometry.label} onClick={fileCommands.commands.importGeometry.onActivate}>
               <Icon id="import" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Export model" onClick={fileCommands.commands.exportModel.onActivate}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.exportModel.label} onClick={fileCommands.commands.exportModel.onActivate}>
               <Icon id="export" />
             </button>
-            <button className="top-cmd-btn top-cmd-btn--print" type="button" aria-label="Print design" onClick={fileCommands.commands.printDesign.onActivate}>
+            <button className="top-cmd-btn top-cmd-btn--print" type="button" aria-label={fileCommands.commands.printDesign.label} onClick={fileCommands.commands.printDesign.onActivate}>
               <Icon id="print" />
             </button>
             <button
               className={`top-cmd-btn ${dirty ? 'top-cmd-btn--emphasized' : ''}`}
               type="button"
-              aria-label="Save project"
+              aria-label={fileCommands.commands.saveProject.label}
               onClick={fileCommands.commands.saveProject.onActivate}
             >
               <Icon id="save" />
@@ -170,10 +173,10 @@ export function TopCommandBar({
           </div>
 
           <div className="top-cmd-group">
-            <button className="top-cmd-btn" type="button" aria-label="Undo" onClick={fileCommands.commands.undo.onActivate} disabled={!fileCommands.commands.undo.enabled}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.undo.label} onClick={fileCommands.commands.undo.onActivate} disabled={!fileCommands.commands.undo.enabled}>
               <Icon id="undo" />
             </button>
-            <button className="top-cmd-btn" type="button" aria-label="Redo" onClick={fileCommands.commands.redo.onActivate} disabled={!fileCommands.commands.redo.enabled}>
+            <button className="top-cmd-btn" type="button" aria-label={fileCommands.commands.redo.label} onClick={fileCommands.commands.redo.onActivate} disabled={!fileCommands.commands.redo.enabled}>
               <Icon id="redo" />
             </button>
           </div>
@@ -184,21 +187,21 @@ export function TopCommandBar({
               type="button"
               onClick={() => onCenterTabChange('sketch')}
             >
-              Sketch
+              {t('shell.topBar.tabSketch')}
             </button>
             <button
               className={`top-cmd-tab ${centerTab === 'preview3d' ? 'top-cmd-tab--active' : ''}`}
               type="button"
               onClick={() => onCenterTabChange('preview3d')}
             >
-              3D
+              {t('shell.topBar.tab3d')}
             </button>
             <button
               className={`top-cmd-tab ${centerTab === 'simulation' ? 'top-cmd-tab--active' : ''}`}
               type="button"
               onClick={() => onCenterTabChange('simulation')}
             >
-              Sim
+              {t('shell.topBar.tabSim')}
             </button>
           </div>
         </div>
@@ -206,13 +209,13 @@ export function TopCommandBar({
         {/* Right section: zoom + snap + operations */}
         <div className="top-command-bar__right">
           <div className="top-cmd-group">
-            <button className="top-cmd-btn" type="button" aria-label="Zoom to model" onClick={onZoomToModel}>
+            <button className="top-cmd-btn" type="button" aria-label={t('shell.topBar.zoomToModel')} onClick={onZoomToModel}>
               <Icon id="fit" />
             </button>
             <button
               className={`top-cmd-btn ${zoomWindowActive ? 'top-cmd-btn--active' : ''}`}
               type="button"
-              aria-label="Zoom selected"
+              aria-label={t('shell.topBar.zoomSelected')}
               onClick={onZoomWindow}
             >
               <Icon id="fit-window" />
@@ -226,13 +229,14 @@ export function TopCommandBar({
           />
           <DimensionPopover />
           <AppearanceControl />
+          <LanguageControl />
           <button
             className="top-cmd-btn top-cmd-btn--operations"
             type="button"
-            aria-label="Open operations panel"
+            aria-label={t('shell.topBar.openOperationsPanel')}
             onClick={onOpenRightDrawer}
           >
-            Operations{project.operations.length > 0 ? ` ${project.operations.length}` : ''}
+            {t('shell.topBar.operations')}{project.operations.length > 0 ? ` ${project.operations.length}` : ''}
           </button>
         </div>
       </div>

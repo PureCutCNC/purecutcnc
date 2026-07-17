@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../i18n/i18nContext'
 import { useFileActions } from '../platform/useFileActions'
 import { useProjectStore } from '../store/projectStore'
 
@@ -54,6 +55,7 @@ export function useFileCommands({
   historyFutureLength: number
   commands: Record<FileCommandId, FileCommandDescriptor>
 } {
+  const { t } = useI18n()
   const fileActions = useFileActions()
   const { dirty, history, undo, redo } = useProjectStore()
 
@@ -80,7 +82,7 @@ export function useFileCommands({
       newProject: {
         id: 'newProject',
         icon: 'new',
-        label: 'New project',
+        label: t('file.newProject'),
         enabled: true,
         active: false,
         onActivate: handleNewProject,
@@ -88,7 +90,7 @@ export function useFileCommands({
       openProject: {
         id: 'openProject',
         icon: 'open',
-        label: 'Open project',
+        label: t('file.openProject'),
         enabled: true,
         active: false,
         onActivate: handleOpenProject,
@@ -96,7 +98,7 @@ export function useFileCommands({
       importGeometry: {
         id: 'importGeometry',
         icon: 'import',
-        label: 'Import geometry',
+        label: t('file.importGeometry'),
         enabled: true,
         active: false,
         onActivate: onImportGeometry,
@@ -104,7 +106,7 @@ export function useFileCommands({
       exportModel: {
         id: 'exportModel',
         icon: 'export',
-        label: 'Export model',
+        label: t('file.exportModel'),
         enabled: true,
         active: false,
         onActivate: onExportModel,
@@ -112,7 +114,7 @@ export function useFileCommands({
       printDesign: {
         id: 'printDesign',
         icon: 'print',
-        label: 'Print design',
+        label: t('file.printDesign'),
         enabled: true,
         active: false,
         onActivate: onPrintDesign,
@@ -120,7 +122,7 @@ export function useFileCommands({
       saveProject: {
         id: 'saveProject',
         icon: 'save',
-        label: dirty ? 'Save project with unsaved changes' : 'Save project',
+        label: dirty ? t('file.saveProjectDirty') : t('file.saveProject'),
         enabled: true,
         active: false,
         onActivate: handleSaveProject,
@@ -128,7 +130,7 @@ export function useFileCommands({
       undo: {
         id: 'undo',
         icon: 'undo',
-        label: 'Undo',
+        label: t('file.undo'),
         enabled: history.past.length > 0,
         active: false,
         onActivate: undo,
@@ -136,7 +138,7 @@ export function useFileCommands({
       redo: {
         id: 'redo',
         icon: 'redo',
-        label: 'Redo',
+        label: t('file.redo'),
         enabled: history.future.length > 0,
         active: false,
         onActivate: redo,

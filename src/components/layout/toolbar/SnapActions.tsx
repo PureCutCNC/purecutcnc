@@ -15,8 +15,20 @@
  */
 
 import type { SnapMode } from '../../../sketch/snapping'
+import { useI18n } from '../../../i18n/i18nContext'
+import type { MessageKey } from '../../../i18n/locales/en'
 import type { SnapToolbarProps } from './shared'
 import { ToolbarActionButton } from './primitives'
+
+const SNAP_MODE_ACTIONS: { mode: SnapMode; icon: string; labelKey: MessageKey }[] = [
+  { mode: 'grid', icon: 'snap-grid', labelKey: 'shell.snap.grid' },
+  { mode: 'point', icon: 'snap-point', labelKey: 'shell.snap.point' },
+  { mode: 'line', icon: 'snap-line', labelKey: 'shell.snap.line' },
+  { mode: 'midpoint', icon: 'snap-midpoint', labelKey: 'shell.snap.midpoint' },
+  { mode: 'center', icon: 'snap-center', labelKey: 'shell.snap.center' },
+  { mode: 'intersection', icon: 'snap-intersection', labelKey: 'shell.snap.intersection' },
+  { mode: 'perpendicular', icon: 'snap-perpendicular', labelKey: 'shell.snap.perpendicular' },
+]
 
 function SnapActions({
   snapSettings,
@@ -27,6 +39,7 @@ function SnapActions({
 }: SnapToolbarProps & {
   tooltipSide?: 'bottom' | 'right'
 }) {
+  const { t } = useI18n()
   const hasMode = (mode: SnapMode) => snapSettings.modes.includes(mode)
 
   return (
@@ -34,67 +47,22 @@ function SnapActions({
       <div className="toolbar-group">
         <ToolbarActionButton
           icon="snap"
-          label={snapSettings.enabled ? 'Disable snapping' : 'Enable snapping'}
+          label={snapSettings.enabled ? t('shell.snap.disable') : t('shell.snap.enable')}
           active={snapSettings.enabled}
           tooltipSide={tooltipSide}
           onClick={onToggleSnapEnabled}
         />
-        <ToolbarActionButton
-          icon="snap-grid"
-          label="Snap to grid"
-          active={snapSettings.enabled && hasMode('grid')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'grid'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('grid')}
-        />
-        <ToolbarActionButton
-          icon="snap-point"
-          label="Snap to point"
-          active={snapSettings.enabled && hasMode('point')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'point'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('point')}
-        />
-        <ToolbarActionButton
-          icon="snap-line"
-          label="Snap to line"
-          active={snapSettings.enabled && hasMode('line')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'line'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('line')}
-        />
-        <ToolbarActionButton
-          icon="snap-midpoint"
-          label="Snap to midpoint"
-          active={snapSettings.enabled && hasMode('midpoint')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'midpoint'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('midpoint')}
-        />
-        <ToolbarActionButton
-          icon="snap-center"
-          label="Snap to center"
-          active={snapSettings.enabled && hasMode('center')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'center'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('center')}
-        />
-        <ToolbarActionButton
-          icon="snap-intersection"
-          label="Snap to intersection"
-          active={snapSettings.enabled && hasMode('intersection')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'intersection'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('intersection')}
-        />
-        <ToolbarActionButton
-          icon="snap-perpendicular"
-          label="Snap perpendicular"
-          active={snapSettings.enabled && hasMode('perpendicular')}
-          emphasized={snapSettings.enabled && activeSnapMode === 'perpendicular'}
-          tooltipSide={tooltipSide}
-          onClick={() => onToggleSnapMode('perpendicular')}
-        />
+        {SNAP_MODE_ACTIONS.map(({ mode, icon, labelKey }) => (
+          <ToolbarActionButton
+            key={mode}
+            icon={icon}
+            label={t(labelKey)}
+            active={snapSettings.enabled && hasMode(mode)}
+            emphasized={snapSettings.enabled && activeSnapMode === mode}
+            tooltipSide={tooltipSide}
+            onClick={() => onToggleSnapMode(mode)}
+          />
+        ))}
       </div>
     </>
   )

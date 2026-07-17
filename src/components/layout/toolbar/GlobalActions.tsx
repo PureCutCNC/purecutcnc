@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../../i18n/i18nContext'
 import { ToolbarActionButton } from './primitives'
 
 function GlobalActions({
@@ -47,30 +48,31 @@ function GlobalActions({
   zoomWindowActive: boolean
   projectDirty: boolean
 }) {
+  const { t } = useI18n()
   return (
     <>
       <div className="toolbar-group">
-        <ToolbarActionButton icon="new" label="New project" onClick={onNew} />
-        <ToolbarActionButton icon="open" label="Open project" onClick={onOpen} />
-        <ToolbarActionButton icon="import" label="Import geometry" onClick={onImport} />
-        <ToolbarActionButton icon="export" label="Export model" onClick={onExportModel} />
-        <ToolbarActionButton icon="print" label="Print design" onClick={onPrintDesign} />
+        <ToolbarActionButton icon="new" label={t('file.newProject')} onClick={onNew} />
+        <ToolbarActionButton icon="open" label={t('file.openProject')} onClick={onOpen} />
+        <ToolbarActionButton icon="import" label={t('file.importGeometry')} onClick={onImport} />
+        <ToolbarActionButton icon="export" label={t('file.exportModel')} onClick={onExportModel} />
+        <ToolbarActionButton icon="print" label={t('file.printDesign')} onClick={onPrintDesign} />
         <ToolbarActionButton
           icon="save"
-          label={projectDirty ? 'Save project with unsaved changes' : 'Save project'}
+          label={projectDirty ? t('file.saveProjectDirty') : t('file.saveProject')}
           emphasized={projectDirty}
           onClick={onSave}
         />
       </div>
       <div className="toolbar-group">
-        <ToolbarActionButton icon="undo" label="Undo" onClick={onUndo} disabled={historyLengthPast === 0} />
-        <ToolbarActionButton icon="redo" label="Redo" onClick={onRedo} disabled={historyLengthFuture === 0} />
+        <ToolbarActionButton icon="undo" label={t('file.undo')} onClick={onUndo} disabled={historyLengthPast === 0} />
+        <ToolbarActionButton icon="redo" label={t('file.redo')} onClick={onRedo} disabled={historyLengthFuture === 0} />
       </div>
       <div className="toolbar-group">
-        <ToolbarActionButton icon="fit" label="Zoom to model" onClick={onZoomToModel} />
+        <ToolbarActionButton icon="fit" label={t('shell.topBar.zoomToModel')} onClick={onZoomToModel} />
         <ToolbarActionButton
           icon="fit-window"
-          label={zoomWindowActive ? 'Cancel zoom selected' : 'Zoom selected'}
+          label={zoomWindowActive ? t('shell.topBar.cancelZoomSelected') : t('shell.topBar.zoomSelected')}
           active={zoomWindowActive}
           onClick={onZoomWindow}
         />

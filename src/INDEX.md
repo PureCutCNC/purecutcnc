@@ -16,6 +16,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
+- [i18n/](i18n/INDEX.md) — typed localization layer: English-fallback catalogs (en, zh-CN), custom language packs, locale persistence/detection, and the `useI18n()` React binding
 - [theme/](theme/INDEX.md) — app-local Dark/Light/System appearance state plus typed canvas and Three.js palettes
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema

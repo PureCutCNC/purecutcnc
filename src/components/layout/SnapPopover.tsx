@@ -17,6 +17,8 @@
 import { useRef, useState } from 'react'
 import { Icon } from '../Icon'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 
 interface SnapPopoverProps {
@@ -26,14 +28,15 @@ interface SnapPopoverProps {
   onToggleSnapMode: (mode: SnapMode) => void
 }
 
-const SNAP_MODES: { mode: SnapMode; icon: string; label: string }[] = [
-  { mode: 'grid', icon: 'snap-grid', label: 'Snap to grid' },
-  { mode: 'point', icon: 'snap-point', label: 'Snap to point' },
-  { mode: 'line', icon: 'snap-line', label: 'Snap to line' },
-  { mode: 'midpoint', icon: 'snap-midpoint', label: 'Snap to midpoint' },
-  { mode: 'center', icon: 'snap-center', label: 'Snap to center' },
-  { mode: 'intersection', icon: 'snap-intersection', label: 'Snap to intersection' },
-  { mode: 'perpendicular', icon: 'snap-perpendicular', label: 'Snap perpendicular' },
+// Full label for accessibility, short label for the compact grid tile.
+const SNAP_MODES: { mode: SnapMode; icon: string; labelKey: MessageKey; shortKey: MessageKey }[] = [
+  { mode: 'grid', icon: 'snap-grid', labelKey: 'shell.snap.grid', shortKey: 'shell.snap.gridShort' },
+  { mode: 'point', icon: 'snap-point', labelKey: 'shell.snap.point', shortKey: 'shell.snap.pointShort' },
+  { mode: 'line', icon: 'snap-line', labelKey: 'shell.snap.line', shortKey: 'shell.snap.lineShort' },
+  { mode: 'midpoint', icon: 'snap-midpoint', labelKey: 'shell.snap.midpoint', shortKey: 'shell.snap.midpointShort' },
+  { mode: 'center', icon: 'snap-center', labelKey: 'shell.snap.center', shortKey: 'shell.snap.centerShort' },
+  { mode: 'intersection', icon: 'snap-intersection', labelKey: 'shell.snap.intersection', shortKey: 'shell.snap.intersectionShort' },
+  { mode: 'perpendicular', icon: 'snap-perpendicular', labelKey: 'shell.snap.perpendicular', shortKey: 'shell.snap.perpendicularShort' },
 ]
 
 export function SnapPopover({
@@ -42,6 +45,7 @@ export function SnapPopover({
   onToggleSnapEnabled,
   onToggleSnapMode,
 }: SnapPopoverProps) {
+  const { t, tPlural } = useI18n()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -55,7 +59,9 @@ export function SnapPopover({
         <button
           className={`toolbar-icon-btn ${snapSettings.enabled ? 'toolbar-icon-btn--active' : ''} ${activeSnapMode ? 'toolbar-icon-btn--live' : ''}`}
           type="button"
-          aria-label={snapSettings.enabled ? `Snapping enabled (${enabledCount} modes)` : 'Snapping disabled'}
+          aria-label={snapSettings.enabled
+            ? tPlural(enabledCount, 'shell.snap.enabledAria.one', 'shell.snap.enabledAria.other')
+            : t('shell.snap.disabledAria')}
           aria-expanded={open}
           onClick={() => setOpen((prev) => !prev)}
         >
@@ -65,7 +71,7 @@ export function SnapPopover({
           )}
         </button>
         <span className="toolbar-tooltip toolbar-tooltip--bottom" role="tooltip">
-          Snap settings
+          {t('shell.snap.settingsTooltip')}
         </span>
       </div>
       {open && (
@@ -76,11 +82,11 @@ export function SnapPopover({
               type="button"
               onClick={() => onToggleSnapEnabled()}
             >
-              {snapSettings.enabled ? 'Enabled' : 'Disabled'}
+              {snapSettings.enabled ? t('shell.snap.enabledButton') : t('shell.snap.disabledButton')}
             </button>
           </div>
           <div className="snap-popover-grid">
-            {SNAP_MODES.map(({ mode, icon, label }) => {
+            {SNAP_MODES.map(({ mode, icon, labelKey, shortKey }) => {
               const active = snapSettings.enabled && snapSettings.modes.includes(mode)
               const emphasized = snapSettings.enabled && activeSnapMode === mode
               return (
@@ -90,11 +96,11 @@ export function SnapPopover({
                   type="button"
                   role="menuitemcheckbox"
                   aria-checked={active}
-                  aria-label={label}
+                  aria-label={t(labelKey)}
                   onClick={() => onToggleSnapMode(mode)}
                 >
                   <Icon id={icon} />
-                  <span className="snap-popover-item-label">{label.replace('Snap ', '').replace('to ', '')}</span>
+                  <span className="snap-popover-item-label">{t(shortKey)}</span>
                 </button>
               )
             })}

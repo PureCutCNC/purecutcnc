@@ -16,6 +16,8 @@
 
 import { useId, useRef, useState } from 'react'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import { resolveCustomTheme } from '../../theme/registry'
 import { THEME_PREFERENCES, type ThemePreference } from '../../theme/theme'
 import { useTheme } from '../../theme/themeContext'
@@ -23,14 +25,15 @@ import { ThemeManagerDialog } from '../theme/ThemeManagerDialog'
 import { ThemeSwatch } from '../theme/ThemeSwatch'
 import { Icon } from '../Icon'
 
-const THEME_LABELS: Record<ThemePreference, { label: string; detail: string }> = {
-  dark: { label: 'Dark', detail: 'Low-light workshop' },
-  light: { label: 'Light', detail: 'Drafting paper' },
-  system: { label: 'System', detail: 'Match this device' },
+const THEME_COPY: Record<ThemePreference, { labelKey: MessageKey; detailKey: MessageKey }> = {
+  dark: { labelKey: 'appearance.darkLabel', detailKey: 'appearance.darkDetail' },
+  light: { labelKey: 'appearance.lightLabel', detailKey: 'appearance.lightDetail' },
+  system: { labelKey: 'appearance.systemLabel', detailKey: 'appearance.systemDetail' },
 }
 
 export function AppearanceControl() {
   const { resolvedTheme, selection, customThemes, activeTheme, setPreference, activateTheme } = useTheme()
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [managerOpen, setManagerOpen] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -39,10 +42,12 @@ export function AppearanceControl() {
 
   useOutsideDismiss({ open, refs: hostRef, onDismiss: () => setOpen(false) })
 
+  // Custom themes keep their user-authored names; only built-in copy is
+  // translated.
   const currentLabel = selection.mode === 'system'
-    ? THEME_LABELS.system.label
+    ? t(THEME_COPY.system.labelKey)
     : activeTheme.builtin
-      ? THEME_LABELS[activeTheme.family].label
+      ? t(THEME_COPY[activeTheme.family].labelKey)
       : activeTheme.name
 
   const isQuickOptionSelected = (option: ThemePreference): boolean => {
@@ -63,7 +68,7 @@ export function AppearanceControl() {
           ref={triggerRef}
           className="toolbar-icon-btn appearance-control__trigger"
           type="button"
-          aria-label={`Appearance: ${currentLabel}`}
+          aria-label={t('appearance.current', { name: currentLabel })}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
@@ -74,18 +79,18 @@ export function AppearanceControl() {
         </button>
         {!open && (
           <span className="toolbar-tooltip toolbar-tooltip--bottom" role="tooltip">
-            Appearance
+            {t('appearance.tooltip')}
           </span>
         )}
       </div>
 
       {open && (
-        <div className="appearance-menu" id={menuId} role="menu" aria-label="Appearance theme">
-          <div className="appearance-menu__heading">Appearance</div>
+        <div className="appearance-menu" id={menuId} role="menu" aria-label={t('appearance.menuAria')}>
+          <div className="appearance-menu__heading">{t('appearance.heading')}</div>
           <div className="appearance-menu__options">
             {THEME_PREFERENCES.map((option) => {
               const selected = isQuickOptionSelected(option)
-              const copy = THEME_LABELS[option]
+              const copy = THEME_COPY[option]
               return (
                 <button
                   key={option}
@@ -97,8 +102,8 @@ export function AppearanceControl() {
                 >
                   <span className={`appearance-menu__swatch appearance-menu__swatch--${option}`} aria-hidden="true" />
                   <span className="appearance-menu__copy">
-                    <span className="appearance-menu__label">{copy.label}</span>
-                    <span className="appearance-menu__detail">{copy.detail}</span>
+                    <span className="appearance-menu__label">{t(copy.labelKey)}</span>
+                    <span className="appearance-menu__detail">{t(copy.detailKey)}</span>
                   </span>
                   <span className="appearance-menu__check" aria-hidden="true">{selected ? '✓' : ''}</span>
                 </button>
@@ -107,7 +112,7 @@ export function AppearanceControl() {
 
             {customThemes.length > 0 && (
               <>
-                <div className="appearance-menu__heading appearance-menu__heading--section">Custom themes</div>
+                <div className="appearance-menu__heading appearance-menu__heading--section">{t('appearance.customThemesHeading')}</div>
                 {customThemes.map((custom) => {
                   const selected = selection.mode === 'fixed' && selection.fixedThemeId === custom.id
                   const resolved = resolveCustomTheme(custom)
@@ -124,7 +129,7 @@ export function AppearanceControl() {
                       <span className="appearance-menu__copy">
                         <span className="appearance-menu__label">{custom.name}</span>
                         <span className="appearance-menu__detail">
-                          {custom.family === 'dark' ? 'Dark family' : 'Light family'}
+                          {custom.family === 'dark' ? t('appearance.darkFamily') : t('appearance.lightFamily')}
                         </span>
                       </span>
                       <span className="appearance-menu__check" aria-hidden="true">{selected ? '✓' : ''}</span>
@@ -144,8 +149,8 @@ export function AppearanceControl() {
               }}
             >
               <span className="appearance-menu__copy">
-                <span className="appearance-menu__label">Manage themes…</span>
-                <span className="appearance-menu__detail">Create, edit, import, export</span>
+                <span className="appearance-menu__label">{t('appearance.manageThemes')}</span>
+                <span className="appearance-menu__detail">{t('appearance.manageThemesDetail')}</span>
               </span>
             </button>
           </div>

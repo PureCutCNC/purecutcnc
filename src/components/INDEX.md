@@ -21,7 +21,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `simulation/` — voxel toolpath simulation viewport and playback controls
 - `cam/` — CAM panels (tools, operations, parameters); per-parameter reference icons via `OperationParameterReference`
 - `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu
-- `layout/` — app shell (toolbars, sidebars, mode switching), including the shared `AppearanceControl`; toolbar internals are documented in `layout/toolbar/INDEX.md`
+- `layout/` — app shell (toolbars, sidebars, mode switching), including the shared `AppearanceControl` and `LanguageControl` (interface-language selector backed by `src/i18n/`); toolbar internals are documented in `layout/toolbar/INDEX.md`
 - `project/` — project-level UI (new/open/save, stock, machine, units), including `UnitConversionDialog` for the explicit convert-vs-reinterpret units decision. Import dialog is `ImportGeometryDialog` with analysis delegated to `useImportGeometryAnalysis` (parse/classify caching hook), `ImportGeometryModeSection` (mode select + summary), and `importModelFile` (3D model import utility).
 - `export/` — export dialogs: G-code (`ExportDialog`, with a per-operation checklist backed by the pure helpers in `exportOperationSelection.ts`), the Export Model dialog (`ModelExportDialog`, STL mesh + 2D design SVG via `src/engine/modelExport/`), and the Print Design dialog (`PrintDesignDialog`, backed by `src/engine/designPrint/`)
 - `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
