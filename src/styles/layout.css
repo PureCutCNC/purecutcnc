@@ -577,6 +577,31 @@
   text-align: center;
 }
 
+.appearance-menu__heading--section {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* Descendant selector (0,2,0) so this min-height beats the broad
+   `.app-shell button` hit-target rule (0,1,1); a bare
+   `.appearance-menu__option--manage` (0,1,0) loses to it and the swatch-less
+   row would fall back to content height — 43px under CI font metrics, below
+   the 44px touch minimum. */
+.appearance-menu .appearance-menu__option--manage {
+  grid-template-columns: 1fr;
+  min-height: 48px;
+}
+
+.appearance-menu .theme-swatch {
+  justify-self: center;
+}
+
+.appearance-menu .theme-swatch__chip {
+  width: 6px;
+  height: 26px;
+}
+
 .toolbar-action:hover .toolbar-tooltip,
 .toolbar-action:focus-within .toolbar-tooltip {
   opacity: 1;

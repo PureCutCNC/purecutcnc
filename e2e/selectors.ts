@@ -33,8 +33,75 @@ export const appearance = {
   menu: (page: Page) => page.getByRole('menu', { name: 'Appearance theme' }),
   option: (page: Page, label: 'Dark' | 'Light' | 'System') =>
     appearance.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+  customOption: (page: Page, name: string) =>
+    appearance.menu(page).getByRole('menuitemradio').filter({ has: page.getByText(name, { exact: true }) }),
+  manageEntry: (page: Page) =>
+    appearance.menu(page).getByRole('menuitem', { name: /^Manage themes/ }),
   positiveActionProbe: (page: Page) =>
     page.getByRole('button', { name: 'Positive action contrast probe' }),
+}
+
+// ── Theme manager & editor ─────────────────────────────────────────
+
+export const themeManager = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: 'Manage themes' }),
+  themeItem: (page: Page, name: string) =>
+    themeManager.dialog(page).getByRole('option')
+      .filter({ has: page.getByText(name, { exact: true }) }),
+  detailName: (page: Page) =>
+    themeManager.dialog(page).locator('.machine-manager-detail-name'),
+  useButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Use this theme' }),
+  duplicateButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: /^Duplicate/ }),
+  editButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Edit', exact: true }),
+  renameButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Rename' }),
+  renameInput: (page: Page) =>
+    themeManager.dialog(page).getByRole('textbox', { name: 'Theme name' }),
+  saveNameButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Save name' }),
+  resetButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Reset to base' }),
+  importButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Import theme' }),
+  exportButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Export theme' }),
+  deleteButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Delete theme' }),
+  notice: (page: Page) =>
+    themeManager.dialog(page).locator('.theme-manager-notice'),
+  fixedModeRadio: (page: Page) =>
+    themeManager.dialog(page).getByRole('radio', { name: 'Fixed theme' }),
+  systemModeRadio: (page: Page) =>
+    themeManager.dialog(page).getByRole('radio', { name: 'Follow system light/dark' }),
+  systemLightSelect: (page: Page) =>
+    themeManager.dialog(page).getByLabel('Light theme'),
+  systemDarkSelect: (page: Page) =>
+    themeManager.dialog(page).getByLabel('Dark theme'),
+  doneButton: (page: Page) =>
+    themeManager.dialog(page).getByRole('button', { name: 'Done' }),
+}
+
+export const themeEditor = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit theme/ }),
+  nameInput: (page: Page) =>
+    themeEditor.dialog(page).getByLabel('Theme name'),
+  colorText: (page: Page, label: string) =>
+    themeEditor.dialog(page).getByLabel(label, { exact: true }),
+  resetField: (page: Page, label: string) =>
+    themeEditor.dialog(page).getByRole('button', { name: `Reset ${label} to base value` }),
+  restoreButton: (page: Page) =>
+    themeEditor.dialog(page).getByRole('button', { name: 'Restore saved colors' }),
+  applyButton: (page: Page) =>
+    themeEditor.dialog(page).getByRole('button', { name: 'Apply theme' }),
+  cancelButton: (page: Page) =>
+    themeEditor.dialog(page).getByRole('button', { name: 'Cancel' }),
+  blockers: (page: Page) =>
+    themeEditor.dialog(page).locator('.theme-editor-contrast__item--block'),
+  contrastOk: (page: Page) =>
+    themeEditor.dialog(page).locator('.theme-editor-contrast__ok'),
 }
 
 // ── Status bar and About dialog ────────────────────────────────────

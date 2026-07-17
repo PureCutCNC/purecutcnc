@@ -15,6 +15,8 @@
  */
 
 import type { StorageCodec } from '../hooks/useLocalStorageState'
+import { cssOverridesFromValues, type ResolvedThemeDefinition } from './registry'
+import { themeTokenKeys } from './tokens'
 
 export const THEME_STORAGE_KEY = 'purecutcnc.appearance.theme'
 export const THEME_PREFERENCES = ['dark', 'light', 'system'] as const
@@ -42,13 +44,16 @@ export function resolveThemePreference(
   return preference
 }
 
-interface ThemeRoot {
+export interface ThemeRoot {
   dataset: {
     theme?: string
     themePreference?: string
+    themeId?: string
   }
   style: {
     colorScheme: string
+    setProperty(name: string, value: string): void
+    removeProperty(name: string): void
   }
 }
 
@@ -64,29 +69,33 @@ export function readThemePreference(
   }
 }
 
-export function applyThemeToRoot(
+/**
+ * Apply a resolved theme to the document root: the family drives the static
+ * CSS block via `data-theme` and native controls via `color-scheme`, while
+ * tokens that differ from the family built-in are set as inline custom
+ * properties. Previous inline tokens are always cleared first, so switching
+ * or cancelling a preview can never leave stale colors behind.
+ */
+export function applyResolvedThemeToRoot(
   root: ThemeRoot,
-  preference: ThemePreference,
-  resolvedTheme: ResolvedTheme,
+  mode: 'fixed' | 'system',
+  resolved: ResolvedThemeDefinition,
 ): void {
-  root.dataset.theme = resolvedTheme
-  root.dataset.themePreference = preference
-  root.style.colorScheme = resolvedTheme
+  root.dataset.theme = resolved.family
+  root.dataset.themePreference = mode === 'system' ? 'system' : resolved.family
+  root.dataset.themeId = resolved.id
+  root.style.colorScheme = resolved.family
+
+  for (const key of themeTokenKeys('css')) {
+    root.style.removeProperty(`--${key}`)
+  }
+  for (const [property, value] of Object.entries(cssOverridesFromValues(resolved.values, resolved.family))) {
+    root.style.setProperty(property, value)
+  }
 }
 
 export function getSystemPrefersDark(): boolean {
   return typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-color-scheme: dark)').matches
-}
-
-/** Applies the stored preference before React renders, preventing a theme flash. */
-export function bootstrapTheme(): ThemePreference {
-  if (typeof document === 'undefined') return 'dark'
-
-  const storage = typeof window === 'undefined' ? null : window.localStorage
-  const preference = readThemePreference(storage)
-  const resolvedTheme = resolveThemePreference(preference, getSystemPrefersDark())
-  applyThemeToRoot(document.documentElement, preference, resolvedTheme)
-  return preference
 }

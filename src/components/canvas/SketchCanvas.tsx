@@ -151,7 +151,6 @@ import {
 } from '../../platform/featureClipboard'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useTheme } from '../../theme/themeContext'
-import { THEME_PALETTES } from '../../theme/palette'
 
 export type { SketchCanvasHandle }
 
@@ -175,8 +174,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   },
   ref
 ) {
-  const { resolvedTheme } = useTheme()
-  const canvasPalette = THEME_PALETTES[resolvedTheme].canvas
+  const { palette } = useTheme()
+  const canvasPalette = palette.canvas
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const isDraggingNodeRef = useRef(false)
@@ -801,7 +800,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, resolvedTheme])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, canvasPalette])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
