@@ -22,6 +22,12 @@ import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh } from './importedMesh'
+import {
+  importedModelInstanceTransform,
+  importedModelMatrix4,
+  importedModelTransformKey,
+  transformImportedModelPoint,
+} from './importedModelTransform'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
 import { buildBatchedLines, type BatchLineMeta } from './lineBatcher'
 import { profileToPolygon } from './profilePolyline'
@@ -218,14 +224,13 @@ function stlTransformedGeometryCacheKey(
   const asset = featureModelAsset(project, feature)
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
+  const transform = importedModelInstanceTransform(feature)
   return [
     feature.id,
     stl?.format ?? 'stl',
     stl?.axisSwap ?? 'none',
     stl?.scale ?? 1,
-    feature.sketch.origin.x,
-    feature.sketch.origin.y,
-    feature.sketch.orientationAngle ?? 0,
+    importedModelTransformKey(transform),
     zTop,
     zBottom,
     stl?.meshAssetId ?? 'missing',
@@ -305,16 +310,11 @@ export function loadSTLTransformedGeometry(
 
   // BuildFeatureSolid-style transformations (same as buildFeatureMesh)
   const scale = stl?.scale ?? 1
-  const angleDeg = feature.sketch.orientationAngle ?? 0
+  const transform = importedModelInstanceTransform(feature)
   const zTop = resolveDimension(feature.z_top, project)
   const zBottom = resolveDimension(feature.z_bottom, project)
   const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
   const zScale = targetHeight / ((meshHeight || 1) * scale)
-  const angleRad = (angleDeg * Math.PI) / 180
-  const cosA = Math.cos(angleRad)
-  const sinA = Math.sin(angleRad)
-  const originX = feature.sketch.origin.x
-  const originY = feature.sketch.origin.y
   const bottomZ = Math.min(zTop, zBottom)
 
   // Apply transforms to vertex positions
@@ -325,8 +325,7 @@ export function loadSTLTransformedGeometry(
     const iz = i * 3 + 2
 
     // Uniform scale
-    let x = rawPos[ix] * scale
-    let y = rawPos[iy] * scale
+    const xy = transformImportedModelPoint(transform, rawPos[ix] * scale, rawPos[iy] * scale)
     let z = rawPos[iz] * scale
 
     // Translate bottom to Z=0, then Z-only scale, then translate to target
@@ -334,18 +333,8 @@ export function loadSTLTransformedGeometry(
     z *= zScale
     z += bottomZ
 
-    // Rotate around Z
-    const rx = x * cosA - y * sinA
-    const ry = x * sinA + y * cosA
-    x = rx
-    y = ry
-
-    // Translate to sketch origin
-    x += originX
-    y += originY
-
-    positions[ix] = x
-    positions[iy] = y
+    positions[ix] = xy.x
+    positions[iy] = xy.y
     positions[iz] = z
   }
 
@@ -378,7 +367,7 @@ export function buildFeatureMesh(
     }
 
     const userScale = stl?.scale ?? 1
-    const angleRad = (feature.sketch.orientationAngle ?? 0) * (Math.PI / 180)
+    const transform = importedModelInstanceTransform(feature)
 
     // Resolve z dimensions (DimensionRef → number).
     // STL features always store numeric z values, but the type allows DimensionRef.
@@ -399,22 +388,21 @@ export function buildFeatureMesh(
     //   2. translate(0,0,-minZ)          → move bottom of mesh to z=0
     //   3. scale(1,1,zScaleFactor)       → stretch Z to targetHeight
     //   4. translate(0,0,min(zTop,zBot)) → move bottom to feature's bottom plane
-    //   5. rotateZ(angleRad)
-    //   6. translate(origin.x, origin.y, 0)
-    //   7. rotateX(-π/2)                 → swap Y/Z for viewport convention
-    //   8. mesh.scale.z = -1             → flip Z (final mesh-local axis flip)
+    //   5. apply the strict instance's full 2D affine transform
+    //   6. rotateX(-π/2)                 → swap Y/Z for viewport convention
+    //   7. mesh.scale.z = -1             → flip Z (final mesh-local axis flip)
     //
     // We reproduce that as an Object3D hierarchy so each chunk shares it
     // without baking transforms into per-chunk geometry. Read from outer (last
     // applied) to inner (first applied):
     //
-    //   group (rotateX(-π/2), translate(origin), rotateZ(angleRad))
+    //   group (rotateX(-π/2), instance affine transform)
     //     └── inner (scale Z, translate -minZ*userScale, scale userScale, then
     //                translate by min(zTop,zBot) along Z BEFORE rotateX)
     //
     // The clearest way to assemble this without juggling matrices is two
     // nested groups: an inner that handles the mesh-local scale/translate, and
-    // an outer that handles the world-space rotate/translate. We also fold
+    // an outer that handles the world-space affine placement. We also fold
     // mesh.scale.z = -1 into the inner.
 
     // Inner Z transform reproduces steps 1–4 in mesh-local space:
@@ -428,22 +416,19 @@ export function buildFeatureMesh(
       innerGroup.add(new THREE.Mesh(chunk, material))
     }
 
-    // Each subsequent step in the original sequence (5–7, then mesh.scale.z = -1)
+    // Each subsequent step in the original sequence (5–6, then mesh.scale.z = -1)
     // is wrapped as its own group, outer = applied later. Three.js composes a
     // node's local transform as T * R * S; the inner group already uses both
     // scale and translation, so all subsequent ops use one transform per node
     // to avoid combined-order surprises.
-    const rotateZGroup = new THREE.Group()
-    rotateZGroup.rotation.z = angleRad
-    rotateZGroup.add(innerGroup)
-
-    const translateGroup = new THREE.Group()
-    translateGroup.position.set(feature.sketch.origin.x, feature.sketch.origin.y, 0)
-    translateGroup.add(rotateZGroup)
+    const affineGroup = new THREE.Group()
+    affineGroup.matrixAutoUpdate = false
+    affineGroup.matrix.fromArray(importedModelMatrix4(transform))
+    affineGroup.add(innerGroup)
 
     const rotateXGroup = new THREE.Group()
     rotateXGroup.rotation.x = -Math.PI / 2
-    rotateXGroup.add(translateGroup)
+    rotateXGroup.add(affineGroup)
 
     // Outermost — the equivalent of the original `mesh.scale.z = -1` applied
     // AFTER the geometry's rotateX, so this must live in its own group.
@@ -689,7 +674,7 @@ export function buildFeatureSolid(
       
       const solid = new module.Manifold(manifoldMesh)
       const scale = stl?.scale ?? 1
-      const angleDeg = feature.sketch.orientationAngle ?? 0
+      const transform = importedModelInstanceTransform(feature)
       
       // Resolve z dimensions (DimensionRef → number)
       const zTop = resolveDimension(feature.z_top, project)
@@ -709,8 +694,7 @@ export function buildFeatureSolid(
         .translate([0, 0, -bbox.min[2] * scale]) // Move to 0 (accounting for uniform scale)
         .scale([1, 1, zScale]) // Scale Z to match target height
         .translate([0, 0, Math.min(zTop, zBottom)]) // Move to target bottom
-        .rotate(0, 0, angleDeg)
-        .translate(feature.sketch.origin.x, feature.sketch.origin.y, 0)
+        .transform(importedModelMatrix4(transform))
     } catch (error) {
       console.warn('STL is non-manifold, falling back to 2.5D silhouette extrusion for boolean model.', error)
       

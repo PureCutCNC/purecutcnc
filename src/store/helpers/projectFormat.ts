@@ -47,7 +47,9 @@ import {
   syncFeatureTreeProject,
 } from './normalize'
 import { createFeatureInstance } from './featureDefinitions'
+import { invertMatrix, multiplyMatrix } from './instanceTransforms'
 import { resolveFeatureRow } from './resolveFeatures'
+import { transformProfileAffine, transformStlFeatureData } from './transform'
 import { normalizeBackdrop } from '../slices/backdropSlice'
 
 export type LegacyFeatureRow = SketchFeature & {
@@ -80,6 +82,74 @@ function isFiniteMatrix(value: unknown): value is Matrix2D {
 
 function isFinitePoint(value: unknown): boolean {
   return isRecord(value) && Number.isFinite(value.x) && Number.isFinite(value.y)
+}
+
+function legacyImportedModelPlacement(
+  feature: LegacyFeatureRow,
+  normalized: LegacyFeatureRow,
+): Matrix2D {
+  const { origin, orientationAngle } = normalized.sketch
+  if (!isFinitePoint(origin) || !Number.isFinite(orientationAngle)) {
+    throw new Error(`Legacy imported model ${feature.id || '(unnamed)'} has invalid placement metadata.`)
+  }
+
+  const angleRadians = orientationAngle * (Math.PI / 180)
+  const cos = Math.cos(angleRadians)
+  const sin = Math.sin(angleRadians)
+  const sketchPlacement: Matrix2D = {
+    a: cos,
+    b: sin,
+    c: -sin,
+    d: cos,
+    e: origin.x,
+    f: origin.y,
+  }
+  const existingTransform = feature.transform ?? IDENTITY_MATRIX
+  if (!isFiniteMatrix(existingTransform)) {
+    throw new Error(`Legacy imported model ${feature.id || '(unnamed)'} has an invalid transform.`)
+  }
+
+  // Legacy reference transforms describe a world-space delta, so they are
+  // applied after the mesh's sketch-origin placement.
+  const placement = multiplyMatrix(existingTransform, sketchPlacement)
+  const determinant = placement.a * placement.d - placement.b * placement.c
+  if (!isFiniteMatrix(placement) || !Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) {
+    throw new Error(`Legacy imported model ${feature.id || '(unnamed)'} has a non-invertible placement.`)
+  }
+  return placement
+}
+
+function canonicalizeLegacyImportedModel(
+  feature: LegacyFeatureRow,
+  normalized: LegacyFeatureRow,
+): { feature: LegacyFeatureRow, transform: Matrix2D } {
+  if (normalized.kind !== 'stl') {
+    const transform = feature.transform ?? IDENTITY_MATRIX
+    if (!isFiniteMatrix(transform)) {
+      throw new Error(`Legacy project feature ${feature.id || '(unnamed)'} has an invalid transform.`)
+    }
+    return { feature: normalized, transform }
+  }
+
+  const transform = legacyImportedModelPlacement(feature, normalized)
+  const inverse = invertMatrix(transform)
+  const transformPoint = (point: { x: number, y: number }) => ({
+    x: inverse.a * point.x + inverse.c * point.y + inverse.e,
+    y: inverse.b * point.x + inverse.d * point.y + inverse.f,
+  })
+  return {
+    feature: {
+      ...normalized,
+      sketch: {
+        ...normalized.sketch,
+        profile: transformProfileAffine(normalized.sketch.profile, transformPoint),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+      },
+      stl: transformStlFeatureData(normalized.stl, transformPoint),
+    },
+    transform,
+  }
 }
 
 function normalizeDefinition(id: string, value: unknown): FeatureDefinition {
@@ -272,6 +342,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
       }]
     }),
   )
+  const canonicalizedImportedDefinitions = new Set<string>()
 
   const features: FeatureInstance[] = input.features.map((feature) => {
     if (!isLegacyFeatureRow(feature)) {
@@ -280,26 +351,25 @@ export function normalizeProject(input: ProjectFormatInput): Project {
 
     const normalized = normalizeLegacyFeature(feature, modelAssets)
     const definitionId = feature.definitionId ?? feature.id
-    if (!featureDefinitions[definitionId]) {
+    const canonicalized = canonicalizeLegacyImportedModel(feature, normalized)
+    if (!featureDefinitions[definitionId]
+      || (canonicalized.feature.kind === 'stl' && !canonicalizedImportedDefinitions.has(definitionId))) {
       featureDefinitions = {
         ...featureDefinitions,
         [definitionId]: normalizeFeatureDefinition({
           id: definitionId,
-          kind: normalized.kind,
-          profile: normalized.sketch.profile,
-          dimensions: normalized.sketch.dimensions.map((dimension) => ({ ...dimension })),
-          text: normalized.text ? { ...normalized.text } : null,
-          stl: normalized.stl ? { ...normalized.stl } : null,
-          operation: normalized.operation,
-          regionMaskMode: normalized.regionMaskMode,
+          kind: canonicalized.feature.kind,
+          profile: canonicalized.feature.sketch.profile,
+          dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
+          text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+          stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
+          operation: canonicalized.feature.operation,
+          regionMaskMode: canonicalized.feature.regionMaskMode,
         }),
       }
+      if (canonicalized.feature.kind === 'stl') canonicalizedImportedDefinitions.add(definitionId)
     }
-    const transform = feature.transform ?? IDENTITY_MATRIX
-    if (!isFiniteMatrix(transform)) {
-      throw new Error(`Legacy project feature ${feature.id || '(unnamed)'} has an invalid transform.`)
-    }
-    return createFeatureInstance(normalized, definitionId, transform)
+    return createFeatureInstance(canonicalized.feature, definitionId, canonicalized.transform)
   })
 
   const rawSourceFeature = (input.stock as unknown as Record<string, unknown>).sourceFeature as
@@ -314,25 +384,28 @@ export function normalizeProject(input: ProjectFormatInput): Project {
     if (isLegacyFeatureRow(rawSourceFeature)) {
       const normalized = normalizeLegacyFeature(rawSourceFeature, modelAssets)
       const definitionId = rawSourceFeature.definitionId ?? rawSourceFeature.id
-      if (!featureDefinitions[definitionId]) {
+      const canonicalized = canonicalizeLegacyImportedModel(rawSourceFeature, normalized)
+      if (!featureDefinitions[definitionId]
+        || (canonicalized.feature.kind === 'stl' && !canonicalizedImportedDefinitions.has(definitionId))) {
         featureDefinitions = {
           ...featureDefinitions,
           [definitionId]: normalizeFeatureDefinition({
             id: definitionId,
-            kind: normalized.kind,
-            profile: normalized.sketch.profile,
-            dimensions: normalized.sketch.dimensions.map((dimension) => ({ ...dimension })),
-            text: normalized.text ? { ...normalized.text } : null,
-            stl: normalized.stl ? { ...normalized.stl } : null,
-            operation: normalized.operation,
-            regionMaskMode: normalized.regionMaskMode,
+            kind: canonicalized.feature.kind,
+            profile: canonicalized.feature.sketch.profile,
+            dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
+            text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+            stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
+            operation: canonicalized.feature.operation,
+            regionMaskMode: canonicalized.feature.regionMaskMode,
           }),
         }
+        if (canonicalized.feature.kind === 'stl') canonicalizedImportedDefinitions.add(definitionId)
       }
       sourceFeature = createFeatureInstance(
-        normalized,
+        canonicalized.feature,
         definitionId,
-        rawSourceFeature.transform ?? IDENTITY_MATRIX,
+        canonicalized.transform,
       )
     } else {
       sourceFeature = normalizeInstance(rawSourceFeature, featureDefinitions)
