@@ -309,6 +309,7 @@ export function AppShell({
     setStock,
     setOrigin,
     updateBackdrop,
+    setShowFeatureInfo,
     setAllRegionsVisible,
     setAllConstructionVisible,
     setAllTabsVisible,
@@ -697,6 +698,15 @@ export function AppShell({
           </button>
         ) : null}
         <div className={`statusbar-visibility ${tabletShell && !statusBarExpanded ? 'statusbar-visibility--hidden' : ''}`} aria-label="View visibility">
+          <button
+            className={`statusbar-toggle ${project.meta.showFeatureInfo ? 'statusbar-toggle--active' : ''}`}
+            type="button"
+            aria-pressed={project.meta.showFeatureInfo}
+            title={project.meta.showFeatureInfo ? 'Hide feature labels' : 'Show feature labels'}
+            onClick={() => setShowFeatureInfo(!project.meta.showFeatureInfo)}
+          >
+            Feature labels
+          </button>
           <button
             className={`statusbar-toggle ${project.grid.visible ? 'statusbar-toggle--active' : ''}`}
             type="button"

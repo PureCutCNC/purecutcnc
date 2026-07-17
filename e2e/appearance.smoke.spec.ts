@@ -75,6 +75,19 @@ test('keeps status and dialog text legible in both themes', async ({ app, ui }) 
   await expect(ui.aboutDialog.productName(app.page)).toHaveCSS('color', 'rgb(37, 48, 57)')
 })
 
+test('toggles feature labels from the status bar', async ({ app, ui }) => {
+  const featureLabels = ui.statusBar.toggle(app.page, 'Feature labels')
+
+  await expect(featureLabels).toHaveAttribute('aria-pressed', 'true')
+  await expect(featureLabels).toHaveAttribute('title', 'Hide feature labels')
+
+  await featureLabels.click()
+
+  await expect(featureLabels).toHaveAttribute('aria-pressed', 'false')
+  await expect(featureLabels).toHaveAttribute('title', 'Show feature labels')
+  expect((await getProject(app.page)).meta.showFeatureInfo).toBe(false)
+})
+
 test('keeps New Project template hover states within the light palette', async ({ app, ui }) => {
   await ui.appearance.trigger(app.page).click()
   await ui.appearance.option(app.page, 'Light').click()
@@ -136,5 +149,23 @@ test.describe('tablet appearance', () => {
 
     await lightOption.click()
     await expect(app.page.locator('html')).toHaveAttribute('data-theme', 'light')
+  })
+})
+
+test.describe('tablet status bar', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
+
+  test('keeps Feature labels touch-sized in the expanded status bar', async ({ app, ui }) => {
+    const statusBar = ui.statusBar.root(app.page)
+    await statusBar.getByRole('button', { name: 'Expand status bar' }).click()
+
+    const featureLabels = ui.statusBar.toggle(app.page, 'Feature labels')
+    await expect(featureLabels).toBeVisible()
+    const featureLabelsBox = await featureLabels.boundingBox()
+    expect(featureLabelsBox).not.toBeNull()
+    expect(featureLabelsBox!.height).toBeGreaterThanOrEqual(44)
+
+    await featureLabels.click()
+    await expect(featureLabels).toHaveAttribute('aria-pressed', 'false')
   })
 })
