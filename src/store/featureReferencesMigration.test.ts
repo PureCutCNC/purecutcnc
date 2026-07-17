@@ -20,10 +20,13 @@ import {
   IDENTITY_MATRIX,
   defaultGrid,
   defaultStock,
+  getProfileBounds,
   newProject,
   rectProfile,
+  type Matrix2D,
   type SketchFeature,
 } from '../types/project'
+import { computeMeshBounds, serializeImportedMesh, type ImportedTriangleMesh } from '../engine/importedMesh'
 import { projectWithFeatures, resolvedFeature } from '../test/projectFixtures'
 import {
   decodeProjectFormat,
@@ -31,10 +34,15 @@ import {
   type ProjectFormatInput,
 } from './helpers/projectFormat'
 import { gcOrphanedDefinitions } from './helpers/featureDefinitions'
-import { resolvedProjectFeatures } from './helpers/resolveFeatures'
+import { applyMatrixToPoint, resolvedProjectFeatures } from './helpers/resolveFeatures'
+import { transformProfileAffine } from './helpers/transform'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function approx(left: number, right: number, epsilon = 1e-9): boolean {
+  return Math.abs(left - right) <= epsilon
 }
 
 function makeRectFeature(id: string, operation: SketchFeature['operation'] = 'add'): SketchFeature {
@@ -99,6 +107,69 @@ function makeLegacyProject(
   }
 }
 
+function makeImportedModelAsset(): ReturnType<typeof serializeImportedMesh> {
+  const positions = new Float32Array([
+    0, 0, 0, 2, 0, 0, 2, 1, 0, 0, 1, 0,
+    0, 0, 3, 2, 0, 3, 2, 1, 3, 0, 1, 3,
+  ])
+  const index = new Uint32Array([
+    0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7,
+    0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5,
+    2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7,
+  ])
+  const mesh: ImportedTriangleMesh = {
+    positions,
+    index,
+    bounds: computeMeshBounds(positions),
+  }
+  return serializeImportedMesh(mesh, 'stl')
+}
+
+function makeLegacyImportedModel(id: string): SketchFeature & { transform: Matrix2D } {
+  const scale = 0.5
+  const existingTransform: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 3, f: 2 }
+  const sketchPlacement: Matrix2D = { a: 0, b: 1, c: -1, d: 0, e: 10, f: -4 }
+  const placement: Matrix2D = {
+    ...sketchPlacement,
+    e: sketchPlacement.e + existingTransform.e,
+    f: sketchPlacement.f + existingTransform.f,
+  }
+  const localProfile = rectProfile(0, 0, 2 * scale, scale)
+  const transformPoint = (point: { x: number, y: number }) => applyMatrixToPoint(placement, point)
+  const silhouettePaths = [[
+    { x: 0, y: 0 },
+    { x: 2 * scale, y: 0 },
+    { x: 2 * scale, y: scale },
+    { x: 0, y: scale },
+  ].map(transformPoint)]
+  return {
+    id,
+    name: id,
+    kind: 'stl',
+    folderId: null,
+    transform: existingTransform,
+    stl: {
+      format: 'stl',
+      scale,
+      axisSwap: 'none',
+      meshAssetId: 'legacy-model-asset',
+      silhouettePaths,
+    },
+    sketch: {
+      profile: transformProfileAffine(localProfile, transformPoint),
+      origin: { x: 10, y: -4 },
+      orientationAngle: 90,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'model',
+    z_top: 4,
+    z_bottom: 1,
+    visible: true,
+    locked: false,
+  }
+}
+
 let passed = 0
 let failed = 0
 
@@ -133,6 +204,63 @@ for (const version of ['1.0', '2.0', '2.1'] as const) {
     assert(resolvedFeature(decoded.project, `rect-${version}`).sketch.profile.start.x === 10, 'geometry should resolve')
   })
 }
+
+for (const version of ['1.0', '2.0', '2.1'] as const) {
+  test(`legacy ${version} imported-model placement becomes a strict instance transform`, () => {
+    const feature = makeLegacyImportedModel(`model-${version}`)
+    const input = makeLegacyProject(version, [feature])
+    input.modelAssets = { 'legacy-model-asset': makeImportedModelAsset() }
+    const decoded = decodeProjectFormat(input).project
+    const instance = decoded.features[0]
+    const row = instance as unknown as Record<string, unknown>
+    const expectedTransform: Matrix2D = { a: 0, b: 1, c: -1, d: 0, e: 13, f: -2 }
+
+    assert(!('sketch' in row), 'converted imported-model instance must be lightweight')
+    assert(Object.keys(decoded.modelAssets).length === 1, 'persisted mesh asset should not be duplicated')
+    for (const component of ['a', 'b', 'c', 'd', 'e', 'f'] as const) {
+      assert(approx(instance.transform[component], expectedTransform[component]),
+        `legacy placement ${component} should compose`)
+    }
+    assert(decoded.featureDefinitions[instance.definitionId].stl?.scale === 0.5, 'STL scale should be retained')
+    assert(instance.z_top === 4 && instance.z_bottom === 1, 'Z range should be retained')
+
+    const resolved = resolvedFeature(decoded, feature.id)
+    const expectedBounds = getProfileBounds(feature.sketch.profile)
+    const resolvedBounds = getProfileBounds(resolved.sketch.profile)
+    for (const bound of ['minX', 'maxX', 'minY', 'maxY'] as const) {
+      assert(approx(resolvedBounds[bound], expectedBounds[bound]),
+        `resolved profile ${bound} should retain its legacy world coordinate`)
+    }
+    const expectedSilhouette = feature.stl?.silhouettePaths?.[0] ?? []
+    const resolvedSilhouette = resolved.stl?.silhouettePaths?.[0] ?? []
+    assert(resolvedSilhouette.length === expectedSilhouette.length, 'resolved silhouette length should be retained')
+    resolvedSilhouette.forEach((point, index) => {
+      assert(approx(point.x, expectedSilhouette[index].x) && approx(point.y, expectedSilhouette[index].y),
+        `resolved silhouette point ${index} should retain its legacy world coordinate`)
+    })
+
+    const reopened = decodeProjectFormat(JSON.parse(JSON.stringify(decoded))).project
+    for (const component of ['a', 'b', 'c', 'd', 'e', 'f'] as const) {
+      assert(approx(reopened.features[0].transform[component], instance.transform[component]),
+        `strict save/reopen should retain transform ${component}`)
+    }
+    assert(Object.keys(reopened.modelAssets).length === 1, 'save/reopen should retain one mesh asset')
+  })
+}
+
+test('legacy imported-model conversion rejects non-invertible placement', () => {
+  const feature = makeLegacyImportedModel('invalid-model')
+  feature.transform = { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0 }
+  const input = makeLegacyProject('2.1', [feature])
+  input.modelAssets = { 'legacy-model-asset': makeImportedModelAsset() }
+  let message = ''
+  try {
+    decodeProjectFormat(input)
+  } catch (error: unknown) {
+    message = error instanceof Error ? error.message : String(error)
+  }
+  assert(message.includes('non-invertible placement'), `expected clear placement error, got: ${message}`)
+})
 
 test('current 3.0 decode is idempotent and is not reported as legacy', () => {
   const current = projectWithFeatures(newProject('Current', 'mm'), [makeRectFeature('rect-current')])

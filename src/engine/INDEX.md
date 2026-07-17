@@ -13,6 +13,8 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `lineBatcher.test.ts` — value/object-level tests for independent segment geometry, colours, closed-solid exclusion, multi-profile text, 2,980-contour batching, and GPU resource disposal
 - `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, silhouette extraction, serialization
 - `importedMesh.test.ts` — tests for the above
+- `importedModelTransform.ts` — shared strict instance-matrix adapter for imported-model preview, CSG, CAM, and export
+- `importedModelTransform.test.ts` — imported-model affine transform and consumer-alignment regressions
 
 ## Subfolders
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**
