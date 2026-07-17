@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { translate } from '../i18n/store'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
 
@@ -64,7 +65,7 @@ export function useFileActions() {
         const ok = await platform.confirmDiscardChanges()
         if (!ok) return false
       } else {
-        if (!window.confirm('You have unsaved changes. Discard them and continue?')) return false
+        if (!window.confirm(translate('platform.confirmDiscard'))) return false
       }
     }
 
@@ -72,7 +73,7 @@ export function useFileActions() {
     try {
       result = await platform.openProjectFile()
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to read project file.')
+      alert(error instanceof Error ? error.message : translate('platform.readProjectFailed'))
       return false
     }
     if (!result) return false
@@ -90,7 +91,7 @@ export function useFileActions() {
       store.openProjectFromText(result.content, result.path)
       return true
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to open project file.')
+      alert(error instanceof Error ? error.message : translate('platform.openProjectFailed'))
       return false
     } finally {
       useProjectStore.setState({ projectLoading: false })

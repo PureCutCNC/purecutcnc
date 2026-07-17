@@ -18,18 +18,21 @@ import { useRef, useState } from 'react'
 import { Icon } from '../Icon'
 import { useProjectStore } from '../../store/projectStore'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { DimensionType } from '../../types/project'
 
-const DIMENSION_TYPES: { type: DimensionType; icon: string; hint: string }[] = [
-  { type: 'aligned', icon: 'dim-aligned', hint: 'Aligned dimension' },
-  { type: 'horizontal', icon: 'dim-horizontal', hint: 'Horizontal dimension' },
-  { type: 'vertical', icon: 'dim-vertical', hint: 'Vertical dimension' },
-  { type: 'radius', icon: 'dim-radius', hint: 'Radius dimension' },
-  { type: 'diameter', icon: 'dim-diameter', hint: 'Diameter dimension' },
-  { type: 'angle', icon: 'dim-angle', hint: 'Angle dimension' },
+const DIMENSION_TYPES: { type: DimensionType; icon: string; hintKey: MessageKey }[] = [
+  { type: 'aligned', icon: 'dim-aligned', hintKey: 'shell.measure.dimAligned' },
+  { type: 'horizontal', icon: 'dim-horizontal', hintKey: 'shell.measure.dimHorizontal' },
+  { type: 'vertical', icon: 'dim-vertical', hintKey: 'shell.measure.dimVertical' },
+  { type: 'radius', icon: 'dim-radius', hintKey: 'shell.measure.dimRadius' },
+  { type: 'diameter', icon: 'dim-diameter', hintKey: 'shell.measure.dimDiameter' },
+  { type: 'angle', icon: 'dim-angle', hintKey: 'shell.measure.dimAngle' },
 ]
 
 export function DimensionPopover() {
+  const { t, tPlural } = useI18n()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -67,14 +70,14 @@ export function DimensionPopover() {
         <button
           className={`toolbar-icon-btn ${anyActive ? 'toolbar-icon-btn--active' : ''}`}
           type="button"
-          aria-label="Measure and dimensions"
+          aria-label={t('shell.measure.aria')}
           aria-expanded={open}
           onClick={() => setOpen((prev) => !prev)}
         >
           <Icon id="measure" />
         </button>
         <span className="toolbar-tooltip toolbar-tooltip--bottom" role="tooltip">
-          Measure &amp; dimensions
+          {t('shell.measure.tooltip')}
         </span>
       </div>
       {open && (
@@ -83,9 +86,9 @@ export function DimensionPopover() {
             <button
               className={`snap-popover-item ${tapeActive ? 'snap-popover-item--active' : ''}`}
               type="button"
-              aria-label="Tape measure"
+              aria-label={t('shell.measure.tapeMeasure')}
               aria-pressed={tapeActive}
-              title={tapeActive ? 'Stop tape measure' : 'Tape measure'}
+              title={tapeActive ? t('shell.measure.stopTapeMeasure') : t('shell.measure.tapeMeasure')}
               onClick={toggleTape}
             >
               <Icon id="tape-measure" />
@@ -93,11 +96,13 @@ export function DimensionPopover() {
             <button
               className={`snap-popover-item ${showDimensions ? 'snap-popover-item--active' : ''}`}
               type="button"
-              aria-label="Show or hide dimensions"
+              aria-label={t('shell.measure.showOrHideAria')}
               aria-pressed={showDimensions}
               title={dimensionCount > 0
-                ? `${showDimensions ? 'Hide' : 'Show'} dimensions (${dimensionCount})`
-                : 'Show/hide dimensions'}
+                ? (showDimensions
+                    ? tPlural(dimensionCount, 'shell.measure.hideDimensionsCount.one', 'shell.measure.hideDimensionsCount.other')
+                    : tPlural(dimensionCount, 'shell.measure.showDimensionsCount.one', 'shell.measure.showDimensionsCount.other'))
+                : t('shell.measure.showHideDimensions')}
               onClick={() => setShowDimensions(!showDimensions)}
             >
               <Icon id={showDimensions ? 'eye' : 'eye-off'} />
@@ -105,15 +110,15 @@ export function DimensionPopover() {
             <button
               className={`snap-popover-item ${dimensionDeleteArmed ? 'snap-popover-item--active' : ''}`}
               type="button"
-              aria-label="Delete dimension"
+              aria-label={t('shell.measure.deleteDimension')}
               aria-pressed={dimensionDeleteArmed}
               disabled={dimensionCount === 0}
-              title={dimensionDeleteArmed ? 'Click a dimension to delete' : 'Delete dimension'}
+              title={dimensionDeleteArmed ? t('shell.measure.deleteDimensionClickOne') : t('shell.measure.deleteDimension')}
               onClick={() => setDimensionDeleteArmed(!dimensionDeleteArmed)}
             >
               <Icon id="trash" />
             </button>
-            {DIMENSION_TYPES.map(({ type, icon, hint }) => {
+            {DIMENSION_TYPES.map(({ type, icon, hintKey }) => {
               const active = dimType === type
               return (
                 <button
@@ -122,8 +127,8 @@ export function DimensionPopover() {
                   type="button"
                   role="menuitemradio"
                   aria-checked={active}
-                  aria-label={hint}
-                  title={hint}
+                  aria-label={t(hintKey)}
+                  title={t(hintKey)}
                   onClick={() => pickType(type)}
                 >
                   <Icon id={icon} />

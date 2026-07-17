@@ -18,6 +18,7 @@ import { open, save, confirm } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { getVersion } from '@tauri-apps/api/app'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { translate } from '../i18n/store'
 import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
 
 // ---------------------------------------------------------------------------
@@ -125,7 +126,8 @@ export const desktopPlatform: PlatformApi = {
   },
 
   async confirmDiscardChanges(): Promise<boolean> {
-    return confirm('You have unsaved changes. Discard them and continue?', {
+    // "PureCutCNC" is the product name, deliberately untranslated.
+    return confirm(translate('platform.confirmDiscard'), {
       title: 'PureCutCNC',
       kind: 'warning',
     })
