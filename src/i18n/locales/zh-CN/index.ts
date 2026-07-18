@@ -18,6 +18,7 @@ import type { MessageKey } from '../en'
 import { shellZhCN } from './shell'
 import { sketchZhCN } from './sketch'
 import { canvasZhCN } from './canvas'
+import { featureTreeZhCN } from './featureTree'
 
 /**
  * The complete Simplified Chinese catalog, merged from per-area modules that
@@ -29,4 +30,5 @@ export const zhCN: Record<MessageKey, string> = {
   ...shellZhCN,
   ...sketchZhCN,
   ...canvasZhCN,
+  ...featureTreeZhCN,
 }
