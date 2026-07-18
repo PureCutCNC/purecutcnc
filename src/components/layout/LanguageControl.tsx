@@ -18,19 +18,20 @@ import { useId, useRef, useState } from 'react'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
 import { useI18n } from '../../i18n/i18nContext'
 import { builtinLocaleInfos } from '../../i18n/registry'
+import { LanguageManagerDialog } from '../language/LanguageManagerDialog'
 import { Icon } from '../Icon'
 
 /**
  * Interface-language selector, mirroring `AppearanceControl`'s menu pattern
  * (and reusing its menu styling): built-in locales listed by native name,
- * any custom language packs beneath, radio-style selection. Language is an
+ * any custom language packs beneath, radio-style selection, and the
+ * "Manage languages…" entry opening the language manager. Language is an
  * application preference — switching never touches project state.
- * The "Manage languages…" entry arrives with the language manager (phase 6
- * of issue #314).
  */
 export function LanguageControl() {
   const { t, localeId, locale, customLanguages, setLocale } = useI18n()
   const [open, setOpen] = useState(false)
+  const [managerOpen, setManagerOpen] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuId = useId()
@@ -119,9 +120,26 @@ export function LanguageControl() {
                 })}
               </>
             )}
+
+            <button
+              className="appearance-menu__option appearance-menu__option--manage"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false)
+                setManagerOpen(true)
+              }}
+            >
+              <span className="appearance-menu__copy">
+                <span className="appearance-menu__label">{t('langManager.manageEntry')}</span>
+                <span className="appearance-menu__detail">{t('langManager.manageDetail')}</span>
+              </span>
+            </button>
           </div>
         </div>
       )}
+
+      {managerOpen && <LanguageManagerDialog onClose={() => setManagerOpen(false)} />}
     </div>
   )
 }

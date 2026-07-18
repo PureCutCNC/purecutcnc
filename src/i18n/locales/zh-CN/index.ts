@@ -24,6 +24,7 @@ import { dialogsZhCN } from './dialogs'
 import { viewportZhCN } from './viewport'
 import { appShellZhCN } from './appShell'
 import { warningsZhCN } from './warnings'
+import { languageManagerZhCN } from './languageManager'
 
 /**
  * The complete Simplified Chinese catalog, merged from per-area modules that
@@ -41,4 +42,5 @@ export const zhCN: Record<MessageKey, string> = {
   ...featureTreeZhCN,
   ...viewportZhCN,
   ...appShellZhCN,
+  ...languageManagerZhCN,
 }

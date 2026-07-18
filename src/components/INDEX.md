@@ -25,6 +25,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `project/` — project-level UI (new/open/save, stock, machine, units), including `UnitConversionDialog` for the explicit convert-vs-reinterpret units decision. Import dialog is `ImportGeometryDialog` with analysis delegated to `useImportGeometryAnalysis` (parse/classify caching hook), `ImportGeometryModeSection` (mode select + summary), and `importModelFile` (3D model import utility).
 - `export/` — export dialogs: G-code (`ExportDialog`, with a per-operation checklist backed by the pure helpers in `exportOperationSelection.ts`), the Export Model dialog (`ModelExportDialog`, STL mesh + 2D design SVG via `src/engine/modelExport/`), and the Print Design dialog (`PrintDesignDialog`, backed by `src/engine/designPrint/`)
 - `machine/` — machine definition editor (focused form + raw JSON + Zod validation)
+- `language/` — language manager + per-key custom-language editor dialogs (see `language/INDEX.md`); backed by the locale registry/store in `src/i18n/`
 - `theme/` — theme manager + guided custom-theme editor dialogs (see `theme/INDEX.md`); backed by the registry/selection model in `src/theme/`
 - `about/` — About dialog (web only; version info + links). Desktop uses the native About menu.
 - `ai/` — MCP / agent-facing UI (placeholder — MCP not yet implemented)

@@ -107,6 +107,11 @@ const ALLOWED_CUSTOM_LANGUAGE_KEYS = new Set([
 
 const LANGUAGE_TAG_PATTERN = /^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8})*$/
 
+/** The loose BCP-47 shape accepted for custom packs (editor + validation). */
+export function isValidLanguageTag(tag: string): boolean {
+  return LANGUAGE_TAG_PATTERN.test(tag)
+}
+
 /**
  * Validate untrusted custom-language data (storage, import). Structural
  * problems reject with a readable message; empty-string override values are
