@@ -31,7 +31,12 @@ and verified on the integration branch; then a single PR to `main` closing
 
 ## Global rules
 
-- One active implementation slice at a time.
+- At most two concurrent implementation slices, and only when their
+  allowed-file sets are fully disjoint. The locale registration files
+  (`src/i18n/locales/en/index.ts`, `src/i18n/locales/zh-CN/index.ts`) are
+  reserved to the manager, who registers new catalog modules at merge time —
+  this removes the only shared-file conflict between extraction slices.
+  (Amended 2026-07-18 from "one active slice" to increase throughput.)
 - Every worker runs in its own task worktree branched from the current integration tip, never in the integration checkout.
 - The worker may use `bypassPermissions` only through the project launcher in explicit implementation mode.
 - The manager owns worktree/branch creation, review, merge, cleanup, issue-plan updates, browser regression, push, and PR decisions.
@@ -58,8 +63,10 @@ Issue #314 phases and how they are executed:
 | S1 | i18n core, LanguageControl, shell extraction (phase 1) | `bd88b6b` | `feat/issue-314-phase-1-core` / `…/issue-314-phase-1-core` | `done (manager)` | `pass` | `af0148c` merged `ca0df27` | `npm run build`; language+appearance e2e (12/12) | Manager-implemented, sets the extraction pattern |
 | S2a | Sketch toolbars + command descriptors extraction | `ff5830e` | `feat/issue-314-i18n-sketch-toolbars` / `…/i18n-sketch-toolbars` | `done` | `pass` | `f97a9f3` merged `a55866a` | `npm run build` (gate: passed) | 80-key `sketch` module; worktree removed |
 | S2b | Canvas creation panels extraction | `94adc16` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `done` | `pass` | `0834e63` merged `9b4f006` | `npm run build` (gate: passed) | ~150-key `canvas` module; worktree removed |
-| S2c | Feature tree + properties extraction | `9b4f006` | `feat/issue-314-i18n-feature-tree` / `…/i18n-feature-tree` | `not started` | `pending` | `-` | `npm run build` | Structural-test rule amended after S2a/S2b findings |
-| S2d | heldSideLabel structured-id refactor | after S2c | `-` | `not started` | `pending` | `-` | `npm run build` | Follow-up: display-string-as-identifier in drivingDimensionResolver |
+| S2c | Feature tree + properties extraction | `9b4f006` | `feat/issue-314-i18n-feature-tree` / `…/i18n-feature-tree` | `done` | `pass` | `86e07f9` merged `16f1fd1` | `npm run build` (gate: passed) | ~170-key `featureTree` module; worktree removed |
+| S2d | heldSideLabel structured-id refactor | `16f1fd1`+ | manager-implemented | `-` | `-` | `-` | `scripts/build-summary.sh` | Display-string-as-identifier in drivingDimensionResolver |
+| S3a | CAM panel + operation reference extraction | `16f1fd1`+ | `feat/issue-314-i18n-cam-panel` / `…/i18n-cam-panel` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3b (disjoint files); manager registers module |
+| S3b | Project/export/machine dialog extraction | `16f1fd1`+ | `feat/issue-314-i18n-dialogs` / `…/i18n-dialogs` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3a (disjoint files); manager registers module |
 
 ## Slice instructions
 
@@ -217,6 +224,72 @@ unchanged (a failing one means visible text changed); everything else as S2a.
 Presentation modules are non-React: use `translate` from `src/i18n/store.ts`.
 
 **Required checks:** `npm run build`
+
+**Manager review record:**
+
+- Worker invocation: 2026-07-17/18, exit 0; independent gate passed; RISKS: none.
+- Diff/commit review: pass. ~170-key `featureTree` module, en byte-identity
+  spot-verified, sanctioned structural-test strengthening only (component
+  references key + en catalog carries original string). Note: the
+  "constructionPresentation.ts / regionPresentation.ts" files listed as
+  allowed did not exist — those names are standalone structural test SUITES,
+  not modules; the slice instructions carried a manager assumption error the
+  worker correctly handled.
+- Acceptance decision: `accepted` — merged `--no-ff` as `16f1fd1`.
+
+### S3a — CAM panel + operation reference (concurrent with S3b)
+
+**Goal:** Extract user-facing strings in the CAM panels (tools, operations,
+parameters, add menu, per-parameter reference copy) into a new `cam` catalog
+module with complete zh-CN, en byte-identical.
+
+**Allowed files:** `src/components/cam/CAMPanel.tsx`,
+`src/components/cam/OperationParameterReference.tsx`,
+`src/components/cam/OperationAddMenu.tsx`, any other `src/components/cam/*`
+UI file, `src/components/INDEX.md` (only if a documented purpose changes),
+`src/i18n/locales/en/cam.ts` (new), `src/i18n/locales/zh-CN/cam.ts` (new).
+
+**Forbidden:** the locale `index.ts` registration files (manager registers at
+merge — the new module will be intentionally unreferenced in this slice; the
+build stays green because unregistered modules compile standalone), all
+tests except sanctioned structural strengthening, the rest of `src/i18n/`,
+`src/store/`, `src/engine/`, `src/toolLibrary.ts` serialized tool/operation
+identifiers, `e2e/`, and every file from earlier slices.
+
+**Invariants:** as earlier slices, plus: operation/tool TYPE identifiers and
+serialized enum values are never keyed; only display labels are. Long-form
+parameter reference copy is translatable prose — keep keys per parameter
+(`cam.paramRef.<param>.…`).
+
+**Required checks:** `scripts/build-summary.sh`
+
+**Manager review record:** pending.
+
+### S3b — Project/export/machine dialogs (concurrent with S3a)
+
+**Goal:** Extract user-facing strings in the project dialogs (new/import/
+text-tool/unit-conversion/examples), export dialogs (G-code, model, print),
+and machine definition editor/manager into a new `dialogs` catalog module
+with complete zh-CN, en byte-identical.
+
+**Allowed files:** `src/components/project/*.tsx`,
+`src/components/export/*.tsx` and pure helpers beside them,
+`src/components/machine/*.tsx`, `src/components/INDEX.md` (only if a
+documented purpose changes), `src/i18n/locales/en/dialogs.ts` (new),
+`src/i18n/locales/zh-CN/dialogs.ts` (new).
+
+**Forbidden:** the locale `index.ts` registration files (manager registers
+at merge), all tests except sanctioned structural strengthening, the rest of
+`src/i18n/`, `src/store/`, `src/engine/` (export/print content generation
+stays untouched — dialogs only), `e2e/`, files from earlier slices.
+
+**Invariants:** as earlier slices, plus: file names, file-type descriptors
+passed to native pickers, units (mm/in symbols), G-code text, and
+Zod-generated raw-JSON validation messages in the machine editor stay
+English/technical (documented boundary — translate the form labels,
+headings, buttons, and app-authored error summaries around them).
+
+**Required checks:** `scripts/build-summary.sh`
 
 **Manager review record:** pending.
 
