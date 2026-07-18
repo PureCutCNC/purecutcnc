@@ -172,6 +172,7 @@ assert(
 
 const creationTargetBadge = readSrc('src/components/canvas/CreationTargetBadge.tsx')
 const sketchCanvas = readSrc('src/components/canvas/SketchCanvas.tsx')
+const canvasEn = readSrc('src/i18n/locales/en/canvas.ts')
 
 assert(
   layoutCss.includes('.creation-target-badge') && layoutCss.includes('.creation-target-badge--construction') && layoutCss.includes('.creation-target-badge--line'),
@@ -182,12 +183,20 @@ assert(
   'the drawing-mode badge must not intercept canvas pointer events',
 )
 assert(
-  creationTargetBadge.includes("line: { icon: 'snap-line', label: 'Drawing lines' }"),
-  'CreationTargetBadge must present the line mode',
+  creationTargetBadge.includes("canvas.target.drawingLines"),
+  'CreationTargetBadge must reference the drawing-lines i18n key',
 )
 assert(
-  creationTargetBadge.includes("construction: { icon: 'construction', label: 'Drawing construction' }"),
-  'CreationTargetBadge must present the construction mode',
+  canvasEn.includes("'canvas.target.drawingLines': 'Drawing lines'"),
+  'canvas i18n catalog must include the drawing-lines English string',
+)
+assert(
+  creationTargetBadge.includes("canvas.target.drawingConstruction"),
+  'CreationTargetBadge must reference the drawing-construction i18n key',
+)
+assert(
+  canvasEn.includes("'canvas.target.drawingConstruction': 'Drawing construction'"),
+  'canvas i18n catalog must include the drawing-construction English string',
 )
 assert(
   sketchCanvas.includes('<CreationTargetBadge />'),

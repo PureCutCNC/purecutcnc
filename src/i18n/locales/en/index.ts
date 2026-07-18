@@ -16,6 +16,7 @@
 
 import { shellEn } from './shell'
 import { sketchEn } from './sketch'
+import { canvasEn } from './canvas'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -26,6 +27,7 @@ import { sketchEn } from './sketch'
 export const en = {
   ...shellEn,
   ...sketchEn,
+  ...canvasEn,
 } as const
 
 export type MessageKey = keyof typeof en

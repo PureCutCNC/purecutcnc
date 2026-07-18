@@ -15,6 +15,7 @@
  */
 
 import type { HTMLAttributes, ReactNode, RefObject } from 'react'
+import { useI18n } from '../../i18n/i18nContext'
 import type { CanvasWorkflowPanelPosition } from './useCanvasWorkflowPanel'
 
 interface CanvasWorkflowPanelProps {
@@ -40,8 +41,10 @@ export function CanvasWorkflowPanel({
   handleProps,
   actionRowProps,
   className = '',
-  moveLabel = 'Move workflow controls',
+  moveLabel,
 }: CanvasWorkflowPanelProps) {
+  const { t } = useI18n()
+  const resolvedMoveLabel = moveLabel ?? t('canvas.common.moveControls')
   const panelClassName = ['canvas-workflow-panel', className].filter(Boolean).join(' ')
 
   return (
@@ -54,7 +57,7 @@ export function CanvasWorkflowPanel({
         className="canvas-workflow-panel__handle"
         role="button"
         tabIndex={0}
-        aria-label={moveLabel}
+        aria-label={resolvedMoveLabel}
         {...handleProps}
       >
         <span className="canvas-workflow-panel__grip" aria-hidden="true" />

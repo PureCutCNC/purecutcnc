@@ -15,6 +15,7 @@
  */
 
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { useI18n } from '../../i18n/i18nContext'
 import type { ConstraintWorkflow } from './useConstraintWorkflow'
 
 /* eslint-disable react-hooks/refs -- This leaf component forwards refs produced by canvas workflow hooks into JSX. */
@@ -24,28 +25,29 @@ interface ConstraintEditPanelProps {
 }
 
 export function ConstraintEditPanel({ constraint }: ConstraintEditPanelProps) {
+  const { t } = useI18n()
   const edit = constraint.constraintEdit
   if (!edit) return null
 
   return (
     <CanvasWorkflowPanel
-      title="Edit Constraint"
-      step="Set distance"
+      title={t('canvas.constraint.editTitle')}
+      step={t('canvas.constraint.step.setDistance')}
       position={constraint.constraintEditWorkflowPanel.position}
       panelRef={constraint.constraintEditWorkflowPanel.panelRef}
       handleProps={constraint.constraintEditWorkflowPanel.handleProps}
       actionRowProps={constraint.constraintEditWorkflowPanel.actionRowProps}
       className="canvas-workflow-panel--constraint-edit"
-      moveLabel="Move constraint edit controls"
+      moveLabel={t('canvas.constraint.moveLabel')}
       actions={(
         <>
-          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={constraint.commitConstraintEditFromPanel}>Apply</button>
-          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintEditFromPanel}>Cancel</button>
+          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={constraint.commitConstraintEditFromPanel}>{t('canvas.constraint.apply')}</button>
+          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintEditFromPanel}>{t('canvas.constraint.cancel')}</button>
         </>
       )}
     >
       <label className="canvas-workflow-panel__field">
-        <span>Distance</span>
+        <span>{t('canvas.field.distance')}</span>
         <input
           key={`constraint-edit-${edit.constraintId}`}
           ref={constraint.constraintEditInputRef}

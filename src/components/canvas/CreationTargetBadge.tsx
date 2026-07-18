@@ -24,18 +24,28 @@
 
 import { useProjectStore } from '../../store/projectStore'
 import { Icon } from '../Icon'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { CreationTarget } from '../../store/types'
 
-const TARGET_PRESENTATION: Record<CreationTarget, { icon: string; label: string }> = {
-  feature: { icon: 'plus', label: 'Drawing features' },
-  line: { icon: 'snap-line', label: 'Drawing lines' },
-  region: { icon: 'pocket', label: 'Drawing regions' },
-  construction: { icon: 'construction', label: 'Drawing construction' },
+const TARGET_LABEL_KEYS: Record<CreationTarget, MessageKey> = {
+  feature: 'canvas.target.drawingFeatures',
+  line: 'canvas.target.drawingLines',
+  region: 'canvas.target.drawingRegions',
+  construction: 'canvas.target.drawingConstruction',
+}
+
+const TARGET_ICONS: Record<CreationTarget, string> = {
+  feature: 'plus',
+  line: 'snap-line',
+  region: 'pocket',
+  construction: 'construction',
 }
 
 export function CreationTargetBadge() {
   const creationTarget = useProjectStore((s) => s.creationTarget)
-  const { icon, label } = TARGET_PRESENTATION[creationTarget]
+  const { t } = useI18n()
+  const label = t(TARGET_LABEL_KEYS[creationTarget])
 
   return (
     <div
@@ -43,7 +53,7 @@ export function CreationTargetBadge() {
       role="status"
       aria-label={label}
     >
-      <Icon id={icon} size={13} />
+      <Icon id={TARGET_ICONS[creationTarget]} size={13} />
       <span>{label}</span>
     </div>
   )

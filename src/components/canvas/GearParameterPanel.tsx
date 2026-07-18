@@ -23,6 +23,8 @@ import {
 } from '../../sketch/gearProfile'
 import type { PendingAddTool } from '../../store/types'
 import { formatLength } from '../../utils/units'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 
 type PendingGear = Extract<NonNullable<PendingAddTool>, { shape: 'gear' }>
 
@@ -50,7 +52,7 @@ interface GearReferenceProps {
 
 interface GearFieldProps {
   children: ReactNode
-  label: string
+  labelKey: MessageKey
   params: GearCreationParams
   reference: GearReferenceKind
 }
@@ -79,10 +81,11 @@ function commitNumber(
   return String(next)
 }
 
-function GearField({ children, label, params, reference }: GearFieldProps) {
+function GearField({ children, labelKey, params, reference }: GearFieldProps) {
+  const { t } = useI18n()
   return (
     <label className="canvas-workflow-panel__field canvas-workflow-panel__field--gear">
-      <span>{label}</span>
+      <span>{t(labelKey)}</span>
       {children}
       <GearParameterReference kind={reference} params={params} />
     </label>
@@ -110,13 +113,14 @@ function GearReferenceFrame({
 }
 
 function GearParameterReference({ kind, params }: GearReferenceProps) {
+  const { t } = useI18n()
   const pressureAngle = params.pressureAngleDeg * Math.PI / 180
   const pressureEndX = 29 + Math.sin(pressureAngle) * 20
   const pressureEndY = 29 - Math.cos(pressureAngle) * 20
 
   if (kind === 'teeth') {
     return (
-      <GearReferenceFrame label="Tooth count reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.teeth')}>
         <circle className="gear-reference__guide" cx="29" cy="17" r="10" />
         <path className="gear-reference__guide" d="M29 3v7M43 17h-7M29 31v-7M15 17h7M39 7l-5 5M39 27l-5-5M19 27l5-5M19 7l5 5" />
         <path className="gear-reference__accent-fill" d="M26 3h6l2 8-5 4-5-4z" />
@@ -127,7 +131,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
 
   if (kind === 'wholeDepth') {
     return (
-      <GearReferenceFrame label="Whole depth reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.wholeDepth')}>
         <path className="gear-reference__outline" d="M12 27L21 7h16l9 20" />
         <path className="gear-reference__guide" d="M11 7h38M11 27h38" />
         <path className="gear-reference__accent" d="M49 8v18" />
@@ -141,7 +145,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
       ? 'M14 28C16 19 21 10 29 6C37 10 42 19 44 28'
       : 'M14 28L24 6H34L44 28'
     return (
-      <GearReferenceFrame label="Tooth flank profile reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.flankProfile')}>
         <path className="gear-reference__guide" d="M29 4v27" />
         <path className="gear-reference__outline" d="M14 28h30" />
         <path className="gear-reference__accent" d={flankPath} />
@@ -151,7 +155,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
 
   if (kind === 'pressureAngle') {
     return (
-      <GearReferenceFrame label="Pressure angle reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.pressureAngle')}>
         <path className="gear-reference__outline" d="M15 29h28" />
         <path className="gear-reference__guide" d="M29 29V7" />
         <path className="gear-reference__accent" d={`M29 29L${pressureEndX.toFixed(2)} ${pressureEndY.toFixed(2)}`} />
@@ -168,7 +172,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
         ? 'M10 5L22 26H36L48 5'
         : 'M10 5L29 29L48 5'
     return (
-      <GearReferenceFrame label="Root form reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.rootForm')}>
         <path className="gear-reference__outline" d="M10 5L20 25M38 25L48 5" />
         <path className="gear-reference__accent" d={rootPath} />
       </GearReferenceFrame>
@@ -177,7 +181,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
 
   if (kind === 'rootFilletRadius') {
     return (
-      <GearReferenceFrame label="Root fillet radius reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.rootFilletRadius')}>
         <path className="gear-reference__outline" d="M10 5L20 25Q29 31 38 25L48 5" />
         <path className="gear-reference__guide" d="M29 27L21 25" />
         <circle className="gear-reference__guide" cx="29" cy="27" r="8" />
@@ -192,7 +196,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
       ? 'M16 28L21 10Q29 2 37 10L42 28'
       : 'M16 28L22 8H36L42 28'
     return (
-      <GearReferenceFrame label="Crest form reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.crestForm')}>
         <path className="gear-reference__guide" d="M29 5v24" />
         <path className="gear-reference__accent" d={crestPath} />
       </GearReferenceFrame>
@@ -201,7 +205,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
 
   if (kind === 'crestRadius') {
     return (
-      <GearReferenceFrame label="Crest radius reference">
+      <GearReferenceFrame label={t('canvas.gear.ref.crestRadius')}>
         <path className="gear-reference__outline" d="M16 28L22 12Q29 5 36 12L42 28" />
         <path className="gear-reference__guide" d="M29 10L22 12" />
         <circle className="gear-reference__guide" cx="29" cy="10" r="7" />
@@ -212,7 +216,7 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
   }
 
   return (
-    <GearReferenceFrame label="Bore diameter reference">
+    <GearReferenceFrame label={t('canvas.gear.ref.boreDiameter')}>
       <circle className="gear-reference__outline" cx="29" cy="17" r="13" />
       <circle className="gear-reference__accent" cx="29" cy="17" r="5" />
       <path className="gear-reference__accent" d="M24 17h10" />
@@ -226,6 +230,8 @@ export function GearParameterPanel({
   units,
   setPendingGearParams,
 }: GearParameterPanelProps) {
+  const { t } = useI18n()
+
   if (!pendingAdd.anchor || pendingAdd.outsideRadius === null) {
     return null
   }
@@ -240,10 +246,10 @@ export function GearParameterPanel({
   return (
     <>
       <div className="canvas-workflow-panel__summary">
-        Outside radius {formatLength(pendingAdd.outsideRadius, units)}
+        {t('canvas.gear.summary', { length: formatLength(pendingAdd.outsideRadius, units) })}
       </div>
       <div className="canvas-workflow-panel__meta canvas-workflow-panel__gear-fields">
-        <GearField label="Tooth count" params={params} reference="teeth">
+        <GearField labelKey="canvas.gear.toothCount" params={params} reference="teeth">
           <input
             key={`gear-teeth-${pendingAdd.session}`}
             className="canvas-workflow-panel__count-input"
@@ -262,7 +268,7 @@ export function GearParameterPanel({
             autoFocus
           />
         </GearField>
-        <GearField label="Whole depth" params={params} reference="wholeDepth">
+        <GearField labelKey="canvas.gear.wholeDepth" params={params} reference="wholeDepth">
           <input
             key={`gear-depth-${pendingAdd.session}`}
             className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
@@ -280,19 +286,19 @@ export function GearParameterPanel({
             onKeyDown={stopPanelKey}
           />
         </GearField>
-        <GearField label="Tooth flank profile" params={params} reference="flankProfile">
+        <GearField labelKey="canvas.gear.flankProfile" params={params} reference="flankProfile">
           <select
             className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
             value={params.flankProfile}
             onChange={(event) => setPendingGearParams({ flankProfile: event.target.value as GearCreationParams['flankProfile'] })}
             onKeyDown={stopPanelKey}
           >
-            <option value="involute">Involute</option>
-            <option value="straight">Straight-sided</option>
+            <option value="involute">{t('canvas.gear.flank.involute')}</option>
+            <option value="straight">{t('canvas.gear.flank.straight')}</option>
           </select>
         </GearField>
         {params.flankProfile === 'involute' ? (
-          <GearField label="Pressure angle" params={params} reference="pressureAngle">
+          <GearField labelKey="canvas.gear.pressureAngle" params={params} reference="pressureAngle">
             <input
               key={`gear-pressure-${pendingAdd.session}`}
               className="canvas-workflow-panel__count-input"
@@ -311,20 +317,20 @@ export function GearParameterPanel({
             />
           </GearField>
         ) : null}
-        <GearField label="Root form" params={params} reference="rootForm">
+        <GearField labelKey="canvas.gear.rootForm" params={params} reference="rootForm">
           <select
             className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
             value={params.rootForm}
             onChange={(event) => setPendingGearParams({ rootForm: event.target.value as GearCreationParams['rootForm'] })}
             onKeyDown={stopPanelKey}
           >
-            <option value="rounded">Rounded root fillet</option>
-            <option value="flat">Flat root</option>
-            <option value="sharp">Sharp root</option>
+            <option value="rounded">{t('canvas.gear.root.rounded')}</option>
+            <option value="flat">{t('canvas.gear.root.flat')}</option>
+            <option value="sharp">{t('canvas.gear.root.sharp')}</option>
           </select>
         </GearField>
         {params.rootForm === 'rounded' ? (
-          <GearField label="Root fillet radius" params={params} reference="rootFilletRadius">
+          <GearField labelKey="canvas.gear.rootFilletRadius" params={params} reference="rootFilletRadius">
             <input
               key={`gear-root-fillet-${pendingAdd.session}`}
               className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
@@ -343,19 +349,19 @@ export function GearParameterPanel({
             />
           </GearField>
         ) : null}
-        <GearField label="Crest form" params={params} reference="crestForm">
+        <GearField labelKey="canvas.gear.crestForm" params={params} reference="crestForm">
           <select
             className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
             value={params.crestForm}
             onChange={(event) => setPendingGearParams({ crestForm: event.target.value as GearCreationParams['crestForm'] })}
             onKeyDown={stopPanelKey}
           >
-            <option value="flat">Flat crest</option>
-            <option value="rounded">Rounded crest</option>
+            <option value="flat">{t('canvas.gear.crest.flat')}</option>
+            <option value="rounded">{t('canvas.gear.crest.rounded')}</option>
           </select>
         </GearField>
         {params.crestForm === 'rounded' ? (
-          <GearField label="Crest radius" params={params} reference="crestRadius">
+          <GearField labelKey="canvas.gear.crestRadius" params={params} reference="crestRadius">
             <input
               key={`gear-crest-radius-${pendingAdd.session}`}
               className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
@@ -374,7 +380,7 @@ export function GearParameterPanel({
             />
           </GearField>
         ) : null}
-        <GearField label="Bore diameter" params={params} reference="boreDiameter">
+        <GearField labelKey="canvas.gear.boreDiameter" params={params} reference="boreDiameter">
           <input
             key={`gear-bore-${pendingAdd.session}`}
             className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
