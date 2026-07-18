@@ -368,7 +368,7 @@ as S4a (honestly reported; gate passed; scope exact; `translate` correctly
 confined to the pre-React `errorFormat.ts`). Manager committed on the
 worker's behalf (`38cb80e`) and merged (`780be20`).
 
-### S5 — Structured engine warnings (manager-implemented; in progress)
+### S5 — Structured engine warnings (manager-implemented; DONE — `6f718b9` merged `4e5ff6f`; gate + 8/8 language/CAM/export e2e green. One test conversion initially over-narrowed a substring assertion to a single code — caught by the gate, widened to both matching codes.)
 
 Contract (binding for the implementation, survives session summarization):
 
