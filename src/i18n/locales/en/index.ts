@@ -21,6 +21,7 @@ import { featureTreeEn } from './featureTree'
 import { camEn } from './cam'
 import { dialogsEn } from './dialogs'
 import { viewportEn } from './viewport'
+import { appShellEn } from './appShell'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -36,6 +37,7 @@ export const en = {
   ...canvasEn,
   ...featureTreeEn,
   ...viewportEn,
+  ...appShellEn,
 } as const
 
 export type MessageKey = keyof typeof en
