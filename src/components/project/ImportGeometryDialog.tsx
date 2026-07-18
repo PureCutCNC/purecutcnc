@@ -35,6 +35,11 @@ import type { Units } from '../../utils/units'
 import { useImportGeometryAnalysis } from './useImportGeometryAnalysis'
 import { ImportGeometryModeSection } from './ImportGeometryModeSection'
 import { importModelFile } from './importModelFile'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface LoadedImportFile {
   fileName: string
@@ -50,13 +55,13 @@ interface ImportGeometryDialogProps {
   onImportComplete?: () => void
 }
 
-function sourceTypeLabel(sourceType: ImportSourceType): string {
+function sourceTypeLabel(sourceType: ImportSourceType, td: (key: keyof typeof dialogsEn) => string): string {
   if (sourceType === 'svg') return 'SVG'
   if (sourceType === 'dxf') return 'DXF'
   if (sourceType === 'stl') return 'STL'
   if (sourceType === 'obj') return 'OBJ'
-  if (sourceType === 'camj') return 'PureCutCNC Project'
-  return 'Unknown'
+  if (sourceType === 'camj') return td('dialogs.importGeometry.formatLabel.camj')
+  return td('dialogs.importGeometry.formatLabel.unknown')
 }
 
 function isModelSourceType(sourceType: ImportSourceType): sourceType is ImportedModelFormat {
@@ -84,6 +89,14 @@ function detectSourceType(fileName: string): ImportSourceType | null {
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
   useRestoreCanvasFocus()
   const { project, importShapes, importCamjFolders } = useProjectStore()
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
+
   const [loadedFile, setLoadedFile] = useState<LoadedImportFile | null>(null)
   const [sourceUnits, setSourceUnits] = useState<Units | ''>('')
   const [joinTolerance, setJoinTolerance] = useState(defaultJoinTolerance(project.meta.units))
@@ -92,7 +105,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState<number | null>(null)
-  const [loadingStage, setLoadingStage] = useState<string>('Processing model')
+  const [loadingStage, setLoadingStage] = useState<string>(() => td('dialogs.importGeometry.processingModel'))
   const [axisSwap, setAxisSwap] = useState<'none' | 'yz' | 'xz' | 'xy'>('none')
   const [silhouetteZSteps, setSilhouetteZSteps] = useState('')
   const [importStock, setImportStock] = useState(false)
@@ -169,7 +182,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     if (!nextSourceType) {
       setLoadedFile(null)
       resetDialogState()
-      setDialogError('Unsupported import format. Use .svg, .dxf, .stl, .obj, or .camj.')
+      setDialogError(td('dialogs.importGeometry.error.unsupportedFormat'))
       return
     }
 
@@ -179,7 +192,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         if (isModelSourceType(nextSourceType)) {
           const modelBuffer = readerEvent.target?.result
           if (!(modelBuffer instanceof ArrayBuffer)) throw new Error('Failed to read model file.')
-          const label = sourceTypeLabel(nextSourceType)
+          const label = sourceTypeLabel(nextSourceType, td)
           setLoadedFile({
             fileName: file.name,
             text: '',
@@ -200,7 +213,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           const text = String(readerEvent.target?.result ?? '')
           const camjInspection = inspectCamjString(text)
           if (camjInspection.folderIds.length === 0) {
-            throw new Error('No folders with features found in the selected .camj file.')
+            throw new Error(td('dialogs.importGeometry.error.noCamjFolders'))
           }
           setLoadedFile({
             fileName: file.name,
@@ -212,7 +225,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               sourceUnitScale: 1,
               detectedUnits: camjInspection.sourceUnits,
               unitsReliable: true,
-              summary: `${sourceTypeLabel(nextSourceType)} - ${camjInspection.folderIds.length} importable folder${camjInspection.folderIds.length === 1 ? '' : 's'}`,
+              summary: `${sourceTypeLabel(nextSourceType, td)} - ${camjInspection.folderIds.length} importable folder${camjInspection.folderIds.length === 1 ? '' : 's'}`,
             },
             camj: camjInspection,
           })
@@ -233,7 +246,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       } catch (error) {
         setLoadedFile(null)
         resetDialogState()
-        setDialogError(error instanceof Error ? error.message : 'Failed to inspect geometry file.')
+        setDialogError(error instanceof Error ? error.message : td('dialogs.importGeometry.error.inspectFailed'))
       }
     }
     if (isModelSourceType(nextSourceType)) {
@@ -260,23 +273,23 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   // ── import ────────────────────────────────────────────────────────────
   async function handleImport() {
     if (!loadedFile) {
-      setDialogError('Choose an SVG, DXF, STL, OBJ, or .camj file to import.')
+      setDialogError(td('dialogs.importGeometry.error.chooseFile'))
       return
     }
     if (!sourceUnits) {
-      setDialogError('Source units could not be detected. Choose the source units to continue.')
+      setDialogError(td('dialogs.importGeometry.error.sourceUnits'))
       return
     }
 
     setBusy(true)
     setLoadingProgress(0)
-    setLoadingStage('Preparing import')
+    setLoadingStage(td('dialogs.importGeometry.preparingImport'))
     setDialogError(null)
 
     try {
       const tolerance = Number.parseFloat(joinTolerance)
       if (loadedFile.sourceType === 'dxf' && (!Number.isFinite(tolerance) || tolerance < 0)) {
-        setDialogError('Join tolerance must be a non-negative number.')
+        setDialogError(td('dialogs.importGeometry.error.joinTolerance'))
         setBusy(false)
         return
       }
@@ -289,11 +302,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         const selectedFolderIds = [...selectedLayers]
         const wantsStock = importStock && camj.stockIsFeatureBased
         if (selectedFolderIds.length === 0 && !wantsStock) {
-          setDialogError('Select at least one folder to import, or check "Import stock from source".')
+          setDialogError(td('dialogs.importGeometry.error.selectFolder'))
           setBusy(false)
           return
         }
-        setLoadingStage('Merging folders')
+        setLoadingStage(td('dialogs.importGeometry.mergingFolders'))
         createdIds = importCamjFolders({
           fileName: loadedFile.fileName,
           sourceProject: camj.project,
@@ -301,7 +314,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           importStock: wantsStock,
         })
         if (createdIds.length === 0 && !wantsStock) {
-          setDialogError('No features were imported from the selected folders.')
+          setDialogError(td('dialogs.importGeometry.error.noFeaturesImported'))
           setBusy(false)
           return
         }
@@ -321,9 +334,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         })
       } else {
         // SVG / DXF import — use pre-parsed shapes and classification
-        setLoadingStage('Importing geometry')
+        setLoadingStage(td('dialogs.importGeometry.importingGeometry'))
         if (!cachedShapes || cachedShapes.length === 0) {
-          setDialogError('No importable geometry found in the selected file.')
+          setDialogError(td('dialogs.importGeometry.error.noGeometryFound'))
           setBusy(false)
           return
         }
@@ -336,13 +349,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         })
 
         if (combinedWarnings.length > 0) {
-          window.alert(
-            `Imported ${createdIds.length} feature${createdIds.length === 1 ? '' : 's'} with warnings:\n\n${combinedWarnings.join('\n')}`,
-          )
+          const alertKey = createdIds.length === 1
+            ? 'dialogs.importGeometry.importedFeaturesWarnings.one' as const
+            : 'dialogs.importGeometry.importedFeaturesWarnings.other' as const
+          window.alert(td(alertKey, { count: createdIds.length, warnings: combinedWarnings.join('\n') }))
         }
 
         if (createdIds.length === 0) {
-          setDialogError(combinedWarnings[0] ?? 'No importable geometry found in the selected file.')
+          setDialogError(combinedWarnings[0] ?? td('dialogs.importGeometry.error.noGeometryFound'))
           setBusy(false)
           return
         }
@@ -351,10 +365,10 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       onImportComplete?.()
       onClose()
     } catch (error) {
-      setDialogError(error instanceof Error ? error.message : 'Failed to import geometry file.')
+      setDialogError(error instanceof Error ? error.message : td('dialogs.importGeometry.error.importFailed'))
       setBusy(false)
       setLoadingProgress(null)
-      setLoadingStage('Processing model')
+      setLoadingStage(td('dialogs.importGeometry.processingModel'))
     }
   }
 
@@ -384,8 +398,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         onClick={(event) => event.stopPropagation()}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Import Geometry</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{td('dialogs.importGeometry.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -398,24 +412,24 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
             {/* File */}
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Source File</label>
+              <label className="dialog-section-title">{td('dialogs.importGeometry.sourceFile')}</label>
               <button
                 className="btn-secondary import-dialog__file-button"
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
               >
-                {loadedFile ? 'Choose Different File' : 'Choose SVG, DXF, STL, OBJ, or .camj'}
+                {loadedFile ? td('dialogs.importGeometry.chooseDifferentFile') : td('dialogs.importGeometry.chooseFile')}
               </button>
               <input ref={fileInputRef} type="file" accept=".svg,.dxf,.stl,.obj,.camj" onChange={handleFileChange} style={{ display: 'none' }} />
               <div className="import-dialog__file-name">
-                {loadedFile ? loadedFile.fileName : 'No file selected.'}
+                {loadedFile ? loadedFile.fileName : td('dialogs.importGeometry.noFileSelected')}
               </div>
             </div>
 
             {/* File info + settings — only shown once a file is loaded */}
             {loadedFile ? (
               <div className="dialog-section-group">
-                <label className="dialog-section-title">Settings</label>
+                <label className="dialog-section-title">{td('dialogs.importGeometry.settings')}</label>
 
                 {/* Geometry mode — SVG/DXF only */}
                 {isSvgDxf ? (
@@ -432,34 +446,34 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
                 {/* Format */}
                 <div className="import-dialog__info-row">
-                  <span>Format</span>
-                  <strong>{sourceTypeLabel(loadedFile.sourceType)}</strong>
+                  <span>{td('dialogs.importGeometry.format')}</span>
+                  <strong>{sourceTypeLabel(loadedFile.sourceType, td)}</strong>
                 </div>
 
                 {/* Source Units */}
                 <div className="import-dialog__info-row">
-                  <span>Source Units</span>
+                  <span>{td('dialogs.importGeometry.sourceUnits')}</span>
                   {isCamj ? (
-                    <strong>{sourceUnits === 'inch' ? 'Inch' : 'Millimeter'}</strong>
+                    <strong>{sourceUnits === 'inch' ? td('dialogs.common.inch') : td('dialogs.common.millimeter')}</strong>
                   ) : (
                     <select
                       value={sourceUnits}
                       onChange={(event) => setSourceUnits(event.target.value as Units)}
                     >
-                      <option value="">Select units</option>
-                      <option value="mm">Millimeter</option>
-                      <option value="inch">Inch</option>
+                      <option value="">{td('dialogs.importGeometry.selectUnits')}</option>
+                      <option value="mm">{td('dialogs.common.millimeter')}</option>
+                      <option value="inch">{td('dialogs.common.inch')}</option>
                     </select>
                   )}
                 </div>
                 {!loadedFile.inspection.detectedUnits && !isModelSourceType(loadedFile.sourceType) && !isCamj ? (
                   <div className="import-dialog__field-note import-dialog__field-note--warn">
-                    Units not detected — choose the source units before importing.
+                    {td('dialogs.importGeometry.unitsNotDetected')}
                   </div>
                 ) : null}
                 {isCamj ? (
                   <div className="import-dialog__field-note">
-                    Backdrop, grid, machine definitions, and global constraints are not imported.
+                    {td('dialogs.importGeometry.camjImportNote')}
                   </div>
                 ) : null}
 
@@ -467,7 +481,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 {isCamj && loadedFile.camj?.stockIsFeatureBased ? (
                   <>
                     <label className="import-dialog__toggle-row">
-                      <span className="import-dialog__toggle-label">Import stock from source</span>
+                      <span className="import-dialog__toggle-label">{td('dialogs.importGeometry.importStock')}</span>
                       <input
                         className="import-dialog__toggle-input"
                         type="checkbox"
@@ -477,7 +491,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     </label>
                     {importStock ? (
                       <div className="import-dialog__field-note import-dialog__field-note--warn">
-                        Current stock and origin will be replaced.
+                        {td('dialogs.importGeometry.stockWillBeReplaced')}
                       </div>
                     ) : null}
                   </>
@@ -485,35 +499,35 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
                 {/* Project Units */}
                 <div className="import-dialog__info-row">
-                  <span>Project Units</span>
-                  <strong>{project.meta.units === 'inch' ? 'Inch' : 'Millimeter'}</strong>
+                  <span>{td('dialogs.importGeometry.projectUnits')}</span>
+                  <strong>{project.meta.units === 'inch' ? td('dialogs.common.inch') : td('dialogs.common.millimeter')}</strong>
                 </div>
 
                 {/* Axis orientation for imported 3D models */}
                 {isModelSourceType(loadedFile.sourceType) ? (
                   <div className="import-dialog__info-row">
-                    <span>Axis Orientation</span>
+                    <span>{td('dialogs.importGeometry.axisOrientation')}</span>
                     <select
                       value={axisSwap}
                       onChange={(event) => setAxisSwap(event.target.value as ModelAxisOrientation)}
                     >
-                      <option value="none">Original (Z-Up)</option>
-                      <option value="yz">Swap Y / Z (Y-Up)</option>
-                      <option value="xz">Swap X / Z</option>
-                      <option value="xy">Swap X / Y</option>
+                      <option value="none">{td('dialogs.importGeometry.axisOriginal')}</option>
+                      <option value="yz">{td('dialogs.importGeometry.axisSwapYZ')}</option>
+                      <option value="xz">{td('dialogs.importGeometry.axisSwapXZ')}</option>
+                      <option value="xy">{td('dialogs.importGeometry.axisSwapXY')}</option>
                     </select>
                   </div>
                 ) : null}
 
                 {isModelSourceType(loadedFile.sourceType) ? (
                   <div className="import-dialog__info-row">
-                    <span>Silhouette Z Steps</span>
+                    <span>{td('dialogs.importGeometry.silhouetteZSteps')}</span>
                     <input
                       type="number"
                       min="8"
                       max="512"
                       step="1"
-                      placeholder="Auto"
+                      placeholder={td('dialogs.importGeometry.silhouetteAuto')}
                       value={silhouetteZSteps}
                       onChange={(event) => setSilhouetteZSteps(event.target.value)}
                     />
@@ -524,7 +538,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                 {showJoinTolerance ? (
                   <>
                     <div className="import-dialog__info-row">
-                      <span>Join Tolerance ({project.meta.units === 'inch' ? 'in' : 'mm'})</span>
+                      <span>{td('dialogs.importGeometry.joinTolerance', { unit: project.meta.units === 'inch' ? 'in' : 'mm' })}</span>
                       <input
                         type="number"
                         min="0"
@@ -536,7 +550,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
 
                     {/* Cross-Layer Join */}
                     <label className="import-dialog__toggle-row">
-                      <span className="import-dialog__toggle-label">Cross-Layer Join</span>
+                      <span className="import-dialog__toggle-label">{td('dialogs.importGeometry.crossLayerJoin')}</span>
                       <input
                         className="import-dialog__toggle-input"
                         type="checkbox"
@@ -576,13 +590,13 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           {showLayers ? (
             <div className="import-dialog__layers-column">
               <div className="import-dialog__layers-header">
-                <label className="dialog-section-title">{showCamjFolders ? 'Folders' : 'Layers'}</label>
+                <label className="dialog-section-title">{showCamjFolders ? td('dialogs.importGeometry.folders') : td('dialogs.importGeometry.layers')}</label>
                 <button
                   className="import-dialog__layers-toggle"
                   type="button"
                   onClick={() => setAllLayersSelected(!allLayersSelected)}
                 >
-                  {allLayersSelected ? 'Deselect all' : 'Select all'}
+                  {allLayersSelected ? td('dialogs.importGeometry.deselectAll') : td('dialogs.importGeometry.selectAll')}
                 </button>
               </div>
               <div className="import-dialog__layer-list import-dialog__layer-list--fill">
@@ -616,7 +630,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               </div>
               {!someLayersSelected ? (
                 <div className="cam-field-message">
-                  Select at least one {showCamjFolders ? 'folder' : 'layer'} to import.
+                  {td('dialogs.importGeometry.selectAtLeastOne', {
+                    type: showCamjFolders
+                      ? (localeId === 'zh-CN' ? td('dialogs.importGeometry.folders') : 'folder')
+                      : (localeId === 'zh-CN' ? td('dialogs.importGeometry.layers') : 'layer'),
+                  })}
                 </div>
               ) : null}
             </div>
@@ -624,14 +642,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         </div>
 
         <div className="dialog-footer">
-          <button className="btn-secondary" onClick={onClose} type="button">Cancel</button>
+          <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
           <button
             className="btn-primary"
             onClick={handleImport}
             type="button"
             disabled={!loadedFile || !sourceUnits || busy || (showLayers && !someLayersSelected && !(isCamj && importStock))}
           >
-            Import
+            {td('dialogs.importGeometry.import')}
           </button>
         </div>
       </div>

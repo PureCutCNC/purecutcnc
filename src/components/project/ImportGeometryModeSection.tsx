@@ -15,6 +15,11 @@
  */
 
 import type { ClassificationResult, ImportGeometryMode, ImportSourceType } from '../../import'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 export interface ImportGeometryModeSectionProps {
   sourceType: ImportSourceType
@@ -32,16 +37,17 @@ export interface ImportGeometryModeSectionProps {
 function modeExplanation(
   mode: ImportGeometryMode,
   sourceType: ImportSourceType,
+  td: (key: keyof typeof dialogsEn) => string,
 ): string {
   if (mode === 'auto') {
     return sourceType === 'svg'
-      ? 'Auto: stroke-only geometry → Lines; filled closed shapes → nesting-aware solids.'
-      : 'Auto: closed profiles → nesting-aware solids. Use Paths for line-only import.'
+      ? td('dialogs.importGeometry.mode.explain.autoSvg')
+      : td('dialogs.importGeometry.mode.explain.autoDxf')
   }
   if (mode === 'paths') {
-    return 'Paths: all profiles → Lines (no solid features).'
+    return td('dialogs.importGeometry.mode.explain.paths')
   }
-  return 'Solid regions: closed profiles → nesting-aware Add/Subtract solids.'
+  return td('dialogs.importGeometry.mode.explain.solidRegions')
 }
 
 export function ImportGeometryModeSection({
@@ -53,12 +59,20 @@ export function ImportGeometryModeSection({
   parseError,
   hasShapes,
 }: ImportGeometryModeSectionProps) {
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
+
   const selectId = 'import-geometry-mode'
 
   return (
     <>
       <div className="import-dialog__info-row">
-        <label htmlFor={selectId}>Geometry Mode</label>
+        <label htmlFor={selectId}>{td('dialogs.importGeometry.mode.geometryMode')}</label>
         <select
           id={selectId}
           value={geometryMode}
@@ -67,14 +81,14 @@ export function ImportGeometryModeSection({
           }
           data-testid="import-geometry-mode"
         >
-          <option value="auto">Auto</option>
-          <option value="paths">Paths</option>
-          <option value="solid-regions">Solid regions</option>
+          <option value="auto">{td('dialogs.importGeometry.mode.auto')}</option>
+          <option value="paths">{td('dialogs.importGeometry.mode.paths')}</option>
+          <option value="solid-regions">{td('dialogs.importGeometry.mode.solidRegions')}</option>
         </select>
       </div>
 
       <div className="import-dialog__field-note">
-        {modeExplanation(geometryMode, sourceType)}
+        {modeExplanation(geometryMode, sourceType, td)}
       </div>
 
       {/* Parse error */}
@@ -85,7 +99,7 @@ export function ImportGeometryModeSection({
       {/* Analysis pending */}
       {!classification && hasShapes && !parseError ? (
         <div className="import-dialog__field-note">
-          Analysing geometry…
+          {td('dialogs.importGeometry.mode.analysing')}
         </div>
       ) : null}
 
@@ -95,33 +109,33 @@ export function ImportGeometryModeSection({
           className="import-dialog__analysis"
           data-testid="import-analysis-summary"
         >
-          <div className="import-dialog__analysis-title">Import Summary</div>
+          <div className="import-dialog__analysis-title">{td('dialogs.importGeometry.mode.importSummary')}</div>
           <div className="import-dialog__analysis-rows">
             <div className="import-dialog__analysis-row" data-testid="import-summary-total">
-              <span>Total importable</span>
+              <span>{td('dialogs.importGeometry.mode.totalImportable')}</span>
               <strong>{classification.result.totalImportable}</strong>
             </div>
             {classification.result.openLineCount > 0 ? (
               <div className="import-dialog__analysis-row" data-testid="import-summary-open-line">
-                <span>Open Lines</span>
+                <span>{td('dialogs.importGeometry.mode.openLines')}</span>
                 <strong>{classification.result.openLineCount}</strong>
               </div>
             ) : null}
             {classification.result.closedLineCount > 0 ? (
               <div className="import-dialog__analysis-row" data-testid="import-summary-closed-line">
-                <span>Closed Lines</span>
+                <span>{td('dialogs.importGeometry.mode.closedLines')}</span>
                 <strong>{classification.result.closedLineCount}</strong>
               </div>
             ) : null}
             {classification.result.addCount > 0 ? (
               <div className="import-dialog__analysis-row" data-testid="import-summary-add">
-                <span>Add (solid)</span>
+                <span>{td('dialogs.importGeometry.mode.addSolid')}</span>
                 <strong>{classification.result.addCount}</strong>
               </div>
             ) : null}
             {classification.result.subtractCount > 0 ? (
               <div className="import-dialog__analysis-row" data-testid="import-summary-subtract">
-                <span>Subtract (solid)</span>
+                <span>{td('dialogs.importGeometry.mode.subtractSolid')}</span>
                 <strong>{classification.result.subtractCount}</strong>
               </div>
             ) : null}

@@ -39,6 +39,11 @@ import {
 } from '../../engine/designPrint'
 import { formatLength } from '../../utils/units'
 import type { Project } from '../../types/project'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface ModelExportDialogProps {
   onClose: () => void
@@ -52,6 +57,13 @@ interface AssembledMesh {
 export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, lastModelExportPath, markModelExported } = useProjectStore()
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
 
   const [formatId, setFormatId] = useState<string>(MODEL_EXPORT_FORMATS[0]?.id ?? 'stl')
   const [stlOptions, setStlOptions] = useState<STLExportOptions>(STL_DEFAULT_OPTIONS)
@@ -121,9 +133,10 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
     if (is2d) return []
     const list = [...(assembled?.warnings ?? [])]
     if (assembled && triangleCount === 0) {
-      list.push('No solid geometry to export — add visible features first.')
+      list.push(td('dialogs.modelExport.noGeometry'))
     }
     return list
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [is2d, assembled, triangleCount])
 
   async function handleExport() {
@@ -171,8 +184,8 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Export Model</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close">
+          <h2 className="dialog-title">{td('dialogs.modelExport.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -182,7 +195,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Format</label>
+              <label className="dialog-section-title">{td('dialogs.modelExport.format')}</label>
               <Select
                 value={formatId}
                 options={MODEL_EXPORT_FORMATS.map((f) => ({ value: f.id, label: f.name }))}
@@ -191,7 +204,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
             </div>
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="model-export-name">File name</label>
+              <label className="dialog-section-title" htmlFor="model-export-name">{td('dialogs.modelExport.fileName')}</label>
               <div className="properties-field">
                 <input
                   id="model-export-name"
@@ -202,52 +215,59 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
                 />
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                Saved as <code>{`${sanitizeFileName(fileName || project.meta.name)}.${format?.extension ?? ''}`}</code>. The location is chosen in the next dialog.
+                {td('dialogs.modelExport.fileNameHint', { filename: `${sanitizeFileName(fileName || project.meta.name)}.${format?.extension ?? ''}` })}
               </div>
             </div>
 
             {!is2d && (
               <div className="dialog-section-group">
-                <label className="dialog-section-title">Curve quality</label>
+                <label className="dialog-section-title">{td('dialogs.modelExport.curveQuality')}</label>
                 <Select<CurveQuality>
                   value={curveQuality}
-                  options={CURVE_QUALITY_OPTIONS}
+                  options={[
+                    { value: 'coarse', label: td('dialogs.modelExport.curveQuality.coarse') },
+                    { value: 'normal', label: td('dialogs.modelExport.curveQuality.normal') },
+                    { value: 'fine', label: td('dialogs.modelExport.curveQuality.fine') },
+                    { value: 'very_fine', label: td('dialogs.modelExport.curveQuality.veryFine') },
+                  ]}
                   onChange={setCurveQuality}
                 />
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                  Controls how finely arcs and bezier curves are tessellated. Finer = more triangles, smoother curves.
+                  {td('dialogs.modelExport.curveQualityHint')}
                 </div>
               </div>
             )}
 
             {format?.id === 'stl' && (
-              <StlOptionsPanel options={stlOptions} onChange={setStlOptions} />
+              <StlOptionsPanel options={stlOptions} onChange={setStlOptions} td={td} />
             )}
 
             {format?.id === 'svg' && (
-              <SvgOptionsPanel project={project} options={svgOptions} onChange={setSvgOptions} />
+              <SvgOptionsPanel project={project} options={svgOptions} onChange={setSvgOptions} td={td} />
             )}
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Summary</label>
+              <label className="dialog-section-title">{td('dialogs.modelExport.summary')}</label>
               <div style={{ fontSize: '13px', color: 'var(--text)', display: 'grid', gap: '4px' }}>
                 {is2d && svgBounds ? (
                   <>
                     <div>
-                      Exported size: {formatLength(svgBounds.maxX - svgBounds.minX, project.meta.units)} ×{' '}
-                      {formatLength(svgBounds.maxY - svgBounds.minY, project.meta.units)}{' '}
-                      {project.meta.units === 'inch' ? 'in' : 'mm'} at 1:1
+                      {td('dialogs.modelExport.exportedSize', {
+                        width: formatLength(svgBounds.maxX - svgBounds.minX, project.meta.units),
+                        height: formatLength(svgBounds.maxY - svgBounds.minY, project.meta.units),
+                        unit: project.meta.units === 'inch' ? 'in' : 'mm',
+                      })}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                      Editable vector paths; hidden features are left out and dimensions follow the sketch setting.
+                      {td('dialogs.modelExport.exportedSizeNote')}
                     </div>
                   </>
                 ) : (
-                  <div>{assembling ? 'Assembling mesh…' : `${triangleCount.toLocaleString()} triangles`}</div>
+                  <div>{assembling ? td('dialogs.modelExport.assembling') : td('dialogs.modelExport.triangles', { count: triangleCount.toLocaleString() })}</div>
                 )}
                 {estimatedSize !== null && !is2d && (
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                    Estimated file size: {formatBytes(estimatedSize)}
+                    {td('dialogs.modelExport.estimatedSize', { size: formatBytes(estimatedSize) })}
                   </div>
                 )}
               </div>
@@ -255,7 +275,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 
             {warnings.length > 0 && (
               <div className="dialog-section-group">
-                <label className="dialog-section-title">Warnings</label>
+                <label className="dialog-section-title">{td('dialogs.modelExport.warnings')}</label>
                 <div className="export-warning-list">
                   {warnings.map((warning, index) => (
                     <div key={index} className="export-warning">{warning}</div>
@@ -266,7 +286,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 
             {errorMessage && (
               <div className="dialog-section-group">
-                <label className="dialog-section-title">Error</label>
+                <label className="dialog-section-title">{td('dialogs.modelExport.error')}</label>
                 <div className="export-warning">{errorMessage}</div>
               </div>
             )}
@@ -275,7 +295,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button" disabled={exporting}>
-            Cancel
+            {td('dialogs.common.cancel')}
           </button>
           <button
             className="btn-primary"
@@ -283,7 +303,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
             disabled={exporting || (!is2d && (!assembled || triangleCount === 0 || assembling))}
             type="button"
           >
-            {exporting ? 'Exporting…' : `Export .${format?.extension ?? ''}`}
+            {exporting ? td('dialogs.modelExport.exporting') : td('dialogs.modelExport.export', { ext: format?.extension ?? '' })}
           </button>
         </div>
       </div>
@@ -294,14 +314,16 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 function StlOptionsPanel({
   options,
   onChange,
+  td,
 }: {
   options: STLExportOptions
   onChange: (next: STLExportOptions) => void
+  td: (key: keyof typeof dialogsEn) => string
 }) {
   return (
     <>
       <div className="dialog-section-group">
-        <label className="dialog-section-title">STL encoding</label>
+        <label className="dialog-section-title">{td('dialogs.modelExport.stlEncoding')}</label>
         <div className="export-option-group">
           <label className="export-option">
             <input
@@ -310,7 +332,7 @@ function StlOptionsPanel({
               checked={options.format === 'binary'}
               onChange={() => onChange({ ...options, format: 'binary' })}
             />
-            Binary (recommended — smaller, faster)
+            {td('dialogs.modelExport.stlBinary')}
           </label>
           <label className="export-option">
             <input
@@ -319,12 +341,12 @@ function StlOptionsPanel({
               checked={options.format === 'ascii'}
               onChange={() => onChange({ ...options, format: 'ascii' })}
             />
-            ASCII (human-readable)
+            {td('dialogs.modelExport.stlAscii')}
           </label>
         </div>
       </div>
       <div className="dialog-section-group">
-        <label className="dialog-section-title">Contents</label>
+        <label className="dialog-section-title">{td('dialogs.modelExport.contents')}</label>
         <div className="export-option-group">
           <label className="export-option">
             <input
@@ -332,7 +354,7 @@ function StlOptionsPanel({
               checked={options.includeImportedMeshes}
               onChange={(event) => onChange({ ...options, includeImportedMeshes: event.target.checked })}
             />
-            Include imported meshes
+            {td('dialogs.modelExport.includeImportedMeshes')}
           </label>
         </div>
       </div>
@@ -344,14 +366,16 @@ function SvgOptionsPanel({
   project,
   options,
   onChange,
+  td,
 }: {
   project: Project
   options: SvgExportOptions
   onChange: (next: SvgExportOptions) => void
+  td: (key: keyof typeof dialogsEn) => string
 }) {
   const areaOptions: { value: DesignSvgExportArea; label: string }[] = [
-    { value: 'visible', label: 'Visible design extents' },
-    { value: 'stock', label: 'Stock extents' },
+    { value: 'visible', label: td('dialogs.printDesign.printArea.visible') },
+    { value: 'stock', label: td('dialogs.printDesign.printArea.stock') },
   ]
 
   function updateContent(partial: Partial<DesignSvgExportContent>) {
@@ -361,7 +385,7 @@ function SvgOptionsPanel({
   return (
     <>
       <div className="dialog-section-group">
-        <label className="dialog-section-title">Export area</label>
+        <label className="dialog-section-title">{td('dialogs.modelExport.svgArea')}</label>
         <Select<DesignSvgExportArea>
           value={options.area}
           options={areaOptions}
@@ -370,25 +394,25 @@ function SvgOptionsPanel({
       </div>
 
       <div className="dialog-section-group">
-        <label className="dialog-section-title">Content</label>
+        <label className="dialog-section-title">{td('dialogs.modelExport.svgContent')}</label>
         <div className="export-option-group">
-          <label className="export-option" title={project.tabs.length === 0 ? 'No tabs in this project' : undefined}>
+          <label className="export-option" title={project.tabs.length === 0 ? td('dialogs.printDesign.noTabs') : undefined}>
             <input
               type="checkbox"
               checked={options.content.tabs}
               disabled={project.tabs.length === 0}
               onChange={(event) => updateContent({ tabs: event.target.checked })}
             />
-            Tabs
+            {td('dialogs.modelExport.svgContent.tabs')}
           </label>
-          <label className="export-option" title={project.clamps.length === 0 ? 'No clamps in this project' : undefined}>
+          <label className="export-option" title={project.clamps.length === 0 ? td('dialogs.printDesign.noClamps') : undefined}>
             <input
               type="checkbox"
               checked={options.content.clamps}
               disabled={project.clamps.length === 0}
               onChange={(event) => updateContent({ clamps: event.target.checked })}
             />
-            Clamps
+            {td('dialogs.modelExport.svgContent.clamps')}
           </label>
           <label className="export-option">
             <input
@@ -396,7 +420,7 @@ function SvgOptionsPanel({
               checked={options.content.featureLabels}
               onChange={(event) => updateContent({ featureLabels: event.target.checked })}
             />
-            Feature labels
+            {td('dialogs.modelExport.svgContent.featureLabels')}
           </label>
           <label className="export-option">
             <input
@@ -404,7 +428,7 @@ function SvgOptionsPanel({
               checked={options.content.grid}
               onChange={(event) => updateContent({ grid: event.target.checked })}
             />
-            Grid
+            {td('dialogs.modelExport.svgContent.grid')}
           </label>
         </div>
         <div className="export-option-group">
@@ -415,7 +439,7 @@ function SvgOptionsPanel({
               checked={options.colorMode === 'color'}
               onChange={() => onChange({ ...options, colorMode: 'color' })}
             />
-            Color
+            {td('dialogs.modelExport.svgContent.color')}
           </label>
           <label className="export-option">
             <input
@@ -424,7 +448,7 @@ function SvgOptionsPanel({
               checked={options.colorMode === 'monochrome'}
               onChange={() => onChange({ ...options, colorMode: 'monochrome' })}
             />
-            Monochrome
+            {td('dialogs.modelExport.svgContent.monochrome')}
           </label>
         </div>
       </div>
@@ -432,12 +456,6 @@ function SvgOptionsPanel({
   )
 }
 
-const CURVE_QUALITY_OPTIONS: { value: CurveQuality, label: string }[] = [
-  { value: 'coarse', label: 'Coarse (10° — matches 3D viewport)' },
-  { value: 'normal', label: 'Normal (5°)' },
-  { value: 'fine', label: 'Fine (2°)' },
-  { value: 'very_fine', label: 'Very fine (1°)' },
-]
 
 function sanitizeFileName(name: string): string {
   const trimmed = name.trim().replace(/\s+/g, '_').replace(/[\\/:*?"<>|]+/g, '')
