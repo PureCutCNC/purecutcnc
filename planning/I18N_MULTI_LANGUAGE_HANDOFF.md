@@ -336,7 +336,15 @@ its dependency array.
 
 **Required checks:** `scripts/build-summary.sh`
 
-**Manager review record:** pending.
+**Manager review record:** accepted with one deviation. Worker followed every
+S3-lesson rule (useI18n throughout, no wrappers, no hardcoded locale,
+ToolRail composition restructured onto key-based nouns, registration lines
+correct) and its gate passed — but ended with `COMMIT: none` (honestly
+reported). Manager committed on the worker's behalf (`5c8abe8`) and merged
+with a manual union of the concurrent registration conflict (`c87d192`).
+Same omission in both S4 slices — likely the enlarged CRITICAL RULES block
+displaced the commit instruction; future prompts must put "make exactly one
+commit" inside that block.
 
 ### S4b — Viewports, about, onboarding, errors (concurrent with S4a)
 
@@ -355,7 +363,10 @@ rules apply verbatim.
 
 **Required checks:** `scripts/build-summary.sh`
 
-**Manager review record:** pending.
+**Manager review record:** accepted with the same `COMMIT: none` deviation
+as S4a (honestly reported; gate passed; scope exact; `translate` correctly
+confined to the pre-React `errorFormat.ts`). Manager committed on the
+worker's behalf (`38cb80e`) and merged (`780be20`).
 
 ### S5 — Structured engine warnings (manager-implemented; in progress)
 
