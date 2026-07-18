@@ -20,6 +20,7 @@
  * shape, import a file, or open a bundled example project.
  */
 
+import { useI18n } from '../../i18n/i18nContext'
 import { ExampleProjectList } from '../project/ExampleProjectList'
 
 interface EmptyStateOverlayProps {
@@ -30,27 +31,26 @@ interface EmptyStateOverlayProps {
 }
 
 export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened }: EmptyStateOverlayProps) {
+  const { t } = useI18n()
   return (
     <div className="empty-state-overlay">
       <div className="empty-state-card">
-        <h2 className="empty-state-card__title">Start your part</h2>
-        <p className="empty-state-card__subtitle">
-          Draw a shape, import a file, or open a finished example to see the full workflow.
-        </p>
+        <h2 className="empty-state-card__title">{t('viewport.empty.title')}</h2>
+        <p className="empty-state-card__subtitle">{t('viewport.empty.subtitle')}</p>
 
         <div className="empty-state-card__actions">
           <button className="empty-state-action" type="button" onClick={onDraw}>
-            <span className="empty-state-action__title">Draw a shape</span>
-            <span className="empty-state-action__meta">Sketch a rectangle on the canvas</span>
+            <span className="empty-state-action__title">{t('viewport.empty.drawTitle')}</span>
+            <span className="empty-state-action__meta">{t('viewport.empty.drawMeta')}</span>
           </button>
           <button className="empty-state-action" type="button" onClick={onImport}>
-            <span className="empty-state-action__title">Import a file</span>
-            <span className="empty-state-action__meta">SVG, DXF, OBJ, STL, or CAMJ files</span>
+            <span className="empty-state-action__title">{t('viewport.empty.importTitle')}</span>
+            <span className="empty-state-action__meta">{t('viewport.empty.importMeta')}</span>
           </button>
         </div>
 
         <div className="empty-state-card__examples">
-          <div className="empty-state-card__examples-label">Open an example…</div>
+          <div className="empty-state-card__examples-label">{t('viewport.empty.examplesLabel')}</div>
           <ExampleProjectList onOpened={onExampleOpened} />
         </div>
       </div>

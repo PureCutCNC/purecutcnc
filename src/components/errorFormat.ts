@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { translate } from '../i18n/store'
+
 export function formatError(error: unknown, info?: string): string {
   const parts: string[] = []
   if (error instanceof Error) {
@@ -33,8 +35,8 @@ export function formatError(error: unknown, info?: string): string {
   }
   if (info) parts.push(info)
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
-  parts.push(`User agent: ${ua}`)
-  parts.push(`Timestamp: ${new Date().toISOString()}`)
+  parts.push(`${translate('viewport.error.userAgent')} ${ua}`)
+  parts.push(`${translate('viewport.error.timestamp')} ${new Date().toISOString()}`)
   return parts.join('\n\n')
 }
 
@@ -46,22 +48,17 @@ export function renderErrorHTML(error: unknown, info?: string): string {
   return `
     <main class="app-error-shell">
       <div class="app-error-card">
-        <div class="app-error-eyebrow">Something went wrong</div>
-        <h1>Sorry &mdash; PureCutCNC couldn't start on this device.</h1>
-        <p>
-          This usually means your browser or operating system doesn't support
-          the 3D graphics features the app needs. Try a current version of
-          Chrome, Edge, or Firefox on a reasonably recent desktop or tablet, or
-          use one of our desktop builds.
-        </p>
+        <div class="app-error-eyebrow">${translate('viewport.error.eyebrow')}</div>
+        <h1>${translate('viewport.error.title')}</h1>
+        <p>${translate('viewport.error.body')}</p>
         <details class="app-error-details">
-          <summary>Show technical details</summary>
+          <summary>${translate('viewport.error.showDetails')}</summary>
           <pre>${details}</pre>
         </details>
         <div class="app-error-actions">
-          <button type="button" onclick="window.location.reload()">Reload</button>
-          <a href="https://purecutcnc.github.io/downloads.html">Desktop Downloads</a>
-          <a href="https://purecutcnc.github.io/">Project Website</a>
+          <button type="button" onclick="window.location.reload()">${translate('viewport.error.reload')}</button>
+          <a href="https://purecutcnc.github.io/downloads.html">${translate('viewport.error.desktopDownloads')}</a>
+          <a href="https://purecutcnc.github.io/">${translate('viewport.error.projectWebsite')}</a>
         </div>
       </div>
     </main>
