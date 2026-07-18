@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../../i18n/i18nContext'
 import type { SketchEditTool } from '../../../store/types'
 import { ToolbarActionButton } from './primitives'
 
@@ -44,55 +45,57 @@ function SketchEditActions({
   onExtend: () => void
   trimExtendDisabled?: boolean
 }) {
+  const { t } = useI18n()
+
   if (!enabled) return null
 
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="point-add"
-        label={activeTool === 'add_point' ? 'Cancel add point' : 'Add point'}
+        label={activeTool === 'add_point' ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint')}
         active={activeTool === 'add_point'}
         tooltipSide={tooltipSide}
         onClick={onAddPoint}
       />
       <ToolbarActionButton
         icon="point-delete"
-        label={activeTool === 'delete_point' ? 'Cancel delete point' : 'Delete point'}
+        label={activeTool === 'delete_point' ? t('sketch.edit.cancelDeletePoint') : t('sketch.edit.deletePoint')}
         active={activeTool === 'delete_point'}
         tooltipSide={tooltipSide}
         onClick={onDeletePoint}
       />
       <ToolbarActionButton
         icon="segment-delete"
-        label={activeTool === 'delete_segment' ? 'Cancel delete segment' : 'Delete segment'}
+        label={activeTool === 'delete_segment' ? t('sketch.edit.cancelDeleteSegment') : t('sketch.edit.deleteSegment')}
         active={activeTool === 'delete_segment'}
         tooltipSide={tooltipSide}
         onClick={onDeleteSegment}
       />
       <ToolbarActionButton
         icon="disconnect"
-        label={activeTool === 'disconnect' ? 'Cancel disconnect' : 'Disconnect point'}
+        label={activeTool === 'disconnect' ? t('sketch.edit.cancelDisconnect') : t('sketch.edit.disconnect')}
         active={activeTool === 'disconnect'}
         tooltipSide={tooltipSide}
         onClick={onDisconnect}
       />
       <ToolbarActionButton
         icon="fillet"
-        label={activeTool === 'fillet' ? 'Cancel fillet' : 'Round corner / fillet'}
+        label={activeTool === 'fillet' ? t('sketch.edit.cancelFillet') : t('sketch.edit.fillet')}
         active={activeTool === 'fillet'}
         tooltipSide={tooltipSide}
         onClick={onFillet}
       />
       <ToolbarActionButton
         icon="chamfer"
-        label={activeTool === 'chamfer' ? 'Cancel chamfer' : 'Chamfer corner'}
+        label={activeTool === 'chamfer' ? t('sketch.edit.cancelChamfer') : t('sketch.edit.chamfer')}
         active={activeTool === 'chamfer'}
         tooltipSide={tooltipSide}
         onClick={onChamfer}
       />
       <ToolbarActionButton
         icon="trim"
-        label={trimExtendDisabled ? 'Trim — open profiles only' : activeTool === 'trim' ? 'Cancel trim' : 'Trim to cutting edge'}
+        label={trimExtendDisabled ? t('sketch.edit.trimDisabled') : activeTool === 'trim' ? t('sketch.edit.cancelTrim') : t('sketch.edit.trim')}
         active={activeTool === 'trim'}
         disabled={trimExtendDisabled}
         tooltipSide={tooltipSide}
@@ -100,7 +103,7 @@ function SketchEditActions({
       />
       <ToolbarActionButton
         icon="extend"
-        label={trimExtendDisabled ? 'Extend — open profiles only' : activeTool === 'extend' ? 'Cancel extend' : 'Extend to target'}
+        label={trimExtendDisabled ? t('sketch.edit.extendDisabled') : activeTool === 'extend' ? t('sketch.edit.cancelExtend') : t('sketch.edit.extend')}
         active={activeTool === 'extend'}
         disabled={trimExtendDisabled}
         tooltipSide={tooltipSide}

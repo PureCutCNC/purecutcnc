@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../../i18n/i18nContext'
 import { ToolbarActionButton } from './primitives'
 
 function FeatureEditActions({
@@ -51,6 +52,8 @@ function FeatureEditActions({
   onConstraint: () => void
   constraintActive: boolean
 }) {
+  const { t } = useI18n()
+
   if (!enabled) return null
 
   return (
@@ -58,14 +61,14 @@ function FeatureEditActions({
       <div className="toolbar-group">
         <ToolbarActionButton
           icon="copy"
-          label={pendingMoveMode === 'copy' ? 'Cancel copy' : 'Copy selected features'}
+          label={pendingMoveMode === 'copy' ? t('sketch.transform.cancelCopy') : t('sketch.transform.copy')}
           active={pendingMoveMode === 'copy'}
           tooltipSide={tooltipSide}
           onClick={onCopy}
         />
         <ToolbarActionButton
           icon="move"
-          label={pendingMoveMode === 'move' ? 'Cancel move' : 'Move selected features'}
+          label={pendingMoveMode === 'move' ? t('sketch.transform.cancelMove') : t('sketch.transform.move')}
           active={pendingMoveMode === 'move'}
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
@@ -73,13 +76,13 @@ function FeatureEditActions({
         />
         <ToolbarActionButton
           icon="trash"
-          label="Delete selected features"
+          label={t('sketch.transform.delete')}
           tooltipSide={tooltipSide}
           onClick={onDelete}
         />
         <ToolbarActionButton
           icon="resize"
-          label={pendingTransformMode === 'resize' ? 'Cancel resize' : 'Resize selected features'}
+          label={pendingTransformMode === 'resize' ? t('sketch.transform.cancelResize') : t('sketch.transform.resize')}
           active={pendingTransformMode === 'resize'}
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
@@ -87,7 +90,7 @@ function FeatureEditActions({
         />
         <ToolbarActionButton
           icon="rotate"
-          label={pendingTransformMode === 'rotate' ? 'Cancel rotate' : 'Rotate selected features'}
+          label={pendingTransformMode === 'rotate' ? t('sketch.transform.cancelRotate') : t('sketch.transform.rotate')}
           active={pendingTransformMode === 'rotate'}
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
@@ -95,7 +98,7 @@ function FeatureEditActions({
         />
         <ToolbarActionButton
           icon="mirror"
-          label={pendingTransformMode === 'mirror' ? 'Cancel mirror' : 'Mirror selected features'}
+          label={pendingTransformMode === 'mirror' ? t('sketch.transform.cancelMirror') : t('sketch.transform.mirror')}
           active={pendingTransformMode === 'mirror'}
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
@@ -103,7 +106,7 @@ function FeatureEditActions({
         />
         <ToolbarActionButton
           icon="offset"
-          label={pendingOffset ? 'Cancel offset' : 'Create offset feature'}
+          label={pendingOffset ? t('sketch.boolean.cancelOffset') : t('sketch.boolean.offset')}
           active={pendingOffset}
           disabled={hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
@@ -111,7 +114,7 @@ function FeatureEditActions({
         />
         <ToolbarActionButton
           icon="constraint"
-          label={constraintActive ? 'Cancel constraint' : 'Add constraint'}
+          label={constraintActive ? t('sketch.constraint.cancel') : t('sketch.constraint.add')}
           active={constraintActive}
           disabled={hasLockedSelection}
           tooltipSide={tooltipSide}
