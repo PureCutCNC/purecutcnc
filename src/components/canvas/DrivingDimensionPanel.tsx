@@ -17,10 +17,23 @@
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useI18n } from '../../i18n/i18nContext'
 import type { DrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
+import type { HeldSideId } from '../../sketch/drivingDimensionResolver'
 
 /* eslint-disable react-hooks/refs -- This leaf component forwards refs produced by canvas workflow hooks into JSX. */
 
 import type { MessageKey } from '../../i18n/locales/en'
+
+// Localized "Hold …" labels for the resolver's stable held-side ids.
+const HOLD_LABEL_KEYS: Record<HeldSideId, MessageKey> = {
+  left: 'canvas.driving.holdLabel.left',
+  right: 'canvas.driving.holdLabel.right',
+  top: 'canvas.driving.holdLabel.top',
+  bottom: 'canvas.driving.holdLabel.bottom',
+  start: 'canvas.driving.holdLabel.start',
+  end: 'canvas.driving.holdLabel.end',
+  firstRay: 'canvas.driving.holdLabel.firstRay',
+  secondRay: 'canvas.driving.holdLabel.secondRay',
+}
 
 const HELD_SIDE_LABEL_KEYS: Record<string, MessageKey> = {
   left: 'canvas.driving.heldSide.left',
@@ -50,7 +63,7 @@ export function DrivingDimensionPanel({ driving }: DrivingDimensionPanelProps) {
   const heldSummary =
     edit.kind === 'stock_dimension'
       ? t('canvas.driving.holdingSide', { side: t((HELD_SIDE_LABEL_KEYS[edit.heldSide] ?? 'canvas.driving.heldSide.left') as MessageKey) })
-      : edit.kind === 'linear' || edit.kind === 'angle' ? edit.heldSideLabel : null
+      : edit.kind === 'linear' || edit.kind === 'angle' ? t(HOLD_LABEL_KEYS[edit.heldSideId]) : null
 
   return (
     <CanvasWorkflowPanel

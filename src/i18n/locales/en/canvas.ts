@@ -157,6 +157,14 @@ export const canvasEn = {
   'canvas.driving.heldSide.right': 'right',
   'canvas.driving.heldSide.top': 'top',
   'canvas.driving.heldSide.bottom': 'bottom',
+  'canvas.driving.holdLabel.left': 'Hold left',
+  'canvas.driving.holdLabel.right': 'Hold right',
+  'canvas.driving.holdLabel.top': 'Hold top',
+  'canvas.driving.holdLabel.bottom': 'Hold bottom',
+  'canvas.driving.holdLabel.start': 'Hold start',
+  'canvas.driving.holdLabel.end': 'Hold end',
+  'canvas.driving.holdLabel.firstRay': 'Hold first ray',
+  'canvas.driving.holdLabel.secondRay': 'Hold second ray',
 
   // ── Offset workflow panel ──
   'canvas.offset.title': 'Offset',

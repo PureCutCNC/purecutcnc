@@ -176,17 +176,17 @@ export function useDrivingDimensionWorkflow(ctx: DrivingDimensionWorkflowCtx): D
 
   function computeNewDrivenPoint(edit: LinearDrivingEdit, targetDistance: number): Point {
     const { heldPoint, drivenPoint } = edit
-    // Infer the annotation type from held-side labels
-    const heldLabel = edit.heldSideLabel
+    // Infer the annotation type from the held-side id
+    const heldId = edit.heldSideId
 
-    if (heldLabel === 'Hold left' || heldLabel === 'Hold right') {
+    if (heldId === 'left' || heldId === 'right') {
       // Horizontal
-      const sign = heldLabel === 'Hold left' ? 1 : -1
+      const sign = heldId === 'left' ? 1 : -1
       return { x: heldPoint.x + sign * targetDistance, y: drivenPoint.y }
     }
-    if (heldLabel === 'Hold top' || heldLabel === 'Hold bottom') {
+    if (heldId === 'top' || heldId === 'bottom') {
       // Vertical
-      const sign = heldLabel === 'Hold top' ? 1 : -1
+      const sign = heldId === 'top' ? 1 : -1
       return { x: drivenPoint.x, y: heldPoint.y + sign * targetDistance }
     }
     // Aligned — move along the held→driven direction
