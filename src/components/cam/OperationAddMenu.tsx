@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../../i18n/i18nContext'
 import type { OperationKind } from '../../types/project'
 import { operationDescriptions } from '../../types/operationDescriptions'
 import type { camEn } from '../../i18n/locales/en/cam'
@@ -67,6 +68,9 @@ export function OperationAddMenu({
   onHighlightOperation,
   onSelectFeatures,
 }: OperationAddMenuProps) {
+  // Subscribe to locale changes: camT() reads the i18n store without
+  // subscribing; this context read re-renders the menu on language switch.
+  useI18n()
   // expandedOperationKind: which description card is open (one at a time).
   // selectedNewOperationKind (prop): which operation the user last attempted to add via the
   // + button for non-pass operations — separate from expansion state so the user can browse

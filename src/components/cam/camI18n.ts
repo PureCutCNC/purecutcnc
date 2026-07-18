@@ -14,41 +14,17 @@
  * limitations under the License.
  */
 
+import type { MessageParams } from '../../i18n/catalog'
+import type { camEn } from '../../i18n/locales/en/cam'
+import { translate } from '../../i18n/store'
+
 /**
- * Thin translation wrapper for the unregistered `cam` catalog module. The
- * manager registers the module at merge time; until then this wrapper queries
- * the store and falls back to the English cam catalog so the build and tests
- * stay green.
+ * Typed translation helper scoped to the cam catalog module — a thin
+ * delegate to the i18n store now that the module is registered. Pure modules
+ * (operationValidity, operationParamRefData) may call it freely; React
+ * components that render its output must also call `useI18n()` so they
+ * re-render when the locale changes (module-level translation does not
+ * subscribe them).
  */
-
-import { translate as _tr } from '../../i18n/store'
-import { camEn } from '../../i18n/locales/en/cam'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- cam module unregistered; manager widens at merge
-const EN_FALLBACK: Record<string, string> = camEn as any
-
-const PLACEHOLDER = /\{(\w+)\}/g
-
-function interpolate(template: string, params?: Record<string, string | number>): string {
-  if (!params) return template
-  return template.replace(PLACEHOLDER, (_match, name: string) =>
-    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : _match,
-  )
-}
-
-/** Translate a cam key, falling back to the English cam catalog when the store doesn't have it yet. */
-export const camT = (key: string, params?: Record<string, string | number>): string => {
-  // Try the store first; it throws (template is undefined) when the key
-  // hasn't been registered yet — catch and fall back to the catalog.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cam module unregistered; manager widens at merge
-    const fromStore = (_tr as any)(key, params)
-    if (fromStore !== undefined && fromStore !== key) return fromStore
-  } catch {
-    // Expected: key not in the store yet; use fallback below.
-  }
-  const template = EN_FALLBACK[key]
-  if (template !== undefined) return interpolate(template, params)
-  // Last resort: return the key so mistranslations are visible rather than blank
-  return key
-}
+export const camT = (key: keyof typeof camEn, params?: MessageParams): string =>
+  translate(key, params)

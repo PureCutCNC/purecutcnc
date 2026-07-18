@@ -19,8 +19,6 @@ import { createPortal } from 'react-dom'
 import type { Project } from '../../types/project'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -48,12 +46,10 @@ export function UnitConversionDialog({
   onCancel,
 }: UnitConversionDialogProps) {
   useRestoreCanvasFocus()
-  const { localeId } = useI18n()
+  const { t } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   useEffect(() => {

@@ -90,6 +90,8 @@ export const dialogsEn = {
   'dialogs.importGeometry.selectAll': 'Select all',
   'dialogs.importGeometry.deselectAll': 'Deselect all',
   'dialogs.importGeometry.selectAtLeastOne': 'Select at least one {type} to import.',
+  'dialogs.importGeometry.folderNoun': 'folder',
+  'dialogs.importGeometry.layerNoun': 'layer',
   'dialogs.importGeometry.import': 'Import',
 
   // ── Import Geometry: error messages (set via setDialogError) ──

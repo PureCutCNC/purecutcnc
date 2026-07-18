@@ -31,8 +31,6 @@ import {
   suggestGcodeFileName,
 } from './exportOperationSelection'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -46,12 +44,10 @@ interface ExportDialogProps {
 export function ExportDialog({ onClose, generateToolpath, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
-  const { localeId } = useI18n()
+  const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)
@@ -109,8 +105,8 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
       warnings.unshift(td('dialogs.export.warning.noMachine'))
     }
     return warnings
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDefinition, operationOptions, previewResult, selectedOperationIds])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [activeDefinition, operationOptions, previewResult, selectedOperationIds, languageTag])
 
   function toggleOperationSelected(operationId: string, selected: boolean) {
     setSelectedOperationIds((current) => {

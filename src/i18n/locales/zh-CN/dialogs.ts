@@ -92,6 +92,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.importGeometry.selectAll': '全选',
   'dialogs.importGeometry.deselectAll': '取消全选',
   'dialogs.importGeometry.selectAtLeastOne': '至少选择一个{type}来导入。',
+  'dialogs.importGeometry.folderNoun': '文件夹',
+  'dialogs.importGeometry.layerNoun': '图层',
   'dialogs.importGeometry.import': '导入',
 
   // ── Import Geometry: error messages ──

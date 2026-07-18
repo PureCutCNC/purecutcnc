@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
+import { useI18n } from '../../i18n/i18nContext'
 import { createPortal } from 'react-dom'
 import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
@@ -580,6 +581,10 @@ export function CAMPanel({
   generatingOperationIds,
   onOperationHighlightChange,
 }: CAMPanelProps) {
+  // Subscribe to locale changes: camT() reads the i18n store without
+  // subscribing, so this context read is what re-renders the panel (and its
+  // in-file subcomponents) when the language switches.
+  useI18n()
   const [selectedToolIdState, setSelectedToolId] = useState<string | null>(null)
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)

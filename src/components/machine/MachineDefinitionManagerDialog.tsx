@@ -22,8 +22,6 @@ import { useProjectStore } from '../../store/projectStore'
 import { platform } from '../../platform'
 import { MachineDefinitionEditorDialog } from './MachineDefinitionEditorDialog'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -40,12 +38,10 @@ export function MachineDefinitionManagerDialog({
   const removeMachineDefinition = useProjectStore((s) => s.removeMachineDefinition)
   const updateMachineDefinition = useProjectStore((s) => s.updateMachineDefinition)
   const duplicateMachineDefinition = useProjectStore((s) => s.duplicateMachineDefinition)
-  const { localeId } = useI18n()
+  const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   const definitions = project.meta.machineDefinitions
@@ -96,8 +92,8 @@ export function MachineDefinitionManagerDialog({
     } catch (error) {
       alert(td('dialogs.machineManager.invalidImport', { message: error instanceof Error ? error.message : String(error) }))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addMachineDefinition])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [addMachineDefinition, languageTag])
 
   const handleEdit = useCallback(() => {
     if (previewDef) {

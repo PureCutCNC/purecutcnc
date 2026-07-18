@@ -41,8 +41,6 @@ import type { Bounds2D } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -65,12 +63,10 @@ export function PrintDesignDialog({
   const { project } = useProjectStore()
   const units = project.meta.units
   const unitSuffix = units === 'inch' ? 'in' : 'mm'
-  const { localeId } = useI18n()
+  const { t } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   // Default-orientation bounds exclude the backdrop, matching its

@@ -40,8 +40,6 @@ import {
 import { formatLength } from '../../utils/units'
 import type { Project } from '../../types/project'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -57,12 +55,10 @@ interface AssembledMesh {
 export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, lastModelExportPath, markModelExported } = useProjectStore()
-  const { localeId } = useI18n()
+  const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   const [formatId, setFormatId] = useState<string>(MODEL_EXPORT_FORMATS[0]?.id ?? 'stl')
@@ -136,8 +132,8 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
       list.push(td('dialogs.modelExport.noGeometry'))
     }
     return list
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [is2d, assembled, triangleCount])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [is2d, assembled, triangleCount, languageTag])
 
   async function handleExport() {
     if (!format) return

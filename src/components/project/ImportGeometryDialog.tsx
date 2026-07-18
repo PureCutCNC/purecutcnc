@@ -36,8 +36,6 @@ import { useImportGeometryAnalysis } from './useImportGeometryAnalysis'
 import { ImportGeometryModeSection } from './ImportGeometryModeSection'
 import { importModelFile } from './importModelFile'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -89,12 +87,10 @@ function detectSourceType(fileName: string): ImportSourceType | null {
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
   useRestoreCanvasFocus()
   const { project, importShapes, importCamjFolders } = useProjectStore()
-  const { localeId } = useI18n()
+  const { t } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   const [loadedFile, setLoadedFile] = useState<LoadedImportFile | null>(null)
@@ -631,9 +627,9 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               {!someLayersSelected ? (
                 <div className="cam-field-message">
                   {td('dialogs.importGeometry.selectAtLeastOne', {
-                    type: showCamjFolders
-                      ? (localeId === 'zh-CN' ? td('dialogs.importGeometry.folders') : 'folder')
-                      : (localeId === 'zh-CN' ? td('dialogs.importGeometry.layers') : 'layer'),
+                    type: td(showCamjFolders
+                      ? 'dialogs.importGeometry.folderNoun'
+                      : 'dialogs.importGeometry.layerNoun'),
                   })}
                 </div>
               ) : null}

@@ -25,8 +25,6 @@ import {
 } from './machineDefinitionForm'
 import type { MachineFormData } from './machineDefinitionForm'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
-import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
-import { interpolate } from '../../i18n/catalog'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -41,12 +39,10 @@ export function MachineDefinitionEditorDialog({
   onSave,
   onClose,
 }: MachineDefinitionEditorDialogProps) {
-  const { localeId } = useI18n()
+  const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
-    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
-    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
-    return interpolate(template, params)
+    return t(key, params)
   }
 
   const [form, setForm] = useState<MachineFormData>(() => toFormData(definition))
@@ -88,8 +84,8 @@ export function MachineDefinitionEditorDialog({
         return { mergedDef: null, jsonError: jsonErr, validationError: 'Invalid definition' }
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [advancedJson, definition, form])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [advancedJson, definition, form, languageTag])
 
   function handleFormChange(patch: Partial<MachineFormData>) {
     setForm((prev) => {
