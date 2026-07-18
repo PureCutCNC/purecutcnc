@@ -395,6 +395,64 @@ Contract (binding for the implementation, survives session summarization):
   (equivalent strength, mirrors the S2d test conversion).
 - Checks: `scripts/build-summary.sh` + language/appearance/CAM/export e2e.
 
+### S6 — Language manager + editor (manager-implemented; IN PROGRESS)
+
+State at session handoff (2026-07-18 ~15:00):
+
+- Worktree `…/issue-314-s6-editor` on `feat/issue-314-s6-editor` (pushed),
+  branched from integration at `a8e3856`.
+- DONE: `languageManager` catalog modules (en + zh-CN) at
+  `src/i18n/locales/*/languageManager.ts`, commit `249d3bf` — keys for both
+  dialogs including plural variants and notices. NOT yet registered in the
+  locale `index.ts` files.
+- REMAINING, in order:
+  1. `src/components/language/LanguageManagerDialog.tsx` — mirror
+     `ThemeManagerDialog.tsx` exactly (list + detail + notices +
+     import/export via `platform.pickJsonFile`/`saveTextFile`; registry
+     helpers `duplicateLocaleAsCustom`, `parseLanguageImport`,
+     `serializeLanguageExport`, `customLanguageProgress`,
+     `customLanguagePlaceholderIssues` all exist from phase 1). Built-ins:
+     `builtinLocaleInfos()`; customs from `useI18n().customLanguages`;
+     activate via `setLocale`; CRUD via `saveCustomLanguage` /
+     `deleteCustomLanguage`. Show `customLanguageProgress` percentages.
+  2. `src/components/language/LanguageEditorDialog.tsx` — draft
+     overrides in local state; per-key rows grouped by top-level namespace
+     (collapsed `<details>` sections, render rows only when open — the
+     catalog is ~1400 keys); search + all/untranslated/edited filter;
+     per-row placeholder-parity flag via `placeholdersMatch` and Apply
+     blocked while any issue exists; name + BCP-47 tag fields (validate
+     tag with the registry pattern); "Preview in app" persists the draft
+     via `saveCustomLanguage` with Cancel restoring the snapshot taken on
+     open; Apply persists and closes.
+  3. Wire `Manage languages…` (`langManager.manageEntry` +
+     `langManager.manageDetail`) into `LanguageControl`'s menu, opening
+     the manager (mirror AppearanceControl's manage entry).
+  4. Register the `languageManager` module in both locale `index.ts`.
+  5. GAP FOUND during S6 scoping: `src/components/theme/*` dialog strings
+     (ThemeManagerDialog, ThemeEditorDialog, ThemeColorRow,
+     ThemePreviewSamples) were never extracted by any slice — extract them
+     into a `themeManager` catalog module (en byte-identical + zh) as part
+     of S6 or as a follow-up commit on the integration branch.
+  6. e2e `e2e/languageManager.smoke.spec.ts`: open manager → duplicate
+     English → editor: translate one key (e.g. `file.saveProject`) →
+     Apply → Use this language → assert the toolbar shows the custom
+     string and `html[lang]` follows the pack's tag; plus selectors in
+     `e2e/selectors.ts` (`languageManager` group). Reuse the fresh-port
+     worktree Playwright config pattern (recreate it — the old copy lives
+     in the previous session's scratchpad, gone).
+  7. Docs: ARCHITECTURE.md localization section (contract per issue
+     #314), `src/i18n/INDEX.md` + `src/components/INDEX.md` entries,
+     GLOSSARY additions if new terms appeared.
+  8. Gate (`scripts/build-summary.sh`) + full e2e in the worktree, merge
+     `--no-ff` into `feat/issue-314-multi-language` (expect the usual
+     2-line locale-index union conflict), gate + language e2e on
+     integration, push, ledger.
+
+Then the Final phase per the issue: full build + complete e2e suite on
+integration, manual CJK layout pass (desktop + tablet), user review, and
+ONE PR to `main` with "Closes #314" and "Closes #311" (no attribution
+footer — repo rule).
+
 ## Integration verification
 
 - Accepted commits and merge order: S1 `af0148c` → merge `ca0df27`.
