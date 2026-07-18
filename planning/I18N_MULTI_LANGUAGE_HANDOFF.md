@@ -309,6 +309,54 @@ Corrected by manager in `9290cff` (td → context `t`, `languageTag` deps,
 dedicated noun keys). Verified: full gate + 17/17 language/appearance/CAM/
 export e2e.
 
+### S4a — App shell chrome (concurrent with S4b)
+
+**Goal:** Extract user-facing strings in the app shell (status bar, drawers,
+mode switching in `AppShell.tsx`), the tablet `ToolRail.tsx`, and
+`ToolpathVisibilityPanel.tsx` into a new `appShell` catalog module with
+complete zh-CN, en byte-identical.
+
+**Allowed files:** `src/components/layout/AppShell.tsx`,
+`src/components/layout/ToolRail.tsx`, `src/components/layout/useShellMode.ts`,
+`src/components/ToolpathVisibilityPanel.tsx`,
+`src/i18n/locales/en/appShell.ts` (new), `src/i18n/locales/zh-CN/appShell.ts`
+(new), and — unlike earlier slices — BOTH locale `index.ts` files, where you
+add exactly one import and one spread line for your module (the manager
+resolves the trivial conflict with the concurrent slice at merge).
+
+**Binding rules (lessons from S3):** components translate via
+`useI18n()`/`t` only — NO per-file translation wrapper helpers, NO module
+`translate` in component render paths, NO hardcoded locale checks
+(`localeId === 'zh-CN' ? … : …` is forbidden; missing singular/plural or
+case variants get their own keys instead). ToolRail's aria-labels built by
+string composition from `option.noun` must be restructured onto the existing
+`sketch.creation.*` template keys and `nounKey`s (leave the `noun` field
+itself in place). Memoized translated content must include `languageTag` in
+its dependency array.
+
+**Required checks:** `scripts/build-summary.sh`
+
+**Manager review record:** pending.
+
+### S4b — Viewports, about, onboarding, errors (concurrent with S4a)
+
+**Goal:** Extract user-facing strings in `SimulationViewport.tsx` (and
+simulation playback controls), `Viewport3D.tsx`, `about/AboutDialog.tsx`,
+`onboarding/EmptyStateOverlay.tsx`, `AppErrorBoundary.tsx`,
+`ErrorScreen.tsx`, and `errorFormat.ts` into a new `viewport` catalog module
+with complete zh-CN, en byte-identical.
+
+**Allowed files:** the files above, `src/i18n/locales/en/viewport.ts` (new),
+`src/i18n/locales/zh-CN/viewport.ts` (new), and BOTH locale `index.ts`
+files (one import + one spread line each; manager resolves the concurrent
+conflict). `errorFormat.ts` renders pre-React fatal HTML — module
+`translate` is correct THERE (no React); everywhere else the S4a binding
+rules apply verbatim.
+
+**Required checks:** `scripts/build-summary.sh`
+
+**Manager review record:** pending.
+
 ## Integration verification
 
 - Accepted commits and merge order: S1 `af0148c` → merge `ca0df27`.
