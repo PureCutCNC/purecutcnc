@@ -50,6 +50,72 @@ export const language = {
   menu: (page: Page) => page.getByRole('menu', { name: /^(Interface language|界面语言)$/ }),
   option: (page: Page, label: string) =>
     language.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+  manageEntry: (page: Page) =>
+    language.menu(page).getByRole('menuitem', { name: /^Manage languages/ }),
+}
+
+// ── Language manager & editor ──────────────────────────────────────
+
+export const languageManager = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: 'Manage languages' }),
+  localeItem: (page: Page, name: string) =>
+    languageManager.dialog(page).getByRole('option')
+      .filter({ has: page.getByText(name, { exact: true }) }),
+  detailName: (page: Page) =>
+    languageManager.dialog(page).locator('.machine-manager-detail-name'),
+  progress: (page: Page) =>
+    languageManager.dialog(page).locator('.language-manager-progress'),
+  useButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Use this language' }),
+  duplicateButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Duplicate & edit' }),
+  editButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Edit', exact: true }),
+  renameButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Rename' }),
+  renameInput: (page: Page) =>
+    languageManager.dialog(page).getByRole('textbox', { name: 'Language name' }),
+  saveNameButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Save name' }),
+  importButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Import language' }),
+  exportButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Export language' }),
+  deleteButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Delete language' }),
+  notice: (page: Page) =>
+    languageManager.dialog(page).locator('.theme-manager-notice'),
+  doneButton: (page: Page) =>
+    languageManager.dialog(page).getByRole('button', { name: 'Done' }),
+}
+
+export const languageEditor = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit language/ }),
+  nameInput: (page: Page) =>
+    languageEditor.dialog(page).getByLabel('Language name'),
+  tagInput: (page: Page) =>
+    languageEditor.dialog(page).getByLabel('BCP-47 language tag'),
+  searchInput: (page: Page) =>
+    languageEditor.dialog(page).getByRole('searchbox'),
+  filterSelect: (page: Page) =>
+    languageEditor.dialog(page).getByLabel('Show'),
+  section: (page: Page, namespace: string) =>
+    languageEditor.dialog(page).locator('.language-editor-section')
+      .filter({ has: page.locator('.language-editor-section__name', { hasText: new RegExp(`^${namespace}$`) }) }),
+  keyInput: (page: Page, key: string) =>
+    languageEditor.dialog(page).getByRole('textbox', { name: key, exact: true }),
+  rowIssue: (page: Page) =>
+    languageEditor.dialog(page).locator('.language-editor-row__issue'),
+  footerBlocked: (page: Page) =>
+    languageEditor.dialog(page).locator('.theme-editor-footer-blocked'),
+  previewingNote: (page: Page) =>
+    languageEditor.dialog(page).locator('.language-editor-footer-note'),
+  previewButton: (page: Page) =>
+    languageEditor.dialog(page).getByRole('button', { name: 'Preview in app' }),
+  applyButton: (page: Page) =>
+    languageEditor.dialog(page).getByRole('button', { name: 'Apply', exact: true }),
+  cancelButton: (page: Page) =>
+    languageEditor.dialog(page).getByRole('button', { name: 'Cancel', exact: true }),
 }
 
 // ── Theme manager & editor ─────────────────────────────────────────
