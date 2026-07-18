@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../i18n/i18nContext'
+
 /** Depth-colour legend overlay shown on the sketch canvas. */
 export function DepthLegend({ onToggleDepthLegend }: { onToggleDepthLegend?: () => void }) {
+  const { t } = useI18n()
+
   return (
     <div className="sketch-depth-legend">
       <div className="sketch-depth-legend__header">
-        <span>Feature Colors</span>
+        <span>{t('canvas.legend.heading')}</span>
         <button
           className="sketch-depth-legend__toggle tree-action-btn"
           type="button"
           onClick={onToggleDepthLegend}
-          aria-label="Collapse feature color legend"
-          title="Collapse legend"
+          aria-label={t('canvas.legend.collapseAria')}
+          title={t('canvas.legend.collapseTitle')}
         >
           ▾
         </button>
@@ -33,27 +37,27 @@ export function DepthLegend({ onToggleDepthLegend }: { onToggleDepthLegend?: () 
       <div className="sketch-depth-legend__items">
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract" />
-          <span>Subtract</span>
+          <span>{t('canvas.legend.subtract')}</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
-          <span>Add feature</span>
+          <span>{t('canvas.legend.addFeature')}</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
-          <span>Region include</span>
+          <span>{t('canvas.legend.regionInclude')}</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region-exclude" />
-          <span>Region exclude</span>
+          <span>{t('canvas.legend.regionExclude')}</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
-          <span>Imported model</span>
+          <span>{t('canvas.legend.importedModel')}</span>
         </div>
         <div className="sketch-depth-legend__item">
           <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
-          <span>Selected</span>
+          <span>{t('canvas.legend.selected')}</span>
         </div>
       </div>
     </div>

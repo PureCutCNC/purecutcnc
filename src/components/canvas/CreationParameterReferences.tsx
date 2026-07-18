@@ -16,6 +16,8 @@
 
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { PendingAddTool } from '../../store/types'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 
 type PendingNgon = Extract<PendingAddTool, { shape: 'ngon' }>
 type PendingRectCorner = Extract<PendingAddTool, { shape: 'roundrect' | 'chamferrect' }>
@@ -32,7 +34,7 @@ interface RectCornerParameterPanelProps {
 
 interface CreationParameterFieldProps {
   children: ReactNode
-  label: string
+  labelKey: MessageKey
   reference: ReactNode
 }
 
@@ -64,10 +66,11 @@ function normalizeCorner(value: number, fallback: number): number {
   return value < 0 ? fallback : value
 }
 
-function CreationParameterField({ children, label, reference }: CreationParameterFieldProps) {
+function CreationParameterField({ children, labelKey, reference }: CreationParameterFieldProps) {
+  const { t } = useI18n()
   return (
     <label className="canvas-workflow-panel__field canvas-workflow-panel__field--reference">
-      <span>{label}</span>
+      <span>{t(labelKey)}</span>
       {children}
       {reference}
     </label>
@@ -104,8 +107,9 @@ function polygonPath(sides: number): string {
 }
 
 function NgonSidesReference({ sides }: { sides: number }) {
+  const { t } = useI18n()
   return (
-    <CreationReferenceFrame label="Polygon side count reference">
+    <CreationReferenceFrame label={t('canvas.param.ref.ngonSides')}>
       <path className="gear-reference__guide" d="M29 5v24M16 17h26" />
       <path className="gear-reference__outline" d={polygonPath(sides)} />
       <path className="gear-reference__accent" d="M29 6L38.5 12.5" />
@@ -116,9 +120,10 @@ function NgonSidesReference({ sides }: { sides: number }) {
 }
 
 function RectCornerReference({ kind }: { kind: PendingRectCorner['shape'] }) {
+  const { t } = useI18n()
   if (kind === 'roundrect') {
     return (
-      <CreationReferenceFrame label="Rounded rectangle corner radius reference">
+      <CreationReferenceFrame label={t('canvas.param.ref.roundRectCorner')}>
         <path className="gear-reference__outline" d="M10 28V11Q10 6 15 6H48" />
         <path className="gear-reference__guide" d="M21 17L10 17M21 17V6" />
         <path className="gear-reference__accent" d="M10 17A11 11 0 0 1 21 6" />
@@ -128,7 +133,7 @@ function RectCornerReference({ kind }: { kind: PendingRectCorner['shape'] }) {
   }
 
   return (
-    <CreationReferenceFrame label="Chamfered rectangle corner reference">
+    <CreationReferenceFrame label={t('canvas.param.ref.chamferRectCorner')}>
       <path className="gear-reference__outline" d="M10 28V16L20 6H48" />
       <path className="gear-reference__guide" d="M10 16H20V6" />
       <path className="gear-reference__accent" d="M10 16L20 6" />
@@ -140,7 +145,7 @@ function RectCornerReference({ kind }: { kind: PendingRectCorner['shape'] }) {
 export function NgonParameterPanel({ pendingAdd, setPendingNgonSides }: NgonParameterPanelProps) {
   return (
     <div className="canvas-workflow-panel__meta canvas-workflow-panel__parameter-fields">
-      <CreationParameterField label="Sides (3-50)" reference={<NgonSidesReference sides={pendingAdd.sides} />}>
+      <CreationParameterField labelKey="canvas.param.ngonSides" reference={<NgonSidesReference sides={pendingAdd.sides} />}>
         <input
           key={pendingAdd.session}
           className="canvas-workflow-panel__count-input"
@@ -176,7 +181,7 @@ export function RectCornerParameterPanel({ pendingAdd, setPendingRectCorner }: R
   return (
     <div className="canvas-workflow-panel__meta canvas-workflow-panel__parameter-fields">
       <CreationParameterField
-        label={pendingAdd.shape === 'roundrect' ? 'Corner radius' : 'Chamfer'}
+        labelKey={pendingAdd.shape === 'roundrect' ? 'canvas.param.cornerRadius' : 'canvas.param.chamfer'}
         reference={<RectCornerReference kind={pendingAdd.shape} />}
       >
         <input

@@ -124,10 +124,12 @@ assert(
 
 // ── DepthLegend: merged subtract color and region include/exclude keys ──
 
-assert(depthLegend.includes('Subtract'), 'DepthLegend must include the merged Subtract color entry')
+const canvasEn = readSrc('src/i18n/locales/en/canvas.ts')
+assert(canvasEn.includes("'canvas.legend.subtract': 'Subtract'"), 'canvas i18n catalog must include the Subtract entry')
+assert(!depthLegend.includes('Subtract'), 'DepthLegend must not hardcode Subtract — uses i18n key')
 assert(!depthLegend.includes('Subtract shallow'), 'DepthLegend must not keep the old Subtract shallow entry')
 assert(!depthLegend.includes('Subtract deep'), 'DepthLegend must not keep the old Subtract deep entry')
-assert(depthLegend.includes('Region include'), 'DepthLegend must include Region include')
-assert(depthLegend.includes('Region exclude'), 'DepthLegend must include Region exclude')
+assert(canvasEn.includes("'canvas.legend.regionInclude': 'Region include'"), 'canvas i18n catalog must include Region include')
+assert(canvasEn.includes("'canvas.legend.regionExclude': 'Region exclude'"), 'canvas i18n catalog must include Region exclude')
 
 console.log('regionPresentation.test.ts passed')
