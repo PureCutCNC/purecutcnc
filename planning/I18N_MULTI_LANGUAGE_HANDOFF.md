@@ -65,8 +65,8 @@ Issue #314 phases and how they are executed:
 | S2b | Canvas creation panels extraction | `94adc16` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `done` | `pass` | `0834e63` merged `9b4f006` | `npm run build` (gate: passed) | ~150-key `canvas` module; worktree removed |
 | S2c | Feature tree + properties extraction | `9b4f006` | `feat/issue-314-i18n-feature-tree` / `…/i18n-feature-tree` | `done` | `pass` | `86e07f9` merged `16f1fd1` | `npm run build` (gate: passed) | ~170-key `featureTree` module; worktree removed |
 | S2d | heldSideLabel structured-id refactor | `d9756c7` | manager-implemented (`feat/issue-314-s2d-heldside`) | `done` | `self` | `b6d4631` merged `d671ddf` | `scripts/build-summary.sh` (pass) | Closes the S2b "Hold left" display gap; ids drive logic, keys drive display |
-| S3a | CAM panel + operation reference extraction | `16f1fd1`+ | `feat/issue-314-i18n-cam-panel` / `…/i18n-cam-panel` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3b (disjoint files); manager registers module |
-| S3b | Project/export/machine dialog extraction | `16f1fd1`+ | `feat/issue-314-i18n-dialogs` / `…/i18n-dialogs` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3a (disjoint files); manager registers module |
+| S3a | CAM panel + operation reference extraction | `d9756c7` | `feat/issue-314-i18n-cam-panel` / `…/i18n-cam-panel` | `done` | `pass w/ corrections` | `1ab3ff6` merged `e6da26c` + fix `9290cff` | gate passed | ~200-key `cam` module; camI18n wrapper replaced by manager |
+| S3b | Project/export/machine dialog extraction | `d9756c7` | `feat/issue-314-i18n-dialogs` / `…/i18n-dialogs` | `done` | `pass w/ corrections` | `1c62745` merged `68da3f5` + fix `9290cff` | gate passed | ~160-key `dialogs` module; td dispatch fixed by manager |
 
 ## Slice instructions
 
@@ -263,7 +263,15 @@ parameter reference copy is translatable prose — keep keys per parameter
 
 **Required checks:** `scripts/build-summary.sh`
 
-**Manager review record:** pending.
+**Manager review record:** extraction and zh-CN quality accepted (gate
+passed, en byte-identical). Defects — all traced to the register-at-merge
+rule denying workers typed keys: a duplicate mini-i18n wrapper (`camI18n.ts`)
+with no locale subscription. Corrected by manager in `9290cff`; the CAM
+surfaces now re-render on language switch. Lesson (binding for phase 4+):
+workers register their own catalog module in the locale index files — the
+manager resolves the deterministic 2-line conflict between concurrent
+slices at merge; per-file translation wrappers and any hardcoded locale
+dispatch (`localeId === 'zh-CN' ? … : …`) are forbidden.
 
 ### S3b — Project/export/machine dialogs (concurrent with S3a)
 
@@ -291,7 +299,15 @@ headings, buttons, and app-authored error summaries around them).
 
 **Required checks:** `scripts/build-summary.sh`
 
-**Manager review record:** pending.
+**Manager review record:** extraction and zh-CN quality accepted (gate
+passed); exportOperationSelection's reason-key refactor was exemplary.
+Defects, same root cause as S3a: eleven per-dialog `td()` helpers hardcoded
+`zh-CN` catalog dispatch (custom packs would never apply), six memoized
+fragments lacked a locale dependency (stale translations after switching),
+one hardcoded-locale singular/plural hack in ImportGeometryDialog.
+Corrected by manager in `9290cff` (td → context `t`, `languageTag` deps,
+dedicated noun keys). Verified: full gate + 17/17 language/appearance/CAM/
+export e2e.
 
 ## Integration verification
 
