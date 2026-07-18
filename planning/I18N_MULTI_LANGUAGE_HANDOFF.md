@@ -64,7 +64,7 @@ Issue #314 phases and how they are executed:
 | S2a | Sketch toolbars + command descriptors extraction | `ff5830e` | `feat/issue-314-i18n-sketch-toolbars` / `…/i18n-sketch-toolbars` | `done` | `pass` | `f97a9f3` merged `a55866a` | `npm run build` (gate: passed) | 80-key `sketch` module; worktree removed |
 | S2b | Canvas creation panels extraction | `94adc16` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `done` | `pass` | `0834e63` merged `9b4f006` | `npm run build` (gate: passed) | ~150-key `canvas` module; worktree removed |
 | S2c | Feature tree + properties extraction | `9b4f006` | `feat/issue-314-i18n-feature-tree` / `…/i18n-feature-tree` | `done` | `pass` | `86e07f9` merged `16f1fd1` | `npm run build` (gate: passed) | ~170-key `featureTree` module; worktree removed |
-| S2d | heldSideLabel structured-id refactor | `16f1fd1`+ | manager-implemented | `-` | `-` | `-` | `scripts/build-summary.sh` | Display-string-as-identifier in drivingDimensionResolver |
+| S2d | heldSideLabel structured-id refactor | `d9756c7` | manager-implemented (`feat/issue-314-s2d-heldside`) | `done` | `self` | `b6d4631` merged `d671ddf` | `scripts/build-summary.sh` (pass) | Closes the S2b "Hold left" display gap; ids drive logic, keys drive display |
 | S3a | CAM panel + operation reference extraction | `16f1fd1`+ | `feat/issue-314-i18n-cam-panel` / `…/i18n-cam-panel` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3b (disjoint files); manager registers module |
 | S3b | Project/export/machine dialog extraction | `16f1fd1`+ | `feat/issue-314-i18n-dialogs` / `…/i18n-dialogs` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Concurrent with S3a (disjoint files); manager registers module |
 
