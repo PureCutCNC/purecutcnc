@@ -15,6 +15,7 @@
  */
 
 import { getProfileBounds, type Operation, type Point, type Project, type SketchFeature } from '../../types/project'
+import type { ToolpathWarning } from './warningCodes'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, flattenProfile, normalizeWinding, toClipperPath } from './geometry'
 import { transitionToCutEntry } from './pocket'
@@ -206,7 +207,7 @@ export type FinishSurfaceParallelCacheHost = { finishHeightMapCache?: Map<string
 export function chooseHeightMapCellSize(
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
   requestedCellSize: number,
-  warnings: string[],
+  warnings: ToolpathWarning[],
 ): number {
   let cellSize = Math.max(requestedCellSize, 1e-6)
   const spanX = Math.max(0, bbox.maxX - bbox.minX)
@@ -217,9 +218,10 @@ export function chooseHeightMapCellSize(
   if (requestedCells <= MAX_HEIGHT_MAP_CELLS) return cellSize
 
   cellSize *= Math.sqrt(requestedCells / MAX_HEIGHT_MAP_CELLS)
-  warnings.push(
-    `Finish surface height map reduced from ${requestedCells.toLocaleString()} to about ${MAX_HEIGHT_MAP_CELLS.toLocaleString()} cells for performance`,
-  )
+  warnings.push({
+    code: 'surfaceHeightMapReduced',
+    params: { from: requestedCells.toLocaleString(), to: MAX_HEIGHT_MAP_CELLS.toLocaleString() },
+  })
   return cellSize
 }
 
@@ -567,16 +569,14 @@ export function generateFinishSurfaceParallel(
   sliceIndexHost: FinishSurfaceParallelCacheHost,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
-  warnings: string[],
+  warnings: ToolpathWarning[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
   const stepoverDistance = Math.max(stepoverRatio * tool.diameter, 1e-3)
   const angleDeg = operation.pocketAngle ?? 0
 
   if (operation.debugToolpath) {
-    warnings.push(
-      `Debug: parallel mode, angle=${angleDeg}°, stepover=${stepoverDistance.toFixed(4)}`,
-    )
+    warnings.push({ code: 'debug', params: { text: `Debug: parallel mode, angle=${angleDeg}°, stepover=${stepoverDistance.toFixed(4)}` } })
   }
 
   const modelBbox = computeXYBounds(transformedPos)
@@ -742,7 +742,7 @@ export function generateFinishSurfaceParallel(
   })
   const baseBounds = computeContourBounds([baseContours])
   if (!baseBounds) {
-    warnings.push('Model silhouette is degenerate — no finish surface coverage generated')
+    warnings.push({ code: 'surfaceSilhouetteDegenerate' })
     return { moves: allMoves, stepLevels: allStepLevels }
   }
 
@@ -754,9 +754,9 @@ export function generateFinishSurfaceParallel(
   if (clippedBounds) {
     emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, null)
   } else if (operation.debugToolpath && regionMask && !regionMask.baseIncludesSubject) {
-    warnings.push('Debug: region mask does not intersect the model silhouette')
+    warnings.push({ code: 'debug', params: { text: 'Debug: region mask does not intersect the model silhouette' } })
   } else if (operation.debugToolpath) {
-    warnings.push('Debug: protected footprints remove all finish surface coverage')
+    warnings.push({ code: 'debug', params: { text: 'Debug: protected footprints remove all finish surface coverage' } })
   }
 
   return { moves: allMoves, stepLevels: allStepLevels }

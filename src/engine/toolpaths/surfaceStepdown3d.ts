@@ -16,6 +16,7 @@
 
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, NormalizedTool, PocketToolpathResult, ResolvedPocketRegion } from './types'
+import type { ToolpathWarning } from './warningCodes'
 import {
   DEFAULT_CLIPPER_SCALE,
   checkMaxCutDepthWarning,
@@ -62,7 +63,7 @@ export interface Resolved3DSurfaceStepdown {
   effectiveStepover: number
   maxLinkDistance: number
   levels: Resolved3DSurfaceLevel[]
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 export type Resolve3DSurfaceStepdownResult =
@@ -85,7 +86,7 @@ interface Resolve3DSurfaceStepdownOptions {
 const Z_TOLERANCE = 1e-6
 const OUTER_WALL_MARGIN = 1e-3
 
-function emptyResult(operation: Operation, warning: string): PocketToolpathResult {
+function emptyResult(operation: Operation, warning: ToolpathWarning): PocketToolpathResult {
   return {
     operationId: operation.id,
     moves: [],
@@ -143,7 +144,7 @@ export function resolve3DSurfaceStepdown(
   if (target.source !== 'features' || target.featureIds.length === 0) {
     return {
       ok: false,
-      result: emptyResult(operation, `${operationLabel} requires a model feature to be selected`),
+      result: emptyResult(operation, { code: 'surface3dNeedsModel', params: { operation: operationLabel } }),
     }
   }
 
@@ -151,7 +152,7 @@ export function resolve3DSurfaceStepdown(
   if (splitTargets.missingFeatureIds.length > 0) {
     return {
       ok: false,
-      result: emptyResult(operation, 'One or more target features not found'),
+      result: emptyResult(operation, { code: 'targetsNotFound' }),
     }
   }
 
@@ -163,7 +164,7 @@ export function resolve3DSurfaceStepdown(
   if (!modelFeature?.stl?.meshAssetId || !project.modelAssets?.[modelFeature.stl.meshAssetId]) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Model feature must be an imported mesh model'),
+      result: emptyResult(operation, { code: 'surface3dNotMesh' }),
     }
   }
 
@@ -172,7 +173,7 @@ export function resolve3DSurfaceStepdown(
   if (!toolRecord) {
     return {
       ok: false,
-      result: emptyResult(operation, 'No tool assigned to this operation'),
+      result: emptyResult(operation, { code: 'noToolAssigned' }),
     }
   }
 
@@ -180,7 +181,7 @@ export function resolve3DSurfaceStepdown(
   if (!(tool.diameter > 0)) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Tool diameter must be greater than zero'),
+      result: emptyResult(operation, { code: 'toolDiameterPositive' }),
     }
   }
 
@@ -188,7 +189,7 @@ export function resolve3DSurfaceStepdown(
   if (!(stepoverRatio > 0 && stepoverRatio <= 1)) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Stepover ratio must be between 0 and 1'),
+      result: emptyResult(operation, { code: 'stepoverRatioRange' }),
     }
   }
 
@@ -196,7 +197,7 @@ export function resolve3DSurfaceStepdown(
   if (!stlData) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Failed to load model geometry'),
+      result: emptyResult(operation, { code: 'surface3dLoadFailed' }),
     }
   }
 
@@ -235,7 +236,7 @@ export function resolve3DSurfaceStepdown(
   if (effectiveBottom > modelTopZ + 1e-6) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Axial stock-to-leave exceeds model height — nothing to cut'),
+      result: emptyResult(operation, { code: 'surface3dStockToLeaveTooLarge' }),
     }
   }
 
@@ -261,7 +262,7 @@ export function resolve3DSurfaceStepdown(
   if (outlinePaths.length === 0) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Computed outer boundary is degenerate — model silhouette may be too small'),
+      result: emptyResult(operation, { code: 'surface3dDegenerateBoundary' }),
     }
   }
 
@@ -280,7 +281,7 @@ export function resolve3DSurfaceStepdown(
     if (effectiveBottom > modelTopZ + 1e-6) {
       return {
         ok: false,
-        result: emptyResult(operation, 'Containing subtract feature leaves no machining depth for this model'),
+        result: emptyResult(operation, { code: 'surface3dNoDepthInPocket' }),
       }
     }
   }
@@ -298,7 +299,7 @@ export function resolve3DSurfaceStepdown(
   if (!(resolvedStepdown > 0)) {
     return {
       ok: false,
-      result: emptyResult(operation, 'Operation stepdown must be greater than zero'),
+      result: emptyResult(operation, { code: 'stepdownPositive' }),
     }
   }
 
@@ -314,27 +315,23 @@ export function resolve3DSurfaceStepdown(
   if (roughLevels.length === 0) {
     return {
       ok: false,
-      result: emptyResult(operation, 'No step levels generated'),
+      result: emptyResult(operation, { code: 'surface3dNoStepLevels' }),
     }
   }
 
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(stockTop - effectiveBottom))
   if (depthWarning) {
     warnings.push(depthWarning)
   }
 
   if (operation.debugToolpath) {
-    warnings.push(
-      `Debug: Z range ${stockTop.toFixed(4)} -> ${modelBottomZ.toFixed(4)}, bottom ${effectiveBottom.toFixed(4)}`,
-    )
-    warnings.push(`Debug: silhouette area = ${silhouetteArea.toFixed(4)}`)
-    warnings.push(`Debug: floor candidate Zs = ${[...floorLevels].map((z) => z.toFixed(4)).join(', ')}`)
-    warnings.push(`Debug: rough levels = ${roughLevels.map((z) => z.toFixed(4)).join(', ')}`)
-    warnings.push(`Debug: mesh triangles = ${index.length / 3}`)
-    warnings.push(
-      `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)} stepdown=${resolvedStepdown.toFixed(4)}`,
-    )
+    warnings.push({ code: 'debug', params: { text: `Debug: Z range ${stockTop.toFixed(4)} -> ${modelBottomZ.toFixed(4)}, bottom ${effectiveBottom.toFixed(4)}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: silhouette area = ${silhouetteArea.toFixed(4)}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: floor candidate Zs = ${[...floorLevels].map((z) => z.toFixed(4)).join(', ')}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: rough levels = ${roughLevels.map((z) => z.toFixed(4)).join(', ')}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: mesh triangles = ${index.length / 3}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)} stepdown=${resolvedStepdown.toFixed(4)}` } })
   }
 
   const levels: Resolved3DSurfaceLevel[] = []
@@ -369,7 +366,7 @@ export function resolve3DSurfaceStepdown(
 
     if (levelOutlinePaths.length === 0) {
       if (operation.debugToolpath) {
-        warnings.push(`Debug: Z=${z.toFixed(4)} outside active subtract pocket depth`)
+        warnings.push({ code: 'debug', params: { text: `Debug: Z=${z.toFixed(4)} outside active subtract pocket depth` } })
       }
       continue
     }
@@ -395,7 +392,7 @@ export function resolve3DSurfaceStepdown(
         ...modelFootprintPaths,
       ])
       if (!usedOpenSliceFallback) {
-        warnings.push('Model has open/non-watertight slices; roughing used conservative silhouette protection')
+        warnings.push({ code: 'surface3dOpenMesh' })
         usedOpenSliceFallback = true
       }
     }
@@ -411,9 +408,7 @@ export function resolve3DSurfaceStepdown(
 
     if (operation.debugToolpath) {
       const sliceArea = calculateClipperArea(slicePaths)
-      warnings.push(
-        `Debug: Z=${z.toFixed(4)} protectionZ=${protectionZ.toFixed(4)} sliceArea=${sliceArea.toFixed(4)} protectedAbovePaths=${protectedAbovePaths.length} clearable=${clearablePaths.length}`,
-      )
+      warnings.push({ code: 'debug', params: { text: `Debug: Z=${z.toFixed(4)} protectionZ=${protectionZ.toFixed(4)} sliceArea=${sliceArea.toFixed(4)} protectedAbovePaths=${protectedAbovePaths.length} clearable=${clearablePaths.length}` } })
     }
 
     if (clearablePaths.length > 0) {
@@ -422,10 +417,10 @@ export function resolve3DSurfaceStepdown(
       const isCriticalFloorLevel = criticalLevels.some((criticalLevel) => sameZ(criticalLevel, z))
       if (insetRegions.length === 0) {
         if (isCriticalFloorLevel) {
-          warnings.push(`Critical cleanup floor at Z=${z.toFixed(4)} collapsed after inset and was skipped`)
+          warnings.push({ code: 'surface3dFloorCollapsed', params: { z: z.toFixed(4) } })
         }
         if (operation.debugToolpath) {
-          warnings.push(`Debug: Z=${z.toFixed(4)} no machinable region after initial inset`)
+          warnings.push({ code: 'debug', params: { text: `Debug: Z=${z.toFixed(4)} no machinable region after initial inset` } })
         }
       } else {
         levels.push({
@@ -437,7 +432,7 @@ export function resolve3DSurfaceStepdown(
         })
       }
     } else if (operation.debugToolpath) {
-      warnings.push(`Debug: Z=${z.toFixed(4)} fully protected — no clearance area`)
+      warnings.push({ code: 'debug', params: { text: `Debug: Z=${z.toFixed(4)} fully protected — no clearance area` } })
     }
 
     const sliceArea = calculateClipperArea(slicePaths)
@@ -456,7 +451,7 @@ export function resolve3DSurfaceStepdown(
   }
 
   if (levels.length === 0) {
-    warnings.push('No machinable 3D surface levels were found')
+    warnings.push({ code: 'surface3dNoLevels' })
   }
 
   return {

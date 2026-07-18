@@ -117,7 +117,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Only V-carve operations can be resolved by the V-carve generator'],
+      warnings: [{ code: 'vcarveWrongKind' }],
       bounds: null,
     }
   }
@@ -141,7 +141,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'No tool assigned to this operation'],
+      warnings: [...resolved.warnings, { code: 'noToolAssigned' }],
       bounds: null,
     }
   }
@@ -151,7 +151,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-Carve requires a V-bit tool'],
+      warnings: [...resolved.warnings, { code: 'vcarveNeedsVBit' }],
       bounds: null,
     }
   }
@@ -160,7 +160,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-bit angle must be between 0 and 180 degrees'],
+      warnings: [...resolved.warnings, { code: 'vBitAngleRange' }],
       bounds: null,
     }
   }
@@ -169,7 +169,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Max carve depth must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'maxCarveDepthPositive' }],
       bounds: null,
     }
   }
@@ -178,7 +178,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Contour spacing must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'contourSpacingPositive' }],
       bounds: null,
     }
   }
@@ -189,7 +189,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-bit angle produces an invalid carving slope'],
+      warnings: [...resolved.warnings, { code: 'vBitInvalidSlope' }],
       bounds: null,
     }
   }
@@ -209,7 +209,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
   for (const band of resolved.bands) {
     const maxBandDepth = Math.max(0, Math.min(operation.maxCarveDepth, band.topZ - band.bottomZ))
     if (!(maxBandDepth > 0)) {
-      warnings.push(`Band ${band.topZ} -> ${band.bottomZ} leaves no usable V-carve depth`)
+      warnings.push({ code: 'vcarveBandNoDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       continue
     }
 
@@ -259,7 +259,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
   }
 
   if (moves.length === 0) {
-    warnings.push('V-carve generator produced no toolpath moves')
+    warnings.push({ code: 'vcarveNoMoves' })
   }
 
   return {

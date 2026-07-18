@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import { convertLength } from '../../utils/units'
 
@@ -1130,7 +1131,7 @@ export function generateFinishSurfaceWaterline(
   safeZ: number,
   effectiveBottom: number,
   modelTopZ: number,
-  warnings: string[],
+  warnings: ToolpathWarning[],
   intersectingAdds: IntersectingAddFeature[] = [],
   modelSilhouettePaths: ClipperPath[] = [],
   relatedSubtracts: RelatedSubtractFeature[] = [],
@@ -1186,19 +1187,15 @@ export function generateFinishSurfaceWaterline(
   for (const add of intersectingAdds) targetFeatureIds.add(add.feature.id)
 
   if (operation.debugToolpath) {
-    warnings.push(
-      `Debug: waterline mode, adaptive=${adaptiveRefinementEnabled ? 'on' : 'off'}, ` +
+    warnings.push({ code: 'debug', params: { text: `Debug: waterline mode, adaptive=${adaptiveRefinementEnabled ? 'on' : 'off'}, ` +
       `spacing=${stepoverDistance.toFixed(4)}, triggerGap=${refinementGapThreshold.toFixed(4)}, ` +
       `tipStepdown=${tipStepdownDistance.toFixed(4)}, ` +
       `maxRingsPerBand=${maxRingsPerBand}, epsilon=${waterlineLengthEpsilon.toFixed(6)}, ` +
-      `toolOffset=${toolOffset.toFixed(4)}`,
-    )
-    warnings.push(
-      `Debug: intersectingAdds=${intersectingAdds.length} ` +
+      `toolOffset=${toolOffset.toFixed(4)}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: intersectingAdds=${intersectingAdds.length} ` +
       `[${intersectingAdds.map((a) => `${a.feature.name}:z=${a.bottomZ.toFixed(2)}..${a.topZ.toFixed(2)}`).join(', ')}], ` +
       `relatedSubtracts=${relatedSubtracts.length} ` +
-      `[${relatedSubtracts.map((s) => `z=${s.bottomZ.toFixed(2)}..${s.topZ.toFixed(2)}`).join(', ')}]`,
-    )
+      `[${relatedSubtracts.map((s) => `z=${s.bottomZ.toFixed(2)}..${s.topZ.toFixed(2)}`).join(', ')}]` } })
   }
 
   // Mesh top extracted from the slice index domain — separate from the
@@ -1361,23 +1358,19 @@ export function generateFinishSurfaceWaterline(
 
   if (operation.debugToolpath) {
     const metrics = refinedLevelBuild.metrics
-    warnings.push(
-      `Debug: adaptive waterline inserted ${metrics.insertedLevels} projected rings (${coarseLevelBuild.levels.length} coarse levels → ${waterlineLevels.length} projected levels), ` +
-      `maxGap=${metrics.maxObservedGap.toFixed(4)}, threshold=${metrics.gapThreshold.toFixed(4)}, spacing=${metrics.microStepover.toFixed(4)}`,
-    )
+    warnings.push({ code: 'debug', params: { text: `Debug: adaptive waterline inserted ${metrics.insertedLevels} projected rings (${coarseLevelBuild.levels.length} coarse levels → ${waterlineLevels.length} projected levels), ` +
+      `maxGap=${metrics.maxObservedGap.toFixed(4)}, threshold=${metrics.gapThreshold.toFixed(4)}, spacing=${metrics.microStepover.toFixed(4)}` } })
     if (!adaptiveRefinementEnabled) {
-      warnings.push('Debug: adaptive waterline skipped because adaptive refinement is disabled')
+      warnings.push({ code: 'debug', params: { text: 'Debug: adaptive waterline skipped because adaptive refinement is disabled' } })
     }
     if (regionFeatures.length > 0) {
-      warnings.push('Debug: adaptive waterline skipped because region-filtered waterline clipping must not emit boundary contours')
+      warnings.push({ code: 'debug', params: { text: 'Debug: adaptive waterline skipped because region-filtered waterline clipping must not emit boundary contours' } })
     }
     if (intersectingAdds.length > 0 && metrics.insertedLevels > 0) {
-      warnings.push('Debug: adaptive waterline projected bands were generated from mesh slices only; add-wall contours remain coarse')
+      warnings.push({ code: 'debug', params: { text: 'Debug: adaptive waterline projected bands were generated from mesh slices only; add-wall contours remain coarse' } })
     }
     if (metrics.hitCap || metrics.hitPassLimit) {
-      warnings.push(
-        `Debug: adaptive waterline stopped before all gaps were accepted (${metrics.hitCap ? 'insert cap' : 'pass limit'})`,
-      )
+      warnings.push({ code: 'debug', params: { text: `Debug: adaptive waterline stopped before all gaps were accepted (${metrics.hitCap ? 'insert cap' : 'pass limit'})` } })
     }
   }
 
@@ -1504,9 +1497,7 @@ export function generateFinishSurfaceWaterline(
   }
 
   if (operation.debugToolpath) {
-    warnings.push(
-      `Debug: ${waterlineLevels.length} waterline levels → ${allRingEntries.length} rings → ${clusters.length} columns`,
-    )
+    warnings.push({ code: 'debug', params: { text: `Debug: ${waterlineLevels.length} waterline levels → ${allRingEntries.length} rings → ${clusters.length} columns` } })
   }
 
   const allMoves: ToolpathMove[] = []

@@ -17,6 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
+import { toolpathWarningText } from '../../i18n/warningText'
+import type { ToolpathWarning } from '../../engine/toolpaths/warningCodes'
 import { createPortal } from 'react-dom'
 import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
@@ -60,7 +62,7 @@ interface CAMPanelProps {
   /** Open the Export G-code dialog scoped to a single operation. */
   onExportOperation: (operationId: string) => void
   generateToolpath: (operation: Operation) => ToolpathResult | null
-  toolpathWarnings?: string[] | null
+  toolpathWarnings?: ToolpathWarning[] | null
   generatingOperationIds?: Set<string>
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
   onOperationHighlightChange?: (kind: OperationKind | null) => void
@@ -928,7 +930,7 @@ export function CAMPanel({
     const result = createRestOperation(selectedOperation.id)
     const text = result.operationId
       ? camT('cam.restOp.created', { count: String(result.regionIds.length), plural: result.regionIds.length === 1 ? '' : 's' })
-      : (result.warnings[0] ?? camT('cam.restOp.empty'))
+      : (result.warnings[0] ? toolpathWarningText(result.warnings[0]) : camT('cam.restOp.empty'))
     setOperationActionMessage({ operationId: result.operationId ?? selectedOperation.id, text })
     if (result.operationId) {
       onSelectedOperationIdChange(result.operationId)
@@ -1209,7 +1211,7 @@ export function CAMPanel({
                       <div className="cam-field-note-list">
                         {toolpathWarnings.map((warning, index) => (
                           <div key={`${selectedOperation.id}-warning-${index}`} className="cam-field-note">
-                            {warning}
+                            {toolpathWarningText(warning)}
                           </div>
                         ))}
                       </div>

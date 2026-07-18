@@ -501,7 +501,7 @@ function testMergeToolpathResults() {
   const partA: ToolpathResult = {
     operationId: 'sub1',
     moves: [{ kind: 'cut', from: { x: 0, y: 0, z: -2 }, to: { x: 10, y: 0, z: -2 } }],
-    warnings: ['warn A'],
+    warnings: [{ code: 'debug' as const, params: { text: 'warn A' } }],
     bounds: bounds1,
     collidingClampIds: ['c1'],
   }
@@ -517,7 +517,7 @@ function testMergeToolpathResults() {
   assert(merged.operationId === 'op-parent', 'operationId comes from parent')
   assert(merged.moves.length === 2, 'moves concatenated')
   assert(merged.moves[0].from.x === 0 && merged.moves[1].from.x === 10, 'move order preserved')
-  assert(merged.warnings.length === 1 && merged.warnings[0] === 'warn A', 'warnings concatenated')
+  assert(merged.warnings.length === 1 && merged.warnings[0].params?.text === 'warn A', 'warnings concatenated')
   assert(merged.bounds !== null, 'bounds present')
   assert(merged.bounds!.minX === 0 && merged.bounds!.maxX === 30, 'bounds X unioned')
   assert(merged.bounds!.minZ === -6 && merged.bounds!.maxZ === 1, 'bounds Z unioned')
@@ -805,7 +805,8 @@ function testPocketRejectsRegionOnlyTarget() {
   const result = generatePocketToolpath(project, op)
 
   assert(cutMoves(result.moves).length === 0, 'region-only pocket should generate no cuts')
-  assert(result.warnings.some((warning) => warning.includes('No valid subtract features')), 'region-only pocket should warn about missing subtract targets')
+  assert(result.warnings.some((warning) => warning.code === 'resolverNoValidSubtracts'
+    || (warning.code === 'resolverNoValidKindTargets' && String(warning.params?.kind ?? '').includes('subtract'))), 'region-only pocket should warn about missing subtract targets')
   console.log('pocket region-only rejection: PASSED')
 }
 
@@ -1374,7 +1375,7 @@ function testEdgeOutsideAcceptsModelSilhouette() {
   const result = generateEdgeRouteToolpath(project, op)
   assert(result.moves.length > 0, 'outside edge route produces moves for model silhouette')
   assert(
-    !result.warnings.some((warning) => warning.includes('not add/model/region')),
+    !result.warnings.some((warning) => warning.code === 'targetsMissingOrWrongRole' && String(warning.params?.roles ?? '').includes('add/model/region')),
     `model target should be accepted; warnings: ${result.warnings.join(', ')}`,
   )
 
@@ -1970,7 +1971,7 @@ function testFinishSurfaceCleanupRejectsRegionOnlyTarget() {
   const result = generateFinishSurfaceCleanupToolpath(project, op)
 
   assert(cutMoves(result.moves).length === 0, 'region-only cleanup should generate no cuts')
-  assert(result.warnings.some((warning) => warning.includes('imported mesh model')), 'region-only cleanup should warn about the missing imported model target')
+  assert(result.warnings.some((warning) => warning.code === 'finishNotMesh' || warning.code === 'surface3dNotMesh'), 'region-only cleanup should warn about the missing imported model target')
   console.log('finish_surface_cleanup region-only rejection: PASSED')
 }
 

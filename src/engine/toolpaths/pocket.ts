@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import type {
   ClipperPath,
@@ -1312,15 +1313,15 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
+): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const effectiveBottom = resolveBandBottomZ(band, operation)
   if (effectiveBottom === null) {
     return {
       moves,
       stepLevels: [],
-      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no roughing depth after axial stock-to-leave`],
+      warnings: [{ code: 'surfaceBandNoRoughDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -1342,7 +1343,7 @@ function generateRoughBandMoves(
       return {
         moves,
         stepLevels,
-        warnings: [`No machinable parallel floor region for band ${band.topZ} -> ${band.bottomZ}`],
+        warnings: [{ code: 'pocketNoFloorRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
       }
     }
 
@@ -1352,7 +1353,7 @@ function generateRoughBandMoves(
       return {
         moves,
         stepLevels,
-        warnings: [`No machinable parallel floor segments for band ${band.topZ} -> ${band.bottomZ}`],
+        warnings: [{ code: 'pocketNoFloorSegments', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
       }
     }
 
@@ -1397,7 +1398,7 @@ function generateRoughBandMoves(
 
   for (const z of stepLevels) {
     if (regionTrees.length === 0) {
-      warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
+      warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
       continue
     }
@@ -1441,15 +1442,15 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
+): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const effectiveBottom = resolveBandBottomZ(band, operation)
   if (effectiveBottom === null) {
     return {
       moves,
       stepLevels: [],
-      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no finish depth after axial stock-to-leave`],
+      warnings: [{ code: 'surfaceBandNoFinishDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -1457,7 +1458,7 @@ function generateFinishBandMoves(
     return {
       moves,
       stepLevels: [],
-      warnings: ['Finish operation has both Finish Walls and Finish Floor disabled'],
+      warnings: [{ code: 'surfaceFinishBothDisabled' }],
     }
   }
 
@@ -1517,7 +1518,7 @@ function generateFinishBandMoves(
     return {
       moves,
       stepLevels: [],
-      warnings: [`No finish contours available for band ${band.topZ} -> ${band.bottomZ}`],
+      warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -1645,7 +1646,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'No tool assigned to this operation'],
+      warnings: [...resolved.warnings, { code: 'noToolAssigned' }],
       bounds: null,
       stepLevels: [],
     }
@@ -1656,7 +1657,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Tool diameter must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'toolDiameterPositive' }],
       bounds: null,
       stepLevels: [],
     }
@@ -1666,7 +1667,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Operation stepdown must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'stepdownPositive' }],
       bounds: null,
       stepLevels: [],
     }
@@ -1676,7 +1677,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Operation stepover ratio must be between 0 and 1'],
+      warnings: [...resolved.warnings, { code: 'operationStepoverRatioRange' }],
       bounds: null,
       stepLevels: [],
     }
@@ -1727,7 +1728,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
       .join(', ')
 
     if (resolved.bands.length > 0) {
-      warnings.push(`Debug: resolved pocket bands = ${resolvedBandSummary}`)
+      warnings.push({ code: 'debug', params: { text: `Debug: resolved pocket bands = ${resolvedBandSummary}` } })
     }
   }
 
@@ -1758,21 +1759,15 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     stepLevels.forEach((level) => allStepLevels.add(level))
     warnings.push(...bandWarnings)
     if (operation.debugToolpath) {
-      warnings.push(
-        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} cut levels = ${
+      warnings.push({ code: 'debug', params: { text: `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} cut levels = ${
           stepLevels.length > 0 ? stepLevels.map((level) => formatZ(level)).join(', ') : 'none'
-        }`,
-      )
-      warnings.push(
-        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} targets = ${
+        }` } })
+      warnings.push({ code: 'debug', params: { text: `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} targets = ${
           band.targetFeatureIds.length > 0 ? band.targetFeatureIds.map((id) => formatFeatureSpan(id)).join('; ') : 'none'
-        }`,
-      )
-      warnings.push(
-        `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} islands = ${
+        }` } })
+      warnings.push({ code: 'debug', params: { text: `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} islands = ${
           band.islandFeatureIds.length > 0 ? band.islandFeatureIds.map((id) => formatIslandSpan(id)).join('; ') : 'none'
-        }`,
-      )
+        }` } })
     }
   }
 

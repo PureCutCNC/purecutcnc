@@ -15,6 +15,7 @@
  */
 
 import type { Operation, Point, Project } from '../../types/project'
+import type { ToolpathWarning } from './warningCodes'
 import { expandFeatureGeometry } from '../../text'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -115,7 +116,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Only follow-line operations can be resolved by the carving generator'],
+      warnings: [{ code: 'carveWrongKind' }],
       bounds: null,
     }
   }
@@ -124,7 +125,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Follow-line operation has no feature targets'],
+      warnings: [{ code: 'carveNoTargets' }],
       bounds: null,
     }
   }
@@ -137,7 +138,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['No tool assigned to this operation'],
+      warnings: [{ code: 'noToolAssigned' }],
       bounds: null,
     }
   }
@@ -147,7 +148,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Tool diameter must be greater than zero'],
+      warnings: [{ code: 'toolDiameterPositive' }],
       bounds: null,
     }
   }
@@ -156,7 +157,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Carve depth must be greater than zero'],
+      warnings: [{ code: 'carveDepthPositive' }],
       bounds: null,
     }
   }
@@ -166,21 +167,21 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   const targetFeatures = splitTargets.machiningFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))
 
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const depthWarning = checkMaxCutDepthWarning(tool, operation.carveDepth)
   if (depthWarning) {
     warnings.push(depthWarning)
   }
 
   if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
-    warnings.push('Some selected target features are missing')
+    warnings.push({ code: 'targetsMissing' })
   }
 
   if (targetFeatures.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...warnings, 'No valid target features were found for this follow-line operation'],
+      warnings: [...warnings, { code: 'carveNoValidTargets' }],
       bounds: null,
     }
   }
@@ -192,14 +193,14 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
     if (flattened.points.length < 2) {
-      warnings.push(`${feature.name} does not contain enough geometry for follow-line carving`)
+      warnings.push({ code: 'carveNotEnoughGeometry', params: { name: feature.name } })
       continue
     }
 
     const topZ = resolveDimensionRef(project, feature.z_top)
     let carveZ = topZ - operation.carveDepth
     if (carveZ < 0) {
-      warnings.push(`${feature.name} carve depth exceeds stock bottom; clamped to Z 0`)
+      warnings.push({ code: 'carveDepthClamped', params: { name: feature.name } })
       carveZ = 0
     }
 

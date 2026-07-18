@@ -99,7 +99,7 @@ export function generateVCarveMedialToolpath(project: Project, operation: Operat
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Only V-carve medial operations can be resolved by the medial-axis generator'],
+      warnings: [{ code: 'vcarveMedialWrongKind' }],
       bounds: null,
     }
   }
@@ -123,7 +123,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'No tool assigned to this operation'],
+      warnings: [...resolved.warnings, { code: 'noToolAssigned' }],
       bounds: null,
     }
   }
@@ -133,7 +133,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-Carve medial requires a V-bit tool'],
+      warnings: [...resolved.warnings, { code: 'vcarveMedialNeedsVBit' }],
       bounds: null,
     }
   }
@@ -142,7 +142,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-bit angle must be between 0 and 180 degrees'],
+      warnings: [...resolved.warnings, { code: 'vBitAngleRange' }],
       bounds: null,
     }
   }
@@ -151,7 +151,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Max carve depth must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'maxCarveDepthPositive' }],
       bounds: null,
     }
   }
@@ -162,7 +162,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'V-bit angle produces an invalid carving slope'],
+      warnings: [...resolved.warnings, { code: 'vBitInvalidSlope' }],
       bounds: null,
     }
   }
@@ -180,7 +180,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
   for (const band of resolved.bands) {
     const maxBandDepth = Math.max(0, Math.min(operation.maxCarveDepth, band.topZ - band.bottomZ))
     if (!(maxBandDepth > 0)) {
-      warnings.push(`Band ${band.topZ} -> ${band.bottomZ} leaves no usable V-carve depth`)
+      warnings.push({ code: 'vcarveBandNoDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       continue
     }
 
@@ -188,7 +188,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     for (const region of sortedRegions) {
       const resolvedResolution = resolveMedialResolution(region)
       if (!resolvedResolution) {
-        warnings.push('A region has degenerate XY bounds and produced no medial axis')
+        warnings.push({ code: 'vcarveDegenerateRegion' })
         continue
       }
 
@@ -196,9 +196,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
       if (resolvedResolution.budgetLimited) {
         if (!budgetWarned) {
           budgetWarned = true
-          warnings.push(
-            `Sampling resolution raised to ${resolution.toFixed(3)} on large regions to bound computation`,
-          )
+          warnings.push({ code: 'vcarveSamplingBudget', params: { resolution: resolution.toFixed(3) } })
         }
       }
 
@@ -218,7 +216,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
         )
       }
       if (graph.nodes.length === 0) {
-        warnings.push('A region produced no medial axis (feature may be thinner than the step size)')
+        warnings.push({ code: 'vcarveNoMedialAxis' })
         continue
       }
 
@@ -241,7 +239,7 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
   }
 
   if (moves.length === 0) {
-    warnings.push('V-carve medial generator produced no toolpath moves')
+    warnings.push({ code: 'vcarveMedialNoMoves' })
   }
 
   return {

@@ -15,6 +15,7 @@
  */
 
 import type { Manifold as ManifoldSolid } from 'manifold-3d'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from '../csg'
 import { expandFeatureGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -43,7 +44,7 @@ export async function assembleModelExportMesh(
   options: ModelExportAssembleOptions,
 ): Promise<ModelExportAssembleResult> {
   const module = await getManifoldModule()
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const arcStepRadians = CURVE_QUALITY_ARC_STEP_RADIANS[options.curveQuality]
 
   const visibleFeatures = resolvedProjectFeatures(project).filter((feature) => feature.visible)

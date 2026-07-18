@@ -15,6 +15,7 @@
  */
 
 import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
+import type { ToolpathWarning } from './warningCodes'
 import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
@@ -43,15 +44,15 @@ function precomputeDrillTargets(
   targetFeatures: SketchFeature[],
   project: Project,
   regionMask: ReturnType<typeof buildRegionMask> | null,
-): { targets: DrillTarget[]; warnings: string[] } {
+): { targets: DrillTarget[]; warnings: ToolpathWarning[] } {
   const targets: DrillTarget[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
 
   for (let i = 0; i < targetFeatures.length; i += 1) {
     const feature = targetFeatures[i]
     const center = getCircleCenter(feature.sketch.profile)
     if (!center) {
-      warnings.push(`${feature.name} is marked as a circle but has no resolvable center`)
+      warnings.push({ code: 'drillNoCenter', params: { name: feature.name } })
       continue
     }
     if (regionMask && !regionMask.containsPoint(center)) {
@@ -63,7 +64,7 @@ function precomputeDrillTargets(
     const bottomZ = span.bottom
 
     if (bottomZ >= topZ) {
-      warnings.push(`${feature.name} bottom Z is not below top Z; skipping`)
+      warnings.push({ code: 'drillBottomAboveTop', params: { name: feature.name } })
       continue
     }
 
@@ -218,7 +219,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Only drilling operations can be resolved by the drilling generator'],
+      warnings: [{ code: 'drillWrongKind' }],
       bounds: null,
     }
   }
@@ -227,7 +228,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Drilling operation has no feature targets'],
+      warnings: [{ code: 'drillNoTargets' }],
       bounds: null,
     }
   }
@@ -240,7 +241,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['No tool assigned to this operation'],
+      warnings: [{ code: 'noToolAssigned' }],
       bounds: null,
     }
   }
@@ -250,7 +251,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Tool diameter must be greater than zero'],
+      warnings: [{ code: 'toolDiameterPositive' }],
       bounds: null,
     }
   }
@@ -260,14 +261,14 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   const targetFeatures = splitTargets.machiningFeatures
     .filter((feature) => feature.kind === 'circle')
 
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
 
   if (tool.type !== 'drill') {
-    warnings.push('Selected tool is not a drill bit — drilling cycles typically require a drill tool')
+    warnings.push({ code: 'drillNotDrillBit' })
   }
 
   if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
-    warnings.push('Some selected target features are not circles and were skipped')
+    warnings.push({ code: 'drillTargetsNotCircles' })
   }
 
 
@@ -276,7 +277,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   const peckDepth = operation.peckDepth ?? 0
 
   if ((drillType === 'peck' || drillType === 'chip_breaking') && !(peckDepth > 0)) {
-    warnings.push('Peck depth must be greater than zero for peck / chip-breaking drilling; falling back to a single plunge')
+    warnings.push({ code: 'drillPeckDepthPositive' })
   }
 
   // Precompute and sort targets by nearest-neighbor travel
@@ -287,7 +288,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...warnings, 'No valid circle features were found for this drilling operation'],
+      warnings: [...warnings, { code: 'drillNoValidCircles' }],
       bounds: null,
     }
   }
@@ -317,7 +318,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
     const depthWarning = checkMaxCutDepthWarning(tool, topZ - bottomZ)
     if (depthWarning) {
-      warnings.push(`${target.feature.name}: ${depthWarning}`)
+      warnings.push({ code: 'cutDepthExceedsToolMaxForFeature', params: { name: target.feature.name, ...depthWarning.params } })
     }
 
     currentPosition = emitDrillCycle(

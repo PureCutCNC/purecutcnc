@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type {
   ClipperPath,
@@ -77,7 +78,7 @@ interface SurfaceCleanResult {
   units: ResolvedPocketResult['units']
   bands: SurfaceCleanBand[]
   regionMask: ReturnType<typeof buildRegionMask>
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 function executeClip(
@@ -174,7 +175,7 @@ function buildSurfaceCoverageRegions(
 }
 
 function resolveSurfaceCleanRegions(project: Project, operation: Operation): SurfaceCleanResult {
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
 
   if (operation.kind !== 'surface_clean') {
     return {
@@ -182,7 +183,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       units: project.meta.units,
       bands: [],
       regionMask: null,
-      warnings: ['Only surface-clean operations can be resolved by the surface-clean resolver'],
+      warnings: [{ code: 'surfaceCleanWrongKind' }],
     }
   }
 
@@ -192,7 +193,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       units: project.meta.units,
       bands: [],
       regionMask: null,
-      warnings: ['Surface-clean operation has no feature targets'],
+      warnings: [{ code: 'surfaceCleanNoTargets' }],
     }
   }
 
@@ -211,12 +212,12 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     })
 
   if (validTargetSourceFeatures.length !== selectedTargetFeatures.length || splitTargets.missingFeatureIds.length > 0) {
-    warnings.push('Some selected target features are missing or are not add/model features')
+    warnings.push({ code: 'surfaceTargetsWrongRole' })
   }
 
   const closedTargetFeatures = targetFeatures.filter(({ feature }) => featureHasClosedGeometry(feature))
   if (closedTargetFeatures.length !== targetFeatures.length) {
-    warnings.push('Surface-clean operations only support closed target profiles')
+    warnings.push({ code: 'surfaceClosedProfilesOnly' })
   }
 
   if (closedTargetFeatures.length === 0) {
@@ -225,7 +226,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       units: project.meta.units,
       bands: [],
       regionMask,
-      warnings: [...warnings, 'No valid add features were found for this surface-clean operation'],
+      warnings: [...warnings, { code: 'surfaceCleanNoValidTargets' }],
     }
   }
 
@@ -269,7 +270,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     )
 
     if (regions.length === 0) {
-      warnings.push(`Band ${topZ} -> ${bottomZ} resolved to no machinable regions`)
+      warnings.push({ code: 'bandNoRegions', params: { topZ, bottomZ } })
       continue
     }
 
@@ -285,7 +286,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
   }
 
   if (bands.length === 0) {
-    warnings.push('Surface-clean resolver produced no depth bands')
+    warnings.push({ code: 'surfaceNoBands' })
   }
 
   return {
@@ -306,15 +307,15 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
+): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const effectiveBottom = resolveBandBottomZ(band, operation)
   if (effectiveBottom === null) {
     return {
       moves,
       stepLevels: [],
-      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no roughing depth after axial stock-to-leave`],
+      warnings: [{ code: 'surfaceBandNoRoughDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -332,7 +333,7 @@ function generateRoughBandMoves(
       return {
         moves,
         stepLevels,
-        warnings: [`No machinable parallel cleanup region for band ${band.topZ} -> ${band.bottomZ}`],
+        warnings: [{ code: 'surfaceNoCleanupRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
       }
     }
 
@@ -342,7 +343,7 @@ function generateRoughBandMoves(
       return {
         moves,
         stepLevels,
-        warnings: [`No machinable parallel cleanup segments for band ${band.topZ} -> ${band.bottomZ}`],
+        warnings: [{ code: 'surfaceNoCleanupSegments', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
       }
     }
 
@@ -382,7 +383,7 @@ function generateRoughBandMoves(
   for (const z of stepLevels) {
     const currentRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
     if (currentRegions.length === 0) {
-      warnings.push(`No machinable offset contours for band ${band.topZ} -> ${band.bottomZ}`)
+      warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
       continue
     }
@@ -420,15 +421,15 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-): { moves: ToolpathMove[]; stepLevels: number[]; warnings: string[] } {
+): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const effectiveBottom = resolveBandBottomZ(band, operation)
   if (effectiveBottom === null) {
     return {
       moves,
       stepLevels: [],
-      warnings: [`Band ${band.topZ} -> ${band.bottomZ} leaves no finish depth after axial stock-to-leave`],
+      warnings: [{ code: 'surfaceBandNoFinishDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -436,7 +437,7 @@ function generateFinishBandMoves(
     return {
       moves,
       stepLevels: [],
-      warnings: ['Finish operation has both Finish Walls and Finish Floor disabled'],
+      warnings: [{ code: 'surfaceFinishBothDisabled' }],
     }
   }
 
@@ -455,7 +456,7 @@ function generateFinishBandMoves(
     return {
       moves,
       stepLevels: [],
-      warnings: [`No finish contours available for band ${band.topZ} -> ${band.bottomZ}`],
+      warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 
@@ -532,7 +533,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'No tool assigned to this operation'],
+      warnings: [...resolved.warnings, { code: 'noToolAssigned' }],
       bounds: null,
       stepLevels: [],
     }
@@ -543,7 +544,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Tool diameter must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'toolDiameterPositive' }],
       bounds: null,
       stepLevels: [],
     }
@@ -553,7 +554,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     return {
       operationId: operation.id,
       moves: [],
-      warnings: [...resolved.warnings, 'Operation stepdown must be greater than zero'],
+      warnings: [...resolved.warnings, { code: 'stepdownPositive' }],
       bounds: null,
       stepLevels: [],
     }

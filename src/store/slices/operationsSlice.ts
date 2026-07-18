@@ -164,10 +164,10 @@ export function createOperationsSlice(
       const state = get()
       const operation = state.project.operations.find((item) => item.id === operationId)
       if (!operation) {
-        return { operationId: null, regionIds: [], warnings: ['Operation not found'] }
+        return { operationId: null, regionIds: [], warnings: [{ code: 'restOperationNotFound' as const }] }
       }
       if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
-        return { operationId: null, regionIds: [], warnings: ['Rest operations can only be created from pocket or edge-route operations with feature targets'] }
+        return { operationId: null, regionIds: [], warnings: [{ code: 'restOnlyPocketEdgeTargets' as const }] }
       }
 
       if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {

@@ -42,6 +42,8 @@ import type { Project } from '../../types/project'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
+import { toolpathWarningTexts } from '../../i18n/warningText'
+import type { ToolpathWarning } from '../../engine/toolpaths/warningCodes'
 
 interface ModelExportDialogProps {
   onClose: () => void
@@ -49,7 +51,7 @@ interface ModelExportDialogProps {
 
 interface AssembledMesh {
   mesh: ExportTriangleMesh
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
@@ -127,7 +129,7 @@ export function ModelExportDialog({ onClose }: ModelExportDialogProps) {
 
   const warnings = useMemo(() => {
     if (is2d) return []
-    const list = [...(assembled?.warnings ?? [])]
+    const list = toolpathWarningTexts(assembled?.warnings ?? [])
     if (assembled && triangleCount === 0) {
       list.push(td('dialogs.modelExport.noGeometry'))
     }

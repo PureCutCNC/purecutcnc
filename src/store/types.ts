@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
 import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
 import type { SnapMode } from '../sketch/snapping'
@@ -408,7 +409,7 @@ export interface ProjectStore {
     libraryTools?: ToolLibraryEntry[],
   ) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
-  createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: string[] }
+  createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: ToolpathWarning[] }
   setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null

@@ -559,7 +559,7 @@ function testCleanupRejectsDisabledFinishModes(): void {
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
 
   assert(result.moves.length === 0, 'expected no cleanup moves')
-  assert(result.warnings.includes('Finish operation has both Finish Walls and Finish Floor disabled'), 'expected disabled-finish warning')
+  assert(result.warnings.some((w) => w.code === 'surfaceFinishBothDisabled'), 'expected disabled-finish warning')
 }
 
 function testCleanupUsesInternalSamplingStepdown(): void {
@@ -569,7 +569,7 @@ function testCleanupUsesInternalSamplingStepdown(): void {
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
 
   assert(cutMoves(result.moves).length > 0, 'expected cleanup moves even when the stored stepdown is zero')
-  assert(!result.warnings.includes('Operation stepdown must be greater than zero'), 'expected cleanup to ignore the stored stepdown validation')
+  assert(!result.warnings.some((w) => w.code === 'stepdownPositive'), 'expected cleanup to ignore the stored stepdown validation')
 }
 
 function testCleanupWarnsOnStockToLeave(): void {
@@ -579,7 +579,7 @@ function testCleanupWarnsOnStockToLeave(): void {
   operation.stockToLeaveAxial = 0.2
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
 
-  assert(result.warnings.some((warning) => warning.includes('stock-to-leave values')), 'expected cleanup stock-to-leave warning')
+  assert(result.warnings.some((warning) => warning.code === 'cleanupStockToLeaveOffsets'), 'expected cleanup stock-to-leave warning')
 }
 
 function testCleanupWallsEmitOnlyLowestRetainedLevels(): void {
@@ -712,7 +712,7 @@ function testCleanupWarnsOnOpenSliceFallback(): void {
   const { project, operation } = makeOpenSliceProject()
   const result = generateFinishSurfaceCleanupToolpath(project, operation)
 
-  assert(result.warnings.some((warning) => warning.includes('open/non-watertight slices')), 'expected open-slice fallback warning')
+  assert(result.warnings.some((warning) => warning.code === 'surface3dOpenMesh'), 'expected open-slice fallback warning')
 }
 
 function testCleanupRespectsContainingPocketWallsAndFloor(): void {
