@@ -17,7 +17,24 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OperationKind } from '../../types/project'
 import { operationDescriptions } from '../../types/operationDescriptions'
+import type { camEn } from '../../i18n/locales/en/cam'
+import { camT } from './camI18n'
 import { Icon } from '../Icon'
+
+/** camelCase segment used in cam.opDesc.<segment>.* catalog keys. */
+const OP_DESC_SEG: Record<OperationKind, string> = {
+  pocket: 'pocket',
+  v_carve: 'vCarve',
+  v_carve_medial: 'vCarveMedial',
+  edge_route_inside: 'edgeRouteInside',
+  edge_route_outside: 'edgeRouteOutside',
+  surface_clean: 'surfaceClean',
+  rough_surface: 'roughSurface',
+  finish_surface: 'finishSurface',
+  finish_surface_cleanup: 'finishSurfaceCleanup',
+  follow_line: 'followLine',
+  drilling: 'drilling',
+}
 
 interface OperationButton {
   kind: OperationKind
@@ -73,10 +90,14 @@ export function OperationAddMenu({
     onChooseOperation(kind)
   }
 
+  function opDescKey(kind: OperationKind, slot: string): keyof typeof camEn {
+    return `cam.opDesc.${OP_DESC_SEG[kind]}.${slot}` as keyof typeof camEn
+  }
+
   return (
     <div className="cam-add-menu cam-add-menu--vertical">
       <div className="cam-add-menu__section">
-        <span className="cam-add-menu__label">Operation</span>
+        <span className="cam-add-menu__label">{camT('cam.addMenu.operation')}</span>
 
         <div className="cam-operations-list">
           {operationButtons.map((button) => {
@@ -101,7 +122,9 @@ export function OperationAddMenu({
                   <button
                     className={`cam-operation-label-btn ${isExpanded ? 'cam-operation-label-btn--expanded' : ''}`}
                     type="button"
-                    title={button.hint ?? (isExpanded ? `Collapse ${button.label} info` : `Expand ${button.label} info`)}
+                    title={button.hint ?? (isExpanded
+                      ? camT('cam.addMenu.collapseInfo', { label: button.label })
+                      : camT('cam.addMenu.expandInfo', { label: button.label }))}
                     onClick={() => {
                       // A1.5: arm the highlight on tap too, so touch users (no
                       // hover) get the same compatible-feature highlight. Kept
@@ -121,40 +144,48 @@ export function OperationAddMenu({
                       <button
                         className="cam-subtab cam-subtab--compact"
                         type="button"
-                        title={button.hint ? `Rough pass (${button.hint})` : 'Rough pass'}
+                        title={button.hint
+                          ? camT('cam.addMenu.roughPassHint', { hint: button.hint })
+                          : camT('cam.addMenu.roughPassTitle')}
                         disabled={!!button.hint}
                         onClick={() => onAddOperation(button.kind, 'rough')}
                       >
-                        Rough
+                        {camT('cam.addMenu.roughPass')}
                       </button>
                       <button
                         className="cam-subtab cam-subtab--compact"
                         type="button"
-                        title={button.hint ? `Finish pass (${button.hint})` : 'Finish pass'}
+                        title={button.hint
+                          ? camT('cam.addMenu.finishPassHint', { hint: button.hint })
+                          : camT('cam.addMenu.finishPassTitle')}
                         disabled={!!button.hint}
                         onClick={() => onAddOperation(button.kind, 'finish')}
                       >
-                        Finish
+                        {camT('cam.addMenu.finishPass')}
                       </button>
                       <button
                         className="cam-subtab cam-subtab--compact"
                         type="button"
-                        title={button.hint ? `Both passes (${button.hint})` : 'Both rough and finish passes'}
+                        title={button.hint
+                          ? camT('cam.addMenu.bothPassesHint', { hint: button.hint })
+                          : camT('cam.addMenu.bothPassesTitle')}
                         disabled={!!button.hint}
                         onClick={() => onAddOperation(button.kind, 'pair')}
                       >
-                        Both
+                        {camT('cam.addMenu.bothPasses')}
                       </button>
                     </div>
                   ) : (
                     <button
                       className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
                       type="button"
-                      title={button.hint ? `Add ${button.label} (${button.hint})` : `Add ${button.label}`}
+                      title={button.hint
+                        ? camT('cam.addMenu.addHint', { label: button.label, hint: button.hint })
+                        : camT('cam.addMenu.addLabel', { label: button.label })}
                       disabled={!!button.hint}
                       onClick={() => handleOperationClick(button.kind)}
                     >
-                      Add
+                      {camT('cam.addMenu.add')}
                     </button>
                   )}
                 </div>
@@ -170,10 +201,10 @@ export function OperationAddMenu({
                       <button
                         className="cam-subtab cam-subtab--compact cam-operation-hint__select-all"
                         type="button"
-                        title={`Select all features compatible with ${button.label}`}
+                        title={camT('cam.addMenu.selectAllHint', { label: button.label })}
                         onClick={() => onSelectFeatures(button.selectAllFeatureIds ?? [])}
                       >
-                        Select all
+                        {camT('cam.addMenu.selectAll')}
                       </button>
                     ) : null}
                   </div>
@@ -185,13 +216,13 @@ export function OperationAddMenu({
                     <div className="cam-operation-details__image-container">
                       {imageErrors.has(button.kind) ? (
                         <div className="cam-operation-details__image-fallback">
-                          Missing image:<br />
+                          {camT('cam.addMenu.missingImage')}<br />
                           <code>public/operation-examples/{description.exampleImageName}</code>
                         </div>
                       ) : (
                         <img
                           src={`${import.meta.env.BASE_URL}operation-examples/${description.exampleImageName}`}
-                          alt={`${description.title} example`}
+                          alt={camT('cam.addMenu.exampleImage', { title: camT(opDescKey(button.kind, 'title')) })}
                           className="cam-operation-details__image"
                           onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
                         />
@@ -199,16 +230,18 @@ export function OperationAddMenu({
                     </div>
 
                     <p className="cam-operation-details__description">
-                      {description.fullDescription}
+                      {camT(opDescKey(button.kind, 'fullDescription'))}
                     </p>
 
                     {description.keyPoints.length > 0 && (
                       <div className="cam-operation-details__keypoints">
-                        <span className="cam-operation-details__keypoints-label">Key points:</span>
+                        <span className="cam-operation-details__keypoints-label">
+                          {camT('cam.addMenu.keyPoints')}
+                        </span>
                         <ul className="cam-operation-details__keypoints-list">
-                          {description.keyPoints.map((point, index) => (
+                          {description.keyPoints.map((_point, index) => (
                             <li key={index} className="cam-operation-details__keypoint">
-                              {point}
+                              {camT(opDescKey(button.kind, `keyPoint.${index}`))}
                             </li>
                           ))}
                         </ul>
