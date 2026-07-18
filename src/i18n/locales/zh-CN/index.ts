@@ -21,6 +21,7 @@ import { canvasZhCN } from './canvas'
 import { featureTreeZhCN } from './featureTree'
 import { camZhCN } from './cam'
 import { dialogsZhCN } from './dialogs'
+import { appShellZhCN } from './appShell'
 
 /**
  * The complete Simplified Chinese catalog, merged from per-area modules that
@@ -35,4 +36,5 @@ export const zhCN: Record<MessageKey, string> = {
   ...sketchZhCN,
   ...canvasZhCN,
   ...featureTreeZhCN,
+  ...appShellZhCN,
 }

@@ -23,6 +23,9 @@ import { TextToolDialog } from '../project/TextToolDialog'
 import type { TextToolConfig } from '../../text'
 import { useCreationShapeCommands, type CreationShape } from '../../commands/creationShapes'
 import { useSketchCommands } from '../../commands/sketchCommands'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
+import type { CreationTarget } from '../../store/types'
 
 function RailButton({
   icon,
@@ -140,10 +143,19 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const [showAlignPopover, setShowAlignPopover] = useState(false)
   const [showDistributePopover, setShowDistributePopover] = useState(false)
   const [lastCreationShape, setLastCreationShape] = useState<CreationShape>('rect')
+  const { t } = useI18n()
   const sketchCommands = useSketchCommands()
   const creationCommands = useCreationShapeCommands({
     onRequestText: () => setShowTextDialog(true),
   })
+
+  const TARGET_NOUN_KEYS: Record<CreationTarget, MessageKey> = {
+    feature: 'sketch.target.feature',
+    line: 'sketch.target.line',
+    region: 'sketch.target.region',
+    construction: 'sketch.target.construction',
+  }
+  const targetNoun = t(TARGET_NOUN_KEYS[creationCommands.creationTarget])
   const availableCreationOptions = creationCommands.availableShapeCommands
   const lastCreationOption = availableCreationOptions.find((option) => option.id === lastCreationShape) ?? availableCreationOptions[0]
 
@@ -170,14 +182,14 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
 
   return (
     <>
-      <nav className="tool-rail" aria-label="Tools">
+      <nav className="tool-rail" aria-label={t('appShell.drawer.tools')}>
         {/* Creation target toggle */}
         <div className="tool-rail__section">
           <div className="tool-rail__target-toggle">
             <button
               className={`tool-rail__target-btn ${creationCommands.creationTarget === 'feature' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
-              aria-label="Create features"
+              aria-label={t('sketch.target.createFeatures')}
               aria-pressed={creationCommands.creationTarget === 'feature'}
               onClick={() => creationCommands.setCreationTarget('feature')}
             >
@@ -186,7 +198,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <button
               className={`tool-rail__target-btn tool-rail__target-btn--line ${creationCommands.creationTarget === 'line' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
-              aria-label="Create lines"
+              aria-label={t('sketch.target.createLines')}
               aria-pressed={creationCommands.creationTarget === 'line'}
               onClick={() => creationCommands.setCreationTarget('line')}
             >
@@ -195,7 +207,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <button
               className={`tool-rail__target-btn tool-rail__target-btn--region ${creationCommands.creationTarget === 'region' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
-              aria-label="Create regions"
+              aria-label={t('sketch.target.createRegions')}
               aria-pressed={creationCommands.creationTarget === 'region'}
               onClick={() => creationCommands.setCreationTarget('region')}
             >
@@ -204,7 +216,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <button
               className={`tool-rail__target-btn tool-rail__target-btn--construction ${creationCommands.creationTarget === 'construction' ? 'tool-rail__target-btn--active' : ''}`}
               type="button"
-              aria-label="Create construction geometry"
+              aria-label={t('sketch.target.createConstruction')}
               aria-pressed={creationCommands.creationTarget === 'construction'}
               onClick={() => creationCommands.setCreationTarget('construction')}
             >
@@ -217,8 +229,8 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         <div className="tool-rail__section">
           <RailFlyout
             icon="feature-drawer"
-            label={`Choose ${creationCommands.creationTarget} shape`}
-            tooltip="Shapes"
+            label={t('sketch.creation.chooseTarget', { target: targetNoun })}
+            tooltip={t('appShell.toolRail.shapes')}
             open={showCreationPopover}
             onToggle={() => {
               setShowCreationPopover((v) => !v)
@@ -231,7 +243,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               <button
                 key={option.id}
                 type="button"
-                aria-label={`Add ${creationCommands.creationTarget} ${option.noun}`}
+                aria-label={option.label}
                 className={lastCreationOption.id === option.id ? 'tool-rail__popover-btn--active' : ''}
                 onClick={() => selectCreationShape(option.id)}
               >
@@ -241,7 +253,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
           </RailFlyout>
           <RailButton
             icon={lastCreationOption.icon}
-            label={lastCreationOption.active ? `Cancel ${lastCreationOption.noun}` : `Add ${creationCommands.creationTarget} ${lastCreationOption.noun}`}
+            label={lastCreationOption.label}
             active={lastCreationOption.active}
             onClick={lastCreationOption.onActivate}
           />
@@ -250,16 +262,16 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         {/* Edit tools (visible when features selected) */}
         {sketchCommands.predicates.hasSelectedFeatures && (
           <div className="tool-rail__section">
-            <RailButton icon="copy" label="Copy" active={sketchCommands.transform.copy.active} onClick={sketchCommands.transform.copy.onActivate} />
-            <RailButton icon="move" label="Move" active={sketchCommands.transform.move.active} disabled={!sketchCommands.transform.move.enabled} onClick={sketchCommands.transform.move.onActivate} />
-            <RailButton icon="trash" label="Delete" onClick={sketchCommands.transform.delete.onActivate} />
-            <RailButton icon="resize" label="Resize" active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
-            <RailButton icon="rotate" label="Rotate" active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
-            <RailButton icon="mirror" label="Mirror" active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
-            <RailButton icon="offset" label="Offset" active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} onClick={sketchCommands.boolean.offset.onActivate} />
-            <RailButton icon="constraint" label="Constraint" active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} onClick={sketchCommands.constraint.onActivate} />
-            <RailButton icon="merge" label="Join" active={sketchCommands.boolean.join.active} onClick={sketchCommands.boolean.join.onActivate} />
-            <RailButton icon="cut" label="Cut" active={sketchCommands.boolean.cut.active} onClick={sketchCommands.boolean.cut.onActivate} />
+            <RailButton icon="copy" label={t('appShell.toolRail.copy')} active={sketchCommands.transform.copy.active} onClick={sketchCommands.transform.copy.onActivate} />
+            <RailButton icon="move" label={t('appShell.toolRail.move')} active={sketchCommands.transform.move.active} disabled={!sketchCommands.transform.move.enabled} onClick={sketchCommands.transform.move.onActivate} />
+            <RailButton icon="trash" label={t('appShell.toolRail.delete')} onClick={sketchCommands.transform.delete.onActivate} />
+            <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
+            <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
+            <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
+            <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} onClick={sketchCommands.boolean.offset.onActivate} />
+            <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} onClick={sketchCommands.constraint.onActivate} />
+            <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} onClick={sketchCommands.boolean.join.onActivate} />
+            <RailButton icon="cut" label={t('appShell.toolRail.cut')} active={sketchCommands.boolean.cut.active} onClick={sketchCommands.boolean.cut.onActivate} />
           </div>
         )}
 
@@ -268,32 +280,32 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
           <div className="tool-rail__section">
             <RailFlyout
               icon="align"
-              label="Align features"
-              tooltip="Align"
+              label={t('sketch.arrange.align')}
+              tooltip={t('appShell.toolRail.align')}
               open={showAlignPopover}
               onToggle={() => { setShowAlignPopover((v) => !v); setShowDistributePopover(false) }}
               onClose={() => setShowAlignPopover(false)}
             >
-              <button type="button" aria-label="Align left" onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
-              <button type="button" aria-label="Align center horizontal" onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
-              <button type="button" aria-label="Align right" onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
-              <button type="button" aria-label="Align top" onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
-              <button type="button" aria-label="Align center vertical" onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
-              <button type="button" aria-label="Align bottom" onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
+              <button type="button" aria-label={t('sketch.align.left')} onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
+              <button type="button" aria-label={t('sketch.align.centerHorizontal')} onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
+              <button type="button" aria-label={t('sketch.align.right')} onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
+              <button type="button" aria-label={t('sketch.align.top')} onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
+              <button type="button" aria-label={t('sketch.align.centerVertical')} onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
+              <button type="button" aria-label={t('sketch.align.bottom')} onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
             </RailFlyout>
             {sketchCommands.predicates.canDistributeSelectedFeatures && (
               <RailFlyout
                 icon="distribute"
-                label="Distribute features"
-                tooltip="Distribute"
+                label={t('sketch.arrange.distribute')}
+                tooltip={t('appShell.toolRail.distribute')}
                 open={showDistributePopover}
                 onToggle={() => { setShowDistributePopover((v) => !v); setShowAlignPopover(false) }}
                 onClose={() => setShowDistributePopover(false)}
               >
-                <button type="button" aria-label="Distribute horizontal gaps" onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
-                <button type="button" aria-label="Distribute horizontal centers" onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
-                <button type="button" aria-label="Distribute vertical gaps" onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
-                <button type="button" aria-label="Distribute vertical centers" onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
+                <button type="button" aria-label={t('sketch.distribute.horizontalGaps')} onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
+                <button type="button" aria-label={t('sketch.distribute.horizontalCenters')} onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
+                <button type="button" aria-label={t('sketch.distribute.verticalGaps')} onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
+                <button type="button" aria-label={t('sketch.distribute.verticalCenters')} onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
               </RailFlyout>
             )}
           </div>
@@ -302,13 +314,13 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         {/* Sketch edit tools */}
         {sketchCommands.predicates.featureSketchEditActive && (
           <div className="tool-rail__section">
-            <RailButton icon="point-add" label="Add point" active={sketchCommands.sketchEdit.add_point.active} onClick={sketchCommands.sketchEdit.add_point.onActivate} />
-            <RailButton icon="point-delete" label="Delete point" active={sketchCommands.sketchEdit.delete_point.active} onClick={sketchCommands.sketchEdit.delete_point.onActivate} />
-            <RailButton icon="segment-delete" label="Delete segment" active={sketchCommands.sketchEdit.delete_segment.active} onClick={sketchCommands.sketchEdit.delete_segment.onActivate} />
-            <RailButton icon="disconnect" label="Disconnect" active={sketchCommands.sketchEdit.disconnect.active} onClick={sketchCommands.sketchEdit.disconnect.onActivate} />
-            <RailButton icon="fillet" label="Fillet" active={sketchCommands.sketchEdit.fillet.active} onClick={sketchCommands.sketchEdit.fillet.onActivate} />
-            <RailButton icon="trim" label="Trim" active={sketchCommands.sketchEdit.trim.active} disabled={!sketchCommands.sketchEdit.trim.enabled} onClick={sketchCommands.sketchEdit.trim.onActivate} />
-            <RailButton icon="extend" label="Extend" active={sketchCommands.sketchEdit.extend.active} disabled={!sketchCommands.sketchEdit.extend.enabled} onClick={sketchCommands.sketchEdit.extend.onActivate} />
+            <RailButton icon="point-add" label={t('appShell.toolRail.addPoint')} active={sketchCommands.sketchEdit.add_point.active} onClick={sketchCommands.sketchEdit.add_point.onActivate} />
+            <RailButton icon="point-delete" label={t('appShell.toolRail.deletePoint')} active={sketchCommands.sketchEdit.delete_point.active} onClick={sketchCommands.sketchEdit.delete_point.onActivate} />
+            <RailButton icon="segment-delete" label={t('appShell.toolRail.deleteSegment')} active={sketchCommands.sketchEdit.delete_segment.active} onClick={sketchCommands.sketchEdit.delete_segment.onActivate} />
+            <RailButton icon="disconnect" label={t('appShell.toolRail.disconnect')} active={sketchCommands.sketchEdit.disconnect.active} onClick={sketchCommands.sketchEdit.disconnect.onActivate} />
+            <RailButton icon="fillet" label={t('appShell.toolRail.fillet')} active={sketchCommands.sketchEdit.fillet.active} onClick={sketchCommands.sketchEdit.fillet.onActivate} />
+            <RailButton icon="trim" label={t('appShell.toolRail.trim')} active={sketchCommands.sketchEdit.trim.active} disabled={!sketchCommands.sketchEdit.trim.enabled} onClick={sketchCommands.sketchEdit.trim.onActivate} />
+            <RailButton icon="extend" label={t('appShell.toolRail.extend')} active={sketchCommands.sketchEdit.extend.active} disabled={!sketchCommands.sketchEdit.extend.enabled} onClick={sketchCommands.sketchEdit.extend.onActivate} />
           </div>
         )}
       </nav>
