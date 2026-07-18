@@ -45,7 +45,7 @@ Issue #314 phases and how they are executed:
 | Phase | Execution |
 | --- | --- |
 | 1 — i18n core + selector + shell | Manager-implemented directly (S1) |
-| 2 — sketch surfaces | Delegated as S2a (toolbars + command descriptors) and S2b (canvas panels + feature tree) |
+| 2 — sketch surfaces | Delegated as S2a (toolbars + command descriptors), S2b (canvas panels), S2c (feature tree + properties) |
 | 3 — CAM + dialogs | Delegated; slices defined after S2 lands |
 | 4 — remaining surfaces | Delegated; slices defined after S3 lands |
 | 5 — structured engine warnings | Manager-implemented (CAM core; not delegated) |
@@ -56,8 +56,9 @@ Issue #314 phases and how they are executed:
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | S1 | i18n core, LanguageControl, shell extraction (phase 1) | `bd88b6b` | `feat/issue-314-phase-1-core` / `…/issue-314-phase-1-core` | `done (manager)` | `pass` | `af0148c` merged `ca0df27` | `npm run build`; language+appearance e2e (12/12) | Manager-implemented, sets the extraction pattern |
-| S2a | Sketch toolbars + command descriptors extraction | `ca0df27` | `feat/issue-314-i18n-sketch-toolbars` / `…/i18n-sketch-toolbars` | `not started` | `pending` | `-` | `npm run build` | First delegated slice |
-| S2b | Canvas creation panels + feature tree extraction | after S2a | `-` | `not started` | `pending` | `-` | `npm run build` | Defined after S2a merges |
+| S2a | Sketch toolbars + command descriptors extraction | `ff5830e` | `feat/issue-314-i18n-sketch-toolbars` / `…/i18n-sketch-toolbars` | `done` | `pass` | `f97a9f3` merged `a55866a` | `npm run build` (gate: passed) | 80-key `sketch` module; worktree removed |
+| S2b | Canvas creation panels extraction | `a55866a` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `not started` | `pending` | `-` | `npm run build` | Canvas-drawn text out of scope |
+| S2c | Feature tree + properties extraction | after S2b | `-` | `not started` | `pending` | `-` | `npm run build` | Presentation-module tests must pass unchanged |
 
 ## Slice instructions
 
@@ -135,11 +136,71 @@ npm run build
 
 **Manager review record:**
 
-- Worker invocation: `pending`
-- Worker-reported completion: `pending`
-- Diff/commit review: `pending`
-- Correction attempts: `-`
-- Acceptance decision: `pending`
+- Worker invocation: 2026-07-17. First dispatch failed pre-worker
+  (`DEEPSEEK_API_KEY is not configured` — `.env.agent` lives only in the
+  primary checkout); worktree was clean and removed. Retry with
+  `DEEPSEEK_AGENT_ENV_FILE` pointed at the primary checkout succeeded,
+  exit 0.
+- Worker-reported completion: `STATUS: complete, COMMIT: f97a9f3, CHECKS:
+  npm run build pass` (report only).
+- Diff/commit review: pass. 13 in-scope files + one out-of-scope edit,
+  `constructionPresentation.test.ts` — accepted as forced: it is a
+  structural test asserting CreationActions source text, which extraction
+  necessarily rewrites; assertion intent preserved. `noun` kept alongside
+  `nounKey` deliberately — ToolRail (phase 4) still consumes the English
+  noun. en byte-identity spot-verified via templates
+  (`'Add {target} {shape}'` + lowercase nouns). Independent gate: passed.
+- Correction attempts: none.
+- Acceptance decision: `accepted` — merged `--no-ff` as `a55866a`.
+
+### S2b — Canvas creation panels
+
+**Goal:** Extract user-facing strings in the sketch-canvas UI (workflow/
+creation panels, constraint + driving-dimension panels, gear panel, pickers,
+badges, canvas context menu, manual entry) into a new `canvas` catalog module
+with complete zh-CN, en byte-identical.
+
+**Allowed files:** `src/components/canvas/{SketchCanvas,CanvasWorkflowPanel,ConstraintEditPanel,DrivingDimensionPanel,GearParameterPanel,CreationParameterReferences,CreationTargetBadge,OverlapFeaturePicker,DepthLegend}.tsx`,
+`src/components/canvas/{useCanvasContextMenu,useCanvasWorkflowPanel,useDrivingDimensionWorkflow,useOverlapFeaturePicker,manualEntry}.ts`,
+`src/components/canvas/SketchCanvas.types.ts`, `src/components/INDEX.md`,
+`src/i18n/locales/en/canvas.ts` (new), `src/i18n/locales/zh-CN/canvas.ts`
+(new), both locale `index.ts` (spread only).
+
+**Forbidden:** canvas *rendering* modules that draw text into the 2D canvas
+(`dimensionRendering.ts`, `operationSnapshot.ts`, `stlTopViewRenderer.ts`,
+`draftGeometry.ts`, `previewPrimitives.ts`, `measurements.ts`) — numeric/
+technical notation, deliberate boundary; all tests; rest of `src/i18n/`;
+`src/store/`, `src/engine/`, `src/types/`, `e2e/`; files from earlier slices.
+
+**Invariants:** as S2a (pure extraction, byte-identical en, GLOSSARY zh,
+placeholder parity, no string surgery, `tPlural` for counts, Apache headers).
+
+**Required checks:** `npm run build`
+
+**Manager review record:** pending.
+
+### S2c — Feature tree + properties
+
+**Goal:** Extract user-facing strings in the feature tree, properties panel,
+feature context menu, Z-range slider, and the construction/region
+presentation-label modules into a new `featureTree` catalog module with
+complete zh-CN, en byte-identical.
+
+**Allowed files:** `src/components/feature-tree/{FeatureTree,PropertiesPanel,FeatureContextMenu,ZRangeSlider}.tsx`,
+`src/components/feature-tree/{constructionPresentation,regionPresentation}.ts`,
+`src/components/feature-tree/INDEX.md` (if present),
+`src/i18n/locales/en/featureTree.ts` (new),
+`src/i18n/locales/zh-CN/featureTree.ts` (new), both locale `index.ts`
+(spread only).
+
+**Forbidden:** `src/components/feature-tree/*.test.ts` — these assert the
+exact current English output of the presentation modules and MUST pass
+unchanged (a failing one means visible text changed); everything else as S2a.
+Presentation modules are non-React: use `translate` from `src/i18n/store.ts`.
+
+**Required checks:** `npm run build`
+
+**Manager review record:** pending.
 
 ## Integration verification
 
