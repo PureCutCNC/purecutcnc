@@ -23,12 +23,18 @@
 
 import type { Operation, Project } from '../../types/project'
 
+/**
+ * Translation-key references for operation exportability reasons.
+ * The component maps these to translated strings at render time.
+ */
+export type ExportOperationReasonKey = 'dialogs.export.operationDisabled' | 'dialogs.export.noToolAssigned'
+
 export interface ExportOperationOption {
   operation: Operation
   /** False when the operation cannot produce G-code (disabled, or no tool). */
   exportable: boolean
-  /** Human-readable reason shown next to a non-exportable operation. */
-  reason: string | null
+  /** Translation-key reference for the non-exportable reason shown next to the operation. */
+  reasonKey: ExportOperationReasonKey | null
   /** Checked by default — matches the pre-checklist export set. */
   defaultSelected: boolean
 }
@@ -37,16 +43,16 @@ export function listExportOperationOptions(project: Project): ExportOperationOpt
   return project.operations.map((operation) => {
     const hasTool = operation.toolRef !== null
       && project.tools.some((tool) => tool.id === operation.toolRef)
-    const reason = !operation.enabled
-      ? 'Operation is off'
+    const reasonKey: ExportOperationReasonKey | null = !operation.enabled
+      ? 'dialogs.export.operationDisabled'
       : !hasTool
-        ? 'No tool assigned'
+        ? 'dialogs.export.noToolAssigned'
         : null
     return {
       operation,
-      exportable: reason === null,
-      reason,
-      defaultSelected: reason === null && operation.showToolpath,
+      exportable: reasonKey === null,
+      reasonKey,
+      defaultSelected: reasonKey === null && operation.showToolpath,
     }
   })
 }

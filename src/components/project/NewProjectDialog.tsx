@@ -22,6 +22,11 @@ import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { getStockBounds, newProject } from '../../types/project'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 type TemplateKind = 'blank_metric' | 'blank_imperial' | 'current' | 'file'
 
@@ -30,31 +35,30 @@ interface NewProjectDialogProps {
   onCreated?: () => void
 }
 
-function suggestedProjectName(kind: TemplateKind, currentProject: Project, fileTemplate: Project | null): string {
+function suggestedProjectName(_kind: TemplateKind, currentProject: Project, fileTemplate: Project | null): string {
   void currentProject
   void fileTemplate
-  switch (kind) {
-    case 'blank_metric':
-      return 'Untitled'
-    case 'blank_imperial':
-      return 'Untitled'
-    case 'current':
-      return 'Untitled'
-    case 'file':
-      return 'Untitled'
-  }
+  // 'Untitled' is a store-bound default — never translated per i18n invariants.
+  return 'Untitled'
 }
 
-function templateLabel(kind: TemplateKind, currentProject: Project, fileTemplate: Project | null): string {
+function templateLabel(
+  kind: TemplateKind,
+  currentProject: Project,
+  fileTemplate: Project | null,
+  td: (key: keyof typeof dialogsEn, params?: MessageParams) => string,
+): string {
   switch (kind) {
     case 'blank_metric':
-      return 'Blank Metric'
+      return td('dialogs.newProject.templateLabel.blankMetric')
     case 'blank_imperial':
-      return 'Blank Imperial'
+      return td('dialogs.newProject.templateLabel.blankImperial')
     case 'current':
-      return `Current Project Setup: ${currentProject.meta.name}`
+      return td('dialogs.newProject.templateLabel.currentProject', { name: currentProject.meta.name })
     case 'file':
-      return fileTemplate ? `Template File Setup: ${fileTemplate.meta.name}` : 'Template File Setup'
+      return fileTemplate
+        ? td('dialogs.newProject.templateLabel.fileSetup', { name: fileTemplate.meta.name })
+        : td('dialogs.newProject.templateLabel.fileSetupFallback')
   }
 }
 
@@ -77,9 +81,17 @@ function setupOnlyTemplate(template: Project): Project {
 export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) {
   useRestoreCanvasFocus()
   const { project, createNewProject } = useProjectStore()
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
+
   const [templateKind, setTemplateKind] = useState<TemplateKind>('blank_metric')
   const [fileTemplate, setFileTemplate] = useState<Project | null>(null)
-  const [fileLabel, setFileLabel] = useState<string>('No template file loaded.')
+  const [fileLabel, setFileLabel] = useState<string>(td('dialogs.newProject.templateFileNoFile'))
   const [fileError, setFileError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('Untitled')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -128,18 +140,19 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
       const height = bounds.maxY - bounds.minY
 
       return {
-        units: activeTemplate.meta.units === 'inch' ? 'Inch' : 'Millimeter',
+        units: activeTemplate.meta.units === 'inch' ? td('dialogs.common.inch') : td('dialogs.common.millimeter'),
         stock: `${formatLength(width, activeTemplate.meta.units)} × ${formatLength(height, activeTemplate.meta.units)} × ${formatLength(activeTemplate.stock.thickness, activeTemplate.meta.units)}`,
         features: activeTemplate.features.length,
         tools: activeTemplate.tools.length,
         operations: activeTemplate.operations.length,
         machine: activeTemplate.meta.selectedMachineId
-          ? (activeTemplate.meta.machineDefinitions.find((definition) => definition.id === activeTemplate.meta.selectedMachineId)?.name ?? 'None')
-          : 'None',
+          ? (activeTemplate.meta.machineDefinitions.find((definition) => definition.id === activeTemplate.meta.selectedMachineId)?.name ?? td('dialogs.common.none'))
+          : td('dialogs.common.none'),
       }
     } catch {
       return null
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTemplate])
 
   function handleCreate() {
@@ -169,7 +182,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
       } catch {
         setFileTemplate(null)
         setFileLabel(file.name)
-        setFileError('Failed to parse template project file.')
+        setFileError(td('dialogs.newProject.templateFileParseError'))
       }
     }
     reader.readAsText(file)
@@ -179,8 +192,8 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog dialog--new-project" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">New Project</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{td('dialogs.newProject.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -190,7 +203,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="new-project-name">Project Name</label>
+              <label className="dialog-section-title" htmlFor="new-project-name">{td('dialogs.newProject.projectName')}</label>
               <div className="properties-field">
                 <input
                   id="new-project-name"
@@ -204,39 +217,39 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
             </div>
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Template</label>
+              <label className="dialog-section-title">{td('dialogs.newProject.template')}</label>
               <div className="project-template-list">
                 <button
                   className={`project-template-card ${templateKind === 'blank_metric' ? 'project-template-card--active' : ''}`}
                   type="button"
                   onClick={() => setTemplateKind('blank_metric')}
                 >
-                  <span className="project-template-card__title">Blank Metric</span>
-                  <span className="project-template-card__meta">Empty project in millimeters.</span>
+                  <span className="project-template-card__title">{td('dialogs.newProject.templateBlankMetric')}</span>
+                  <span className="project-template-card__meta">{td('dialogs.newProject.templateBlankMetricMeta')}</span>
                 </button>
                 <button
                   className={`project-template-card ${templateKind === 'blank_imperial' ? 'project-template-card--active' : ''}`}
                   type="button"
                   onClick={() => setTemplateKind('blank_imperial')}
                 >
-                  <span className="project-template-card__title">Blank Imperial</span>
-                  <span className="project-template-card__meta">Empty project in inches.</span>
+                  <span className="project-template-card__title">{td('dialogs.newProject.templateBlankImperial')}</span>
+                  <span className="project-template-card__meta">{td('dialogs.newProject.templateBlankImperialMeta')}</span>
                 </button>
                 <button
                   className={`project-template-card ${templateKind === 'current' ? 'project-template-card--active' : ''}`}
                   type="button"
                   onClick={() => setTemplateKind('current')}
                 >
-                  <span className="project-template-card__title">Current Project</span>
-                  <span className="project-template-card__meta">Use the open project settings as a starting template.</span>
+                  <span className="project-template-card__title">{td('dialogs.newProject.templateCurrentProject')}</span>
+                  <span className="project-template-card__meta">{td('dialogs.newProject.templateCurrentProjectMeta')}</span>
                 </button>
                 <button
                   className={`project-template-card ${templateKind === 'file' ? 'project-template-card--active' : ''}`}
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <span className="project-template-card__title">Template File</span>
-                  <span className="project-template-card__meta">{fileTemplate ? `${fileLabel} (settings only)` : fileLabel}</span>
+                  <span className="project-template-card__title">{td('dialogs.newProject.templateFile')}</span>
+                  <span className="project-template-card__meta">{fileTemplate ? td('dialogs.newProject.templateFileMetaSettings', { name: fileLabel }) : fileLabel}</span>
                 </button>
               </div>
               <input
@@ -251,46 +264,46 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
           </div>
 
           <div className="dialog-preview-container">
-            <label className="dialog-section-title">Template Preview</label>
+            <label className="dialog-section-title">{td('dialogs.newProject.templatePreview')}</label>
             <div className="dialog-preview project-template-preview">
               {activeTemplate && templateSummary ? (
                 <div className="project-template-preview__content">
-                  <div className="project-template-preview__title">{templateLabel(templateKind, project, fileTemplate)}</div>
+                  <div className="project-template-preview__title">{templateLabel(templateKind, project, fileTemplate, td)}</div>
                   <div className="project-template-preview__row">
-                    <span>Units</span>
+                    <span>{td('dialogs.newProject.previewUnits')}</span>
                     <strong>{templateSummary.units}</strong>
                   </div>
                   <div className="project-template-preview__row">
-                    <span>Stock</span>
+                    <span>{td('dialogs.newProject.previewStock')}</span>
                     <strong>{templateSummary.stock}</strong>
                   </div>
                   <div className="project-template-preview__row">
-                    <span>Features</span>
+                    <span>{td('dialogs.newProject.previewFeatures')}</span>
                     <strong>{templateSummary.features}</strong>
                   </div>
                   <div className="project-template-preview__row">
-                    <span>Tools</span>
+                    <span>{td('dialogs.newProject.previewTools')}</span>
                     <strong>{templateSummary.tools}</strong>
                   </div>
                   <div className="project-template-preview__row">
-                    <span>Operations</span>
+                    <span>{td('dialogs.newProject.previewOperations')}</span>
                     <strong>{templateSummary.operations}</strong>
                   </div>
                   <div className="project-template-preview__row">
-                    <span>Machine</span>
+                    <span>{td('dialogs.newProject.previewMachine')}</span>
                     <strong>{templateSummary.machine}</strong>
                   </div>
                 </div>
               ) : (
                 <div className="project-template-preview__empty">
-                  Load a project file to use it as a template.
+                  {td('dialogs.newProject.previewEmpty')}
                 </div>
               )}
             </div>
           </div>
 
           <div className="dialog-section-group new-project-examples">
-            <label className="dialog-section-title">Or open an example</label>
+            <label className="dialog-section-title">{td('dialogs.newProject.orOpenExample')}</label>
             <ExampleProjectList
               onOpened={() => {
                 onClose()
@@ -301,9 +314,9 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         </div>
 
         <div className="dialog-footer">
-          <button className="btn-secondary" onClick={onClose} type="button">Cancel</button>
+          <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
           <button className="btn-primary" onClick={handleCreate} type="button" disabled={!activeTemplate}>
-            Create Project
+            {td('dialogs.newProject.createProject')}
           </button>
         </div>
       </div>

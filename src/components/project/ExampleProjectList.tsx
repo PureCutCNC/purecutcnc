@@ -23,6 +23,11 @@
 
 import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../store/projectStore'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface ExampleManifestEntry {
   id: string
@@ -40,6 +45,14 @@ interface ExampleProjectListProps {
 const examplesBase = `${import.meta.env.BASE_URL}examples/`
 
 export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
+
   const [entries, setEntries] = useState<ExampleManifestEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -61,12 +74,13 @@ export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
       })
       .catch((err) => {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Failed to load examples.')
+        setError(err instanceof Error ? err.message : td('dialogs.exampleProject.errorLoad'))
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleOpen(entry: ExampleManifestEntry) {
@@ -81,7 +95,7 @@ export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
       }
       content = await response.text()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load example.')
+      setError(err instanceof Error ? err.message : td('dialogs.exampleProject.errorLoad'))
       setOpeningId(null)
       return
     }
@@ -97,7 +111,7 @@ export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
       useProjectStore.getState().openProjectFromText(content, null)
       onOpened?.()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open example.')
+      setError(err instanceof Error ? err.message : td('dialogs.exampleProject.errorOpen'))
     } finally {
       useProjectStore.setState({ projectLoading: false })
       setOpeningId(null)
@@ -105,13 +119,13 @@ export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
   }
 
   if (loading) {
-    return <div className="example-project-list__status">Loading examples…</div>
+    return <div className="example-project-list__status">{td('dialogs.exampleProject.loading')}</div>
   }
 
   if (entries.length === 0) {
     return (
       <div className="example-project-list__status example-project-list__status--error">
-        {error ?? 'No examples available.'}
+        {error ?? td('dialogs.exampleProject.noExamples')}
       </div>
     )
   }
@@ -137,7 +151,7 @@ export function ExampleProjectList({ onOpened }: ExampleProjectListProps) {
           <span className="example-project-card__title">{entry.title}</span>
           <span className="example-project-card__meta">{entry.description}</span>
           {openingId === entry.id ? (
-            <span className="example-project-card__status">Opening…</span>
+            <span className="example-project-card__status">{td('dialogs.exampleProject.opening')}</span>
           ) : null}
         </button>
       ))}

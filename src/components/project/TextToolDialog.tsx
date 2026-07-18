@@ -20,6 +20,11 @@ import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type TextToolConfig } from '../../text'
 import { useProjectStore } from '../../store/projectStore'
 import { Select } from '../Select'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import { dialogsZhCN } from '../../i18n/locales/zh-CN/dialogs'
+import { interpolate } from '../../i18n/catalog'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface TextToolDialogProps {
   onClose: () => void
@@ -36,6 +41,13 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
   const [size, setSize] = useState(String(defaults.size))
   const [operation, setOperation] = useState<FeatureOperation>(defaults.operation)
   const fontOptions = getTextFontOptions(style)
+  const { localeId } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    const catalog = localeId === 'zh-CN' ? dialogsZhCN : dialogsEn
+    const template = (catalog as Record<string, string>)[key] ?? dialogsEn[key]
+    return interpolate(template, params)
+  }
 
   // `fontOptions` derives only from `style`, so the current font can only become
   // invalid when the style changes. Fall back to that style's default during
@@ -78,8 +90,8 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog dialog--import dialog--no-clip" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Add Text</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{td('dialogs.textTool.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -89,7 +101,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
         <div className="dialog-body dialog-body--import">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="text-tool-value">Text</label>
+              <label className="dialog-section-title" htmlFor="text-tool-value">{td('dialogs.textTool.text')}</label>
               <div className="properties-field">
                 <textarea
                   id="text-tool-value"
@@ -102,20 +114,20 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Font Style</label>
+              <label className="dialog-section-title">{td('dialogs.textTool.fontStyle')}</label>
               <div className="properties-field">
                 <Select
                   value={style}
                   options={[
-                    { value: 'skeleton' as TextFontStyle, label: 'Skeleton' },
-                    { value: 'outline' as TextFontStyle, label: 'Outline' },
+                    { value: 'skeleton' as TextFontStyle, label: td('dialogs.textTool.style.skeleton') },
+                    { value: 'outline' as TextFontStyle, label: td('dialogs.textTool.style.outline') },
                   ]}
                   onChange={(v) => setStyle(v)}
                 />
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Font</label>
+              <label className="dialog-section-title">{td('dialogs.textTool.font')}</label>
               <div className="properties-field">
                 <Select
                   value={fontId}
@@ -125,7 +137,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title" htmlFor="text-tool-size">Height</label>
+              <label className="dialog-section-title" htmlFor="text-tool-size">{td('dialogs.textTool.height')}</label>
               <div className="properties-field">
                 <input
                   id="text-tool-size"
@@ -138,30 +150,30 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
               </div>
             </div>
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Operation</label>
+              <label className="dialog-section-title">{td('dialogs.textTool.operation')}</label>
               <div className="properties-field">
                 <Select
                   value={operation}
                   options={[
-                    { value: 'subtract' as FeatureOperation, label: 'Subtract' },
-                    { value: 'add' as FeatureOperation, label: 'Add' },
+                    { value: 'subtract' as FeatureOperation, label: td('dialogs.textTool.operation.subtract') },
+                    { value: 'add' as FeatureOperation, label: td('dialogs.textTool.operation.add') },
                   ]}
                   onChange={(v) => setOperation(v)}
                 />
               </div>
             </div>
             <div className="cam-field-message">
-              Single-line text for now. Outline text generates closed features; skeleton text generates open engraving paths.
+              {td('dialogs.textTool.helpText')}
             </div>
           </div>
         </div>
 
         <div className="dialog-footer">
           <button className="feat-btn" type="button" onClick={onClose}>
-            Cancel
+            {td('dialogs.common.cancel')}
           </button>
           <button className="feat-btn" type="button" onClick={handleCreate}>
-            Place Text
+            {td('dialogs.textTool.placeText')}
           </button>
         </div>
       </div>

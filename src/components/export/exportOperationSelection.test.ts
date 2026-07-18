@@ -26,6 +26,7 @@ import {
   suggestGcodeFileName,
 } from './exportOperationSelection'
 import { newProject, type Operation, type Project } from '../../types/project'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -75,7 +76,7 @@ function testHealthyVisibleOperationIsExportableAndDefaultSelected(): void {
 
   assert(options.length === 1, 'expected one option per operation')
   assert(options[0].exportable, 'enabled op with tool should be exportable')
-  assert(options[0].reason === null, 'exportable op should have no reason')
+  assert(options[0].reasonKey === null, 'exportable op should have no reasonKey')
   assert(options[0].defaultSelected, 'visible op should be in the default set')
 }
 
@@ -94,7 +95,8 @@ function testDisabledOperationIsNotExportable(): void {
   )
 
   assert(!options[0].exportable, 'disabled op should not be exportable')
-  assert(options[0].reason === 'Operation is off', 'disabled op reason should say it is off')
+  assert(options[0].reasonKey === 'dialogs.export.operationDisabled', 'disabled op reasonKey should reference operationDisabled')
+  assert(dialogsEn['dialogs.export.operationDisabled'] === 'Operation is off', 'en catalog must carry the exact original reason string')
   assert(!options[0].defaultSelected, 'disabled op should not be default-selected')
 }
 
@@ -107,9 +109,10 @@ function testMissingToolIsNotExportable(): void {
   )
 
   assert(!noRef[0].exportable, 'op without toolRef should not be exportable')
-  assert(noRef[0].reason === 'No tool assigned', 'missing tool reason expected')
+  assert(noRef[0].reasonKey === 'dialogs.export.noToolAssigned', 'missing tool reasonKey expected')
+  assert(dialogsEn['dialogs.export.noToolAssigned'] === 'No tool assigned', 'en catalog must carry the exact original reason string')
   assert(!danglingRef[0].exportable, 'op with dangling toolRef should not be exportable')
-  assert(danglingRef[0].reason === 'No tool assigned', 'dangling tool reason expected')
+  assert(danglingRef[0].reasonKey === 'dialogs.export.noToolAssigned', 'dangling tool reasonKey expected')
 }
 
 function testOptionsPreserveExecutionOrder(): void {
