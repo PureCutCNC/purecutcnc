@@ -42,6 +42,7 @@ Rules:
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.
 - Run the required checks. Do not claim an unrun check passed.
+- For the full build gate, run `scripts/build-summary.sh` ONCE instead of a bare `npm run build`: it saves the complete output to a log (path printed at the end) and summarizes the failing stage with extracted errors. Never re-run the build to hunt for an error you already hit — re-read that log, or run `scripts/build-summary.sh --from-log <path>`.
 - Make exactly one commit for this slice. Do not add Co-Authored-By or generated-by footers.
 
 Finish with exactly this completion block:
