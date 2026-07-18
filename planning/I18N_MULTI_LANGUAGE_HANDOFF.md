@@ -57,8 +57,9 @@ Issue #314 phases and how they are executed:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | S1 | i18n core, LanguageControl, shell extraction (phase 1) | `bd88b6b` | `feat/issue-314-phase-1-core` / `…/issue-314-phase-1-core` | `done (manager)` | `pass` | `af0148c` merged `ca0df27` | `npm run build`; language+appearance e2e (12/12) | Manager-implemented, sets the extraction pattern |
 | S2a | Sketch toolbars + command descriptors extraction | `ff5830e` | `feat/issue-314-i18n-sketch-toolbars` / `…/i18n-sketch-toolbars` | `done` | `pass` | `f97a9f3` merged `a55866a` | `npm run build` (gate: passed) | 80-key `sketch` module; worktree removed |
-| S2b | Canvas creation panels extraction | `a55866a` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `not started` | `pending` | `-` | `npm run build` | Canvas-drawn text out of scope |
-| S2c | Feature tree + properties extraction | after S2b | `-` | `not started` | `pending` | `-` | `npm run build` | Presentation-module tests must pass unchanged |
+| S2b | Canvas creation panels extraction | `94adc16` | `feat/issue-314-i18n-canvas-panels` / `…/i18n-canvas-panels` | `done` | `pass` | `0834e63` merged `9b4f006` | `npm run build` (gate: passed) | ~150-key `canvas` module; worktree removed |
+| S2c | Feature tree + properties extraction | `9b4f006` | `feat/issue-314-i18n-feature-tree` / `…/i18n-feature-tree` | `not started` | `pending` | `-` | `npm run build` | Structural-test rule amended after S2a/S2b findings |
+| S2d | heldSideLabel structured-id refactor | after S2c | `-` | `not started` | `pending` | `-` | `npm run build` | Follow-up: display-string-as-identifier in drivingDimensionResolver |
 
 ## Slice instructions
 
@@ -177,7 +178,24 @@ placeholder parity, no string surgery, `tPlural` for counts, Apache headers).
 
 **Required checks:** `npm run build`
 
-**Manager review record:** pending.
+**Manager review record:**
+
+- Worker invocation: 2026-07-17, exit 0; independent gate passed.
+- Worker-reported completion: `STATUS: complete, COMMIT: 0834e63`; RISKS
+  honestly flagged both boundary items below.
+- Diff/commit review: pass. The two feature-tree structural tests were
+  updated out of scope, but the change is forced (they read canvas component
+  source) and strengthens them: each now asserts the component references
+  the i18n key AND the en catalog carries the exact original English string.
+  Verified `heldSideLabel` logic comparisons are untouched (labels never
+  translated at the identifier level), so no behavior change.
+- Known limitations logged: (1) linear/angle dimension-edit panels display
+  the raw `heldSideLabel` ("Hold left" …) — untranslated because the fix
+  needs a structured-id refactor in `src/sketch/drivingDimensionResolver.ts`
+  (out of slice scope) → follow-up S2d; (2) canvas-drawn preview labels
+  ("Pending rectangle", "Move preview") stay English inside the declared
+  canvas-rendering boundary.
+- Acceptance decision: `accepted` — merged `--no-ff` as `9b4f006`.
 
 ### S2c — Feature tree + properties
 
