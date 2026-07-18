@@ -461,21 +461,21 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     const tab = entry
 
     if (!(tab.zTop > tab.zBottom)) {
-      warnings.push(`Tab "${tab.name}" has invalid Z range (${tab.zBottom.toFixed(3)} -> ${tab.zTop.toFixed(3)}).`)
+      warnings.push({ code: 'tabInvalidZRange', params: { name: tab.name, zBottom: tab.zBottom.toFixed(3), zTop: tab.zTop.toFixed(3) } })
       continue
     }
 
     if (tab.zBottom < 0) {
-      warnings.push(`Tab "${tab.name}" extends below stock bottom (Z Bottom ${tab.zBottom.toFixed(3)}).`)
+      warnings.push({ code: 'tabBelowStockBottom', params: { name: tab.name, zBottom: tab.zBottom.toFixed(3) } })
     }
 
     if (tab.zTop > project.stock.thickness) {
-      warnings.push(`Tab "${tab.name}" extends above stock top (Z Top ${tab.zTop.toFixed(3)}, stock top ${project.stock.thickness.toFixed(3)}).`)
+      warnings.push({ code: 'tabAboveStockTop', params: { name: tab.name, zTop: tab.zTop.toFixed(3), stockTop: project.stock.thickness.toFixed(3) } })
     }
 
     const intersectsCutPath = cutMoves.some((move) => clipSegmentPolygon2D(move.from.x, move.from.y, move.to.x, move.to.y, entry.points) !== null)
     if (!intersectsCutPath) {
-      warnings.push(`Tab "${tab.name}" does not intersect the selected operation toolpath.`)
+      warnings.push({ code: 'tabNoIntersect', params: { name: tab.name } })
       continue
     }
 
@@ -489,7 +489,7 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
       depthRelevantTabs.push(entry)
 
       if (!isSupportedTabOperation(operation.kind)) {
-        warnings.push(`Tab "${tab.name}" is relevant to this operation, but tabs are only applied to edge-route operations right now.`)
+        warnings.push({ code: 'tabOnlyEdgeRoute', params: { name: tab.name } })
       }
     }
   }
@@ -498,14 +498,24 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     const listedTabNames = xyOnlyTabNames.slice(0, 3).map((name) => `"${name}"`).join(', ')
     const remainingCount = xyOnlyTabNames.length - Math.min(xyOnlyTabNames.length, 3)
 
+    // Sentence composition (list suffix, "and N more") lives in the message
+    // templates so every shape is translatable; the engine only picks the
+    // variant matching which parts exist.
+    const zRangeParams = { minZ: cutMinZ.toFixed(3), maxZ: cutMaxZ.toFixed(3) }
     if (xyOnlyTabNames.length === 1) {
-      warnings.push(
-        `Nearby tab ${listedTabNames} overlaps the toolpath footprint but is outside the cut Z range (${cutMinZ.toFixed(3)} -> ${cutMaxZ.toFixed(3)}).`,
-      )
+      warnings.push({ code: 'tabOutsideCutZ', params: { name: listedTabNames, ...zRangeParams } })
+    } else if (listedTabNames === '') {
+      warnings.push({ code: 'tabsOutsideCutZ', params: { count: xyOnlyTabNames.length, ...zRangeParams } })
+    } else if (remainingCount > 0) {
+      warnings.push({
+        code: 'tabsOutsideCutZListMore',
+        params: { count: xyOnlyTabNames.length, names: listedTabNames, more: remainingCount, ...zRangeParams },
+      })
     } else {
-      warnings.push(
-        `${xyOnlyTabNames.length} nearby tabs overlap the toolpath footprint but are outside the cut Z range (${cutMinZ.toFixed(3)} -> ${cutMaxZ.toFixed(3)})${listedTabNames ? `: ${listedTabNames}${remainingCount > 0 ? `, and ${remainingCount} more` : ''}` : ''}.`,
-      )
+      warnings.push({
+        code: 'tabsOutsideCutZList',
+        params: { count: xyOnlyTabNames.length, names: listedTabNames, ...zRangeParams },
+      })
     }
   }
 
@@ -515,7 +525,7 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     for (let otherIndex = index + 1; otherIndex < depthRelevantTabs.length; otherIndex += 1) {
       const other = depthRelevantTabs[otherIndex]
       if (rectsOverlap(entry, other)) {
-        warnings.push(`Tabs "${tab.name}" and "${other.name}" overlap in a way that may produce ambiguous output.`)
+        warnings.push({ code: 'tabsOverlapAmbiguous', params: { a: tab.name, b: other.name } })
       }
     }
   }

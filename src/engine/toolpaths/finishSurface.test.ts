@@ -38,6 +38,10 @@ import type { SimulationGrid, SimulationReplayItem } from '../simulation/types'
 import { applyTabsToEdgeRoute } from './tabs'
 import { projectWithFeatures, replaceProjectFeatures, resolvedFeature } from '../../test/projectFixtures'
 
+const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
+  w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
+
+
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
@@ -1112,14 +1116,14 @@ function testWaterlineAdaptivelyRefinesShallowSlope(): void {
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
   const coarseLevelCount = 5 // top + 3 stepdowns + bottom
-  const insertedDebug = result.warnings.find((warning) => warning.includes('adaptive waterline inserted')) ?? ''
+  const insertedDebug = result.warnings.map(wtext).find((warning) => warning.includes('adaptive waterline inserted')) ?? ''
   const cuts = cutMoves(result.moves)
   const projectedCuts = cuts.filter((move) => move.source === 'projectedBand' || move.source === 'projectedCap')
   const has3DProjectedMove = projectedCuts.some((move) => Math.abs(move.from.z - move.to.z) > 1e-6)
   const maxProjectedZ = Math.max(...projectedCuts.map((move) => Math.max(move.from.z, move.to.z)))
 
   assert(result.stepLevels.length > coarseLevelCount,
-    `expected adaptive waterline to produce projected Z samples beyond ${coarseLevelCount}, got ${result.stepLevels.length} — debug: ${result.warnings.join('; ')}`)
+    `expected adaptive waterline to produce projected Z samples beyond ${coarseLevelCount}, got ${result.stepLevels.length} — debug: ${result.warnings.map(wtext).join('; ')}`)
   assert(projectedCuts.length > 0, 'expected projected micro-offset cut moves on shallow slope')
   assert(maxProjectedZ > 3.5, `expected projected top band cuts to blend near model top, got max Z ${maxProjectedZ}`)
   assert(has3DProjectedMove, 'expected projected micro-offset moves to vary Z along the cut')
@@ -1144,7 +1148,7 @@ function testWaterlineTipCapSmoothsConePeak(): void {
   const result = generateFinishSurfaceToolpath(project, operation)
   const capCuts = projectedWaterlineCuts(result, 'projectedCap')
   assert(capCuts.length > 0,
-    `expected projected cap cuts on cone peak, got none; debug: ${result.warnings.join('; ')}`)
+    `expected projected cap cuts on cone peak, got none; debug: ${result.warnings.map(wtext).join('; ')}`)
 
   const cuts = cutMoves(result.moves)
   const firstRealWaterlineIndex = cuts.findIndex((move) => !move.source)
@@ -1166,7 +1170,7 @@ function testWaterlineTipCapSmoothsConePeak(): void {
   const maxCapZ = Math.max(...capZs)
   const minCapZ = Math.min(...capZs)
   assert(maxCapZ > 3.6,
-    `expected projected cap to reach near cone peak, got max Z ${maxCapZ}; debug: ${result.warnings.join('; ')}`)
+    `expected projected cap to reach near cone peak, got max Z ${maxCapZ}; debug: ${result.warnings.map(wtext).join('; ')}`)
   assert(maxCapZ - minCapZ > 0.4,
     `expected projected cap to form a Z ramp instead of a flat crown, got range ${maxCapZ - minCapZ}`)
   assert(minCapZ >= 2 - 1e-6,
@@ -1230,7 +1234,7 @@ function testWaterlineTipCapFillsCollapsedBranch(): void {
     : Number.NEGATIVE_INFINITY
 
   assert(lowerPeakInnerCuts.length > 0,
-    `expected projected cap cuts inside the lower collapsed peak, got none; debug: ${result.warnings.join('; ')}`)
+    `expected projected cap cuts inside the lower collapsed peak, got none; debug: ${result.warnings.map(wtext).join('; ')}`)
   assert(maxLowerPeakInnerZ > 2.85,
     `expected collapsed peak cap to reach near the lower apex, got max Z ${maxLowerPeakInnerZ}`)
   assert(hasRisingInnerMove,
@@ -1253,8 +1257,8 @@ function testWaterlineAdaptiveRefinementCanBeDisabled(): void {
 
   assert(projectedCuts.length === 0,
     `expected no projected cuts when adaptive refinement is disabled, got ${projectedCuts.length}`)
-  assert(result.warnings.some((warning) => warning.includes('adaptive refinement is disabled')),
-    `expected disabled adaptive refinement debug warning, got: ${result.warnings.join('; ')}`)
+  assert(result.warnings.map(wtext).some((warning) => warning.includes('adaptive refinement is disabled')),
+    `expected disabled adaptive refinement debug warning, got: ${result.warnings.map(wtext).join('; ')}`)
 }
 
 function testWaterlineMicroStepoverControlsProjectedDensity(): void {
@@ -1365,9 +1369,9 @@ function testWaterlineAdaptiveSubdivisionIsBounded(): void {
   const result = generateFinishSurfaceToolpath(project, operation)
   const projectedCuts = cutMoves(result.moves).filter((move) => move.source === 'projectedBand' || move.source === 'projectedCap')
   assert(projectedCuts.length < 350_000,
-    `expected bounded projected micro-offset cuts, got ${projectedCuts.length} — debug: ${result.warnings.join('; ')}`)
-  assert(result.warnings.some((warning) => warning.includes('insert cap') || warning.includes('pass limit')),
-    `expected projected refinement to report a limit, got: ${result.warnings.join('; ')}`)
+    `expected bounded projected micro-offset cuts, got ${projectedCuts.length} — debug: ${result.warnings.map(wtext).join('; ')}`)
+  assert(result.warnings.map(wtext).some((warning) => warning.includes('insert cap') || warning.includes('pass limit')),
+    `expected projected refinement to report a limit, got: ${result.warnings.map(wtext).join('; ')}`)
 }
 
 function testWaterlineMaxRingsPerBandLimitsProjectedRings(): void {
@@ -1395,7 +1399,7 @@ function testWaterlineMaxRingsPerBandLimitsProjectedRings(): void {
   assert(limitedProjected.length > 0, 'expected limited adaptive pass to still emit projected cuts')
   assert(limitedProjected.length < unrestrictedProjected.length,
     `expected max rings per band to reduce projected cuts, limited=${limitedProjected.length}, unrestricted=${unrestrictedProjected.length}`)
-  assert(limited.warnings.some((warning) => warning.includes('pass limit')),
+  assert(limited.warnings.map(wtext).some((warning) => warning.includes('pass limit')),
     `expected pass limit debug warning, got: ${limited.warnings.join('; ')}`)
 }
 

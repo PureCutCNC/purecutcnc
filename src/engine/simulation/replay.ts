@@ -15,6 +15,7 @@
  */
 
 import type { Operation, Project } from '../../types/project'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { createSimulationGrid } from './grid'
@@ -165,8 +166,8 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
   }
 }
 
-function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: string[] } {
-  const warnings: string[] = []
+function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: ToolpathWarning[] } {
+  const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
   for (const move of item.toolpath.moves) {
     if (!moveIsMaterialRemoving(move)) {
@@ -186,7 +187,7 @@ export function simulateReplayItemsHeightfield(
   options: SimulationBuildOptions = {},
 ): SimulationResult {
   const grid = createSimulationGrid(project, options)
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
 
   for (const item of items) {
@@ -209,13 +210,13 @@ export function simulateOperationHeightfield(
   options: SimulationBuildOptions = {},
 ): SimulationResult {
   const grid = createSimulationGrid(project, options)
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
     : null
 
   if (!toolRecord) {
-    warnings.push('No tool assigned to the selected operation.')
+    warnings.push({ code: 'replayNoTool' })
     return { grid, stats: computeStats(grid, 0), warnings }
   }
 

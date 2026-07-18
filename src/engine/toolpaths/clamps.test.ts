@@ -26,6 +26,10 @@ import { newProject } from '../../types/project'
 import type { ToolpathMove, ToolpathResult } from './types'
 import { applyClampWarnings } from './clamps'
 
+const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
+  w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
+
+
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
@@ -90,7 +94,7 @@ function testCollidingCutIsTaggedAndWarned() {
   const project = makeProjectWithClamp()
   const result = makeResult([move('cut', -1, -1)])
   const out = applyClampWarnings(project, result)
-  assert(out.warnings.some((w) => w.includes('Front clamp')), 'warning names the clamp')
+  assert(out.warnings.some((w) => wtext(w).includes('Front clamp')), 'warning names the clamp')
   assert((out.collidingClampIds ?? []).includes('clamp-1'), 'clamp id reported')
   assert((out.collidingMoveIndices ?? []).length === 1, 'one colliding move tagged')
   assert((out.collidingMoveIndices ?? [])[0] === 0, 'colliding move index refers to the cut')

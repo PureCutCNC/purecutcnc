@@ -43,6 +43,7 @@ export interface OperationBookletReport {
   targetFeatureNames: string[]
   toolRows: OperationBookletRow[]
   settingRows: OperationBookletRow[]
+  /** Rendered, localized warning text — the booklet is a user-facing document. */
   warnings: string[]
   toolpathStats: OperationBookletRow[]
 }

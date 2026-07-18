@@ -15,6 +15,7 @@
  */
 
 import type { ReactNode } from 'react'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { Project } from '../../types/project'
 
 /** Triangle mesh in standard right-handed Z-up coordinates (the STL/CAD convention). */
@@ -55,7 +56,7 @@ export interface ModelExportAssembleOptions {
 export interface ModelExportAssembleResult {
   mesh: ExportTriangleMesh
   /** Non-blocking notes worth surfacing in the dialog (e.g. fallback geometry used). */
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 export interface ModelExportInput {

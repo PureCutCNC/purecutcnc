@@ -16,6 +16,7 @@
 
 import type { Operation, Point, Tool, DrillType } from '../../types/project'
 import type { Units } from '../../utils/units'
+import type { ToolpathWarning } from './warningCodes'
 
 export type ToolpathMoveKind = 'rapid' | 'plunge' | 'cut' | 'lead_in' | 'lead_out'
 
@@ -63,7 +64,7 @@ export interface DrillCycle {
 export interface ToolpathResult {
   operationId: string
   moves: ToolpathMove[]
-  warnings: string[]
+  warnings: ToolpathWarning[]
   bounds: ToolpathBounds | null
   collidingClampIds?: string[]
   /** Indices into `moves` of segments that cross a clamp zone below required
@@ -135,7 +136,7 @@ export interface ResolvedPocketResult {
   operationId: string
   units: Units
   bands: ResolvedPocketBand[]
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 export interface ClipperPoint {

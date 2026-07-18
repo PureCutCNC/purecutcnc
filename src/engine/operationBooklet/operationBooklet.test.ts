@@ -102,7 +102,7 @@ function fixture(): { project: Project; operation: Operation; toolpath: Toolpath
   }
   const toolpath: ToolpathResult = {
     operationId: operation.id,
-    warnings: ['Test warning'],
+    warnings: [{ code: 'debug' as const, params: { text: 'Test warning' } }],
     bounds: { minX: 5, minY: 5, minZ: 0, maxX: 25, maxY: 21, maxZ: 5 },
     moves: [
       { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 5, y: 5, z: 5 } },

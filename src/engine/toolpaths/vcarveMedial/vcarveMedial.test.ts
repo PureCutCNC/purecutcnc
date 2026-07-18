@@ -483,7 +483,7 @@ function testGeneratorRequiresVBit(): void {
   const result = generateVCarveMedialToolpath(proj, makeVCarveMedialOp(['f1']))
   assert(result.moves.length === 0, 'expected no moves with a flat tool')
   assert(
-    result.warnings.some((w) => w.includes('V-bit')),
+    result.warnings.some((w) => w.code === 'vcarveMedialNeedsVBit' || w.code === 'vBitAngleRange' || w.code === 'vBitInvalidSlope'),
     `expected V-bit warning, got: ${result.warnings.join(', ')}`,
   )
   console.log('non-V-bit rejection PASSED')
@@ -571,7 +571,7 @@ function testGeneratorTextFeatureTarget(): void {
   const cuts = cutMoves(result.moves)
   assert(cuts.length > 0, `expected cuts for text feature, got 0 (warnings: ${result.warnings.join(', ')})`)
   assert(
-    !result.warnings.some((w) => w.includes('empty subject geometry')),
+    !result.warnings.some((w) => w.code === 'bandEmptySubject'),
     `text target resolved empty: ${result.warnings.join(', ')}`,
   )
   console.log(`text feature target: ${cuts.length} cuts PASSED`)

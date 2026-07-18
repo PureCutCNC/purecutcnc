@@ -27,6 +27,10 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
 - `store.ts` — framework-agnostic active-locale store: `translate()` /
   `translatePlural()` for non-React call sites, custom-pack CRUD,
   subscribe/notify for React, and `document.documentElement.lang` upkeep.
+- `warningText.ts` — the single presentation mapper for structured engine
+  warnings (`{ code, params }` → localized text; injects the clamp move-kind
+  word). Catalog module `locales/*/warnings.ts`; coverage locked by
+  `warningsCoverage.test.ts`.
 - `bootstrap.ts` — resolves the locale before React renders (no
   wrong-language flash; covers the phone-blocker screen).
 - `i18nContext.ts` / `I18nProvider.tsx` — React context (`useI18n()` →

@@ -33,6 +33,7 @@ import {
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
+import { toolpathWarningTexts } from '../../i18n/warningText'
 
 interface ExportDialogProps {
   onClose: () => void
@@ -97,7 +98,7 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
   ), [generateToolpath, operationOptions, project, selectedOperationIds])
 
   const previewWarnings = useMemo(() => {
-    const warnings = [...(previewResult?.warnings ?? [])]
+    const warnings = toolpathWarningTexts(previewResult?.warnings ?? [])
     if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
       warnings.unshift(td('dialogs.export.warning.noOperations'))
     }

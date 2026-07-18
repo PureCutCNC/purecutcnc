@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { Project, Operation } from '../../types/project'
 import type { ToolpathResult, NormalizedTool } from '../toolpaths/types'
 
@@ -132,7 +133,7 @@ export interface PostProcessorOptions {
 
 export interface PostProcessorResult {
   gcode: string
-  warnings: string[]
+  warnings: ToolpathWarning[]
   stats: {
     lineCount: number
     operationCount: number

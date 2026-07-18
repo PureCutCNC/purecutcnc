@@ -20,6 +20,7 @@ import { canvasEn } from './canvas'
 import { featureTreeEn } from './featureTree'
 import { camEn } from './cam'
 import { dialogsEn } from './dialogs'
+import { warningsEn } from './warnings'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -32,6 +33,7 @@ export const en = {
   ...sketchEn,
   ...camEn,
   ...dialogsEn,
+  ...warningsEn,
   ...canvasEn,
   ...featureTreeEn,
 } as const

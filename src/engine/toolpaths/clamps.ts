@@ -15,6 +15,7 @@
  */
 
 import type { Clamp, Operation, Project } from '../../types/project'
+import type { ToolpathWarning } from './warningCodes'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import { normalizeToolForProject } from './geometry'
 
@@ -102,21 +103,6 @@ function moveIntersectsClamp(move: ToolpathMove, rect: ExpandedClampBounds): boo
     move.to.y,
     rect,
   )
-}
-
-function describeMoveKind(kind: ToolpathMove['kind']): string {
-  switch (kind) {
-    case 'rapid':
-      return 'rapid'
-    case 'plunge':
-      return 'plunge'
-    case 'lead_in':
-      return 'lead-in'
-    case 'lead_out':
-      return 'lead-out'
-    case 'cut':
-      return 'cut'
-  }
 }
 
 function clonePoint(point: ToolpathPoint): ToolpathPoint {
@@ -213,7 +199,7 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
   const collidingClampIds = new Set<string>()
   const collidingMoveIndices: number[] = []
   const warningCounts = new Map<string, { clamp: Clamp; kind: ToolpathMove['kind']; count: number; minActualZ: number; requiredZ: number }>()
-  const travelLimitWarnings = new Set<string>()
+  const travelLimitWarnings = new Map<string, ToolpathWarning>()
 
   for (const move of result.moves) {
     const intersections = intersectingClamps(move, expandedClamps)
@@ -237,9 +223,10 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
     if (requiredZ > maxTravelZ) {
       for (const rect of unsafe) {
         if (rect.requiredZ > maxTravelZ) {
-          travelLimitWarnings.add(
-            `Clamp "${rect.clamp.name}" requires clearance Z ${rect.requiredZ.toFixed(3)}, which exceeds project max travel Z ${maxTravelZ.toFixed(3)}.`,
-          )
+          travelLimitWarnings.set(rect.clamp.name, {
+            code: 'clampTravelLimitExceeded',
+            params: { name: rect.clamp.name, requiredZ: rect.requiredZ.toFixed(3), maxZ: maxTravelZ.toFixed(3) },
+          })
         }
       }
     } else if (canAutoLiftRapid(move, unsafe)) {
@@ -273,11 +260,18 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
   }
 
   const warnings = [...result.warnings]
-  warnings.push(...travelLimitWarnings)
+  warnings.push(...travelLimitWarnings.values())
   for (const entry of warningCounts.values()) {
-    warnings.push(
-      `Clamp "${entry.clamp.name}" is crossed by ${entry.count} ${describeMoveKind(entry.kind)} move${entry.count === 1 ? '' : 's'} below required clearance (min Z ${entry.minActualZ.toFixed(3)}, required Z ${entry.requiredZ.toFixed(3)}).`,
-    )
+    warnings.push({
+      code: entry.count === 1 ? 'clampCrossedOne' : 'clampCrossedMany',
+      params: {
+        name: entry.clamp.name,
+        count: entry.count,
+        moveKindId: entry.kind,
+        minZ: entry.minActualZ.toFixed(3),
+        requiredZ: entry.requiredZ.toFixed(3),
+      },
+    })
   }
 
   return {
