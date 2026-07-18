@@ -681,6 +681,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     right: t('viewport.presets.right'),
     left: t('viewport.presets.left'),
     iso: t('viewport.presets.iso'),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is identity-stable; languageTag drives locale recomputes
   }), [t, languageTag])
   const threePalette = palette.three
   const threePaletteRef = useRef(threePalette)

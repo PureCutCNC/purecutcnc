@@ -86,6 +86,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
       }
     }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is identity-stable; languageTag drives locale recomputes
   const versionLabel = useMemo(() => t('viewport.about.version', { version }), [t, version, languageTag])
 
   return (

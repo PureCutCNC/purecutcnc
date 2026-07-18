@@ -587,6 +587,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     right: t('viewport.presets.right'),
     left: t('viewport.presets.left'),
     iso: t('viewport.presets.iso'),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is identity-stable; languageTag drives locale recomputes
   }), [t, languageTag])
   const threePalette = palette.three
   const initialThreePaletteRef = useRef(threePalette)
@@ -795,11 +796,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     renderer.domElement.style.display = 'block'
     renderer.domElement.style.touchAction = 'none'
     mount.appendChild(renderer.domElement)
-    // eslint-disable-next-line react-hooks/immutability -- three.js renderer/scene/camera live in refs across effects: populated in this mount effect, read in the resize/mesh sibling effect. No behavior-preserving restructure satisfies the rule.
+     
     rendererRef.current = renderer
 
     const scene = new THREE.Scene()
-    // eslint-disable-next-line react-hooks/immutability -- see rendererRef above (three.js objects in cross-effect refs).
+     
     sceneRef.current = scene
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.7)
@@ -812,7 +813,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     scene.add(fill)
 
     const camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 5000)
-    // eslint-disable-next-line react-hooks/immutability -- see rendererRef above (three.js objects in cross-effect refs).
+     
     cameraRef.current = camera
 
     // Camera changes request a draw from the RAF loop rather than rendering
@@ -898,7 +899,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const camera = cameraRef.current
     if (mount && renderer && camera) {
       renderer.setSize(mount.clientWidth, mount.clientHeight)
-      // eslint-disable-next-line react-hooks/immutability -- camera comes from cameraRef (populated in the mount effect); adjusting its aspect here is the canonical three.js resize path.
+       
       camera.aspect = mount.clientWidth / mount.clientHeight
       camera.updateProjectionMatrix()
     }
