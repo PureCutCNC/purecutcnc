@@ -357,6 +357,33 @@ rules apply verbatim.
 
 **Manager review record:** pending.
 
+### S5 — Structured engine warnings (manager-implemented; in progress)
+
+Contract (binding for the implementation, survives session summarization):
+
+- `src/engine/toolpaths/warningCodes.ts` (new): `ToolpathWarningCode`
+  string-literal union + `interface ToolpathWarning { code:
+  ToolpathWarningCode; params?: Record<string, string | number> }`. The
+  ENGINE owns codes and stays free of i18n imports (layering: engine pure,
+  translation at presentation).
+- `types.ts` both `warnings: string[]` fields and the postprocessor's
+  local `warnings` become `ToolpathWarning[]` — the compiler then
+  enumerates every push site (~90 across ~20 generator files +
+  postprocessor). Each converts to `{ code, params }`; user-authored names
+  and numbers travel as params, never baked into text.
+- `src/i18n/locales/en/warnings.ts` + `zh-CN/warnings.ts` (new module,
+  registered): one key per code (`warnings.<code>`), en values byte-equal
+  to today's strings. A unit test imports the engine union and asserts the
+  catalog covers every code (and no orphans).
+- `src/i18n/warningText.ts` (new): `toolpathWarningText(w)` →
+  `translate('warnings.' + w.code, w.params)` — the single presentation
+  mapper. Consumers (CAMPanel warning list, ExportDialog preview warnings,
+  operation booklet rendering) format at render time; the booklet follows
+  the UI locale.
+- Engine tests asserting warning STRINGS convert to code assertions
+  (equivalent strength, mirrors the S2d test conversion).
+- Checks: `scripts/build-summary.sh` + language/appearance/CAM/export e2e.
+
 ## Integration verification
 
 - Accepted commits and merge order: S1 `af0148c` → merge `ca0df27`.
