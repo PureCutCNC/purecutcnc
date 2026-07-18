@@ -49,6 +49,7 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { camT } from './camI18n'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -247,13 +248,13 @@ function DraftNumberInput({ value, min, max, onCommit }: DraftNumberInputProps) 
 function toolTypeLabel(type: ToolType): string {
   switch (type) {
     case 'flat_endmill':
-      return 'Flat Endmill'
+      return camT('cam.toolType.flatEndmill')
     case 'ball_endmill':
-      return 'Ball Endmill'
+      return camT('cam.toolType.ballEndmill')
     case 'v_bit':
-      return 'V-Bit'
+      return camT('cam.toolType.vBit')
     case 'drill':
-      return 'Drill'
+      return camT('cam.toolType.drill')
   }
 }
 
@@ -303,27 +304,27 @@ function resolvedWaterlineAdaptiveSpacing(
 function operationAddButtonLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
-      return 'Pocket'
+      return camT('cam.opButton.pocket')
     case 'v_carve':
-      return 'V-Carve offset'
+      return camT('cam.opButton.vCarve')
     case 'v_carve_medial':
-      return 'V-Carve medial'
+      return camT('cam.opButton.vCarveMedial')
     case 'edge_route_inside':
-      return 'Edge in'
+      return camT('cam.opButton.edgeIn')
     case 'edge_route_outside':
-      return 'Edge out'
+      return camT('cam.opButton.edgeOut')
     case 'surface_clean':
-      return 'Surface'
+      return camT('cam.opButton.surface')
     case 'rough_surface':
-      return '3D Surface rough'
+      return camT('cam.opButton.roughSurface')
     case 'finish_surface':
-      return '3D Surface finish'
+      return camT('cam.opButton.finishSurface')
     case 'finish_surface_cleanup':
-      return '3D Surface cleanup'
+      return camT('cam.opButton.finishSurfaceCleanup')
     case 'follow_line':
-      return 'Engrave'
+      return camT('cam.opButton.engrave')
     case 'drilling':
-      return 'Drill'
+      return camT('cam.opButton.drill')
   }
 }
 
@@ -340,19 +341,19 @@ function operationSupportsPassSelection(kind: OperationKind): boolean {
 function drillTypeLabel(type: DrillType): string {
   switch (type) {
     case 'simple':
-      return 'Simple (G81)'
+      return camT('cam.drillType.simple')
     case 'peck':
-      return 'Peck (G83)'
+      return camT('cam.drillType.peck')
     case 'dwell':
-      return 'Dwell (G82)'
+      return camT('cam.drillType.dwell')
     case 'chip_breaking':
-      return 'Chip breaking (G73)'
+      return camT('cam.drillType.chipBreaking')
   }
 }
 
 function operationTargetSummary(project: Project, target: OperationTarget): string {
   if (target.source === 'stock') {
-    return 'Stock'
+    return camT('cam.target.stock')
   }
 
   const features = resolveFeatureInstances(project, target.featureIds)
@@ -364,23 +365,23 @@ function operationTargetSummary(project: Project, target: OperationTarget): stri
     .map((feature) => feature.name)
 
   if (names.length === 0 && regionNames.length === 0) {
-    return 'No features'
+    return camT('cam.target.noFeatures')
   }
 
-  const machiningSummary = names.length > 0 ? names.join(', ') : 'No machining target'
+  const machiningSummary = names.length > 0 ? names.join(', ') : camT('cam.target.noMachiningTarget')
   return regionNames.length > 0
-    ? `${machiningSummary}; filters: ${regionNames.join(', ')}`
+    ? camT('cam.target.filters', { machiningSummary, regionNames: regionNames.join(', ') })
     : machiningSummary
 }
 
 function pocketPatternLabel(pattern: PocketPattern): string {
   switch (pattern) {
     case 'offset':
-      return 'Offset'
+      return camT('cam.pocketPattern.offset')
     case 'parallel':
-      return 'Parallel'
+      return camT('cam.pocketPattern.parallel')
     case 'waterline':
-      return 'Waterline'
+      return camT('cam.pocketPattern.waterline')
   }
 }
 
@@ -562,7 +563,7 @@ function getOperationTargetUpdateHint(project: Project, selection: SelectionStat
   }
 
   if (selection.selectedFeatureIds.length === 0) {
-    return 'Select one or more compatible features in the tree or sketch'
+    return camT('cam.hint.selectCompatible')
   }
 
   return getOperationAddHint(project, selection, operation.kind)
@@ -690,7 +691,7 @@ export function CAMPanel({
       setLibraryError(null)
       return library.tools
     } catch (error) {
-      setLibraryError(error instanceof Error ? error.message : 'Failed to load tool library.')
+      setLibraryError(error instanceof Error ? error.message : camT('cam.library.failed'))
       return []
     } finally {
       setLibraryLoading(false)
@@ -921,8 +922,8 @@ export function CAMPanel({
 
     const result = createRestOperation(selectedOperation.id)
     const text = result.operationId
-      ? `Created rest operation with ${result.regionIds.length} region${result.regionIds.length === 1 ? '' : 's'}; choose a smaller tool`
-      : result.warnings[0] ?? 'No unreachable pocket areas found for this tool'
+      ? camT('cam.restOp.created', { count: String(result.regionIds.length), plural: result.regionIds.length === 1 ? '' : 's' })
+      : (result.warnings[0] ?? camT('cam.restOp.empty'))
     setOperationActionMessage({ operationId: result.operationId ?? selectedOperation.id, text })
     if (result.operationId) {
       onSelectedOperationIdChange(result.operationId)
@@ -1006,7 +1007,7 @@ export function CAMPanel({
           selectionKey,
           text:
             getOperationTargetUpdateHint(project, selection, selectedOperation)
-            ?? 'Current selection is not compatible with this operation',
+            ?? camT('cam.hint.notCompatible'),
         }
       )
       return
@@ -1039,7 +1040,7 @@ export function CAMPanel({
     }
 
     setExportingBookletOperationId(selectedOperation.id)
-    setBookletExportMessage({ operationId: selectedOperation.id, text: 'Building booklet...' })
+    setBookletExportMessage({ operationId: selectedOperation.id, text: camT('cam.booklet.building') })
 
     try {
       const toolpath = generateToolpath(selectedOperation)
@@ -1065,12 +1066,12 @@ export function CAMPanel({
       )
       setBookletExportMessage({
         operationId: selectedOperation.id,
-        text: exportedPath ? `Booklet exported: ${exportedPath}` : 'Booklet export cancelled',
+        text: exportedPath ? camT('cam.booklet.exported', { path: exportedPath }) : camT('cam.booklet.cancelled'),
       })
     } catch (error) {
       setBookletExportMessage({
         operationId: selectedOperation.id,
-        text: error instanceof Error ? error.message : 'Failed to export booklet',
+        text: error instanceof Error ? error.message : camT('cam.booklet.failed'),
       })
     } finally {
       setExportingBookletOperationId(null)
@@ -1079,34 +1080,34 @@ export function CAMPanel({
 
   function renderOperationProperties() {
     if (!selectedOperation) {
-      return <div className="panel-empty">Select an operation to edit its parameters.</div>
+      return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
     return (
       <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
                     <div className="properties-group">
                   <label className="properties-field">
-                    <span>Name</span>
+                    <span>{camT('cam.operation.name')}</span>
                     <DraftTextInput value={selectedOperation.name} onCommit={(value) => updateOperation(selectedOperation.id, { name: value })} />
                   </label>
                   <label className="properties-field properties-field--textarea">
-                    <span>Description</span>
+                    <span>{camT('cam.operation.description')}</span>
                     <DraftTextArea
                       value={selectedOperation.description ?? ''}
                       onCommit={(value) => updateOperation(selectedOperation.id, { description: value })}
                     />
                   </label>
                   <label className="properties-field">
-                    <span>Kind</span>
+                    <span>{camT('cam.operation.kind')}</span>
                     <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
                   </label>
                   {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_medial' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' && selectedOperation.kind !== 'finish_surface_cleanup' ? (
                     <label className="properties-field">
-                      <span>Pass</span>
+                      <span>{camT('cam.operation.pass')}</span>
                       <Select
                         value={selectedOperation.pass}
                         options={[
-                          { value: 'rough', label: 'Rough' },
-                          { value: 'finish', label: 'Finish' },
+                          { value: 'rough', label: camT('cam.pass.rough') },
+                          { value: 'finish', label: camT('cam.pass.finish') },
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { pass: value })}
                       />
@@ -1114,7 +1115,7 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_medial' ? (
                     <label className="properties-field">
-                      <span>Max Carve Depth</span>
+                      <span>{camT('cam.operation.maxCarveDepth')}</span>
                       <DraftLengthInput
                         value={selectedOperation.maxCarveDepth}
                         units={project.meta.units}
@@ -1126,7 +1127,7 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind === 'follow_line' ? (
                     <label className="properties-field">
-                      <span>Carve Depth</span>
+                      <span>{camT('cam.operation.carveDepth')}</span>
                       <DraftLengthInput
                         value={selectedOperation.carveDepth}
                         units={project.meta.units}
@@ -1137,27 +1138,27 @@ export function CAMPanel({
                     </label>
                   ) : null}
                   <label className="properties-field">
-                    <span>Target</span>
+                    <span>{camT('cam.operation.target')}</span>
                     <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />
                   </label>
                   {selectedOperationTargetsRegion ? (
                     <div className="cam-region-note">
-                      <span className="cam-region-note__badge">mask</span>
-                      <span>Regions limit where this operation may cut — not shapes to machine.</span>
+                      <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>
+                      <span>{camT('cam.regionNote.text')}</span>
                     </div>
                   ) : null}
                   <div className="properties-field">
-                    <span>Target Source</span>
+                    <span>{camT('cam.operation.targetSource')}</span>
                     <button
                       className="feat-btn"
                       type="button"
                       title={getOperationTargetUpdateHint(project, selection, selectedOperation) ?? undefined}
                       onClick={handleApplySelectionToOperation}
                     >
-                      Use current selection
+                      {camT('cam.operation.useCurrentSelection')}
                     </button>
                     {selectionUpdateConfirm === selectedOperation.id ? (
-                      <span className="cam-field-message cam-field-message--success">✓ Target updated</span>
+                      <span className="cam-field-message cam-field-message--success">{camT('cam.operation.targetUpdated')}</span>
                     ) : targetUpdateMessage
                       && targetUpdateMessage.operationId === selectedOperation.id
                       && targetUpdateMessage.selectionKey === selectionKey ? (
@@ -1166,9 +1167,9 @@ export function CAMPanel({
                   </div>
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
-                      <span>Rest Machining</span>
+                      <span>{camT('cam.operation.restMachining')}</span>
                       <button className="feat-btn" type="button" onClick={handleCreateRestOperation}>
-                        Create rest operation
+                        {camT('cam.operation.createRestOp')}
                       </button>
                       {operationActionMessage?.operationId === selectedOperation.id ? (
                         <span className="cam-field-message">{operationActionMessage.text}</span>
@@ -1176,14 +1177,14 @@ export function CAMPanel({
                     </div>
                   ) : null}
                   <div className="properties-field">
-                    <span>Booklet</span>
+                    <span>{camT('cam.operation.booklet')}</span>
                     <button
                       className="feat-btn"
                       type="button"
                       onClick={handleExportBooklet}
                       disabled={exportingBookletOperationId === selectedOperation.id}
                     >
-                      {exportingBookletOperationId === selectedOperation.id ? 'Exporting...' : 'Export PDF'}
+                      {exportingBookletOperationId === selectedOperation.id ? camT('cam.operation.exporting') : camT('cam.operation.exportPdf')}
                     </button>
                     {bookletExportMessage?.operationId === selectedOperation.id ? (
                       <span className="cam-field-message">{bookletExportMessage.text}</span>
@@ -1191,15 +1192,15 @@ export function CAMPanel({
                   </div>
                   {(selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
                     <div className="properties-field">
-                      <span>Tabs</span>
+                      <span>{camT('cam.operation.tabs')}</span>
                       <button className="feat-btn" type="button" onClick={handleAutoPlaceTabs}>
-                        Auto place tabs
+                        {camT('cam.operation.autoPlaceTabs')}
                       </button>
                     </div>
                   ) : null}
                   {toolpathWarnings && toolpathWarnings.length > 0 ? (
                     <div className="properties-field">
-                      <span>Toolpath warnings</span>
+                      <span>{camT('cam.operation.toolpathWarnings')}</span>
                       <div className="cam-field-note-list">
                         {toolpathWarnings.map((warning, index) => (
                           <div key={`${selectedOperation.id}-warning-${index}`} className="cam-field-note">
@@ -1210,11 +1211,11 @@ export function CAMPanel({
                     </div>
                   ) : null}
                   <label className="properties-field">
-                    <span>Tool</span>
+                    <span>{camT('cam.operation.tool')}</span>
                     <Select
                       value={selectedOperation.toolRef ?? ''}
                       options={[
-                        { value: '', label: 'No Tool' },
+                        { value: '', label: camT('cam.operation.noTool') },
                         ...(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_medial'
                           ? project.tools.filter((tool) => tool.type === 'v_bit')
                           : project.tools
@@ -1257,11 +1258,11 @@ export function CAMPanel({
                       checked={selectedOperation.enabled}
                       onChange={(event) => updateOperation(selectedOperation.id, { enabled: event.target.checked })}
                     />
-                    <span>Enabled</span>
+                    <span>{camT('cam.operation.enabled')}</span>
                   </label>
                   {showStepdown(selectedOperation) ? (
                     <label className="properties-field">
-                      <span>Stepdown</span>
+                      <span>{camT('cam.operation.stepdown')}</span>
                       <DraftLengthInput
                         value={selectedOperation.stepdown}
                         units={project.meta.units}
@@ -1278,8 +1279,8 @@ export function CAMPanel({
                     <label className="properties-field">
                       <span>
                         {selectedOperation.kind === 'v_carve'
-                          ? 'Contour Spacing'
-                          : 'Stepover Ratio'}
+                          ? camT('cam.operation.contourSpacing')
+                          : camT('cam.operation.stepoverRatio')}
                       </span>
                       <DraftNumberInput
                         value={selectedOperation.stepover}
@@ -1289,10 +1290,10 @@ export function CAMPanel({
                       <OperationParameterReference kind="stepover" />
                     </label>
                   ) : null}
-                  <DisclosureSection title="Advanced" storageKey="cam-operation-advanced">
+                  <DisclosureSection title={camT('cam.operation.advanced')} storageKey="cam-operation-advanced">
                   {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
                     <label className="properties-field">
-                      <span>Pattern</span>
+                      <span>{camT('cam.operation.pattern')}</span>
                       <Select
                         value={selectedOperation.pocketPattern}
                         options={[
@@ -1316,7 +1317,7 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind === 'finish_surface' ? (
                     <label className="properties-field">
-                      <span>Pattern</span>
+                      <span>{camT('cam.operation.pattern')}</span>
                       <Select
                         value={selectedOperation.pocketPattern}
                         options={[
@@ -1330,7 +1331,7 @@ export function CAMPanel({
                   ) : null}
                   {selectedOperation.kind === 'finish_surface_cleanup' ? (
                     <label className="properties-field">
-                      <span>Pattern</span>
+                      <span>{camT('cam.operation.pattern')}</span>
                       <Select
                         value={selectedOperation.pocketPattern}
                         options={[
@@ -1344,7 +1345,7 @@ export function CAMPanel({
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
                     <label className="properties-field">
-                      <span>Angle</span>
+                      <span>{camT('cam.operation.angle')}</span>
                       <DraftNumberInput
                         value={selectedOperation.pocketAngle}
                         onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
@@ -1354,12 +1355,12 @@ export function CAMPanel({
                   ) : null}
                   {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') ? (
                     <label className="properties-field">
-                      <span>Cut Direction</span>
+                      <span>{camT('cam.operation.cutDirection')}</span>
                       <Select
                         value={selectedOperation.cutDirection ?? 'conventional'}
                         options={[
-                          { value: 'conventional', label: 'Conventional' },
-                          { value: 'climb', label: 'Climb' },
+                          { value: 'conventional', label: camT('cam.operation.conventional') },
+                          { value: 'climb', label: camT('cam.operation.climb') },
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
                       />
@@ -1370,12 +1371,12 @@ export function CAMPanel({
                     || selectedOperation.kind === 'edge_route_inside'
                     || selectedOperation.kind === 'edge_route_outside') ? (
                     <label className="properties-field">
-                      <span>Machining Order</span>
+                      <span>{camT('cam.operation.machiningOrder')}</span>
                       <Select
                         value={selectedOperation.machiningOrder ?? 'level_first'}
                         options={[
-                          { value: 'feature_first', label: 'Feature first' },
-                          { value: 'level_first', label: 'Level first' },
+                          { value: 'feature_first', label: camT('cam.operation.featureFirst') },
+                          { value: 'level_first', label: camT('cam.operation.levelFirst') },
                         ]}
                         onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
                       />
@@ -1390,13 +1391,13 @@ export function CAMPanel({
                         checked={selectedOperation.roundOutsideCorners ?? false}
                         onChange={(event) => updateOperation(selectedOperation.id, { roundOutsideCorners: event.target.checked })}
                       />
-                      <span>Round outside corners</span>
+                      <span>{camT('cam.operation.roundOutsideCorners')}</span>
                     </label>
                   ) : null}
                   {selectedOperation.kind === 'drilling' ? (
                     <>
                       <label className="properties-field">
-                        <span>Drill Type</span>
+                        <span>{camT('cam.operation.drillType')}</span>
                         <Select
                           value={selectedOperation.drillType ?? 'simple'}
                           options={[
@@ -1411,7 +1412,7 @@ export function CAMPanel({
                       </label>
                       {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
                         <label className="properties-field">
-                          <span>Peck Depth</span>
+                          <span>{camT('cam.operation.peckDepth')}</span>
                           <DraftLengthInput
                             value={selectedOperation.peckDepth ?? 0}
                             units={project.meta.units}
@@ -1423,7 +1424,7 @@ export function CAMPanel({
                       ) : null}
                       {selectedOperation.drillType === 'dwell' ? (
                         <label className="properties-field">
-                          <span>Dwell Time (s)</span>
+                          <span>{camT('cam.operation.dwellTime')}</span>
                           <DraftNumberInput
                             value={selectedOperation.dwellTime ?? 0}
                             min={0}
@@ -1433,7 +1434,7 @@ export function CAMPanel({
                         </label>
                       ) : null}
                       <label className="properties-field">
-                        <span>Retract Height</span>
+                        <span>{camT('cam.operation.retractHeight')}</span>
                         <DraftLengthInput
                           value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
                           units={project.meta.units}
@@ -1453,7 +1454,7 @@ export function CAMPanel({
                           checked={selectedOperation.finishWalls}
                           onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
                         />
-                        <span>Finish Walls</span>
+                        <span>{camT('cam.operation.finishWalls')}</span>
                         <OperationParameterReference kind="finishWalls" />
                       </label>
                       <label className="properties-check">
@@ -1462,7 +1463,7 @@ export function CAMPanel({
                           checked={selectedOperation.finishFloor}
                           onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
                         />
-                        <span>Finish Floor</span>
+                        <span>{camT('cam.operation.finishFloor')}</span>
                         <OperationParameterReference kind="finishFloor" />
                       </label>
                     </>
@@ -1473,10 +1474,10 @@ export function CAMPanel({
                       checked={selectedOperation.debugToolpath}
                       onChange={(event) => updateOperation(selectedOperation.id, { debugToolpath: event.target.checked })}
                     />
-                    <span>Debug toolpath</span>
+                    <span>{camT('cam.operation.debugToolpath')}</span>
                   </label>
                   <label className="properties-field">
-                    <span>Feed</span>
+                    <span>{camT('cam.operation.feed')}</span>
                     <DraftLengthInput
                       value={selectedOperation.feed}
                       units={project.meta.units}
@@ -1486,7 +1487,7 @@ export function CAMPanel({
                     <OperationParameterReference kind="feed" />
                   </label>
                   <label className="properties-field">
-                    <span>Plunge Feed</span>
+                    <span>{camT('cam.operation.plungeFeed')}</span>
                     <DraftLengthInput
                       value={selectedOperation.plungeFeed}
                       units={project.meta.units}
@@ -1500,9 +1501,9 @@ export function CAMPanel({
                       || (selectedOperation.pass === 'finish' && selectedOperation.finishFloor)) ? (
                     <label
                       className="properties-field"
-                      title="Feed percentage for fully engaged (slotting) cuts: each section's innermost loop, uncleared crossings, the parallel boundary pass, and the first fill line. 100 disables the reduction."
+                      title={camT('cam.operation.slotFeedTooltip')}
                     >
-                      <span>Slot Feed (%)</span>
+                      <span>{camT('cam.operation.slotFeed')}</span>
                       <DraftNumberInput
                         value={selectedOperation.pocketSlotFeedPercent ?? 100}
                         min={1}
@@ -1515,7 +1516,7 @@ export function CAMPanel({
                     </label>
                   ) : null}
                   <label className="properties-field">
-                    <span>RPM</span>
+                    <span>{camT('cam.operation.rpm')}</span>
                     <DraftNumberInput
                       value={selectedOperation.rpm}
                       min={1}
@@ -1530,7 +1531,7 @@ export function CAMPanel({
                     && selectedOperation.kind !== 'finish_surface' ? (
                     <>
                       <label className="properties-field">
-                        <span>Stock To Leave Radial</span>
+                        <span>{camT('cam.operation.stockToLeaveRadial')}</span>
                         <DraftLengthInput
                           value={selectedOperation.stockToLeaveRadial}
                           units={project.meta.units}
@@ -1540,7 +1541,7 @@ export function CAMPanel({
                         <OperationParameterReference kind="stockRadial" />
                       </label>
                       <label className="properties-field">
-                        <span>Stock To Leave Axial</span>
+                        <span>{camT('cam.operation.stockToLeaveAxial')}</span>
                         <DraftLengthInput
                           value={selectedOperation.stockToLeaveAxial}
                           units={project.meta.units}
@@ -1556,7 +1557,7 @@ export function CAMPanel({
                       {selectedOperation.pocketPattern === 'waterline' ? (
                         <>
                           <label className="properties-field">
-                            <span>Stock To Leave Radial</span>
+                            <span>{camT('cam.operation.stockToLeaveRadial')}</span>
                             <DraftLengthInput
                               value={selectedOperation.stockToLeaveRadial}
                               units={project.meta.units}
@@ -1567,7 +1568,7 @@ export function CAMPanel({
                           </label>
                           <label
                             className="properties-check"
-                            title="Adds projected waterline rings on shallow slopes and model tips."
+                            title={camT('cam.operation.adaptiveRefinementTooltip')}
                           >
                             <input
                               type="checkbox"
@@ -1585,16 +1586,16 @@ export function CAMPanel({
                                 })
                               }}
                             />
-                            <span>Adaptive refinement</span>
+                            <span>{camT('cam.operation.adaptiveRefinement')}</span>
                             <OperationParameterReference kind="adaptiveRefinement" />
                           </label>
                           {(selectedOperation.waterlineAdaptiveRefinement ?? true) ? (
                             <>
                               <label
                                 className="properties-field"
-                                title="Projected ring spacing in project units."
+                                title={camT('cam.operation.adaptiveSpacingTooltip')}
                               >
-                                <span>Adaptive Spacing</span>
+                                <span>{camT('cam.operation.adaptiveSpacing')}</span>
                                 <DraftLengthInput
                                   value={selectedOperationWaterlineSpacing}
                                   units={project.meta.units}
@@ -1605,9 +1606,9 @@ export function CAMPanel({
                               </label>
                               <label
                                 className="properties-field"
-                                title="Maximum projected rings in one band or tip. Use 0 for the default cap."
+                                title={camT('cam.operation.maxRingsTooltip')}
                               >
-                                <span>Max Rings / Band</span>
+                                <span>{camT('cam.operation.maxRingsBand')}</span>
                                 <DraftNumberInput
                                   value={selectedOperation.waterlineMaxRingsPerBand ?? 0}
                                   min={0}
@@ -1621,7 +1622,7 @@ export function CAMPanel({
                         </>
                       ) : null}
                       <label className="properties-field">
-                        <span>Stock To Leave Axial</span>
+                        <span>{camT('cam.operation.stockToLeaveAxial')}</span>
                         <DraftLengthInput
                           value={selectedOperation.stockToLeaveAxial}
                           units={project.meta.units}
@@ -1640,24 +1641,24 @@ export function CAMPanel({
 
   function renderToolProperties() {
     if (!selectedTool) {
-      return <div className="panel-empty">Select a tool to edit its properties.</div>
+      return <div className="panel-empty">{camT('cam.panel.emptyTool')}</div>
     }
     return (
       <div key={selectedTool.id} className="properties-panel cam-tool-properties">
                       <div className="properties-group">
                       <label className="properties-field">
-                        <span>Name</span>
+                        <span>{camT('cam.tool.name')}</span>
                         <DraftTextInput value={selectedTool.name} onCommit={(value) => updateTool(selectedTool.id, { name: value })} />
                       </label>
                       <label className="properties-field">
-                        <span>Type</span>
+                        <span>{camT('cam.tool.type')}</span>
                         <Select
                           value={selectedTool.type}
                           options={[
-                            { value: 'flat_endmill', label: 'Flat Endmill' },
-                            { value: 'ball_endmill', label: 'Ball Endmill' },
-                            { value: 'v_bit', label: 'V-Bit' },
-                            { value: 'drill', label: 'Drill' },
+                            { value: 'flat_endmill', label: toolTypeLabel('flat_endmill') },
+                            { value: 'ball_endmill', label: toolTypeLabel('ball_endmill') },
+                            { value: 'v_bit', label: toolTypeLabel('v_bit') },
+                            { value: 'drill', label: toolTypeLabel('drill') },
                           ]}
                           onChange={(nextType) => updateTool(selectedTool.id, {
                             type: nextType,
@@ -1666,18 +1667,18 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Units</span>
+                        <span>{camT('cam.tool.units')}</span>
                         <Select
                           value={selectedTool.units}
                           options={[
-                            { value: 'mm', label: 'Millimeters' },
-                            { value: 'inch', label: 'Inches' },
+                            { value: 'mm', label: camT('cam.tool.unitsMm') },
+                            { value: 'inch', label: camT('cam.tool.unitsInch') },
                           ]}
                           onChange={(value) => updateTool(selectedTool.id, convertToolUnits(selectedTool, value))}
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Diameter</span>
+                        <span>{camT('cam.tool.diameter')}</span>
                         <DraftLengthInput
                           value={selectedTool.diameter}
                           units={selectedTool.units}
@@ -1687,7 +1688,7 @@ export function CAMPanel({
                       </label>
                       {selectedTool.type === 'v_bit' ? (
                         <label className="properties-field">
-                          <span>V Angle</span>
+                          <span>{camT('cam.tool.vAngle')}</span>
                           <DraftNumberInput
                             value={selectedTool.vBitAngle ?? 60}
                             min={1}
@@ -1697,7 +1698,7 @@ export function CAMPanel({
                         </label>
                       ) : null}
                       <label className="properties-field">
-                        <span>Flutes</span>
+                        <span>{camT('cam.tool.flutes')}</span>
                         <DraftNumberInput
                           value={selectedTool.flutes}
                           min={1}
@@ -1706,18 +1707,18 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Material</span>
+                        <span>{camT('cam.tool.material')}</span>
                         <Select
                           value={selectedTool.material}
                           options={[
-                            { value: 'carbide', label: 'Carbide' },
-                            { value: 'hss', label: 'HSS' },
+                            { value: 'carbide', label: camT('cam.tool.materialCarbide') },
+                            { value: 'hss', label: camT('cam.tool.materialHss') },
                           ]}
                           onChange={(value) => updateTool(selectedTool.id, { material: value })}
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Default RPM</span>
+                        <span>{camT('cam.tool.defaultRpm')}</span>
                         <DraftNumberInput
                           value={selectedTool.defaultRpm}
                           min={1}
@@ -1725,7 +1726,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Default Feed</span>
+                        <span>{camT('cam.tool.defaultFeed')}</span>
                         <DraftLengthInput
                           value={selectedTool.defaultFeed}
                           units={selectedTool.units}
@@ -1734,7 +1735,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Plunge Feed</span>
+                        <span>{camT('cam.tool.plungeFeed')}</span>
                         <DraftLengthInput
                           value={selectedTool.defaultPlungeFeed}
                           units={selectedTool.units}
@@ -1743,7 +1744,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Stepdown</span>
+                        <span>{camT('cam.tool.stepdown')}</span>
                         <DraftLengthInput
                           value={selectedTool.defaultStepdown}
                           units={selectedTool.units}
@@ -1752,7 +1753,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Max Cut Depth</span>
+                        <span>{camT('cam.tool.maxCutDepth')}</span>
                         <DraftLengthInput
                           value={selectedTool.maxCutDepth}
                           units={selectedTool.units}
@@ -1761,7 +1762,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>Stepover Ratio</span>
+                        <span>{camT('cam.tool.stepoverRatio')}</span>
                         <DraftNumberInput
                           value={selectedTool.defaultStepover}
                           min={0.01}
@@ -1781,7 +1782,7 @@ export function CAMPanel({
           <PanelSplit className="cam-operations-layout" storageKey="operations" initialRatio={0.54} minFirst={160} minSecond={160}>
             <section className="cam-section cam-section--tree">
               <div className="cam-section-header">
-                <span>Operations</span>
+                <span>{camT('cam.panel.operations')}</span>
                 <span className="feature-count">{project.operations.length}</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
@@ -1790,8 +1791,8 @@ export function CAMPanel({
                   <button
                     className="tree-action-btn tree-action-btn--visibility"
                     type="button"
-                    title="Show all toolpaths"
-                    aria-label="Show all toolpaths"
+                    title={camT('cam.panel.showAllToolpaths')}
+                    aria-label={camT('cam.panel.showAllToolpaths')}
                     disabled={project.operations.length === 0}
                     onClick={() => setAllOperationToolpathVisibility(true)}
                   >
@@ -1800,8 +1801,8 @@ export function CAMPanel({
                   <button
                     className="tree-action-btn tree-action-btn--visibility tree-action-btn--muted"
                     type="button"
-                    title="Hide all toolpaths"
-                    aria-label="Hide all toolpaths"
+                    title={camT('cam.panel.hideAllToolpaths')}
+                    aria-label={camT('cam.panel.hideAllToolpaths')}
                     disabled={project.operations.length === 0}
                     onClick={() => setAllOperationToolpathVisibility(false)}
                   >
@@ -1812,12 +1813,12 @@ export function CAMPanel({
                     type="button"
                     onClick={onExport}
                   >
-                    Export
+                    {camT('cam.panel.export')}
                   </button>
                   <button
                     className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
                     type="button"
-                    title={selection.selectedFeatureIds.length === 0 ? 'Select geometry first, then choose an operation type' : undefined}
+                    title={selection.selectedFeatureIds.length === 0 ? camT('cam.panel.addHint') : undefined}
                     aria-expanded={showAddOperationMenu}
                     aria-haspopup="dialog"
                     onClick={() => {
@@ -1825,7 +1826,7 @@ export function CAMPanel({
                       setShowAddOperationMenu((value) => !value)
                     }}
                   >
-                    Add
+                    {camT('cam.panel.add')}
                   </button>
                     {showAddOperationMenu ? (
                       <OperationAddMenu
@@ -1844,12 +1845,11 @@ export function CAMPanel({
                 <div className="cam-section-body">
                 {project.operations.length === 0 ? (
                   <div className="panel-empty">
-                    Select compatible geometry, then add an operation. Pocket and inside route require subtract features.
-                    Outside route requires add features. Surface clean accepts add features.
+                    {camT('cam.panel.operationsEmpty')}
                   </div>
                 ) : (
                   <div className="feature-tree-panel cam-operation-tree">
-                    <div className="tree-root-label">CAM</div>
+                    <div className="tree-root-label">{camT('cam.panel.cam')}</div>
                     <div className="tree-list">
                       {project.operations.map((operation) => (
                         <div
@@ -1880,8 +1880,8 @@ export function CAMPanel({
                             <button
                               className="tree-action-btn tree-drag-grip"
                               type="button"
-                              title="Drag to reorder"
-                              aria-label="Drag to reorder"
+                              title={camT('cam.treeRow.dragToReorder')}
+                              aria-label={camT('cam.treeRow.dragToReorder')}
                               onPointerDown={(e) => {
                                 if (e.pointerType !== 'touch') return
                                 e.preventDefault()
@@ -1935,8 +1935,11 @@ export function CAMPanel({
                             <button
                               className="tree-action-btn"
                               type="button"
-                              title={operation.showToolpath ? 'Hide toolpath' : 'Show toolpath'}
-                              aria-label={`${operation.showToolpath ? 'Hide' : 'Show'} toolpath for ${operation.name}`}
+                              title={operation.showToolpath ? camT('cam.treeRow.hideToolpath') : camT('cam.treeRow.showToolpath')}
+                              aria-label={camT('cam.treeRow.toolpathFor', {
+                                action: operation.showToolpath ? camT('cam.treeRow.hide') : camT('cam.treeRow.show'),
+                                name: operation.name,
+                              })}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 updateOperation(operation.id, { showToolpath: !operation.showToolpath })
@@ -1944,12 +1947,12 @@ export function CAMPanel({
                             >
                               <Icon id={operation.showToolpath ? 'eye' : 'eye-off'} />
                             </button>
-                            {!operation.enabled ? <span className="cam-operation-badge">Off</span> : null}
+                            {!operation.enabled ? <span className="cam-operation-badge">{camT('cam.treeRow.off')}</span> : null}
                             <button
                               className="tree-action-btn"
                               type="button"
-                              title="Duplicate operation"
-                              aria-label="Duplicate operation"
+                              title={camT('cam.treeRow.duplicateOperation')}
+                              aria-label={camT('cam.treeRow.duplicateOperation')}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 handleDuplicateOperation(operation.id)
@@ -1960,8 +1963,8 @@ export function CAMPanel({
                             <button
                               className="tree-action-btn tree-action-btn--delete"
                               type="button"
-                              title="Delete operation"
-                              aria-label="Delete operation"
+                              title={camT('cam.treeRow.deleteOperation')}
+                              aria-label={camT('cam.treeRow.deleteOperation')}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 handleDeleteOperation(operation.id)
@@ -1981,15 +1984,15 @@ export function CAMPanel({
 
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
-                <span>Properties</span>
+                <span>{camT('cam.panel.properties')}</span>
                 <div className="cam-section-header-actions">
                   <button
                     className="tree-action-btn"
                     type="button"
-                    title="Export G-code for this operation"
+                    title={camT('cam.panel.exportGcodeForOperation')}
                     aria-label={selectedOperation
-                      ? `Export G-code for ${selectedOperation.name}`
-                      : 'Export G-code for selected operation'}
+                      ? camT('cam.panel.exportGcodeFor', { name: selectedOperation.name })
+                      : camT('cam.panel.exportGcodeForSelected')}
                     disabled={!selectedOperation}
                     onClick={() => {
                       if (selectedOperation) {
@@ -2002,8 +2005,8 @@ export function CAMPanel({
                   <button
                     className="tree-action-btn"
                     type="button"
-                    title="Expand operation properties"
-                    aria-label="Expand operation properties"
+                    title={camT('cam.panel.expandOperationProps')}
+                    aria-label={camT('cam.panel.expandOperationProps')}
                     onClick={() => setExpandedCamSection('operation')}
                   >
                     <Icon id="expand" />
@@ -2023,22 +2026,22 @@ export function CAMPanel({
           <PanelSplit className="cam-tools-layout" storageKey="tools" initialRatio={0.42} minFirst={140} minSecond={140}>
             <section className="cam-section">
               <div className="cam-section-header">
-                <span>Tools</span>
+                <span>{camT('cam.panel.tools')}</span>
                 <span className="feature-count">{project.tools.length}</span>
               </div>
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-toolbar">
                   <button className="cam-header-action" type="button" onClick={handleAddTool}>
-                    Add Tool
+                    {camT('cam.tools.addTool')}
                   </button>
                   <button
                     className={['cam-header-action', showLibraryBrowser ? 'cam-header-action--active' : ''].join(' ')}
                     type="button"
                     onClick={handleOpenLibraryBrowser}
                     disabled={libraryLoading}
-                    title={libraryLoading ? 'Loading bundled tool library...' : undefined}
+                    title={libraryLoading ? camT('cam.tools.loadingLibrary') : undefined}
                   >
-                    {libraryLoading ? 'Loading...' : 'Import from Library'}
+                    {libraryLoading ? camT('cam.tools.loading') : camT('cam.tools.importFromLibrary')}
                   </button>
                 </div>
                 {showLibraryBrowser ? (
@@ -2048,17 +2051,17 @@ export function CAMPanel({
                         value={libraryTypeFilter}
                         onChange={(event) => setLibraryTypeFilter(event.target.value as ToolType | 'all')}
                       >
-                        <option value="all">All Types</option>
-                        <option value="flat_endmill">Flat Endmill</option>
-                        <option value="ball_endmill">Ball Endmill</option>
-                        <option value="v_bit">V-Bit</option>
-                        <option value="drill">Drill</option>
+                        <option value="all">{camT('cam.tools.allTypes')}</option>
+                        <option value="flat_endmill">{toolTypeLabel('flat_endmill')}</option>
+                        <option value="ball_endmill">{toolTypeLabel('ball_endmill')}</option>
+                        <option value="v_bit">{toolTypeLabel('v_bit')}</option>
+                        <option value="drill">{toolTypeLabel('drill')}</option>
                       </select>
                       <select
                         value={libraryUnitsFilter}
                         onChange={(event) => setLibraryUnitsFilter(event.target.value as Tool['units'] | 'all')}
                       >
-                        <option value="all">All Units</option>
+                        <option value="all">{camT('cam.tools.allUnits')}</option>
                         <option value="mm">mm</option>
                         <option value="inch">in</option>
                       </select>
@@ -2066,7 +2069,7 @@ export function CAMPanel({
                     {libraryError ? (
                       <div className="cam-section-note">{libraryError}</div>
                     ) : filteredLibraryTools.length === 0 ? (
-                      <div className="cam-section-note">No tools match the selected filters.</div>
+                      <div className="cam-section-note">{camT('cam.tools.noFilterMatch')}</div>
                     ) : (
                       <div className="cam-library-browser__list">
                         {filteredLibraryTools.map((entry) => {
@@ -2083,7 +2086,7 @@ export function CAMPanel({
                                 disabled={alreadyImported}
                                 onClick={() => handleImportLibraryTool(entry)}
                               >
-                                {alreadyImported ? 'Imported' : 'Import'}
+                                {alreadyImported ? camT('cam.tools.imported') : camT('cam.tools.import')}
                               </button>
                             </div>
                           )
@@ -2095,7 +2098,7 @@ export function CAMPanel({
                 <div className="cam-section-body cam-section-body--stack">
                   <div className="feature-tree-panel cam-tool-tree">
                     {project.tools.length === 0 ? (
-                      <div className="panel-empty">No tools yet. Add the first tool to start building the library.</div>
+                      <div className="panel-empty">{camT('cam.tools.empty')}</div>
                     ) : (
                       <div className="tree-list">
                         {project.tools.map((tool) => {
@@ -2129,8 +2132,8 @@ export function CAMPanel({
                                 <button
                                   type="button"
                                   className="tree-action-btn"
-                                  title="Duplicate tool"
-                                  aria-label="Duplicate tool"
+                                  title={camT('cam.tools.duplicateTool')}
+                                  aria-label={camT('cam.tools.duplicateTool')}
                                   onClick={() => handleDuplicateToolById(tool.id)}
                                 >
                                   ⧉
@@ -2138,8 +2141,8 @@ export function CAMPanel({
                                 <button
                                   type="button"
                                   className={['tree-action-btn', usedByOperation ? 'tree-action-btn--muted' : 'tree-action-btn--delete'].join(' ')}
-                                  title={usedByOperation ? 'Tool is used by an operation' : 'Delete tool'}
-                                  aria-label={usedByOperation ? 'Tool is used by an operation' : 'Delete tool'}
+                                  title={usedByOperation ? camT('cam.tools.toolUsedByOperation') : camT('cam.tools.deleteTool')}
+                                  aria-label={usedByOperation ? camT('cam.tools.toolUsedByOperation') : camT('cam.tools.deleteTool')}
                                   disabled={usedByOperation}
                                   onClick={() => handleDeleteTool(tool.id)}
                                 >
@@ -2158,12 +2161,12 @@ export function CAMPanel({
 
             <section className="cam-section cam-section--properties">
               <div className="cam-section-header">
-                <span>Properties</span>
+                <span>{camT('cam.panel.properties')}</span>
                 <button
                   className="tree-action-btn"
                   type="button"
-                  title="Expand tool properties"
-                  aria-label="Expand tool properties"
+                  title={camT('cam.panel.expandToolProps')}
+                  aria-label={camT('cam.panel.expandToolProps')}
                   onClick={() => setExpandedCamSection('tool')}
                 >
                   <Icon id="expand" />
@@ -2185,9 +2188,9 @@ export function CAMPanel({
           <div className="dialog dialog--panel-expand" onClick={(event) => event.stopPropagation()}>
             <div className="dialog-header">
               <h2 className="dialog-title">
-                {expandedCamSection === 'operation' ? 'Operation Properties' : 'Tool Properties'}
+                {expandedCamSection === 'operation' ? camT('cam.panel.operationProperties') : camT('cam.panel.toolProperties')}
               </h2>
-              <button className="dialog-close" onClick={() => setExpandedCamSection(null)} aria-label="Close" type="button">
+              <button className="dialog-close" onClick={() => setExpandedCamSection(null)} aria-label={camT('cam.panel.close')} type="button">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>

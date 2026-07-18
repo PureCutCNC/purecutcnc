@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import type { camEn } from '../../i18n/locales/en/cam'
+import { camT } from './camI18n'
+
 export const OPERATION_PARAM_REF_KINDS = [
   'stepdown',
   'stepover',
@@ -41,31 +44,31 @@ export const OPERATION_PARAM_REF_KINDS = [
 
 export type OperationParamRefKind = typeof OPERATION_PARAM_REF_KINDS[number]
 
-const OP_PARAM_REF_LABELS: Record<OperationParamRefKind, string> = {
-  stepdown: 'Stepdown reference',
-  stepover: 'Stepover reference',
-  maxDepth: 'Max depth reference',
-  retractHeight: 'Retract height reference',
-  peckDepth: 'Peck depth reference',
-  feed: 'Feed reference',
-  plungeFeed: 'Plunge feed reference',
-  slotFeed: 'Slot feed reference',
-  rpm: 'RPM reference',
-  dwell: 'Dwell reference',
-  cutDirection: 'Cut direction reference',
-  pattern: 'Pattern reference',
-  machiningOrder: 'Machining order reference',
-  rasterAngle: 'Raster angle reference',
-  finishWalls: 'Finish walls reference',
-  finishFloor: 'Finish floor reference',
-  stockRadial: 'Stock radial reference',
-  stockAxial: 'Stock axial reference',
-  adaptiveSpacing: 'Adaptive spacing reference',
-  adaptiveRefinement: 'Adaptive refinement reference',
-  maxRings: 'Max rings reference',
-  drillType: 'Drill type reference',
+const OP_PARAM_REF_KEY: Record<OperationParamRefKind, keyof typeof camEn> = {
+  stepdown: 'cam.paramRef.stepdown',
+  stepover: 'cam.paramRef.stepover',
+  maxDepth: 'cam.paramRef.maxDepth',
+  retractHeight: 'cam.paramRef.retractHeight',
+  peckDepth: 'cam.paramRef.peckDepth',
+  feed: 'cam.paramRef.feed',
+  plungeFeed: 'cam.paramRef.plungeFeed',
+  slotFeed: 'cam.paramRef.slotFeed',
+  rpm: 'cam.paramRef.rpm',
+  dwell: 'cam.paramRef.dwell',
+  cutDirection: 'cam.paramRef.cutDirection',
+  pattern: 'cam.paramRef.pattern',
+  machiningOrder: 'cam.paramRef.machiningOrder',
+  rasterAngle: 'cam.paramRef.rasterAngle',
+  finishWalls: 'cam.paramRef.finishWalls',
+  finishFloor: 'cam.paramRef.finishFloor',
+  stockRadial: 'cam.paramRef.stockRadial',
+  stockAxial: 'cam.paramRef.stockAxial',
+  adaptiveSpacing: 'cam.paramRef.adaptiveSpacing',
+  adaptiveRefinement: 'cam.paramRef.adaptiveRefinement',
+  maxRings: 'cam.paramRef.maxRings',
+  drillType: 'cam.paramRef.drillType',
 }
 
 export function operationParamRefLabel(kind: OperationParamRefKind): string {
-  return OP_PARAM_REF_LABELS[kind]
+  return camT(OP_PARAM_REF_KEY[kind])
 }

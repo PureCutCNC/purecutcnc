@@ -53,6 +53,7 @@ const featureTree = readSrc('src/components/feature-tree/FeatureTree.tsx')
 const camPanel = readSrc('src/components/cam/CAMPanel.tsx')
 const propertiesPanel = readSrc('src/components/feature-tree/PropertiesPanel.tsx')
 const depthLegend = readSrc('src/components/canvas/DepthLegend.tsx')
+const camEnCatalog = readSrc('src/i18n/locales/en/cam.ts')
 
 // ── CSS class definitions ────────────────────────────────────────
 
@@ -99,17 +100,26 @@ assert(
   camPanel.includes('operationTargetsRegion') && camPanel.includes('cam-region-note'),
   'CAMPanel must render .cam-region-note when operationTargetsRegion is true',
 )
-// The badge inside the note must also read "mask".
-assert(
-  camPanel.includes('cam-region-note__badge') && camPanel.includes('>mask<'),
-  'CAMPanel .cam-region-note must contain a .cam-region-note__badge with text "mask"',
-)
-// Agreed explanation copy — changing this text must fail the test so the copy
-// stays consistent across PropertiesPanel, CAMPanel, and tooltips.
-assert(
-  camPanel.includes('Regions limit where this operation may cut'),
-  'CAMPanel region note must include the agreed filter explanation',
-)
+	// Badge text: component must reference the i18n key and the en catalog must
+	// carry the byte-identical original string.
+	assert(
+	  camPanel.includes('cam-region-note__badge') && camPanel.includes("camT('cam.regionNote.badge')"),
+	  "CAMPanel .cam-region-note__badge must reference the cam.regionNote.badge i18n key",
+	)
+	assert(
+	  camEnCatalog.includes("'cam.regionNote.badge': 'mask'"),
+	  'cam en catalog must carry the original region note badge text "mask"',
+	)
+	// Agreed explanation copy — component must reference the i18n key and the en
+	// catalog must carry the byte-identical original string.
+	assert(
+	  camPanel.includes("camT('cam.regionNote.text')"),
+	  "CAMPanel region note must reference the cam.regionNote.text i18n key",
+	)
+	assert(
+	  camEnCatalog.includes("'cam.regionNote.text': 'Regions limit where this operation may cut"),
+	  'cam en catalog must carry the original region note explanation',
+	)
 
 // ── PropertiesPanel: Z-lock and region note for region features ──
 
