@@ -68,7 +68,7 @@ assert(tabletCss.includes('.tool-rail__target-btn--line.tool-rail__target-btn--a
 // ── FeatureTree: section root + ref badge + conversion menu ──────
 
 assert(
-  featureTree.includes('label="Construction"') && featureTree.includes('kind="constructions"'),
+  featureTree.includes("t('featureTree.tree.construction')") && featureTree.includes('kind="constructions"'),
   'FeatureTree must render a Construction section root',
 )
 assert(
@@ -76,8 +76,13 @@ assert(
   'FeatureTree must render .tree-construction-badge only for construction rows',
 )
 assert(
-  /tree-construction-badge[\s\S]{0,400}>\s*ref\s*</.test(featureTree),
-  'FeatureTree .tree-construction-badge must display the text "ref"',
+  featureTree.includes("t('featureTree.treeRow.badge.construction.label')"),
+  'FeatureTree .tree-construction-badge must reference the i18n label key',
+)
+const featureTreeEnCatalog = readSrc('src/i18n/locales/en/featureTree.ts')
+assert(
+  featureTreeEnCatalog.includes("'featureTree.treeRow.badge.construction.label': 'ref'"),
+  'featureTree en catalog must carry the original construction badge label "ref"',
 )
 assert(
   featureTree.includes("onToggleOperation('construction')"),
@@ -130,26 +135,34 @@ assert(
 // ── PropertiesPanel: Z lock + note ───────────────────────────────
 
 assert(
-  propertiesPanel.includes("selectedFeature.operation === 'construction'") && propertiesPanel.includes('Not machined'),
+  propertiesPanel.includes("selectedFeature.operation === 'construction'") && propertiesPanel.includes("t('featureTree.properties.z.notMachined')"),
   'PropertiesPanel must show the locked Z field for construction features',
 )
 assert(
-  propertiesPanel.includes('properties-construction-note') && propertiesPanel.includes('>ref<'),
-  'PropertiesPanel must render .properties-construction-note with the "ref" badge',
+  propertiesPanel.includes('properties-construction-note') && propertiesPanel.includes("t('featureTree.properties.constructionNote.badge')"),
+  'PropertiesPanel must render .properties-construction-note with the i18n construction badge key',
 )
 assert(
-  propertiesPanel.includes('Construction geometry is a sketch reference'),
-  'PropertiesPanel construction note must include the agreed explanation',
+  featureTreeEnCatalog.includes("'featureTree.properties.constructionNote.badge': 'ref'"),
+  'featureTree en catalog must carry the original construction note badge "ref"',
+)
+assert(
+  propertiesPanel.includes("t('featureTree.properties.constructionNote.text')"),
+  'PropertiesPanel construction note must reference the i18n text key',
+)
+assert(
+  featureTreeEnCatalog.includes("'featureTree.properties.constructionNote.text': 'Construction geometry is a sketch reference: snap, mirror, and dimension against it. It is never machined.'"),
+  'featureTree en catalog must carry the original construction note explanation',
 )
 // Single-feature AND multi-select operation controls both offer Construction.
 assert(
-  propertiesPanel.split("{ value: 'construction', label: 'Construction' }").length >= 3,
+  propertiesPanel.split("t('featureTree.properties.operation.construction')").length >= 3,
   'PropertiesPanel must offer Construction in both operation selectors',
 )
 // Open profiles convert Line ↔ Construction (mirrors the tree menu).
 assert(
-  propertiesPanel.includes("{ value: 'line', label: 'Line' }"),
-  'PropertiesPanel open-profile operation control must offer Line ↔ Construction',
+  propertiesPanel.includes("t('featureTree.properties.operation.line')"),
+  'PropertiesPanel open-profile operation control must offer Line key',
 )
 // The base-solid lock tracks the first SOLID feature, not row 0.
 assert(
