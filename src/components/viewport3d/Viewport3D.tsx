@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Icon } from '../Icon'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
@@ -28,6 +28,7 @@ import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeatureGeometryProfiles } from '../../text'
 import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
+import { useI18n } from '../../i18n/i18nContext'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -671,6 +672,16 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   onToolpathVisibilityChange,
 }, ref) {
   const { palette } = useTheme()
+  const { t, languageTag } = useI18n()
+  const presetTitles = useMemo(() => ({
+    top: t('viewport.presets.top'),
+    bottom: t('viewport.presets.bottom'),
+    front: t('viewport.presets.front'),
+    back: t('viewport.presets.back'),
+    right: t('viewport.presets.right'),
+    left: t('viewport.presets.left'),
+    iso: t('viewport.presets.iso'),
+  }), [t, languageTag])
   const threePalette = palette.three
   const threePaletteRef = useRef(threePalette)
   const mountRef = useRef<HTMLDivElement>(null)
@@ -1211,25 +1222,25 @@ useImperativeHandle(ref, () => ({
       )}
       <div className="viewport-presets">
         <div className="preset-btn-panel">
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('top')} title="Top view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('top')} title={presetTitles.top} type="button">
             <Icon id="view-top" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('bottom')} title="Bottom view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('bottom')} title={presetTitles.bottom} type="button">
             <Icon id="view-bottom" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('front')} title="Front view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('front')} title={presetTitles.front} type="button">
             <Icon id="view-front" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('back')} title="Back view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('back')} title={presetTitles.back} type="button">
             <Icon id="view-back" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('right')} title="Right view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('right')} title={presetTitles.right} type="button">
             <Icon id="view-right" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('left')} title="Left view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('left')} title={presetTitles.left} type="button">
             <Icon id="view-left" size={16} />
           </button>
-          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('iso')} title="Isometric view" type="button">
+          <button className="preset-btn preset-btn--icon" onClick={() => controlsRef.current?.setPreset('iso')} title={presetTitles.iso} type="button">
             <Icon id="view-iso" size={16} />
           </button>
         </div>
