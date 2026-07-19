@@ -611,6 +611,10 @@
    selector is (0,3,0) and beats the theme option rule regardless of order. */
 .language-control .appearance-menu__option:not(.appearance-menu__option--manage) {
   grid-template-columns: 1fr 20px;
+  /* This must outrank `.app-shell button`, whose 44px minimum can round down
+     to 43px in Chromium. Keep locale choices comfortably above the touch
+     target floor across browser font and layout metrics. */
+  min-height: 48px;
 }
 
 .toolbar-action:hover .toolbar-tooltip,
