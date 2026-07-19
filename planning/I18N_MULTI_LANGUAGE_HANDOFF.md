@@ -25,7 +25,7 @@ and verified on the integration branch; then a single PR to `main` closing
 - Base commit: `bd88b6b` (main at branch time)
 - Approved issue and plan: `https://github.com/PureCutCNC/purecutcnc/issues/314`
 - Manager session: Claude manager session, 2026-07-17
-- Status: `slice in progress`
+- Status: `all phases merged; final verification pending`
 - User authorization for credential-backed worker dispatch: granted 2026-07-17
   in-session ("delegate work if appropriate" in the implementation kickoff).
 
@@ -395,58 +395,46 @@ Contract (binding for the implementation, survives session summarization):
   (equivalent strength, mirrors the S2d test conversion).
 - Checks: `scripts/build-summary.sh` + language/appearance/CAM/export e2e.
 
-### S6 — Language manager + editor (manager-implemented; IN PROGRESS)
+### S6 — Language manager + editor (manager-implemented; DONE — merged `1018d6a`)
 
-State at session handoff (2026-07-18 ~15:00):
+Completed 2026-07-18 by the continuation manager session. Commits on
+`feat/issue-314-s6-editor` (branched at `a8e3856`), merged `--no-ff` as
+`1018d6a`:
 
-- Worktree `…/issue-314-s6-editor` on `feat/issue-314-s6-editor` (pushed),
-  branched from integration at `a8e3856`.
-- DONE: `languageManager` catalog modules (en + zh-CN) at
-  `src/i18n/locales/*/languageManager.ts`, commit `249d3bf` — keys for both
-  dialogs including plural variants and notices. NOT yet registered in the
-  locale `index.ts` files.
-- REMAINING, in order:
-  1. `src/components/language/LanguageManagerDialog.tsx` — mirror
-     `ThemeManagerDialog.tsx` exactly (list + detail + notices +
-     import/export via `platform.pickJsonFile`/`saveTextFile`; registry
-     helpers `duplicateLocaleAsCustom`, `parseLanguageImport`,
-     `serializeLanguageExport`, `customLanguageProgress`,
-     `customLanguagePlaceholderIssues` all exist from phase 1). Built-ins:
-     `builtinLocaleInfos()`; customs from `useI18n().customLanguages`;
-     activate via `setLocale`; CRUD via `saveCustomLanguage` /
-     `deleteCustomLanguage`. Show `customLanguageProgress` percentages.
-  2. `src/components/language/LanguageEditorDialog.tsx` — draft
-     overrides in local state; per-key rows grouped by top-level namespace
-     (collapsed `<details>` sections, render rows only when open — the
-     catalog is ~1400 keys); search + all/untranslated/edited filter;
-     per-row placeholder-parity flag via `placeholdersMatch` and Apply
-     blocked while any issue exists; name + BCP-47 tag fields (validate
-     tag with the registry pattern); "Preview in app" persists the draft
-     via `saveCustomLanguage` with Cancel restoring the snapshot taken on
-     open; Apply persists and closes.
-  3. Wire `Manage languages…` (`langManager.manageEntry` +
-     `langManager.manageDetail`) into `LanguageControl`'s menu, opening
-     the manager (mirror AppearanceControl's manage entry).
-  4. Register the `languageManager` module in both locale `index.ts`.
-  5. GAP FOUND during S6 scoping: `src/components/theme/*` dialog strings
-     (ThemeManagerDialog, ThemeEditorDialog, ThemeColorRow,
-     ThemePreviewSamples) were never extracted by any slice — extract them
-     into a `themeManager` catalog module (en byte-identical + zh) as part
-     of S6 or as a follow-up commit on the integration branch.
-  6. e2e `e2e/languageManager.smoke.spec.ts`: open manager → duplicate
-     English → editor: translate one key (e.g. `file.saveProject`) →
-     Apply → Use this language → assert the toolbar shows the custom
-     string and `html[lang]` follows the pack's tag; plus selectors in
-     `e2e/selectors.ts` (`languageManager` group). Reuse the fresh-port
-     worktree Playwright config pattern (recreate it — the old copy lives
-     in the previous session's scratchpad, gone).
-  7. Docs: ARCHITECTURE.md localization section (contract per issue
-     #314), `src/i18n/INDEX.md` + `src/components/INDEX.md` entries,
-     GLOSSARY additions if new terms appeared.
-  8. Gate (`scripts/build-summary.sh`) + full e2e in the worktree, merge
-     `--no-ff` into `feat/issue-314-multi-language` (expect the usual
-     2-line locale-index union conflict), gate + language e2e on
-     integration, push, ledger.
+- `249d3bf` languageManager catalog modules (prior session).
+- `291f34f` LanguageManagerDialog + LanguageEditorDialog + LanguageControl
+  manage entry + module registration + dialog CSS + INDEX entries.
+- `468fe86` themeManager catalog module closing the theme-dialog extraction
+  gap (en byte-identical + zh-CN).
+- `5465af8` languageManager e2e smoke (3 tests) + `languageManager` /
+  `languageEditor` selector groups.
+- `67f52a9` ARCHITECTURE.md §9 Localization, i18n INDEX refresh, glossary.
+- `fdf396b` importGeometry spec: baseURL from fixture (hardcoded :1420
+  broke every fresh-port worktree run; found by the full-suite gate).
+
+Checks: `scripts/build-summary.sh` PASS in the task worktree and again on
+integration after merge; full e2e in the task worktree 66/66 (65 + the
+fixed import spec rerun); language/languageManager/appearance/themeManager
+e2e on integration 24/24. The predicted locale-index merge conflict did not
+occur (no concurrent slice).
+
+Design decisions of record:
+
+- Editor Apply persists and closes but does NOT activate — activation stays
+  the explicit "Use this language" action (deliberate divergence from the
+  theme editor, matching the e2e contract; a half-translated pack is a
+  state worth saving without living in it).
+- "Preview in app" persists the draft once per press (no per-keystroke
+  persistence) and activates the pack; Cancel restores the on-open snapshot
+  and the previously active locale.
+- Documented boundary (mirrors the S2b canvas-rendering boundary):
+  registry-data labels stay English — built-in theme names and the theme
+  token/group/contrast-check labels from `src/theme/tokens.ts` /
+  `src/theme/contrast.ts`. The '42.5 mm' preview sample is numeric
+  notation. Deeper extraction there would need a labelKey refactor of the
+  theme system; out of S6 scope.
+- `isValidLanguageTag()` exported from the registry for the editor's tag
+  field.
 
 Then the Final phase per the issue: full build + complete e2e suite on
 integration, manual CJK layout pass (desktop + tablet), user review, and
@@ -455,14 +443,17 @@ footer — repo rule).
 
 ## Integration verification
 
-- Accepted commits and merge order: S1 `af0148c` → merge `ca0df27`.
-- Repository checks: `npm run build` green at `ca0df27`; language + appearance
-  e2e 12/12 against a fresh-port dev server.
+- Accepted commits and merge order: S1 `af0148c` → merge `ca0df27`; … ;
+  S5 `6f718b9` → merge `4e5ff6f`; S6 (5 commits) → merge `1018d6a`.
+- Repository checks: `scripts/build-summary.sh` PASS at `1018d6a`;
+  language + languageManager + appearance + themeManager e2e 24/24 on a
+  fresh-port dev server in the integration worktree.
 - Browser/tablet checks: language switch, persistence, tablet touch targets
-  covered by `e2e/language.smoke.spec.ts`; full manual CJK layout pass happens
+  covered by `e2e/language.smoke.spec.ts`; manager/editor flows by
+  `e2e/languageManager.smoke.spec.ts`; full manual CJK layout pass happens
   in the final phase.
-- Known limitations: engine warnings remain English until phase 5; language
-  manager/editor UI arrives in phase 6.
+- Known limitations: none blocking — all six phases merged. Final phase
+  (full-suite e2e on integration + manual CJK pass + user review) pending.
 
 ## User-review handoff
 
