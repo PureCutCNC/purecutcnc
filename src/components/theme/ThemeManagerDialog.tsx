@@ -17,6 +17,7 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useWindowEvent } from '../../hooks/useEventListener'
+import { useI18n } from '../../i18n/i18nContext'
 import { platform } from '../../platform'
 import {
   BUILTIN_THEMES,
@@ -45,6 +46,7 @@ export interface ThemeManagerDialogProps {
  * nothing here touches project data.
  */
 export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
+  const { t } = useI18n()
   const {
     selection,
     setSelection,
@@ -102,7 +104,10 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
   const handleResetOverrides = () => {
     if (!selectedCustom) return
     saveCustomTheme({ ...selectedCustom, overrides: {} })
-    setNotice({ kind: 'info', text: `Reset “${selectedCustom.name}” to its ${selectedCustom.baseThemeId} base colors.` })
+    setNotice({
+      kind: 'info',
+      text: t('themeManager.resetNotice', { name: selectedCustom.name, base: selectedCustom.baseThemeId }),
+    })
   }
 
   const handleExport = () => {
@@ -119,7 +124,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
     if (content === null) return
     const result = parseThemeImport(content)
     if (result.error !== undefined) {
-      setNotice({ kind: 'error', text: `Import failed: ${result.error}` })
+      setNotice({ kind: 'error', text: t('themeManager.importFailed', { error: result.error }) })
       return
     }
     const imported = existingNames.some((name) => name.toLowerCase() === result.ok.name.toLowerCase())
@@ -127,7 +132,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
       : result.ok
     saveCustomTheme(imported)
     setSelectedId(imported.id)
-    setNotice({ kind: 'info', text: `Imported “${imported.name}”.` })
+    setNotice({ kind: 'info', text: t('themeManager.imported', { name: imported.name }) })
   }
 
   const commitRename = () => {
@@ -149,7 +154,6 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
   const isActive = selected.id === activeTheme.id && selection.mode === 'fixed'
   const lightFamilyThemes = allThemes.filter((theme) => theme.family === 'light')
   const darkFamilyThemes = allThemes.filter((theme) => theme.family === 'dark')
-  const systemActiveNow = systemPrefersDark ? 'dark' : 'light'
 
   return createPortal(
     <div className="dialog-backdrop" onClick={onClose}>
@@ -158,18 +162,18 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Manage themes"
+        aria-label={t('themeManager.dialogAria')}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Manage Themes</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{t('themeManager.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={t('themeManager.close')} type="button">
             ✕
           </button>
         </div>
 
         <div className="dialog-body dialog-body--theme-manager">
           {/* Left: theme list */}
-          <div className="theme-manager-list" role="listbox" aria-label="Themes">
+          <div className="theme-manager-list" role="listbox" aria-label={t('themeManager.listAria')}>
             {allThemes.map((theme) => (
               <button
                 key={theme.id}
@@ -190,7 +194,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                 <ThemeSwatch values={theme.values} />
                 <span className="theme-manager-item-name">{theme.name}</span>
                 <span className={theme.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                  {theme.builtin ? 'Built-in' : 'Custom'}
+                  {theme.builtin ? t('themeManager.builtinBadge') : t('themeManager.customBadge')}
                 </span>
               </button>
             ))}
@@ -207,7 +211,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                     value={renameDraft}
                     maxLength={THEME_NAME_MAX_LENGTH}
                     autoFocus
-                    aria-label="Theme name"
+                    aria-label={t('themeManager.nameLabel')}
                     onChange={(event) => setRenameDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') commitRename()
@@ -217,33 +221,33 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                       }
                     }}
                   />
-                  <button className="btn-secondary" type="button" onClick={commitRename}>Save name</button>
+                  <button className="btn-secondary" type="button" onClick={commitRename}>{t('themeManager.saveName')}</button>
                 </span>
               ) : (
                 <h3 className="machine-manager-detail-name">{selected.name}</h3>
               )}
               {selected.id === activeTheme.id ? (
-                <span className="machine-manager-badge machine-manager-badge--active">Active</span>
+                <span className="machine-manager-badge machine-manager-badge--active">{t('themeManager.activeBadge')}</span>
               ) : null}
               <span className={selected.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                {selected.builtin ? 'Built-in' : 'Custom'}
+                {selected.builtin ? t('themeManager.builtinBadge') : t('themeManager.customBadge')}
               </span>
             </div>
 
             <dl className="machine-manager-meta">
-              <dt>Family</dt>
-              <dd>{selected.family === 'dark' ? 'Dark' : 'Light'}</dd>
+              <dt>{t('themeManager.familyLabel')}</dt>
+              <dd>{selected.family === 'dark' ? t('appearance.darkLabel') : t('appearance.lightLabel')}</dd>
               {!selected.builtin ? (
                 <>
-                  <dt>Based on</dt>
+                  <dt>{t('themeManager.basedOnLabel')}</dt>
                   <dd>{resolveBuiltinTheme(selected.baseThemeId).name}</dd>
-                  <dt>Changed colors</dt>
+                  <dt>{t('themeManager.changedColorsLabel')}</dt>
                   <dd>{selected.overriddenKeys.length}</dd>
                 </>
               ) : null}
               {selected.builtin ? (
                 <dd className="machine-manager-hint">
-                  Built-in themes are read-only. Duplicate to create an editable copy.
+                  {t('themeManager.builtinHint')}
                 </dd>
               ) : null}
             </dl>
@@ -260,18 +264,18 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
             <div className="machine-manager-actions">
               {!isActive ? (
                 <button className="btn-primary" type="button" onClick={() => activateTheme(selected.id)}>
-                  Use this theme
+                  {t('themeManager.use')}
                 </button>
               ) : null}
 
               <div className="machine-manager-actions-row">
                 {selectedCustom ? (
                   <button className="btn-secondary" type="button" onClick={() => openEditor(selectedCustom)}>
-                    Edit
+                    {t('themeManager.edit')}
                   </button>
                 ) : null}
                 <button className="btn-secondary" type="button" onClick={() => handleDuplicate(true)}>
-                  {selected.builtin ? 'Duplicate to edit' : 'Duplicate'}
+                  {selected.builtin ? t('themeManager.duplicateToEdit') : t('themeManager.duplicate')}
                 </button>
                 {selectedCustom ? (
                   <button
@@ -279,33 +283,33 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                     type="button"
                     onClick={() => setRenameDraft(selectedCustom.name)}
                   >
-                    Rename
+                    {t('themeManager.rename')}
                   </button>
                 ) : null}
                 {selectedCustom && selected.overriddenKeys.length > 0 ? (
                   <button className="btn-secondary" type="button" onClick={handleResetOverrides}>
-                    Reset to base
+                    {t('themeManager.resetToBase')}
                   </button>
                 ) : null}
                 <button className="btn-secondary" type="button" onClick={() => { void handleImport() }}>
-                  Import theme
+                  {t('themeManager.import')}
                 </button>
                 {selectedCustom ? (
                   <button className="btn-secondary" type="button" onClick={handleExport}>
-                    Export theme
+                    {t('themeManager.export')}
                   </button>
                 ) : null}
               </div>
 
               {selectedCustom ? (
                 <button className="machine-manager-action--remove" type="button" onClick={handleDelete}>
-                  Delete theme
+                  {t('themeManager.delete')}
                 </button>
               ) : null}
             </div>
 
-            <section className="theme-manager-system" aria-label="System mode pairing">
-              <h4 className="theme-manager-system__title">Mode</h4>
+            <section className="theme-manager-system" aria-label={t('themeManager.systemAria')}>
+              <h4 className="theme-manager-system__title">{t('themeManager.modeTitle')}</h4>
               <label className="theme-manager-system__mode">
                 <input
                   type="radio"
@@ -313,7 +317,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                   checked={selection.mode === 'fixed'}
                   onChange={() => setSelection((previous) => ({ ...previous, mode: 'fixed' }))}
                 />
-                Fixed theme
+                {t('themeManager.fixedMode')}
               </label>
               <label className="theme-manager-system__mode">
                 <input
@@ -322,13 +326,13 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                   checked={selection.mode === 'system'}
                   onChange={() => setSelection((previous) => ({ ...previous, mode: 'system' }))}
                 />
-                Follow system light/dark
+                {t('themeManager.systemMode')}
               </label>
 
               {selection.mode === 'system' ? (
                 <div className="theme-manager-system__pair">
                   <label className="theme-manager-system__slot">
-                    Light theme
+                    {t('themeManager.lightSlot')}
                     <select
                       value={selection.systemLightThemeId}
                       onChange={(event) =>
@@ -340,7 +344,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                     </select>
                   </label>
                   <label className="theme-manager-system__slot">
-                    Dark theme
+                    {t('themeManager.darkSlot')}
                     <select
                       value={selection.systemDarkThemeId}
                       onChange={(event) =>
@@ -352,7 +356,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
                     </select>
                   </label>
                   <p className="theme-manager-system__hint">
-                    This device currently prefers {systemActiveNow}.
+                    {systemPrefersDark ? t('themeManager.systemPrefersDark') : t('themeManager.systemPrefersLight')}
                   </p>
                 </div>
               ) : null}
@@ -362,7 +366,7 @@ export function ThemeManagerDialog({ onClose }: ThemeManagerDialogProps) {
 
         <div className="dialog-footer">
           <button className="btn-primary" type="button" onClick={onClose}>
-            Done
+            {t('themeManager.done')}
           </button>
         </div>
       </div>

@@ -11,16 +11,19 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   parity helpers, and `Intl.PluralRules`-backed `.one`/`.other` variant
   selection.
 - `locales/en/` — the canonical English catalog, one module per UI area
-  (`shell.ts` today; later extraction phases add `sketch.ts`, `cam.ts`, …).
-  `index.ts` merges the modules and derives `MessageKey`.
+  (`shell`, `sketch`, `canvas`, `featureTree`, `cam`, `dialogs`, `viewport`,
+  `appShell`, `warnings`, `languageManager`, `themeManager`). `index.ts`
+  merges the modules and derives `MessageKey`.
 - `locales/zh-CN/` — Simplified Chinese, mirroring the `en/` module layout;
   each module is typed as a complete record of its English counterpart so
   extraction and translation land together. Terminology in `GLOSSARY.md`.
 - `GLOSSARY.md` — en ↔ zh-CN CNC terminology and style reference for
   translators and future locales.
 - `registry.ts` — built-in locale metadata, custom language-pack schema
-  validation, base+overrides resolution, duplication, translation progress,
-  placeholder-issue reporting, and the versioned import/export envelope.
+  validation (including the BCP-47 tag predicate), base+overrides
+  resolution, duplication, translation progress, placeholder-issue
+  reporting, and the versioned import/export envelope. Backs the manager and
+  editor dialogs in `src/components/language/`.
 - `selection.ts` — storage keys/codecs, stored-data sanitization, navigator
   locale detection (`zh` → zh-CN unless explicitly Traditional), and
   initial-locale resolution (explicit stored choice wins).

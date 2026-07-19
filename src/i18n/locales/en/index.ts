@@ -23,6 +23,8 @@ import { dialogsEn } from './dialogs'
 import { viewportEn } from './viewport'
 import { appShellEn } from './appShell'
 import { warningsEn } from './warnings'
+import { languageManagerEn } from './languageManager'
+import { themeManagerEn } from './themeManager'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -40,6 +42,8 @@ export const en = {
   ...featureTreeEn,
   ...viewportEn,
   ...appShellEn,
+  ...languageManagerEn,
+  ...themeManagerEn,
 } as const
 
 export type MessageKey = keyof typeof en

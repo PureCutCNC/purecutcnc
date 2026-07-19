@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useWindowEvent } from '../../hooks/useEventListener'
+import { useI18n } from '../../i18n/i18nContext'
 import { evaluateThemeContrast } from '../../theme/contrast'
 import {
   builtinTheme,
@@ -67,6 +68,7 @@ const RECOVERY_BUTTON_STYLE: React.CSSProperties = {
  * previously active theme.
  */
 export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialogProps) {
+  const { t, tPlural } = useI18n()
   const { setPreview } = useTheme()
   const [name, setName] = useState(theme.name)
   const [overrides, setOverrides] = useState(theme.overrides)
@@ -141,19 +143,19 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={`Edit theme ${theme.name}`}
+        aria-label={t('themeEditor.dialogAria', { name: theme.name })}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Edit Theme</h2>
-          <button className="dialog-close" onClick={handleClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{t('themeEditor.title')}</h2>
+          <button className="dialog-close" onClick={handleClose} aria-label={t('themeManager.close')} type="button">
             ✕
           </button>
         </div>
 
         <div className="theme-editor-recovery" style={RECOVERY_BAR_STYLE}>
           <span>
-            Previewing your edits live.
-            {dirty ? ' Colors look wrong?' : ''}
+            {t('themeEditor.previewingLive')}
+            {dirty ? <> {t('themeEditor.colorsWrong')}</> : ''}
           </span>
           <button
             type="button"
@@ -161,7 +163,7 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
             onClick={restoreSaved}
             disabled={!dirty}
           >
-            Restore saved colors
+            {t('themeEditor.restoreSaved')}
           </button>
         </div>
 
@@ -169,7 +171,7 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
           <div className="theme-editor-fields">
             <div className="theme-editor-name">
               <label className="theme-editor-name__label" htmlFor="theme-editor-name-input">
-                Theme name
+                {t('themeManager.nameLabel')}
               </label>
               <input
                 id="theme-editor-name-input"
@@ -180,7 +182,12 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
                 onChange={(event) => setName(event.target.value)}
               />
               <span className="theme-editor-name__base">
-                Based on {base.name} · {resolved.overriddenKeys.length} color{resolved.overriddenKeys.length === 1 ? '' : 's'} changed
+                {tPlural(
+                  resolved.overriddenKeys.length,
+                  'themeEditor.basedOn.one',
+                  'themeEditor.basedOn.other',
+                  { base: base.name },
+                )}
               </span>
             </div>
 
@@ -209,29 +216,29 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
           <aside className="theme-editor-side">
             <ThemePreviewSamples values={resolved.values} />
 
-            <section className="theme-editor-contrast" aria-label="Contrast checks">
-              <h4 className="theme-editor-contrast__title">Readability checks</h4>
+            <section className="theme-editor-contrast" aria-label={t('themeEditor.contrastAria')}>
+              <h4 className="theme-editor-contrast__title">{t('themeEditor.contrastTitle')}</h4>
               {contrast.blockers.length === 0 && contrast.warnings.length === 0 ? (
                 <p className="theme-editor-contrast__ok">
-                  All {contrast.findings.length} checks pass.
+                  {t('themeEditor.allChecksPass', { count: contrast.findings.length })}
                 </p>
               ) : null}
               {contrast.blockers.map((finding) => (
                 <p key={finding.id} className="theme-editor-contrast__item theme-editor-contrast__item--block">
-                  <strong>Blocked:</strong> {finding.label} — {finding.kind === 'ratio'
-                    ? `${finding.measured}:1, needs ${finding.required}:1`
-                    : `ΔE ${finding.measured}, needs ${finding.required}`}
+                  <strong>{t('themeEditor.blockedLabel')}</strong> {finding.label} — {finding.kind === 'ratio'
+                    ? t('themeEditor.ratioNeeds', { measured: finding.measured, required: finding.required })
+                    : t('themeEditor.deltaNeeds', { measured: finding.measured, required: finding.required })}
                 </p>
               ))}
               {contrast.warnings.map((finding) => (
                 <p key={finding.id} className="theme-editor-contrast__item theme-editor-contrast__item--warn">
-                  <strong>Warning:</strong> {finding.label} — {finding.kind === 'ratio'
-                    ? `${finding.measured}:1, recommended ${finding.required}:1`
-                    : `ΔE ${finding.measured}, recommended ${finding.required}`}
+                  <strong>{t('themeEditor.warningLabel')}</strong> {finding.label} — {finding.kind === 'ratio'
+                    ? t('themeEditor.ratioRecommended', { measured: finding.measured, required: finding.required })
+                    : t('themeEditor.deltaRecommended', { measured: finding.measured, required: finding.required })}
                 </p>
               ))}
               <p className="theme-editor-contrast__note">
-                Automated spot checks of representative states — not full WCAG coverage.
+                {t('themeEditor.contrastNote')}
               </p>
             </section>
           </aside>
@@ -240,11 +247,15 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
         <div className="dialog-footer">
           {blocked ? (
             <span className="theme-editor-footer-blocked" role="status">
-              {contrast.blockers.length} readability check{contrast.blockers.length === 1 ? '' : 's'} failing
+              {tPlural(
+                contrast.blockers.length,
+                'themeEditor.checksFailing.one',
+                'themeEditor.checksFailing.other',
+              )}
             </span>
           ) : null}
           <button className="btn-secondary" type="button" onClick={handleClose}>
-            Cancel
+            {t('themeEditor.cancel')}
           </button>
           <button
             className="btn-primary"
@@ -252,12 +263,12 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
             onClick={handleApply}
             disabled={blocked || nameInvalid}
             title={blocked
-              ? 'Fix the blocked readability checks before applying'
+              ? t('themeEditor.fixBlockedTitle')
               : nameInvalid
-                ? 'Give the theme a name'
+                ? t('themeEditor.giveNameTitle')
                 : undefined}
           >
-            Apply theme
+            {t('themeEditor.apply')}
           </button>
         </div>
       </div>
