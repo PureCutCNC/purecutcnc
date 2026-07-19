@@ -13,6 +13,7 @@
     "dialog:allow-message",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
+    "fs:allow-write-file",
     "fs:allow-exists",
     {
       "identifier": "opener:allow-open-url",
