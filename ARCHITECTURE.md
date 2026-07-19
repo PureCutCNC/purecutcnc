@@ -57,6 +57,8 @@ PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape upd
 - `src/components/canvas/`: Complex 2D interaction logic, snapping, and viewport transformations.
 - `src/import/`: DXF and SVG parsers that normalize external geometry into the `.camj` format.
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
+- `src/i18n/`: Typed localization layer — catalogs, locale registry, custom language packs, store/provider (see §9).
+- `src/components/language/`: Language manager + custom-language editor dialogs (mirrors `src/components/theme/`).
 - `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_DESIGN.md`](planning/TABLET_UX_DESIGN.md) for the current tablet UX contract).
 
 ## 6. Icon System
@@ -88,7 +90,54 @@ Icons are **SVG-first**: editable per-icon SVG files are the source of truth and
 - **Unit Handling:** Use helpers in `src/utils/units.ts`. The project can be in `mm` or `inch`; always check `project.meta.units`.
 - **CSG Debouncing:** 3D model generation is expensive. The `Viewport3D` updates are typically debounced (150ms-300ms).
 
-## 9. AI & MCP Integration (not yet implemented)
+## 9. Localization (i18n)
+
+The interface is multi-language (issue #314); machining output is not. The
+model mirrors the theme system: a typed registry of built-ins plus
+user-created overlay packs, stored as application-local preferences —
+switching language never dirties a project, never enters undo history, and
+never changes `.camj` data or machine-facing output.
+
+- **Catalog contract** (`src/i18n/catalog.ts`, `locales/`): flat
+  dot-namespaced keys (`file.saveProject`), `{placeholder}` interpolation
+  (params inserted verbatim; unknown tokens stay visible), and explicit
+  `….one`/`….other` plural-variant keys selected via `Intl.PluralRules`.
+  English is the canonical catalog — `MessageKey` derives from it, every
+  other locale resolves against it per key, so a missing translation renders
+  English, never a blank. One module per UI area (`shell.ts`, `sketch.ts`,
+  `cam.ts`, …) merged in `locales/<locale>/index.ts`; zh-CN modules are
+  typed as complete records of their English counterparts, and tests enforce
+  completeness and placeholder parity.
+- **Custom language packs** (`src/i18n/registry.ts`,
+  `src/components/language/`): overrides-only overlays on a built-in base,
+  with a versioned import/export envelope. Override keys unknown to the
+  running build are preserved (catalogs grow per release; packs round-trip
+  across versions), and a stale active-locale id falls back to a built-in.
+  The manager/editor dialogs mirror the theme manager/editor: the
+  placeholder-parity gate is the analogue of the theme contrast gate, and
+  "Preview in app" persists the draft (Cancel restores the on-open
+  snapshot) because language has no presentation-only preview channel.
+- **Layering**: the engine stays free of i18n. Toolpath/postprocessor
+  warnings are structured `{ code, params }` (`src/engine/toolpaths/
+  warningCodes.ts`) translated at presentation by `src/i18n/warningText.ts`.
+  Components translate via `useI18n()` (`t`/`tPlural`) so they re-render on
+  locale change; module-level `translate()` exists only for non-React call
+  sites (platform confirm dialogs, the pre-React fatal-error screen).
+  `bootstrap.ts` resolves the locale and sets `document.documentElement.lang`
+  before React mounts.
+- **Deliberate boundaries** (never translated): serialized identifiers, enum
+  values, feature/tool/operation type ids, user-authored names, filenames
+  and file-type descriptors, unit symbols, G-code text, raw-JSON validation
+  messages, registry-data display names (built-in theme names, theme
+  token/group/contrast-check labels), and text drawn into the 2D canvas.
+- **Rules for new UI**: every new user-facing string gets a key in its area
+  module with zh-CN landing in the same change; no per-file translation
+  wrappers; no hardcoded locale checks (`localeId === 'zh-CN' ? … : …` is
+  forbidden — missing variants get their own keys); memoized translated
+  content includes `languageTag` in its dependency array; count-bearing
+  strings use `tPlural`. Terminology lives in `src/i18n/GLOSSARY.md`.
+
+## 10. AI & MCP Integration (not yet implemented)
 There is **no MCP server or agent-facing tool surface in the app today**. Earlier drafts of this document described an aspirational design; treat it as a future direction, not current behavior. When that work begins, the guiding principles will be:
 - All mutations should flow through `projectStore` actions (same rule as the UI).
 - An agent will need a project-state inspection call before making changes.

@@ -585,7 +585,7 @@ function testRoughSurfaceFindsModelWhenRegionIsFirst(): void {
   const { project, operation } = makeProject(['region1', 'model1'])
   const result = generateRoughSurfaceToolpath(project, operation)
 
-  assert(!result.warnings.includes('Model feature must be an imported mesh model'), 'model lookup should not depend on first target feature')
+  assert(!result.warnings.some((w) => w.code === 'surface3dNotMesh'), 'model lookup should not depend on first target feature')
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves with region-first target order')
 }
 
@@ -679,7 +679,7 @@ function testRoughSurfaceProtectsOpenMeshSlicesConservatively(): void {
   })
 
   assert(
-    result.warnings.some((warning) => warning.includes('open/non-watertight slices')),
+    result.warnings.some((warning) => warning.code === 'surface3dOpenMesh'),
     `expected open-slice warning, got: ${result.warnings.join(', ')}`,
   )
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')

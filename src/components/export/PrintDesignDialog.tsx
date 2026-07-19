@@ -40,6 +40,9 @@ import { formatLength } from '../../utils/units'
 import type { Bounds2D } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface PrintDesignDialogProps {
   onClose: () => void
@@ -60,6 +63,11 @@ export function PrintDesignDialog({
   const { project } = useProjectStore()
   const units = project.meta.units
   const unitSuffix = units === 'inch' ? 'in' : 'mm'
+  const { t } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    return t(key, params)
+  }
 
   // Default-orientation bounds exclude the backdrop, matching its
   // default-off content toggle.
@@ -131,15 +139,15 @@ export function PrintDesignDialog({
 
   const paperOptions: { value: PaperPresetId; label: string }[] = [
     ...PAPER_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })),
-    { value: 'custom' as const, label: 'Custom size' },
+    { value: 'custom' as const, label: td('dialogs.printDesign.customSize') },
   ]
 
   // "Current sketch view" is offered only when the canvas reported its
   // viewport; the note below the picker explains the fallback.
   const areaOptions: { value: PrintAreaMode; label: string }[] = [
-    { value: 'visible', label: 'Visible design extents' },
-    { value: 'stock', label: 'Stock extents' },
-    ...(viewBounds !== null ? [{ value: 'view' as const, label: 'Current sketch view' }] : []),
+    { value: 'visible', label: td('dialogs.printDesign.printArea.visible') },
+    { value: 'stock', label: td('dialogs.printDesign.printArea.stock') },
+    ...(viewBounds !== null ? [{ value: 'view' as const, label: td('dialogs.printDesign.printArea.view') }] : []),
   ]
 
   const outputW = formatLength(layout.outputWidthMm / unitToMm(units), units)
@@ -147,10 +155,10 @@ export function PrintDesignDialog({
 
   const warnings: string[] = []
   if (options.scaleMode === 'custom' && !layout.customScaleValid) {
-    warnings.push('Custom scale not recognized — enter a ratio like 1:2, a percentage like 50%, or a factor like 0.5.')
+    warnings.push(td('dialogs.printDesign.warning.customScale'))
   }
   if (layout.clipped) {
-    warnings.push('The drawing is clipped on this paper at the selected scale. Use Fit to page, reduce the scale, or choose a larger paper size.')
+    warnings.push(td('dialogs.printDesign.warning.clipped'))
   }
 
   const printDisabled = options.scaleMode === 'custom' && !layout.customScaleValid
@@ -159,8 +167,8 @@ export function PrintDesignDialog({
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog dialog--print-design" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Print Design</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close">
+          <h2 className="dialog-title">{td('dialogs.printDesign.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -170,7 +178,7 @@ export function PrintDesignDialog({
         <div className="dialog-body dialog-body--print-design">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Paper</label>
+              <label className="dialog-section-title">{td('dialogs.printDesign.paper')}</label>
               <Select<PaperPresetId>
                 value={options.paper}
                 options={paperOptions}
@@ -179,14 +187,14 @@ export function PrintDesignDialog({
               {options.paper === 'custom' && (
                 <div className="print-dialog__row">
                   <label className="print-dialog__row-label">
-                    Size ({unitSuffix})
+                    {td('dialogs.printDesign.size', { unit: unitSuffix })}
                   </label>
                   <input
                     type="number"
                     min={1}
                     step={units === 'inch' ? 0.5 : 10}
                     value={options.customPaperWidth}
-                    aria-label={`Custom paper width (${unitSuffix})`}
+                    aria-label={td('dialogs.printDesign.customPaperWidth', { unit: unitSuffix })}
                     onChange={(event) => {
                       const value = parseNumber(event.target.value)
                       if (value !== null) update({ customPaperWidth: value })
@@ -198,7 +206,7 @@ export function PrintDesignDialog({
                     min={1}
                     step={units === 'inch' ? 0.5 : 10}
                     value={options.customPaperHeight}
-                    aria-label={`Custom paper height (${unitSuffix})`}
+                    aria-label={td('dialogs.printDesign.customPaperHeight', { unit: unitSuffix })}
                     onChange={(event) => {
                       const value = parseNumber(event.target.value)
                       if (value !== null) update({ customPaperHeight: value })
@@ -214,7 +222,7 @@ export function PrintDesignDialog({
                     checked={options.orientation === 'portrait'}
                     onChange={() => update({ orientation: 'portrait' })}
                   />
-                  Portrait
+                  {td('dialogs.printDesign.portrait')}
                 </label>
                 <label className="export-option">
                   <input
@@ -223,12 +231,12 @@ export function PrintDesignDialog({
                     checked={options.orientation === 'landscape'}
                     onChange={() => update({ orientation: 'landscape' })}
                   />
-                  Landscape
+                  {td('dialogs.printDesign.landscape')}
                 </label>
               </div>
               <div className="print-dialog__row">
                 <label className="print-dialog__row-label" htmlFor="print-margin">
-                  Margins ({unitSuffix})
+                  {td('dialogs.printDesign.margins', { unit: unitSuffix })}
                 </label>
                 <input
                   id="print-margin"
@@ -245,7 +253,7 @@ export function PrintDesignDialog({
             </div>
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Print area</label>
+              <label className="dialog-section-title">{td('dialogs.printDesign.printArea')}</label>
               <Select<PrintAreaMode>
                 value={options.area}
                 options={areaOptions}
@@ -253,13 +261,13 @@ export function PrintDesignDialog({
               />
               {viewBounds === null && (
                 <div className="print-dialog__note">
-                  Current sketch view is available when the sketch canvas is open.
+                  {td('dialogs.printDesign.currentViewUnavailable')}
                 </div>
               )}
             </div>
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Scale</label>
+              <label className="dialog-section-title">{td('dialogs.printDesign.scale')}</label>
               <div className="export-option-group">
                 <label className="export-option">
                   <input
@@ -268,7 +276,7 @@ export function PrintDesignDialog({
                     checked={options.scaleMode === 'fit'}
                     onChange={() => update({ scaleMode: 'fit' })}
                   />
-                  Fit to page
+                  {td('dialogs.printDesign.fitToPage')}
                 </label>
                 <label className="export-option">
                   <input
@@ -277,7 +285,7 @@ export function PrintDesignDialog({
                     checked={options.scaleMode === 'actual'}
                     onChange={() => update({ scaleMode: 'actual' })}
                   />
-                  Actual size (1:1)
+                  {td('dialogs.printDesign.actualSize')}
                 </label>
                 <div className="print-dialog__custom-scale">
                   <label className="export-option">
@@ -294,7 +302,7 @@ export function PrintDesignDialog({
                         })
                       }}
                     />
-                    Custom
+                    {td('dialogs.printDesign.custom')}
                   </label>
                   <input
                     ref={customScaleInputRef}
@@ -302,7 +310,7 @@ export function PrintDesignDialog({
                     className="print-dialog__scale-input"
                     value={options.customScale}
                     disabled={options.scaleMode !== 'custom'}
-                    aria-label="Custom scale (ratio, percentage, or factor)"
+                    aria-label={td('dialogs.printDesign.customScaleAria')}
                     placeholder="1:2"
                     spellCheck={false}
                     onChange={(event) => update({ customScale: event.target.value })}
@@ -310,12 +318,12 @@ export function PrintDesignDialog({
                 </div>
               </div>
               <div className="print-dialog__row">
-                <label className="print-dialog__row-label">Offset X / Y ({unitSuffix})</label>
+                <label className="print-dialog__row-label">{td('dialogs.printDesign.offsetXY', { unit: unitSuffix })}</label>
                 <input
                   type="number"
                   step={units === 'inch' ? 0.125 : 1}
                   value={options.offsetX}
-                  aria-label={`Horizontal offset (${unitSuffix})`}
+                  aria-label={td('dialogs.printDesign.offsetX', { unit: unitSuffix })}
                   onChange={(event) => {
                     const value = parseNumber(event.target.value)
                     if (value !== null) update({ offsetX: value })
@@ -325,7 +333,7 @@ export function PrintDesignDialog({
                   type="number"
                   step={units === 'inch' ? 0.125 : 1}
                   value={options.offsetY}
-                  aria-label={`Vertical offset (${unitSuffix})`}
+                  aria-label={td('dialogs.printDesign.offsetY', { unit: unitSuffix })}
                   onChange={(event) => {
                     const value = parseNumber(event.target.value)
                     if (value !== null) update({ offsetY: value })
@@ -335,7 +343,7 @@ export function PrintDesignDialog({
             </div>
 
             <div className="dialog-section-group">
-              <label className="dialog-section-title">Content</label>
+              <label className="dialog-section-title">{td('dialogs.printDesign.content')}</label>
               <div className="export-option-group print-dialog__content-options">
                 <label className="export-option">
                   <input
@@ -343,16 +351,16 @@ export function PrintDesignDialog({
                     checked={options.content.grid}
                     onChange={(event) => updateContent({ grid: event.target.checked })}
                   />
-                  Grid
+                  {td('dialogs.printDesign.content.grid')}
                 </label>
-                <label className="export-option" title={!project.backdrop ? 'No backdrop image in this project' : undefined}>
+                <label className="export-option" title={!project.backdrop ? td('dialogs.printDesign.noBackdrop') : undefined}>
                   <input
                     type="checkbox"
                     checked={options.content.backdrop}
                     disabled={!project.backdrop}
                     onChange={(event) => updateContent({ backdrop: event.target.checked })}
                   />
-                  Backdrop image
+                  {td('dialogs.printDesign.content.backdrop')}
                 </label>
                 <label className="export-option">
                   <input
@@ -360,29 +368,29 @@ export function PrintDesignDialog({
                     checked={options.content.featureLabels}
                     onChange={(event) => updateContent({ featureLabels: event.target.checked })}
                   />
-                  Feature labels
+                  {td('dialogs.printDesign.content.featureLabels')}
                 </label>
-                <label className="export-option" title={project.tabs.length === 0 ? 'No tabs in this project' : undefined}>
+                <label className="export-option" title={project.tabs.length === 0 ? td('dialogs.printDesign.noTabs') : undefined}>
                   <input
                     type="checkbox"
                     checked={options.content.tabs}
                     disabled={project.tabs.length === 0}
                     onChange={(event) => updateContent({ tabs: event.target.checked })}
                   />
-                  Tabs
+                  {td('dialogs.printDesign.content.tabs')}
                 </label>
-                <label className="export-option" title={project.clamps.length === 0 ? 'No clamps in this project' : undefined}>
+                <label className="export-option" title={project.clamps.length === 0 ? td('dialogs.printDesign.noClamps') : undefined}>
                   <input
                     type="checkbox"
                     checked={options.content.clamps}
                     disabled={project.clamps.length === 0}
                     onChange={(event) => updateContent({ clamps: event.target.checked })}
                   />
-                  Clamps
+                  {td('dialogs.printDesign.content.clamps')}
                 </label>
                 <label
                   className="export-option"
-                  title={toolpaths.length === 0 ? 'No toolpaths are visible in the sketch view' : undefined}
+                  title={toolpaths.length === 0 ? td('dialogs.printDesign.noToolpaths') : undefined}
                 >
                   <input
                     type="checkbox"
@@ -390,7 +398,7 @@ export function PrintDesignDialog({
                     disabled={toolpaths.length === 0}
                     onChange={(event) => updateContent({ toolpaths: event.target.checked })}
                   />
-                  Toolpath overlays
+                  {td('dialogs.printDesign.content.toolpaths')}
                 </label>
                 <label className="export-option">
                   <input
@@ -398,7 +406,7 @@ export function PrintDesignDialog({
                     checked={options.content.footer}
                     onChange={(event) => updateContent({ footer: event.target.checked })}
                   />
-                  Title block
+                  {td('dialogs.printDesign.content.titleBlock')}
                 </label>
               </div>
               <div className="export-option-group print-dialog__content-options">
@@ -409,7 +417,7 @@ export function PrintDesignDialog({
                     checked={options.colorMode === 'color'}
                     onChange={() => update({ colorMode: 'color' })}
                   />
-                  Color
+                  {td('dialogs.printDesign.content.color')}
                 </label>
                 <label className="export-option">
                   <input
@@ -418,7 +426,7 @@ export function PrintDesignDialog({
                     checked={options.colorMode === 'monochrome'}
                     onChange={() => update({ colorMode: 'monochrome' })}
                   />
-                  Monochrome
+                  {td('dialogs.printDesign.content.monochrome')}
                 </label>
               </div>
             </div>
@@ -433,7 +441,12 @@ export function PrintDesignDialog({
               />
             </div>
             <div className="print-dialog__summary">
-              Printed size: {outputW} × {outputH} {unitSuffix} at {formatScaleRatio(layout.scaleRatio)}
+              {td('dialogs.printDesign.printedSize', {
+                width: outputW,
+                height: outputH,
+                unit: unitSuffix,
+                scale: formatScaleRatio(layout.scaleRatio),
+              })}
             </div>
             {warnings.length > 0 && (
               <div className="export-warning-list">
@@ -448,10 +461,10 @@ export function PrintDesignDialog({
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">
-            Close
+            {td('dialogs.printDesign.close')}
           </button>
           <button className="btn-primary" onClick={handlePrint} disabled={printDisabled} type="button">
-            Print…
+            {td('dialogs.printDesign.print')}
           </button>
         </div>
       </div>

@@ -16,6 +16,7 @@
 
 import { useRef, useState } from 'react'
 import { formatLength, parseLengthInput } from '../../utils/units'
+import { useI18n } from '../../i18n/i18nContext'
 
 // Fraction of track height reserved as visual margin at each end, so handles
 // sit a bit in from the edges even at min/max Z values.
@@ -52,6 +53,7 @@ export function ZRangeSlider({
   onCommitZTop,
   onCommitZBottom,
 }: ZRangeSliderProps) {
+  const { t } = useI18n()
   const trackRef = useRef<HTMLDivElement>(null)
   const topInputRef = useRef<HTMLInputElement>(null)
   const botInputRef = useRef<HTMLInputElement>(null)
@@ -211,7 +213,7 @@ export function ZRangeSlider({
 
   return (
     <div className="z-range-slider">
-      <span className="z-range-slider__label z-range-slider__label--top">Z Top</span>
+      <span className="z-range-slider__label z-range-slider__label--top">{t('featureTree.zRange.zTop')}</span>
 
       <div className="z-range-slider__track" ref={trackRef}>
         <div className="z-range-slider__track-line" />
@@ -224,7 +226,7 @@ export function ZRangeSlider({
           style={{ top: `${topPercent}%` }}
           onPointerDown={(e) => handlePointerDown('top', e)}
           role="slider"
-          aria-label="Z Top handle"
+          aria-label={t('featureTree.zRange.handleTopAria')}
           aria-valuemin={zBottom}
           aria-valuemax={stockThickness}
           aria-valuenow={effectiveTop}
@@ -235,7 +237,7 @@ export function ZRangeSlider({
           style={{ top: `${botPercent}%` }}
           onPointerDown={(e) => handlePointerDown('bottom', e)}
           role="slider"
-          aria-label="Z Bottom handle"
+          aria-label={t('featureTree.zRange.handleBottomAria')}
           aria-valuemin={0}
           aria-valuemax={zTop}
           aria-valuenow={effectiveBot}
@@ -256,7 +258,7 @@ export function ZRangeSlider({
         onKeyDown={topHandlers.onKeyDown}
       />
 
-      <span className="z-range-slider__label z-range-slider__label--bot">Z Bottom</span>
+      <span className="z-range-slider__label z-range-slider__label--bot">{t('featureTree.zRange.zBottom')}</span>
 
       <input
         key={`${featureId}-zrs-bot-${zTop}-${zBottom}`}

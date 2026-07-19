@@ -14,20 +14,19 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../i18n/i18nContext'
+
 export function UnsupportedMobileScreen() {
+  const { t } = useI18n()
   return (
     <main className="unsupported-mobile-shell">
       <div className="unsupported-mobile-card">
-        <div className="unsupported-mobile-eyebrow">Desktop Browser Only</div>
-        <h1>PureCutCNC is not supported on phones.</h1>
-        <p>
-          The browser app is designed for a desktop-sized workspace and does not
-          behave well on phone screens. Use a desktop browser or install a
-          desktop build for macOS, Windows, or Linux.
-        </p>
+        <div className="unsupported-mobile-eyebrow">{t('mobileBlocker.eyebrow')}</div>
+        <h1>{t('mobileBlocker.title')}</h1>
+        <p>{t('mobileBlocker.body')}</p>
         <div className="unsupported-mobile-actions">
-          <a href="https://purecutcnc.github.io/downloads.html">Desktop Downloads</a>
-          <a href="https://purecutcnc.github.io/">Project Website</a>
+          <a href="https://purecutcnc.github.io/downloads.html">{t('mobileBlocker.downloads')}</a>
+          <a href="https://purecutcnc.github.io/">{t('mobileBlocker.website')}</a>
         </div>
       </div>
     </main>

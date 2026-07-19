@@ -150,6 +150,10 @@ function test(name: string, fn: () => void): void {
 // S2 REQUIRED REGRESSION: Z-span isolation for candidate island discovery
 // ═══════════════════════════════════════════════════════════════════════
 
+const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
+  w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
+
+
 test('Z-span isolation: Add island inside inner Line spanning different Z from outer Line must be discovered', () => {
   // Outer Line: 30×30, Z 5→3 (top band only)
   // Inner Line: 10×10 nested at same center, Z 2→0 (bottom band only)
@@ -241,10 +245,10 @@ test('region mask clips Line target to include-only area (200 sq units)', () => 
 
   // The warnings should not call the line invalid merely because it's not subtract.
   const hasSubtractOnlyWarning = result.warnings.some(
-    (w) => w.includes('subtract') && !w.includes('line') && !w.includes('subtract/line'),
+    (w) => w.code === 'targetsMissingOrWrongRole' && String(w.params?.roles ?? '') === 'subtract',
   )
   assert(!hasSubtractOnlyWarning,
-    `should not warn about subtract-only with line targets, got: ${result.warnings.join('; ')}`)
+    `should not warn about subtract-only with line targets, got: ${result.warnings.map(wtext).join('; ')}`)
 })
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -280,8 +284,8 @@ test('single closed Line produces regions for V-carve', () => {
   const op = makeVCarveOp('op1', ['l1'])
   const result = resolvePocketRegions(project, op)
   assert(result.bands.length > 0, 'should produce at least one band')
-  assert(result.warnings.filter((w) => w.includes('warning') || w.includes('invalid')).length === 0,
-    `unexpected warnings: ${result.warnings.join('; ')}`)
+  assert(result.warnings.filter((w) => w.code === 'vBitInvalidSlope' || w.code === 'vBitAngleRange').length === 0,
+    `unexpected warnings: ${result.warnings.map(wtext).join('; ')}`)
   for (const band of result.bands) {
     assert(band.regions.length > 0, 'band should have regions')
     assert(band.targetFeatureIds.includes('l1'), 'band should reference the line feature')
@@ -296,8 +300,8 @@ test('open Line is rejected for V-carve', () => {
   const result = resolvePocketRegions(project, op)
   assert(result.bands.length === 0, 'open line should produce no bands')
   assert(
-    result.warnings.some((w) => w.toLowerCase().includes('closed')),
-    `should warn about closed geometry, got: ${result.warnings.join('; ')}`,
+    result.warnings.some((w) => w.code === 'closedProfilesOnly'),
+    `should warn about closed geometry, got: ${result.warnings.map(wtext).join('; ')}`,
   )
 })
 
@@ -405,8 +409,8 @@ test('Pocket rejects Line targets', () => {
   const result = resolvePocketRegions(project, op)
   assert(result.bands.length === 0, 'pocket should produce no bands for line-only target')
   assert(
-    result.warnings.some((w) => w.toLowerCase().includes('subtract')),
-    `pocket should warn about needing subtract features, got: ${result.warnings.join('; ')}`,
+    result.warnings.some((w) => w.code === 'resolverNoValidSubtracts' || (w.code === 'targetsMissingOrWrongRole' && String(w.params?.roles ?? '').includes('subtract'))),
+    `pocket should warn about needing subtract features, got: ${result.warnings.map(wtext).join('; ')}`,
   )
 })
 

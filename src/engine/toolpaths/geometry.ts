@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ToolpathWarning } from './warningCodes'
 import type {
   DimensionRef,
   Operation,
@@ -252,9 +253,12 @@ export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE
   return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
 }
 
-export function checkMaxCutDepthWarning(tool: NormalizedTool, cutDepth: number): string | null {
+export function checkMaxCutDepthWarning(tool: NormalizedTool, cutDepth: number): ToolpathWarning | null {
   if (tool.maxCutDepth > 0 && cutDepth > tool.maxCutDepth) {
-    return `Cut depth ${cutDepth.toFixed(3)} ${tool.units} exceeds tool max cut depth ${tool.maxCutDepth.toFixed(3)} ${tool.units}`
+    return {
+      code: 'cutDepthExceedsToolMax',
+      params: { depth: cutDepth.toFixed(3), max: tool.maxCutDepth.toFixed(3), units: tool.units },
+    }
   }
   return null
 }

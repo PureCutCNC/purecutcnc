@@ -21,6 +21,9 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import { useProjectStore } from '../../store/projectStore'
 import { platform } from '../../platform'
 import { MachineDefinitionEditorDialog } from './MachineDefinitionEditorDialog'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 export interface MachineDefinitionManagerDialogProps {
   onClose: () => void
@@ -35,6 +38,11 @@ export function MachineDefinitionManagerDialog({
   const removeMachineDefinition = useProjectStore((s) => s.removeMachineDefinition)
   const updateMachineDefinition = useProjectStore((s) => s.updateMachineDefinition)
   const duplicateMachineDefinition = useProjectStore((s) => s.duplicateMachineDefinition)
+  const { t, languageTag } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    return t(key, params)
+  }
 
   const definitions = project.meta.machineDefinitions
   const activeId = project.meta.selectedMachineId
@@ -82,9 +90,10 @@ export function MachineDefinitionManagerDialog({
       addMachineDefinition(validated)
       setPreviewId(validated.id)
     } catch (error) {
-      alert(`Invalid machine definition JSON: ${error instanceof Error ? error.message : String(error)}`)
+      alert(td('dialogs.machineManager.invalidImport', { message: error instanceof Error ? error.message : String(error) }))
     }
-  }, [addMachineDefinition])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [addMachineDefinition, languageTag])
 
   const handleEdit = useCallback(() => {
     if (previewDef) {
@@ -145,11 +154,11 @@ export function MachineDefinitionManagerDialog({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Manage machines"
+        aria-label={td('dialogs.machineManager.title')}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Manage Machines</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{td('dialogs.machineManager.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             ✕
           </button>
         </div>
@@ -170,13 +179,13 @@ export function MachineDefinitionManagerDialog({
               >
                 <div className="machine-manager-item-name">{def.name}</div>
                 <span className={def.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                  {def.builtin ? 'Built-in' : 'Custom'}
+                  {def.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
                 </span>
               </button>
             ))}
             {definitions.length === 0 ? (
               <div className="machine-manager-empty">
-                No machine definitions. Import one to get started.
+                {td('dialogs.machineManager.empty')}
               </div>
             ) : null}
           </div>
@@ -188,80 +197,80 @@ export function MachineDefinitionManagerDialog({
                 <div className="machine-manager-detail-header">
                   <h3 className="machine-manager-detail-name">{previewDef.name}</h3>
                   {isActive ? (
-                    <span className="machine-manager-badge machine-manager-badge--active">Active</span>
+                    <span className="machine-manager-badge machine-manager-badge--active">{td('dialogs.machineManager.active')}</span>
                   ) : null}
                   <span className={previewDef.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                    {previewDef.builtin ? 'Built-in' : 'Custom'}
+                    {previewDef.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
                   </span>
                 </div>
 
                 <dl className="machine-manager-meta">
-                  <dt>File extension</dt>
+                  <dt>{td('dialogs.machineManager.fileExtension')}</dt>
                   <dd>.{previewDef.fileExtension}</dd>
                   {previewDef.description ? (
                     <>
-                      <dt>Description</dt>
+                      <dt>{td('dialogs.machineManager.description')}</dt>
                       <dd>{previewDef.description}</dd>
                     </>
                   ) : null}
                   {previewDef.vendor ? (
                     <>
-                      <dt>Vendor</dt>
+                      <dt>{td('dialogs.machineManager.vendor')}</dt>
                       <dd>{previewDef.vendor}</dd>
                     </>
                   ) : null}
                   {previewDef.builtin ? (
-                    <dd className="machine-manager-hint">Built-in definitions are read-only. Duplicate to create an editable copy.</dd>
+                    <dd className="machine-manager-hint">{td('dialogs.machineManager.builtinHint')}</dd>
                   ) : null}
                 </dl>
 
                 <div className="machine-manager-actions">
                   {!isActive ? (
                     <button className="btn-primary" type="button" onClick={handleUseThisMachine}>
-                      Use this machine
+                      {td('dialogs.machineManager.useThisMachine')}
                     </button>
                   ) : null}
 
                   <div className="machine-manager-actions-row">
                     {!previewDef.builtin ? (
                       <button className="btn-secondary" type="button" onClick={handleEdit}>
-                        Edit
+                        {td('dialogs.machineManager.edit')}
                       </button>
                     ) : null}
 
                     <button className="btn-secondary" type="button" onClick={handleDuplicateToEdit}>
-                      {previewDef.builtin ? 'Duplicate to edit' : 'Duplicate'}
+                      {previewDef.builtin ? td('dialogs.machineManager.duplicateToEdit') : td('dialogs.machineManager.duplicate')}
                     </button>
 
                     <button
                       className="btn-secondary"
                       type="button"
                       onClick={handleImportJson}
-                      title="Import a machine definition JSON file"
+                      title={td('dialogs.machineManager.importMachine')}
                     >
-                      Import machine
+                      {td('dialogs.machineManager.importMachine')}
                     </button>
 
                     <button
                       className="btn-secondary"
                       type="button"
                       onClick={handleExportJson}
-                      title="Export this machine definition as JSON"
+                      title={td('dialogs.machineManager.exportMachine')}
                     >
-                      Export machine
+                      {td('dialogs.machineManager.exportMachine')}
                     </button>
                   </div>
 
                   {!previewDef.builtin ? (
                     <button className="machine-manager-action--remove" type="button" onClick={handleRemove}>
-                      Remove machine
+                      {td('dialogs.machineManager.removeMachine')}
                     </button>
                   ) : null}
                 </div>
               </>
             ) : (
               <div className="machine-manager-empty">
-                Select a machine from the list or import one.
+                {td('dialogs.machineManager.emptyDetail')}
               </div>
             )}
           </div>
@@ -269,7 +278,7 @@ export function MachineDefinitionManagerDialog({
 
         <div className="dialog-footer">
           <button className="btn-primary" type="button" onClick={onClose}>
-            Done
+            {td('dialogs.machineManager.done')}
           </button>
         </div>
       </div>

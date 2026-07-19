@@ -15,6 +15,7 @@
  */
 
 import { useId, useState } from 'react'
+import { useI18n } from '../../i18n/i18nContext'
 import { formatColor, normalizeColorValue, opaqueHex, parseColor } from '../../theme/color'
 
 export interface ThemeColorRowProps {
@@ -36,6 +37,7 @@ export interface ThemeColorRowProps {
  * flagged without touching the theme.
  */
 export function ThemeColorRow({ label, value, baseValue, overridden, onChange, onReset }: ThemeColorRowProps) {
+  const { t } = useI18n()
   const inputId = useId()
   const [draft, setDraft] = useState(value)
   const [invalid, setInvalid] = useState(false)
@@ -80,7 +82,7 @@ export function ThemeColorRow({ label, value, baseValue, overridden, onChange, o
       <input
         className="theme-editor-row__picker"
         type="color"
-        aria-label={`${label} color picker`}
+        aria-label={t('themeEditor.colorPickerAria', { label })}
         value={parsed ? opaqueHex(parsed) : '#000000'}
         onChange={(event) => pickColor(event.target.value)}
       />
@@ -102,15 +104,15 @@ export function ThemeColorRow({ label, value, baseValue, overridden, onChange, o
       />
       <span
         className="theme-editor-row__base"
-        title={`Base value: ${baseValue}`}
+        title={t('themeEditor.baseValueTitle', { value: baseValue })}
         style={{ background: baseValue }}
         aria-hidden="true"
       />
       <button
         className="theme-editor-row__reset"
         type="button"
-        aria-label={`Reset ${label} to base value`}
-        title={`Reset to base (${baseValue})`}
+        aria-label={t('themeEditor.resetFieldAria', { label })}
+        title={t('themeEditor.resetFieldTitle', { value: baseValue })}
         disabled={!overridden}
         onClick={onReset}
       >

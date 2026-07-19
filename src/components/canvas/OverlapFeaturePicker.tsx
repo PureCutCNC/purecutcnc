@@ -16,56 +16,60 @@
 
 import type { FeatureKind } from '../../types/project'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { OverlapFeaturePickerController } from './useOverlapFeaturePicker'
 
 interface OverlapFeaturePickerProps {
   picker: OverlapFeaturePickerController
 }
 
-const FEATURE_KIND_LABELS: Record<FeatureKind, string> = {
-  rect: 'Rectangle',
-  circle: 'Circle',
-  ellipse: 'Ellipse',
-  polygon: 'Polygon',
-  spline: 'Spline',
-  composite: 'Composite path',
-  text: 'Text',
-  stl: 'STL model',
+const FEATURE_KIND_LABEL_KEYS: Record<FeatureKind, MessageKey> = {
+  rect: 'canvas.overlap.kind.rect',
+  circle: 'canvas.overlap.kind.circle',
+  ellipse: 'canvas.overlap.kind.ellipse',
+  polygon: 'canvas.overlap.kind.polygon',
+  spline: 'canvas.overlap.kind.spline',
+  composite: 'canvas.overlap.kind.composite',
+  text: 'canvas.overlap.kind.text',
+  stl: 'canvas.overlap.kind.stl',
 }
 
 export function OverlapFeaturePicker({ picker }: OverlapFeaturePickerProps) {
+  const { t, tPlural } = useI18n()
+
   if (!picker.isOpen) return null
 
   const candidateCount = picker.candidates.length
 
   return (
-    <div className="overlap-feature-picker" role="dialog" aria-label="Select feature" aria-modal="false">
+    <div className="overlap-feature-picker" role="dialog" aria-label={t('canvas.overlap.dialogAria')} aria-modal="false">
       <CanvasWorkflowPanel
-        title="Select feature"
-        step={`${candidateCount} features overlap here. Choose one to select.`}
+        title={t('canvas.overlap.title')}
+        step={tPlural(candidateCount, 'canvas.overlap.step.one', 'canvas.overlap.step.other')}
         position={picker.workflowPanel.position}
         panelRef={picker.workflowPanel.panelRef}
         handleProps={picker.workflowPanel.handleProps}
         actionRowProps={picker.workflowPanel.actionRowProps}
         className="overlap-feature-picker__panel"
-        moveLabel="Move feature selection controls"
+        moveLabel={t('canvas.overlap.moveLabel')}
         actions={(
           <button
             type="button"
             className="tablet-cmd-btn tablet-cmd-btn--cancel"
             onClick={picker.cancel}
-          >Cancel</button>
+          >{t('canvas.overlap.cancel')}</button>
         )}
       >
-        <div className="overlap-feature-picker__list" aria-label="Overlapping features">
+        <div className="overlap-feature-picker__list" aria-label={t('canvas.overlap.listAria')}>
           {picker.candidates.map((candidate) => {
-            const kindLabel = FEATURE_KIND_LABELS[candidate.kind]
+            const kindLabel = t(FEATURE_KIND_LABEL_KEYS[candidate.kind])
             return (
               <button
                 key={candidate.id}
                 type="button"
                 className="overlap-feature-picker__candidate"
-                aria-label={`Select ${candidate.name}, ${kindLabel}`}
+                aria-label={t('canvas.overlap.selectAria', { name: candidate.name, kind: kindLabel })}
                 onClick={() => picker.selectCandidate(candidate.id)}
                 onPointerEnter={() => picker.previewCandidate(candidate.id)}
                 onPointerLeave={(event) => {

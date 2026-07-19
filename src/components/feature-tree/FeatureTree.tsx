@@ -23,6 +23,7 @@ import { isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } 
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -77,6 +78,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     hoverFeature,
   } = useProjectStore()
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
+  const { t } = useI18n()
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -408,7 +410,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     <div className="feature-tree-panel" ref={panelRef}>
       <div className="tree-list">
         <TreeRow
-          label="Project"
+          label={t('featureTree.tree.project')}
           kind="project"
           isSelected={selection.selectedNode?.type === 'project'}
           isDragging={false}
@@ -417,7 +419,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onMouseLeave={() => hoverFeature(null)}
         />
         <TreeRow
-          label="Grid"
+          label={t('featureTree.tree.grid')}
           kind="grid"
           isSelected={selection.selectedNode?.type === 'grid'}
           isDragging={false}
@@ -433,7 +435,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           }
         />
         <TreeRow
-          label="Stock"
+          label={t('featureTree.tree.stock')}
           kind="stock"
           isSelected={selection.selectedNode?.type === 'stock'}
           isDragging={false}
@@ -449,7 +451,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           }
         />
         <TreeRow
-          label="Origin"
+          label={t('featureTree.tree.origin')}
           kind="origin"
           isSelected={selection.selectedNode?.type === 'origin'}
           isDragging={false}
@@ -460,7 +462,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onToggleVisible={() => setOrigin({ ...project.origin, visible: !project.origin.visible })}
         />
         <TreeRow
-          label={project.backdrop?.name ?? 'Backdrop'}
+          label={project.backdrop?.name ?? t('featureTree.tree.backdrop')}
           kind="backdrop"
           isSelected={selection.selectedNode?.type === 'backdrop'}
           isDragging={false}
@@ -471,7 +473,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onToggleVisible={project.backdrop ? () => updateBackdrop({ visible: !project.backdrop!.visible }) : undefined}
         />
         <TreeRow
-          label="Features"
+          label={t('featureTree.tree.features')}
           kind="features"
           depth={0}
           isSelected={selection.selectedNode?.type === 'features_root'}
@@ -487,12 +489,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onDrop={handleDrop}
         />
         {featuresCollapsed ? null : machiningFeatures.length === 0 && featureFolders.length === 0 ? (
-          <div className="feature-tree-empty">No feature nodes yet.</div>
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.features')}</div>
         ) : (
           <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
-                ⚠ First 2.5D feature must be <strong>Add</strong>. The 3D model will not build until this is fixed.
+                {t('featureTree.tree.warning.firstFeaturePrefix')}<strong>{t('featureTree.operation.add')}</strong>{t('featureTree.tree.warning.firstFeatureSuffix')}
               </div>
             )}
             {rootEntries.map((entry, rootIdx) => {
@@ -554,7 +556,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   {!folder.collapsed ? (
                     <div className="tree-children">
                       {folderFeatures.length === 0 ? (
-                        <div className="feature-tree-empty">Empty folder.</div>
+                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
                       ) : (
                         folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
                       )}
@@ -566,7 +568,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           </div>
         )}
         <TreeRow
-          label="Regions"
+          label={t('featureTree.tree.regions')}
           kind="regions"
           depth={0}
           isSelected={selection.selectedNode?.type === 'regions_root'}
@@ -580,7 +582,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onHideAll={() => setAllRegionsVisible(false)}
         />
         {regionsCollapsed ? null : regionFeatures.length === 0 && regionFolders.length === 0 ? (
-          <div className="feature-tree-empty">No regions yet.</div>
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.regions')}</div>
         ) : (
           <div className="tree-children">
             {regionRootEntries.map((entry, regionIdx) => {
@@ -642,7 +644,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   {!folder.collapsed ? (
                     <div className="tree-children">
                       {folderFeatures.length === 0 ? (
-                        <div className="feature-tree-empty">Empty folder.</div>
+                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
                       ) : (
                         folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
                       )}
@@ -654,7 +656,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           </div>
         )}
         <TreeRow
-          label="Construction"
+          label={t('featureTree.tree.construction')}
           kind="constructions"
           depth={0}
           isSelected={selection.selectedNode?.type === 'construction_root'}
@@ -668,7 +670,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onHideAll={() => setAllConstructionVisible(false)}
         />
         {constructionCollapsed ? null : constructionFeatures.length === 0 && constructionFolders.length === 0 ? (
-          <div className="feature-tree-empty">No construction geometry yet.</div>
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.construction')}</div>
         ) : (
           <div className="tree-children">
             {constructionRootEntries.map((entry, constructionIdx) => {
@@ -730,7 +732,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   {!folder.collapsed ? (
                     <div className="tree-children">
                       {folderFeatures.length === 0 ? (
-                        <div className="feature-tree-empty">Empty folder.</div>
+                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
                       ) : (
                         folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
                       )}
@@ -742,7 +744,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           </div>
         )}
         <TreeRow
-          label="Tabs"
+          label={t('featureTree.tree.tabs')}
           kind="tabs"
           depth={0}
           isSelected={selection.selectedNode?.type === 'tabs_root'}
@@ -756,7 +758,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onHideAll={() => setAllTabsVisible(false)}
         />
         {tabsCollapsed ? null : project.tabs.length === 0 ? (
-          <div className="feature-tree-empty">No tabs yet.</div>
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.tabs')}</div>
         ) : (
           <div className="tree-children">
             {project.tabs.map((tab) => (
@@ -787,7 +789,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           </div>
         )}
         <TreeRow
-          label="Clamps"
+          label={t('featureTree.tree.clamps')}
           kind="clamps"
           depth={0}
           isSelected={selection.selectedNode?.type === 'clamps_root'}
@@ -801,7 +803,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onHideAll={() => setAllClampsVisible(false)}
         />
         {clampsCollapsed ? null : project.clamps.length === 0 ? (
-          <div className="feature-tree-empty">No clamps yet.</div>
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.clamps')}</div>
         ) : (
           <div className="tree-children">
             {project.clamps.map((clamp) => (
@@ -930,6 +932,18 @@ function TreeRow({
   const [operationMenuPos, setOperationMenuPos] = useState<{ top: number; left: number } | null>(null)
   const gripDragRef = useRef<{ lastSwapY: number; pointerId: number } | null>(null)
   const hasGrip = onMoveUp || onMoveDown
+  const { t } = useI18n()
+
+  const showAllLabel = kind === 'features' ? t('featureTree.treeRow.showAll.features')
+    : kind === 'regions' ? t('featureTree.treeRow.showAll.regions')
+    : kind === 'constructions' ? t('featureTree.treeRow.showAll.construction')
+    : kind === 'tabs' ? t('featureTree.treeRow.showAll.tabs')
+    : t('featureTree.treeRow.showAll.clamps')
+  const hideAllLabel = kind === 'features' ? t('featureTree.treeRow.hideAll.features')
+    : kind === 'regions' ? t('featureTree.treeRow.hideAll.regions')
+    : kind === 'constructions' ? t('featureTree.treeRow.hideAll.construction')
+    : kind === 'tabs' ? t('featureTree.treeRow.hideAll.tabs')
+    : t('featureTree.treeRow.hideAll.clamps')
 
   return (
     <div
@@ -969,7 +983,7 @@ function TreeRow({
                 type="button"
                 className="tree-folder-chevron"
                 onClick={(e) => { e.stopPropagation(); onToggleCollapsed() }}
-                aria-label={collapsed ? 'Expand folder' : 'Collapse folder'}
+                aria-label={collapsed ? t('featureTree.treeRow.folder.expand') : t('featureTree.treeRow.folder.collapse')}
                 tabIndex={0}
               >
                 <Icon id="chevron-down" className={`tree-chevron-icon${collapsed ? ' tree-chevron-icon--collapsed' : ''}`} size={14} />
@@ -979,38 +993,38 @@ function TreeRow({
           </>
         ) : (
           kind === 'project'
-            ? 'proj'
+            ? t('featureTree.tree.branch.project')
             : kind === 'grid'
-              ? 'grid'
+              ? t('featureTree.tree.branch.grid')
               : kind === 'stock'
-                ? 'root'
+                ? t('featureTree.tree.branch.stock')
                 : kind === 'origin'
-                  ? 'orig'
+                  ? t('featureTree.tree.branch.origin')
                 : kind === 'backdrop'
-                  ? 'back'
+                  ? t('featureTree.tree.branch.backdrop')
                 : kind === 'features'
-                  ? 'feat'
+                  ? t('featureTree.tree.branch.features')
                   : kind === 'regions'
-                    ? 'regn'
+                    ? t('featureTree.tree.branch.regions')
                   : kind === 'constructions'
-                    ? 'cnst'
+                    ? t('featureTree.tree.branch.construction')
                   : kind === 'tabs'
-                    ? 'root'
+                    ? t('featureTree.tree.branch.tabs')
                   : kind === 'clamps'
-                    ? 'clmp'
+                    ? t('featureTree.tree.branch.clamps')
                     : kind === 'tab'
-                      ? 'node'
+                      ? t('featureTree.tree.branch.tab')
                     : kind === 'clamp'
-                      ? 'node'
-                      : 'node'
+                      ? t('featureTree.tree.branch.clamp')
+                      : t('featureTree.tree.branch.feature')
         )}
       </span>
       {hasGrip ? (
         <button
           type="button"
           className="tree-action-btn tree-drag-grip"
-          title="Drag to reorder"
-          aria-label="Drag to reorder"
+          title={t('featureTree.treeRow.grip.dragToReorder')}
+          aria-label={t('featureTree.treeRow.grip.dragToReorder')}
           onPointerDown={(e) => {
             if (e.pointerType !== 'touch') return
             e.preventDefault()
@@ -1059,25 +1073,25 @@ function TreeRow({
             className={`tree-region-badge${regionMaskMode === 'exclude' ? ' tree-region-badge--exclude' : ''}`}
             title={
               regionMaskMode === 'exclude'
-                ? 'Exclude region — subtracts this area from the active region mask.'
-                : 'Include region — adds this area to the active region mask.'
+                ? t('featureTree.treeRow.badge.region.excludeTooltip')
+                : t('featureTree.treeRow.badge.region.includeTooltip')
             }
           >
-            {regionMaskMode === 'exclude' ? 'exclude' : 'include'}
+            {regionMaskMode === 'exclude' ? t('featureTree.treeRow.badge.region.exclude') : t('featureTree.treeRow.badge.region.include')}
           </span>
         ) : null}
         {kind === 'feature' && operation === 'construction' ? (
           <span
             className="tree-construction-badge"
-            title="Construction — sketch reference geometry. Snap, mirror, and dimension against it; never machined."
+            title={t('featureTree.treeRow.badge.construction.tooltip')}
           >
-            ref
+            {t('featureTree.treeRow.badge.construction.label')}
           </span>
         ) : null}
         {kind === 'feature' && linkedCount && linkedCount > 1 ? (
           <span
             className="tree-linked-badge"
-            title={`Linked — ${linkedCount} instances share this definition`}
+            title={t('featureTree.treeRow.badge.linked', { count: linkedCount })}
           >
             <Icon id="link" className="tree-icon--link" />
           </span>
@@ -1092,8 +1106,8 @@ function TreeRow({
               event.stopPropagation()
               onShowAll()
             }}
-            title={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'constructions' ? 'Show all construction geometry' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
-            aria-label={kind === 'features' ? 'Show all features' : kind === 'regions' ? 'Show all regions' : kind === 'constructions' ? 'Show all construction geometry' : kind === 'tabs' ? 'Show all tabs' : 'Show all clamps'}
+            title={showAllLabel}
+            aria-label={showAllLabel}
           >
             <Icon id="eye" />
           </button>
@@ -1106,8 +1120,8 @@ function TreeRow({
               event.stopPropagation()
               onHideAll()
             }}
-            title={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'constructions' ? 'Hide all construction geometry' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
-            aria-label={kind === 'features' ? 'Hide all features' : kind === 'regions' ? 'Hide all regions' : kind === 'constructions' ? 'Hide all construction geometry' : kind === 'tabs' ? 'Hide all tabs' : 'Hide all clamps'}
+            title={hideAllLabel}
+            aria-label={hideAllLabel}
           >
             <Icon id="eye-off" />
           </button>
@@ -1120,8 +1134,8 @@ function TreeRow({
               event.stopPropagation()
               onAddFolder()
             }}
-            title={kind === 'regions' ? 'Add region folder' : kind === 'constructions' ? 'Add construction folder' : 'Add folder'}
-            aria-label={kind === 'regions' ? 'Add region folder' : kind === 'constructions' ? 'Add construction folder' : 'Add folder'}
+            title={kind === 'regions' ? t('featureTree.treeRow.addFolder.regions') : kind === 'constructions' ? t('featureTree.treeRow.addFolder.construction') : t('featureTree.treeRow.addFolder.default')}
+            aria-label={kind === 'regions' ? t('featureTree.treeRow.addFolder.regions') : kind === 'constructions' ? t('featureTree.treeRow.addFolder.construction') : t('featureTree.treeRow.addFolder.default')}
           >
             <Icon id="folder" />
           </button>
@@ -1134,8 +1148,8 @@ function TreeRow({
               event.stopPropagation()
               onAddTab()
             }}
-            title="Add tab"
-            aria-label="Add tab"
+            title={t('featureTree.treeRow.addEntry.tab')}
+            aria-label={t('featureTree.treeRow.addEntry.tab')}
           >
             +
           </button>
@@ -1148,8 +1162,8 @@ function TreeRow({
               event.stopPropagation()
               onAddClamp()
             }}
-            title="Add clamp"
-            aria-label="Add clamp"
+            title={t('featureTree.treeRow.addEntry.clamp')}
+            aria-label={t('featureTree.treeRow.addEntry.clamp')}
           >
             +
           </button>
@@ -1181,23 +1195,23 @@ function TreeRow({
               title={
                 operation === 'line'
                   ? (profileClosed
-                    ? 'Line — closed path usable by engrave, profile, and V-carve operations'
-                    : 'Line — open profile (Line ↔ Construction only)')
+                    ? t('featureTree.treeRow.operation.lineClosedTooltip')
+                    : t('featureTree.treeRow.operation.lineOpenTooltip'))
                   : operation === 'model'
-                  ? 'Model — imported 3D object (locked)'
+                  ? t('featureTree.treeRow.operation.modelTooltip')
                   : operation === 'add'
                   ? subtractDisabled
-                    ? 'Add — first solid (Subtract unavailable; convert to a non-solid role to unlock)'
-                    : 'Feature adds material'
+                    ? t('featureTree.treeRow.operation.addFirstSolidTooltip')
+                    : t('featureTree.treeRow.operation.addTooltip')
                   : operation === 'subtract'
-                  ? 'Feature subtracts material'
+                  ? t('featureTree.treeRow.operation.subtractTooltip')
                   : operation === 'construction'
-                  ? 'Construction — sketch reference geometry (never machined)'
-                  : 'Region — limits where operations may cut (not machined)'
+                  ? t('featureTree.treeRow.operation.constructionTooltip')
+                  : t('featureTree.treeRow.operation.regionTooltip')
               }
               aria-label={
-                operation === 'model' ? 'Model — operation locked'
-                : 'Change operation'
+                operation === 'model' ? t('featureTree.treeRow.operation.modelLockedAria')
+                : t('featureTree.treeRow.operation.changeAria')
               }
               aria-haspopup={operation === 'model' ? undefined : 'true'}
               aria-expanded={operationMenuPos !== null}
@@ -1236,14 +1250,14 @@ function TreeRow({
                         onToggleOperation('line')
                         setOperationMenuPos(null)
                       }}
-                      title="Line — open path machined by engrave operations"
+                      title={t('featureTree.treeRow.operation.menuLineOpenTooltip')}
                     >
                       <span className="tree-operation-menu__icon">
                         <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
                           <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                         </svg>
                       </span>
-                      <span>Line</span>
+                      <span>{t('featureTree.operation.line')}</span>
                     </button>
                   ) : (
                     <>
@@ -1255,10 +1269,10 @@ function TreeRow({
                           onToggleOperation('add')
                           setOperationMenuPos(null)
                         }}
-                        title="Add — feature adds material"
+                        title={t('featureTree.treeRow.operation.menuAddTooltip')}
                       >
                         <span className="tree-operation-menu__icon">+</span>
-                        <span>Add</span>
+                        <span>{t('featureTree.operation.add')}</span>
                       </button>
                       <button
                         type="button"
@@ -1269,10 +1283,10 @@ function TreeRow({
                           onToggleOperation('subtract')
                           setOperationMenuPos(null)
                         }}
-                        title={subtractDisabled ? 'Subtract unavailable — the first solid must be Add or converted to a non-solid role' : 'Subtract — feature removes material'}
+                        title={subtractDisabled ? t('featureTree.treeRow.operation.menuSubtractDisabledTooltip') : t('featureTree.treeRow.operation.menuSubtractTooltip')}
                       >
                         <span className="tree-operation-menu__icon">−</span>
-                        <span>Subtract</span>
+                        <span>{t('featureTree.operation.subtract')}</span>
                       </button>
                       <button
                         type="button"
@@ -1282,14 +1296,14 @@ function TreeRow({
                           onToggleOperation('line')
                           setOperationMenuPos(null)
                         }}
-                        title="Line — closed path machined by engrave/contour operations"
+                        title={t('featureTree.treeRow.operation.menuLineClosedTooltip')}
                       >
                         <span className="tree-operation-menu__icon">
                           <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
                             <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                           </svg>
                         </span>
-                        <span>Line</span>
+                        <span>{t('featureTree.operation.line')}</span>
                       </button>
                       <button
                         type="button"
@@ -1299,10 +1313,10 @@ function TreeRow({
                           onToggleOperation('region')
                           setOperationMenuPos(null)
                         }}
-                        title="Region mask — feature filters machining operations"
+                        title={t('featureTree.treeRow.operation.menuRegionTooltip')}
                       >
                         <span className="tree-operation-menu__icon tree-operation-menu__icon--region">□</span>
-                        <span>Region mask</span>
+                        <span>{t('featureTree.operation.region')}</span>
                       </button>
                     </>
                   )}
@@ -1314,14 +1328,14 @@ function TreeRow({
                       onToggleOperation('construction')
                       setOperationMenuPos(null)
                     }}
-                    title="Construction — sketch reference geometry, never machined"
+                    title={t('featureTree.treeRow.operation.menuConstructionTooltip')}
                   >
                     <span className="tree-operation-menu__icon tree-operation-menu__icon--construction">
                       <svg viewBox="0 0 24 24" width="12" height="12" focusable="false" aria-hidden="true">
                         <line x1="3" y1="21" x2="21" y2="3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="4 3.4" />
                       </svg>
                     </span>
-                    <span>Construction</span>
+                    <span>{t('featureTree.operation.construction')}</span>
                   </button>
                 </div>
               </>
@@ -1336,8 +1350,8 @@ function TreeRow({
               event.stopPropagation()
               onSelectAllFeatures()
             }}
-            title="Select all features in folder"
-            aria-label="Select all features in folder"
+            title={t('featureTree.treeRow.selectAllInFolder')}
+            aria-label={t('featureTree.treeRow.selectAllInFolder')}
           >
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
@@ -1355,8 +1369,8 @@ function TreeRow({
               event.stopPropagation()
               onToggleGrouped()
             }}
-            title={grouped ? 'Ungroup features' : 'Group features'}
-            aria-label={grouped ? 'Ungroup features' : 'Group features'}
+            title={grouped ? t('featureTree.treeRow.ungroup') : t('featureTree.treeRow.group')}
+            aria-label={grouped ? t('featureTree.treeRow.ungroup') : t('featureTree.treeRow.group')}
           >
             <Icon id="group" />
           </button>
@@ -1369,8 +1383,8 @@ function TreeRow({
               event.stopPropagation()
               onEditEntry()
             }}
-            title="Edit sketch"
-            aria-label="Edit sketch"
+            title={t('featureTree.treeRow.editSketch')}
+            aria-label={t('featureTree.treeRow.editSketch')}
           >
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <path fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" d="M1.5 12.5h2.5l7-7-2.5-2.5-7 7v2.5Zm7.5-9.5 2-2 2.5 2.5-2 2" />
@@ -1386,8 +1400,8 @@ function TreeRow({
               const rect = event.currentTarget.getBoundingClientRect()
               onMoreMenu(rect.left, rect.bottom)
             }}
-            title="More actions"
-            aria-label="More actions"
+            title={t('featureTree.treeRow.moreActions')}
+            aria-label={t('featureTree.treeRow.moreActions')}
           >
             ⋮
           </button>
@@ -1400,8 +1414,8 @@ function TreeRow({
               event.stopPropagation()
               onToggleVisible()
             }}
-            title={visible ? 'Hide entry' : 'Show entry'}
-            aria-label={visible ? 'Hide entry' : 'Show entry'}
+            title={visible ? t('featureTree.treeRow.hideEntry') : t('featureTree.treeRow.showEntry')}
+            aria-label={visible ? t('featureTree.treeRow.hideEntry') : t('featureTree.treeRow.showEntry')}
           >
             <Icon id={visible ? 'eye' : 'eye-off'} />
           </button>

@@ -15,17 +15,19 @@
  */
 
 import type { DimensionType } from '../../../types/project'
+import { useI18n } from '../../../i18n/i18nContext'
+import type { MessageKey } from '../../../i18n/locales/en'
 import { ToolbarPopoverMenu } from './ToolbarPopoverMenu'
 import type { PopoverMenuOption } from './shared'
 import { ToolbarActionButton } from './primitives'
 
-const DIMENSION_TYPE_OPTIONS: PopoverMenuOption<DimensionType>[] = [
-  { value: 'aligned', icon: 'dim-aligned', label: 'Aligned dimension' },
-  { value: 'horizontal', icon: 'dim-horizontal', label: 'Horizontal dimension' },
-  { value: 'vertical', icon: 'dim-vertical', label: 'Vertical dimension' },
-  { value: 'radius', icon: 'dim-radius', label: 'Radius dimension' },
-  { value: 'diameter', icon: 'dim-diameter', label: 'Diameter dimension' },
-  { value: 'angle', icon: 'dim-angle', label: 'Angle dimension' },
+const DIMENSION_TYPE_OPTIONS: { value: DimensionType; icon: string; labelKey: MessageKey }[] = [
+  { value: 'aligned', icon: 'dim-aligned', labelKey: 'shell.measure.dimAligned' },
+  { value: 'horizontal', icon: 'dim-horizontal', labelKey: 'shell.measure.dimHorizontal' },
+  { value: 'vertical', icon: 'dim-vertical', labelKey: 'shell.measure.dimVertical' },
+  { value: 'radius', icon: 'dim-radius', labelKey: 'shell.measure.dimRadius' },
+  { value: 'diameter', icon: 'dim-diameter', labelKey: 'shell.measure.dimDiameter' },
+  { value: 'angle', icon: 'dim-angle', labelKey: 'shell.measure.dimAngle' },
 ]
 
 function MeasureActions({
@@ -51,37 +53,48 @@ function MeasureActions({
   onDeleteDimension: () => void
   onToggleShowDimensions: () => void
 }) {
+  const { t, tPlural, languageTag } = useI18n()
+  const options: PopoverMenuOption<DimensionType>[] = DIMENSION_TYPE_OPTIONS.map((option) => ({
+    value: option.value,
+    icon: option.icon,
+    label: t(option.labelKey),
+  }))
+
   // Reflect a pending dimension placement in the popover trigger so the user
   // can see which type is in progress without expanding the menu.
   const activeDimOption = pendingDimensionType
     ? DIMENSION_TYPE_OPTIONS.find((option) => option.value === pendingDimensionType) ?? null
     : null
   const triggerIcon = activeDimOption?.icon ?? 'measure'
+  // Lowercasing the inserted name reproduces English mid-sentence style; it
+  // is an identity transform for CJK and most non-Latin scripts.
   const triggerLabelClosed = activeDimOption
-    ? `Cancel ${activeDimOption.label.toLowerCase()}`
-    : 'Add dimension'
+    ? t('shell.measure.cancelDimension', {
+        dimension: t(activeDimOption.labelKey).toLocaleLowerCase(languageTag),
+      })
+    : t('shell.measure.addDimension')
   return (
     <div className="toolbar-group">
       <ToolbarActionButton
         icon="tape-measure"
-        label={tapeActive ? 'Tape measure (on)' : 'Tape measure'}
+        label={tapeActive ? t('shell.measure.tapeMeasureOn') : t('shell.measure.tapeMeasure')}
         active={tapeActive}
         tooltipSide={tooltipSide}
         onClick={onTapeMeasure}
       />
       <ToolbarPopoverMenu
         triggerIcon={triggerIcon}
-        triggerLabelOpen="Close dimension menu"
+        triggerLabelOpen={t('shell.measure.closeDimensionMenu')}
         triggerLabelClosed={triggerLabelClosed}
         enabled
         tooltipSide={tooltipSide}
         columns={3}
-        options={DIMENSION_TYPE_OPTIONS}
+        options={options}
         onSelect={onDimensionType}
       />
       <ToolbarActionButton
         icon="trash"
-        label={dimensionDeleteArmed ? 'Delete dimension (click one)' : 'Delete dimension'}
+        label={dimensionDeleteArmed ? t('shell.measure.deleteDimensionArmed') : t('shell.measure.deleteDimension')}
         active={dimensionDeleteArmed}
         disabled={dimensionCount === 0}
         tooltipSide={tooltipSide}
@@ -90,8 +103,10 @@ function MeasureActions({
       <ToolbarActionButton
         icon={showDimensions ? 'eye' : 'eye-off'}
         label={dimensionCount === 0
-          ? 'Show/hide dimensions'
-          : showDimensions ? `Hide dimensions (${dimensionCount})` : `Show dimensions (${dimensionCount})`}
+          ? t('shell.measure.showHideDimensions')
+          : showDimensions
+            ? tPlural(dimensionCount, 'shell.measure.hideDimensionsCount.one', 'shell.measure.hideDimensionsCount.other')
+            : tPlural(dimensionCount, 'shell.measure.showDimensionsCount.one', 'shell.measure.showDimensionsCount.other')}
         active={showDimensions}
         tooltipSide={tooltipSide}
         onClick={onToggleShowDimensions}

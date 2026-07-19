@@ -204,8 +204,8 @@ function getProject(): Project {
   if (isLinear(result)) {
     assert(result.featureId === featureId, 'featureId matches')
     assert(result.currentValue > 0, 'currentValue should be positive')
-    assert(result.heldSideLabel.length > 0, 'heldSideLabel should be set')
-    assert(result.flipHeldSideLabel.length > 0, 'flipHeldSideLabel should be set')
+    assert(result.heldSideId.length > 0, 'heldSideId should be set')
+    assert(result.flipHeldSideId.length > 0, 'flipHeldSideId should be set')
     assert(result.heldAnchor.kind === 'vertex', 'held anchor is vertex')
     assert(result.drivenAnchor.kind === 'vertex', 'driven anchor is vertex')
   }
@@ -226,8 +226,8 @@ function getProject(): Project {
   assert(isLinear(result), 'vertical vertex dim should be linear')
   if (isLinear(result)) {
     assert(result.currentValue > 0, 'currentValue should be positive')
-    assert(result.heldSideLabel === 'Hold top' || result.heldSideLabel === 'Hold bottom',
-      `unexpected heldSideLabel: ${result.heldSideLabel}`)
+    assert(result.heldSideId === 'top' || result.heldSideId === 'bottom',
+      `unexpected heldSideId: ${result.heldSideId}`)
   }
 
   console.log('  ✓ vertical dimension same-feature')
@@ -244,8 +244,8 @@ function getProject(): Project {
   const result = resolveDrivingDimensionEdit(dim, project)
   assert(isLinear(result), 'aligned dim should be linear')
   if (isLinear(result)) {
-    assert(result.heldSideLabel === 'Hold start' || result.heldSideLabel === 'Hold end',
-      `unexpected heldSideLabel: ${result.heldSideLabel}`)
+    assert(result.heldSideId === 'start' || result.heldSideId === 'end',
+      `unexpected heldSideId: ${result.heldSideId}`)
   }
 
   console.log('  ✓ aligned dimension same-feature')
@@ -290,9 +290,9 @@ function getProject(): Project {
   const result = resolveDrivingDimensionEdit(dim, project)
   assert(isLinear(result), 'should resolve')
   if (isLinear(result)) {
-    const originalLabel = result.heldSideLabel
+    const originalHeldSideId = result.heldSideId
     const flipped = flipLinearDrivingEdit(result)
-    assert(flipped.heldSideLabel !== originalLabel, 'flipped label should differ')
+    assert(flipped.heldSideId !== originalHeldSideId, 'flipped held side should differ')
     assert(flipped.heldAnchor.kind === result.drivenAnchor.kind, 'flipped: anchors swapped')
     assert(flipped.drivenAnchor.kind === result.heldAnchor.kind, 'flipped: anchors swapped')
   }
@@ -448,7 +448,7 @@ function getProject(): Project {
     const flipped = flipAngleDrivingEdit(result)
     assert(flipped.heldAnchor === result.drivenAnchor, 'angle flip swaps held anchor')
     assert(flipped.drivenAnchor === result.heldAnchor, 'angle flip swaps driven anchor')
-    assert(flipped.heldSideLabel !== result.heldSideLabel, 'angle flip label changes')
+    assert(flipped.heldSideId !== result.heldSideId, 'angle flip held side changes')
   }
 
   console.log('  ✓ angle dimension same-feature')

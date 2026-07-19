@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { loadVersionInfo, type VersionInfo } from '../../utils/version'
 import { platform } from '../../platform'
+import { useI18n } from '../../i18n/i18nContext'
 import './about.css'
 
 interface AboutDialogProps {
@@ -39,6 +40,7 @@ function formatDate(iso?: string): string | null {
 
 export function AboutDialog({ onClose }: AboutDialogProps) {
   useRestoreCanvasFocus()
+  const { t, languageTag } = useI18n()
   const [info, setInfo] = useState<VersionInfo | null>(null)
   const [desktopVersion, setDesktopVersion] = useState<string | null>(null)
 
@@ -71,7 +73,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
   }, [onClose])
 
   const version = desktopVersion ?? info?.version ?? '…'
-  const released = formatDate(info?.date)
+  const released = useMemo(() => formatDate(info?.date), [info?.date])
 
   // In the Tauri webview a plain <a target="_blank"> does not open the system
   // browser, so on desktop route external links through the platform opener.
@@ -84,6 +86,9 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
       }
     }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is identity-stable; languageTag drives locale recomputes
+  const versionLabel = useMemo(() => t('viewport.about.version', { version }), [t, version, languageTag])
+
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div
@@ -91,11 +96,11 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="About PureCutCNC"
+        aria-label={t('viewport.about.ariaLabel')}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">About</h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <h2 className="dialog-title">{t('viewport.about.title')}</h2>
+          <button className="dialog-close" onClick={onClose} aria-label={t('viewport.about.close')} type="button">
             ✕
           </button>
         </div>
@@ -103,25 +108,22 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
         <div className="dialog-body dialog-body--about">
           <div className="about-heading">
             <span className="about-name">PureCutCNC</span>
-            <span className="about-version">Version {version}</span>
+            <span className="about-version">{versionLabel}</span>
           </div>
 
-          <p className="about-tagline">
-            2.5D CAD/CAM for CNC hobbyists — sketching and machining in one workflow, on the
-            web or your desktop.
-          </p>
+          <p className="about-tagline">{t('viewport.about.tagline')}</p>
 
           {(released || info?.name) && (
             <div className="about-meta">
               {info?.name && (
                 <div className="about-meta-row">
-                  <span>Release</span>
+                  <span>{t('viewport.about.releaseLabel')}</span>
                   <strong>{info.name}</strong>
                 </div>
               )}
               {released && (
                 <div className="about-meta-row">
-                  <span>Released</span>
+                  <span>{t('viewport.about.releasedLabel')}</span>
                   <strong>{released}</strong>
                 </div>
               )}
@@ -136,7 +138,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
               rel="noopener noreferrer"
               onClick={handleExternalLink(SITE_URL)}
             >
-              Website
+              {t('viewport.about.website')}
             </a>
             <a
               className="about-link"
@@ -145,7 +147,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
               rel="noopener noreferrer"
               onClick={handleExternalLink(REPO_URL)}
             >
-              Source
+              {t('viewport.about.source')}
             </a>
             <a
               className="about-link"
@@ -154,7 +156,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
               rel="noopener noreferrer"
               onClick={handleExternalLink(RELEASES_URL)}
             >
-              Releases
+              {t('viewport.about.releases')}
             </a>
             <a
               className="about-link"
@@ -163,15 +165,12 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
               rel="noopener noreferrer"
               onClick={handleExternalLink(LICENSE_URL)}
             >
-              License (Apache-2.0)
+              {t('viewport.about.license')}
             </a>
           </div>
 
           <div className="about-support">
-            <p className="about-support-text">
-              PureCutCNC is free, and stays free — but building and maintaining it takes real
-              time and money. If it helps you, a coffee keeps it going.
-            </p>
+            <p className="about-support-text">{t('viewport.about.supportText')}</p>
             <a
               className="about-coffee-btn"
               href={SPONSOR_URL}
@@ -196,7 +195,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
                 <line x1="10" y1="1" x2="10" y2="4" />
                 <line x1="14" y1="1" x2="14" y2="4" />
               </svg>
-              Buy me a coffee
+              {t('viewport.about.buyCoffee')}
             </a>
           </div>
 
@@ -205,7 +204,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
 
         <div className="dialog-footer">
           <button className="btn-primary" type="button" onClick={onClose}>
-            Close
+            {t('viewport.about.close')}
           </button>
         </div>
       </div>

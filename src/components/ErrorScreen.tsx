@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../i18n/i18nContext'
 import { formatError } from './errorFormat'
 
 interface ErrorScreenProps {
@@ -22,28 +23,24 @@ interface ErrorScreenProps {
 }
 
 export function ErrorScreen({ error, info }: ErrorScreenProps) {
+  const { t } = useI18n()
   const details = formatError(error, info)
   return (
     <main className="app-error-shell">
       <div className="app-error-card">
-        <div className="app-error-eyebrow">Something went wrong</div>
-        <h1>Sorry &mdash; PureCutCNC couldn't start on this device.</h1>
-        <p>
-          This usually means your browser or operating system doesn't support
-          the 3D graphics features the app needs. Try a current version of
-          Chrome, Edge, or Firefox on a reasonably recent desktop or tablet, or
-          use one of our desktop builds.
-        </p>
+        <div className="app-error-eyebrow">{t('viewport.error.eyebrow')}</div>
+        <h1>{t('viewport.error.title')}</h1>
+        <p>{t('viewport.error.body')}</p>
         <details className="app-error-details">
-          <summary>Show technical details</summary>
+          <summary>{t('viewport.error.showDetails')}</summary>
           <pre>{details}</pre>
         </details>
         <div className="app-error-actions">
           <button type="button" onClick={() => window.location.reload()}>
-            Reload
+            {t('viewport.error.reload')}
           </button>
-          <a href="https://purecutcnc.github.io/downloads.html">Desktop Downloads</a>
-          <a href="https://purecutcnc.github.io/">Project Website</a>
+          <a href="https://purecutcnc.github.io/downloads.html">{t('viewport.error.desktopDownloads')}</a>
+          <a href="https://purecutcnc.github.io/">{t('viewport.error.projectWebsite')}</a>
         </div>
       </div>
     </main>

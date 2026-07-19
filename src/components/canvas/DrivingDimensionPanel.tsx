@@ -15,42 +15,66 @@
  */
 
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { useI18n } from '../../i18n/i18nContext'
 import type { DrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
+import type { HeldSideId } from '../../sketch/drivingDimensionResolver'
 
 /* eslint-disable react-hooks/refs -- This leaf component forwards refs produced by canvas workflow hooks into JSX. */
+
+import type { MessageKey } from '../../i18n/locales/en'
+
+// Localized "Hold …" labels for the resolver's stable held-side ids.
+const HOLD_LABEL_KEYS: Record<HeldSideId, MessageKey> = {
+  left: 'canvas.driving.holdLabel.left',
+  right: 'canvas.driving.holdLabel.right',
+  top: 'canvas.driving.holdLabel.top',
+  bottom: 'canvas.driving.holdLabel.bottom',
+  start: 'canvas.driving.holdLabel.start',
+  end: 'canvas.driving.holdLabel.end',
+  firstRay: 'canvas.driving.holdLabel.firstRay',
+  secondRay: 'canvas.driving.holdLabel.secondRay',
+}
+
+const HELD_SIDE_LABEL_KEYS: Record<string, MessageKey> = {
+  left: 'canvas.driving.heldSide.left',
+  right: 'canvas.driving.heldSide.right',
+  top: 'canvas.driving.heldSide.top',
+  bottom: 'canvas.driving.heldSide.bottom',
+}
 
 interface DrivingDimensionPanelProps {
   driving: DrivingDimensionWorkflow
 }
 
 export function DrivingDimensionPanel({ driving }: DrivingDimensionPanelProps) {
+  const { t } = useI18n()
   const state = driving.drivingEdit
   if (!state) return null
 
   const edit = state.edit
-  const title = edit.kind === 'stock_dimension' ? 'Resize Stock' : 'Edit Dimension'
+  const title = edit.kind === 'stock_dimension' ? t('canvas.driving.title.resizeStock') : t('canvas.driving.title.editDimension')
   const fieldLabel =
     edit.kind === 'stock_dimension'
-      ? edit.axis === 'width' ? 'Width' : 'Height'
-      : edit.kind === 'linear' ? 'Distance'
-        : edit.kind === 'diameter' ? 'Diameter'
-          : edit.kind === 'angle' ? 'Angle' : 'Radius'
+      ? t(edit.axis === 'width' ? 'canvas.field.width' : 'canvas.field.height')
+      : edit.kind === 'linear' ? t('canvas.field.distance')
+        : edit.kind === 'diameter' ? t('canvas.field.diameter')
+          : edit.kind === 'angle' ? t('canvas.field.angle') : t('canvas.field.radius')
   const inputKey = 'annotationId' in edit ? `drive-${edit.annotationId}` : 'drive-stock'
   const heldSummary =
     edit.kind === 'stock_dimension'
-      ? `Holding ${edit.heldSide} side`
-      : edit.kind === 'linear' || edit.kind === 'angle' ? edit.heldSideLabel : null
+      ? t('canvas.driving.holdingSide', { side: t((HELD_SIDE_LABEL_KEYS[edit.heldSide] ?? 'canvas.driving.heldSide.left') as MessageKey) })
+      : edit.kind === 'linear' || edit.kind === 'angle' ? t(HOLD_LABEL_KEYS[edit.heldSideId]) : null
 
   return (
     <CanvasWorkflowPanel
       title={title}
-      step="Set value"
+      step={t('canvas.driving.step.setValue')}
       position={driving.drivingDimensionWorkflowPanel.position}
       panelRef={driving.drivingDimensionWorkflowPanel.panelRef}
       handleProps={driving.drivingDimensionWorkflowPanel.handleProps}
       actionRowProps={driving.drivingDimensionWorkflowPanel.actionRowProps}
       className="canvas-workflow-panel--driving-edit"
-      moveLabel="Move driving edit controls"
+      moveLabel={t('canvas.driving.moveLabel')}
       actions={(
         <>
           {(edit.kind === 'linear' || edit.kind === 'stock_dimension' || edit.kind === 'angle') && (
@@ -61,11 +85,11 @@ export function DrivingDimensionPanel({ driving }: DrivingDimensionPanelProps) {
                 driving.flipDrivingHeldSide()
               }}
             >
-              Flip held point
+              {t('canvas.driving.flipHeldPoint')}
             </button>
           )}
-          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={driving.commitDrivingFromPanel}>Apply</button>
-          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={driving.cancelDrivingFromPanel}>Cancel</button>
+          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={driving.commitDrivingFromPanel}>{t('canvas.driving.apply')}</button>
+          <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={driving.cancelDrivingFromPanel}>{t('canvas.driving.cancel')}</button>
         </>
       )}
     >

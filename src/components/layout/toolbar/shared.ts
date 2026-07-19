@@ -37,18 +37,18 @@ interface CreationToolbarProps {
 }
 
 const CREATION_SHAPE_OPTIONS = [
-  { value: 'rect', icon: 'rect', noun: 'rectangle', tier: 'primary' },
-  { value: 'circle', icon: 'circle', noun: 'circle', tier: 'primary' },
-  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse', tier: 'primary' },
-  { value: 'polygon', icon: 'polygon', noun: 'polygon', tier: 'primary' },
-  { value: 'spline', icon: 'spline', noun: 'spline', tier: 'primary' },
-  { value: 'composite', icon: 'composite', noun: 'composite', tier: 'primary' },
-  { value: 'text', icon: 'text', noun: 'text', tier: 'primary' },
-  { value: 'slot', icon: 'slot', noun: 'slot', tier: 'secondary' },
-  { value: 'ngon', icon: 'ngon', noun: 'regular polygon', tier: 'secondary' },
-  { value: 'gear', icon: 'gear', noun: 'gear', tier: 'secondary' },
-  { value: 'roundrect', icon: 'roundrect', noun: 'rounded rectangle', tier: 'secondary' },
-  { value: 'chamferrect', icon: 'chamferrect', noun: 'chamfered rectangle', tier: 'secondary' },
+  { value: 'rect', icon: 'rect', noun: 'rectangle', nounKey: 'sketch.shape.rectangle' as const, tier: 'primary' },
+  { value: 'circle', icon: 'circle', noun: 'circle', nounKey: 'sketch.shape.circle' as const, tier: 'primary' },
+  { value: 'ellipse', icon: 'ellipse', noun: 'ellipse', nounKey: 'sketch.shape.ellipse' as const, tier: 'primary' },
+  { value: 'polygon', icon: 'polygon', noun: 'polygon', nounKey: 'sketch.shape.polygon' as const, tier: 'primary' },
+  { value: 'spline', icon: 'spline', noun: 'spline', nounKey: 'sketch.shape.spline' as const, tier: 'primary' },
+  { value: 'composite', icon: 'composite', noun: 'composite', nounKey: 'sketch.shape.composite' as const, tier: 'primary' },
+  { value: 'text', icon: 'text', noun: 'text', nounKey: 'sketch.shape.text' as const, tier: 'primary' },
+  { value: 'slot', icon: 'slot', noun: 'slot', nounKey: 'sketch.shape.slot' as const, tier: 'secondary' },
+  { value: 'ngon', icon: 'ngon', noun: 'regular polygon', nounKey: 'sketch.shape.regularPolygon' as const, tier: 'secondary' },
+  { value: 'gear', icon: 'gear', noun: 'gear', nounKey: 'sketch.shape.gear' as const, tier: 'secondary' },
+  { value: 'roundrect', icon: 'roundrect', noun: 'rounded rectangle', nounKey: 'sketch.shape.roundedRect' as const, tier: 'secondary' },
+  { value: 'chamferrect', icon: 'chamferrect', noun: 'chamfered rectangle', nounKey: 'sketch.shape.chamferedRect' as const, tier: 'secondary' },
 ] as const
 
 type CreationShape = typeof CREATION_SHAPE_OPTIONS[number]['value']

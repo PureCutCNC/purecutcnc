@@ -18,6 +18,7 @@ import type {
   PostProcessorInput,
   PostProcessorResult,
 } from './types'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import type { OperationTarget } from '../../types/project'
@@ -57,7 +58,7 @@ function safeCommentLines(text: string): string[] {
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
   const { project, operations, definition, options } = input
   const lines: string[] = []
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   const outputUnits = project.meta.units
   
   const state: ModalState = {
@@ -178,7 +179,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   if (wcsCommand && !headerContainsWCS) {
     emitLine(wcsCommand)
   } else if (headerContainsWCS && !definition.workCoordinates.selectCommand) {
-    warnings.push('Machine definition requests {wcsCommand} in header but selectCommand is null.')
+    warnings.push({ code: 'postWcsNullSelect' })
   }
 
   // 4. Operations
@@ -229,7 +230,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
       state.currentToolId = tool.id
     } else if (toolChanged && !options.emitToolChanges && opIndex > 0) {
-      warnings.push(`Operation "${operation.name}" uses a different tool ("${tool.name}") than previous, but tool changes are disabled.`)
+      warnings.push({ code: 'postToolChangesDisabled', params: { operation: operation.name, tool: tool.name } })
     }
 
     // Spindle On
@@ -247,7 +248,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           state.coolantOn = true
         }
       } else {
-        warnings.push('Coolant emission requested but machine definition has no coolant commands.')
+        warnings.push({ code: 'postNoCoolantCommands' })
       }
     }
 
@@ -378,9 +379,10 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
       } else {
         // Command not available for this drill type — fall back to expanded moves
-        warnings.push(
-          `Operation "${operation.name}": ${cycleDrillType} canned cycle not supported by machine "${definition.name}"; emitting expanded moves.`,
-        )
+        warnings.push({
+          code: 'postCannedCycleUnsupported',
+          params: { operation: operation.name, drillType: cycleDrillType, machine: definition.name },
+        })
       }
     }
 

@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import type { ToolpathWarning } from './warningCodes'
 import {
   polygonProfile,
   type Operation,
@@ -46,7 +47,7 @@ export interface RestRegionDraft {
 
 export interface RestRegionDraftResult {
   drafts: RestRegionDraft[]
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 function pocketRegionToAreaPaths(region: ResolvedPocketRegion): ClipperPath[] {
@@ -524,7 +525,7 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
   if (operation.kind !== 'pocket') {
     return {
       drafts: [],
-      warnings: ['Rest regions can only be generated for pocket operations'],
+      warnings: [{ code: 'restOnlyPocket' }],
     }
   }
 
@@ -534,12 +535,12 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
     : null
 
   if (!toolRecord) {
-    return { drafts: [], warnings: [...resolved.warnings, 'No tool assigned to this operation'] }
+    return { drafts: [], warnings: [...resolved.warnings, { code: 'noToolAssigned' }] }
   }
 
   const tool = normalizeToolForProject(toolRecord, project)
   if (!(tool.diameter > 0)) {
-    return { drafts: [], warnings: [...resolved.warnings, 'Tool diameter must be greater than zero'] }
+    return { drafts: [], warnings: [...resolved.warnings, { code: 'toolDiameterPositive' }] }
   }
 
   const toolRadius = tool.radius
@@ -577,7 +578,7 @@ function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operat
     : []
 
   if (sourceFeatures.length === 0) {
-    return { drafts: [], warnings: ['No valid add/model features were found for this outside edge-route operation'] }
+    return { drafts: [], warnings: [{ code: 'restNoValidOutsideTargets' }] }
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
@@ -602,7 +603,7 @@ function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operat
   return {
     drafts: restPathsToDrafts(outputRestPaths, toolRadius * 2, operation),
     warnings: splitTargets && splitTargets.missingFeatureIds.length > 0
-      ? ['Some selected target features are missing or are not add/model/region features']
+      ? [{ code: 'targetsMissingOrWrongRole' as const, params: { roles: 'add/model/region' } }]
       : [],
   }
 }
@@ -611,7 +612,7 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
       drafts: [],
-      warnings: ['Rest regions can only be generated for edge-route operations'],
+      warnings: [{ code: 'restOnlyEdgeRoute' }],
     }
   }
 
@@ -620,12 +621,12 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
     : null
 
   if (!toolRecord) {
-    return { drafts: [], warnings: ['No tool assigned to this operation'] }
+    return { drafts: [], warnings: [{ code: 'noToolAssigned' }] }
   }
 
   const tool = normalizeToolForProject(toolRecord, project)
   if (!(tool.diameter > 0)) {
-    return { drafts: [], warnings: ['Tool diameter must be greater than zero'] }
+    return { drafts: [], warnings: [{ code: 'toolDiameterPositive' }] }
   }
 
   if (operation.kind === 'edge_route_outside') {

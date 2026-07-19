@@ -602,6 +602,17 @@
   height: 26px;
 }
 
+/* The language menu reuses the appearance-menu chrome, but its locale rows
+   have no swatch — only copy + check. Left on the theme grid
+   (`38px 1fr 20px`), grid auto-placement drops the copy into the empty 38px
+   swatch column, wrapping locale names ("简体中文" → "简体中/文"). Give these
+   rows a swatch-less `1fr 20px` grid; the manage row keeps its own `1fr`
+   override. `:not()` carries the manage class's specificity, so the whole
+   selector is (0,3,0) and beats the theme option rule regardless of order. */
+.language-control .appearance-menu__option:not(.appearance-menu__option--manage) {
+  grid-template-columns: 1fr 20px;
+}
+
 .toolbar-action:hover .toolbar-tooltip,
 .toolbar-action:focus-within .toolbar-tooltip {
   opacity: 1;

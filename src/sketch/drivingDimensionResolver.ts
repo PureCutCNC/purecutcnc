@@ -70,10 +70,10 @@ export interface LinearDrivingEdit {
   drivenPoint: Point
   /** Current measured value. */
   currentValue: number
-  /** User-facing label for the held side (e.g. "Hold left", "Hold top"). */
-  heldSideLabel: string
+  /** Stable held-side identifier; presentation maps it to a localized label. */
+  heldSideId: HeldSideId
   /** The complementary held-side option (for flip control). */
-  flipHeldSideLabel: string
+  flipHeldSideId: HeldSideId
 }
 
 /** A resolved radius / diameter driving edit on an arc or circle segment. */
@@ -101,8 +101,8 @@ export interface AngleDrivingEdit {
   heldPoint: Point
   drivenPoint: Point
   currentValue: number
-  heldSideLabel: string
-  flipHeldSideLabel: string
+  heldSideId: HeldSideId
+  flipHeldSideId: HeldSideId
 }
 
 export type DrivingDimensionEdit = StockDimensionEdit | LinearDrivingEdit | RadiusDrivingEdit | AngleDrivingEdit
@@ -194,32 +194,33 @@ function anchorToControlIndex(anchor: DimensionAnchor, profile: SketchProfile): 
 // Held-side labelling
 // ────────────────────────────────────────────────────────────
 
-const HELD_LEFT = 'Hold left'
-const HELD_RIGHT = 'Hold right'
-const HELD_TOP = 'Hold top'
-const HELD_BOTTOM = 'Hold bottom'
-const HELD_START = 'Hold start'
-const HELD_END = 'Hold end'
-const HELD_FIRST_RAY = 'Hold first ray'
-const HELD_SECOND_RAY = 'Hold second ray'
+/**
+ * Stable held-side identifiers. These are logic values (orientation is
+ * derived from them and flips swap them) — never display them directly;
+ * presentation maps each id to a localized "Hold …" label.
+ */
+export type HeldSideId =
+  | 'left' | 'right' | 'top' | 'bottom'
+  | 'start' | 'end'
+  | 'firstRay' | 'secondRay'
 
 function heldSideForLinear(
   held: Point,
   driven: Point,
   dimType: 'horizontal' | 'vertical' | 'aligned',
-): { heldSideLabel: string; flipHeldSideLabel: string } {
+): { heldSideId: HeldSideId; flipHeldSideId: HeldSideId } {
   if (dimType === 'horizontal') {
     return held.x <= driven.x
-      ? { heldSideLabel: HELD_LEFT, flipHeldSideLabel: HELD_RIGHT }
-      : { heldSideLabel: HELD_RIGHT, flipHeldSideLabel: HELD_LEFT }
+      ? { heldSideId: 'left', flipHeldSideId: 'right' }
+      : { heldSideId: 'right', flipHeldSideId: 'left' }
   }
   if (dimType === 'vertical') {
     return held.y <= driven.y
-      ? { heldSideLabel: HELD_TOP, flipHeldSideLabel: HELD_BOTTOM }
-      : { heldSideLabel: HELD_BOTTOM, flipHeldSideLabel: HELD_TOP }
+      ? { heldSideId: 'top', flipHeldSideId: 'bottom' }
+      : { heldSideId: 'bottom', flipHeldSideId: 'top' }
   }
   // aligned — use start/end terminology
-  return { heldSideLabel: HELD_START, flipHeldSideLabel: HELD_END }
+  return { heldSideId: 'start', flipHeldSideId: 'end' }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -335,7 +336,7 @@ function resolveLinearDrivingEdit(
   const value = measureValue(dim, project)
   if (value === null || value <= 0) return { disabled: true, reason: 'Cannot measure dimension value' }
 
-  const { heldSideLabel, flipHeldSideLabel } = heldSideForLinear(heldPoint, drivenPoint, dim.type)
+  const { heldSideId, flipHeldSideId } = heldSideForLinear(heldPoint, drivenPoint, dim.type)
 
   return {
     kind: 'linear',
@@ -346,8 +347,8 @@ function resolveLinearDrivingEdit(
     heldPoint,
     drivenPoint,
     currentValue: value,
-    heldSideLabel,
-    flipHeldSideLabel,
+    heldSideId,
+    flipHeldSideId,
   }
 }
 
@@ -402,8 +403,8 @@ function resolveAngleDrivingEdit(
     heldPoint,
     drivenPoint,
     currentValue: value,
-    heldSideLabel: HELD_FIRST_RAY,
-    flipHeldSideLabel: HELD_SECOND_RAY,
+    heldSideId: 'firstRay',
+    flipHeldSideId: 'secondRay',
   }
 }
 
@@ -412,12 +413,12 @@ function resolveAngleDrivingEdit(
  * with the anchors swapped and labels updated.
  */
 export function flipLinearDrivingEdit(edit: LinearDrivingEdit): LinearDrivingEdit {
-  const { heldSideLabel, flipHeldSideLabel } = heldSideForLinear(
+  const { heldSideId, flipHeldSideId } = heldSideForLinear(
     edit.drivenPoint,
     edit.heldPoint,
-    // Infer the dimension type from the held-side labels
-    edit.heldSideLabel === HELD_LEFT || edit.heldSideLabel === HELD_RIGHT ? 'horizontal' :
-    edit.heldSideLabel === HELD_TOP || edit.heldSideLabel === HELD_BOTTOM ? 'vertical' :
+    // Infer the dimension type from the held-side ids
+    edit.heldSideId === 'left' || edit.heldSideId === 'right' ? 'horizontal' :
+    edit.heldSideId === 'top' || edit.heldSideId === 'bottom' ? 'vertical' :
     'aligned',
   )
 
@@ -427,8 +428,8 @@ export function flipLinearDrivingEdit(edit: LinearDrivingEdit): LinearDrivingEdi
     drivenAnchor: edit.heldAnchor,
     heldPoint: edit.drivenPoint,
     drivenPoint: edit.heldPoint,
-    heldSideLabel,
-    flipHeldSideLabel,
+    heldSideId,
+    flipHeldSideId,
   }
 }
 
@@ -440,7 +441,7 @@ export function flipAngleDrivingEdit(edit: AngleDrivingEdit): AngleDrivingEdit {
     drivenAnchor: edit.heldAnchor,
     heldPoint: edit.drivenPoint,
     drivenPoint: edit.heldPoint,
-    heldSideLabel: edit.heldSideLabel === HELD_FIRST_RAY ? HELD_SECOND_RAY : HELD_FIRST_RAY,
-    flipHeldSideLabel: edit.flipHeldSideLabel === HELD_FIRST_RAY ? HELD_SECOND_RAY : HELD_FIRST_RAY,
+    heldSideId: edit.heldSideId === 'firstRay' ? 'secondRay' : 'firstRay',
+    flipHeldSideId: edit.flipHeldSideId === 'firstRay' ? 'secondRay' : 'firstRay',
   }
 }

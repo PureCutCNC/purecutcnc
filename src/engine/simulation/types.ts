@@ -15,6 +15,7 @@
  */
 
 import type { ToolType } from '../../types/project'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 
 export interface SimulationGrid {
   originX: number
@@ -48,7 +49,7 @@ export interface SimulationStats {
 export interface SimulationResult {
   grid: SimulationGrid
   stats: SimulationStats
-  warnings: string[]
+  warnings: ToolpathWarning[]
 }
 
 export interface SimulationReplayItem {

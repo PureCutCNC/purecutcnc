@@ -21,6 +21,7 @@
  */
 
 import type { Operation, Point, Project } from '../../types/project'
+import type { ToolpathWarning } from './warningCodes'
 import type { PocketToolpathResult, ToolpathBounds } from './types'
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
@@ -52,7 +53,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Finish surface requires a model feature and optionally one or more region features'],
+      warnings: [{ code: 'finishNeedsModel' }],
       bounds: null,
       stepLevels: [],
     }
@@ -63,7 +64,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['One or more target features not found'],
+      warnings: [{ code: 'targetsNotFound' }],
       bounds: null,
       stepLevels: [],
     }
@@ -76,7 +77,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Finish surface requires an imported mesh model feature'],
+      warnings: [{ code: 'finishNotMesh' }],
       bounds: null,
       stepLevels: [],
     }
@@ -88,7 +89,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['No tool assigned to this operation'],
+      warnings: [{ code: 'noToolAssigned' }],
       bounds: null,
       stepLevels: [],
     }
@@ -98,7 +99,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Tool diameter must be greater than zero'],
+      warnings: [{ code: 'toolDiameterPositive' }],
       bounds: null,
       stepLevels: [],
     }
@@ -107,7 +108,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Operation stepdown must be greater than zero'],
+      warnings: [{ code: 'stepdownPositive' }],
       bounds: null,
       stepLevels: [],
     }
@@ -118,7 +119,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Failed to load model geometry'],
+      warnings: [{ code: 'surface3dLoadFailed' }],
       bounds: null,
       stepLevels: [],
     }
@@ -157,7 +158,7 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['Axial stock-to-leave exceeds model height — nothing to cut'],
+      warnings: [{ code: 'surface3dStockToLeaveTooLarge' }],
       bounds: null,
       stepLevels: [],
     }
@@ -189,7 +190,7 @@ export function generateFinishSurfaceToolpath(
       return {
         operationId: operation.id,
         moves: [],
-        warnings: ['Containing subtract feature leaves no finish depth for this model'],
+        warnings: [{ code: 'finishNoDepthInPocket' }],
         bounds: null,
         stepLevels: [],
       }
@@ -227,14 +228,14 @@ export function generateFinishSurfaceToolpath(
     return {
       operationId: operation.id,
       moves: [],
-      warnings: ['No step levels generated'],
+      warnings: [{ code: 'surface3dNoStepLevels' }],
       bounds: null,
       stepLevels: [],
     }
   }
 
   const safeZ = getOperationSafeZ(project)
-  const warnings: string[] = []
+  const warnings: ToolpathWarning[] = []
   // Tabs constrain the parallel-finish cut Z per-point: at any XY inside an
   // expanded tab footprint, the cutter tip must stay at or above tab.z_top so
   // the tab material from z_bottom..z_top is preserved. Tabs whose top sits

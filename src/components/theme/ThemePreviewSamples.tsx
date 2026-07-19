@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
 import type { ThemeValues } from '../../theme/registry'
 
 /**
@@ -23,36 +25,37 @@ import type { ThemeValues } from '../../theme/registry'
  * canvas colors are not CSS variables.
  */
 export function ThemePreviewSamples({ values }: { values: ThemeValues }) {
+  const { t } = useI18n()
   return (
     <div className="theme-preview-samples">
       <section className="theme-preview-samples__panel">
-        <h4 className="theme-preview-samples__title">Panel & text</h4>
-        <p className="theme-preview-samples__text">Primary text on a panel surface.</p>
-        <p className="theme-preview-samples__text-dim">Muted guidance text for hints.</p>
+        <h4 className="theme-preview-samples__title">{t('themePreview.panelTitle')}</h4>
+        <p className="theme-preview-samples__text">{t('themePreview.panelText')}</p>
+        <p className="theme-preview-samples__text-dim">{t('themePreview.panelTextDim')}</p>
       </section>
 
       <section className="theme-preview-samples__panel">
-        <h4 className="theme-preview-samples__title">Controls</h4>
+        <h4 className="theme-preview-samples__title">{t('themePreview.controlsTitle')}</h4>
         <div className="theme-preview-samples__row">
-          <button type="button" className="btn-primary" tabIndex={-1}>Primary</button>
-          <button type="button" className="btn-secondary" tabIndex={-1}>Secondary</button>
-          <button type="button" className="btn-secondary" tabIndex={-1} disabled>Disabled</button>
+          <button type="button" className="btn-primary" tabIndex={-1}>{t('themePreview.primary')}</button>
+          <button type="button" className="btn-secondary" tabIndex={-1}>{t('themePreview.secondary')}</button>
+          <button type="button" className="btn-secondary" tabIndex={-1} disabled>{t('themePreview.disabled')}</button>
         </div>
         <div className="theme-preview-samples__row">
-          <span className="theme-preview-samples__selected">Selected item</span>
-          <span className="theme-preview-samples__focus">Focused control</span>
+          <span className="theme-preview-samples__selected">{t('themePreview.selectedItem')}</span>
+          <span className="theme-preview-samples__focus">{t('themePreview.focusedControl')}</span>
         </div>
       </section>
 
       <section className="theme-preview-samples__panel">
-        <h4 className="theme-preview-samples__title">Messages</h4>
-        <p className="theme-preview-samples__positive">Positive: toolpath generated.</p>
-        <p className="theme-preview-samples__warning">Warning: shallow pass depth.</p>
-        <p className="theme-preview-samples__danger">Danger: clamp collision detected.</p>
+        <h4 className="theme-preview-samples__title">{t('themePreview.messagesTitle')}</h4>
+        <p className="theme-preview-samples__positive">{t('themePreview.positive')}</p>
+        <p className="theme-preview-samples__warning">{t('themePreview.warning')}</p>
+        <p className="theme-preview-samples__danger">{t('themePreview.danger')}</p>
       </section>
 
       <section className="theme-preview-samples__panel">
-        <h4 className="theme-preview-samples__title">Sketch canvas</h4>
+        <h4 className="theme-preview-samples__title">{t('themePreview.canvasTitle')}</h4>
         <div className="theme-preview-samples__canvas" style={{ background: values['canvas.background'] }}>
           <svg viewBox="0 0 220 84" className="theme-preview-samples__canvas-svg" aria-hidden="true">
             <line x1="0" y1="42" x2="220" y2="42" stroke={values['canvas.gridMajor']} strokeWidth="1" />
@@ -71,15 +74,15 @@ export function ThemePreviewSamples({ values }: { values: ThemeValues }) {
         </div>
         <div className="theme-preview-samples__row theme-preview-samples__row--legend">
           {([
-            ['Line', values['role-line']],
-            ['Region', values['role-region']],
-            ['Constr.', values['role-construction']],
-            ['Add', values.add],
-            ['Cut', values.cut],
-          ] as const).map(([label, color]) => (
-            <span key={label} className="theme-preview-samples__chip">
+            ['themePreview.legendLine', values['role-line']],
+            ['themePreview.legendRegion', values['role-region']],
+            ['themePreview.legendConstruction', values['role-construction']],
+            ['themePreview.legendAdd', values.add],
+            ['themePreview.legendCut', values.cut],
+          ] as const satisfies readonly (readonly [MessageKey, string])[]).map(([labelKey, color]) => (
+            <span key={labelKey} className="theme-preview-samples__chip">
               <span className="theme-preview-samples__chip-dot" style={{ background: color }} />
-              {label}
+              {t(labelKey)}
             </span>
           ))}
         </div>

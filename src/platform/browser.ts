@@ -15,6 +15,7 @@
  */
 
 import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
+import { translate } from '../i18n/store'
 import { loadVersion } from '../utils/version'
 
 // ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ export const browserPlatform: PlatformApi = {
       const content = await readFileAsText(file)
       return { content, path: null }
     } catch {
-      throw new Error(`Failed to read "${file.name}". The file may be too large or inaccessible.`)
+      throw new Error(translate('platform.readFileError', { name: file.name }))
     }
   },
 
@@ -185,7 +186,7 @@ export const browserPlatform: PlatformApi = {
   },
 
   async confirmDiscardChanges(): Promise<boolean> {
-    return window.confirm('You have unsaved changes. Discard them and continue?')
+    return window.confirm(translate('platform.confirmDiscard'))
   },
 
   async getAppVersion(): Promise<string> {

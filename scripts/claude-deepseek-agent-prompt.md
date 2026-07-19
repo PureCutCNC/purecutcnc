@@ -42,6 +42,8 @@ Rules:
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.
 - Run the required checks. Do not claim an unrun check passed.
+- For the full build gate, run `scripts/build-summary.sh` ONCE instead of a bare `npm run build`: it saves the complete output to a log (path printed at the end) and summarizes the failing stage with extracted errors. Never re-run the build to hunt for an error you already hit — re-read that log, or run `scripts/build-summary.sh --from-log <path>`.
+- Editing files: prefer your built-in exact-match Edit tool. If it rejects an edit twice, do NOT fall back to `sed`/`awk`/`perl` — regex in-place edits mutate files invisibly and beyond the addressed lines. Use the deterministic line editor instead: `npx tsx scripts/edit-lines.ts show <file> <start> <end>` to re-read the exact current lines, then `replace <file> <start> <end> --expect "<substring of the old lines>" <<'EOF' … EOF` (also `insert-after`, `delete`; run with no arguments for usage). It refuses stale line numbers and prints a diff of exactly what changed. File-wide regex renames are forbidden in any tool.
 - Make exactly one commit for this slice. Do not add Co-Authored-By or generated-by footers.
 
 Finish with exactly this completion block:

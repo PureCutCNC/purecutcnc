@@ -24,6 +24,9 @@ import {
   validateDef,
 } from './machineDefinitionForm'
 import type { MachineFormData } from './machineDefinitionForm'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 export interface MachineDefinitionEditorDialogProps {
   definition: MachineDefinition
@@ -36,6 +39,12 @@ export function MachineDefinitionEditorDialog({
   onSave,
   onClose,
 }: MachineDefinitionEditorDialogProps) {
+  const { t, languageTag } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    return t(key, params)
+  }
+
   const [form, setForm] = useState<MachineFormData>(() => toFormData(definition))
   const [advancedJson, setAdvancedJson] = useState<string>(() =>
     JSON.stringify(definition, null, 2),
@@ -63,7 +72,7 @@ export function MachineDefinitionEditorDialog({
       return { mergedDef: null, jsonError: null, validationError: result.error }
     } catch {
       // JSON syntax error — fall back to merging the focused form.
-      const jsonErr = 'Invalid JSON syntax'
+      const jsonErr = td('dialogs.machineEditor.invalidJson')
       try {
         const merged = mergeFormData(definition, form)
         const result = validateDef(merged)
@@ -75,7 +84,8 @@ export function MachineDefinitionEditorDialog({
         return { mergedDef: null, jsonError: jsonErr, validationError: 'Invalid definition' }
       }
     }
-  }, [advancedJson, definition, form])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
+  }, [advancedJson, definition, form, languageTag])
 
   function handleFormChange(patch: Partial<MachineFormData>) {
     setForm((prev) => {
@@ -160,13 +170,13 @@ function renderVar(name: string, desc: string, context?: string) {
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={`Edit machine: ${definition.name}`}
+        aria-label={td('dialogs.machineEditor.title', { name: definition.name })}
       >
         <div className="dialog-header">
           <h2 className="dialog-title">
-            Edit Machine: {definition.name}
+            {td('dialogs.machineEditor.title', { name: definition.name })}
           </h2>
-          <button className="dialog-close" onClick={onClose} aria-label="Close" type="button">
+          <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             ✕
           </button>
         </div>
@@ -174,9 +184,9 @@ function renderVar(name: string, desc: string, context?: string) {
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
-              <span className="dialog-section-title">General</span>
+              <span className="dialog-section-title">{td('dialogs.machineEditor.general')}</span>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Name</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.name')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -185,7 +195,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 />
               </label>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">File Extension</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.fileExtension')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -194,7 +204,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 />
               </label>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Units — mm command</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.mmCommand')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -204,7 +214,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 />
               </label>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Units — inch command</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.inchCommand')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -216,25 +226,25 @@ function renderVar(name: string, desc: string, context?: string) {
             </div>
 
             <div className="dialog-section-group">
-              <span className="dialog-section-title">Program</span>
-              {renderTextAreaField('Header', form.header, (v) => handleFormChange({ header: v }))}
-              {renderTextAreaField('Operation Header', form.operationHeader, (v) =>
+              <span className="dialog-section-title">{td('dialogs.machineEditor.program')}</span>
+              {renderTextAreaField(td('dialogs.machineEditor.header'), form.header, (v) => handleFormChange({ header: v }))}
+              {renderTextAreaField(td('dialogs.machineEditor.operationHeader'), form.operationHeader, (v) =>
                 handleFormChange({ operationHeader: v }),
               )}
-              {renderTextAreaField('Footer', form.footer, (v) => handleFormChange({ footer: v }))}
+              {renderTextAreaField(td('dialogs.machineEditor.footer'), form.footer, (v) => handleFormChange({ footer: v }))}
             </div>
 
             <div className="dialog-section-group">
-              <span className="dialog-section-title">Tool Change</span>
-              {renderTextAreaField('Commands', form.toolChangeCommands, (v) =>
+              <span className="dialog-section-title">{td('dialogs.machineEditor.toolChange')}</span>
+              {renderTextAreaField(td('dialogs.machineEditor.toolChangeCommands'), form.toolChangeCommands, (v) =>
                 handleFormChange({ toolChangeCommands: v }),
               )}
             </div>
 
             <div className="dialog-section-group">
-              <span className="dialog-section-title">Coolant</span>
+              <span className="dialog-section-title">{td('dialogs.machineEditor.coolant')}</span>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Flood On</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.floodOn')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -244,7 +254,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 />
               </label>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Mist On</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.mistOn')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -254,7 +264,7 @@ function renderVar(name: string, desc: string, context?: string) {
                 />
               </label>
               <label className="machine-editor-field">
-                <span className="machine-editor-label">Coolant Off</span>
+                <span className="machine-editor-label">{td('dialogs.machineEditor.coolantOff')}</span>
                 <input
                   className="machine-editor-input"
                   type="text"
@@ -268,7 +278,7 @@ function renderVar(name: string, desc: string, context?: string) {
 
           <div className="dialog-section">
             <DisclosureSection
-              title="Advanced (raw JSON)"
+              title={td('dialogs.machineEditor.advanced')}
               storageKey="machine-editor-advanced"
             >
               <textarea
@@ -293,7 +303,7 @@ function renderVar(name: string, desc: string, context?: string) {
             ) : null}
 
             <DisclosureSection
-              title="Variables reference"
+              title={td('dialogs.machineEditor.variablesReference')}
               storageKey="machine-editor-vars"
             >
               <div className="machine-editor-vars">
@@ -320,7 +330,7 @@ function renderVar(name: string, desc: string, context?: string) {
 
         <div className="dialog-footer">
           <button className="btn-secondary" type="button" onClick={onClose}>
-            Cancel
+            {td('dialogs.common.cancel')}
           </button>
           <button
             className="btn-primary"
@@ -328,7 +338,7 @@ function renderVar(name: string, desc: string, context?: string) {
             onClick={handleSave}
             disabled={!canSave}
           >
-            Save
+            {td('dialogs.machineEditor.save')}
           </button>
         </div>
       </div>

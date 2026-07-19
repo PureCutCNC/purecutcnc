@@ -23,6 +23,7 @@ import { ToolbarDialog } from './ToolbarDialog'
 import { useToolbarState } from './useToolbarState'
 import type { SnapToolbarProps, ToolbarProps } from './shared'
 import { AppearanceControl } from '../AppearanceControl'
+import { LanguageControl } from '../LanguageControl'
 
 export function GlobalToolbar({
   onZoomToModel,
@@ -85,6 +86,7 @@ export function GlobalToolbar({
         />
         <div className="toolbar-group toolbar-group--appearance">
           <AppearanceControl />
+          <LanguageControl />
         </div>
       </div>
       <ToolbarDialog

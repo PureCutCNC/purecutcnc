@@ -38,7 +38,9 @@
 }
 
 [data-shell-mode="tablet"] .appearance-control__trigger,
-[data-shell-mode="tablet-compact"] .appearance-control__trigger {
+[data-shell-mode="tablet-compact"] .appearance-control__trigger,
+[data-shell-mode="tablet"] .language-control__trigger,
+[data-shell-mode="tablet-compact"] .language-control__trigger {
   width: var(--touch-target, 44px);
   height: var(--touch-target, 44px);
   min-width: var(--touch-target, 44px);

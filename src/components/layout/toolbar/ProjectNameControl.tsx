@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-
+import { useI18n } from '../../../i18n/i18nContext'
 
 function ProjectNameControl({
   projectName,
@@ -33,9 +33,10 @@ function ProjectNameControl({
   setEditingName: (value: boolean) => void
   setProjectName: (value: string) => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="toolbar-project-block">
-      <span className="toolbar-project-label">Project</span>
+      <span className="toolbar-project-label">{t('shell.topBar.projectLabel')}</span>
       {editingName ? (
         <input
           className="toolbar-name-input"
@@ -64,7 +65,7 @@ function ProjectNameControl({
             setNameVal(projectName)
             setEditingName(true)
           }}
-          title="Rename project"
+          title={t('shell.topBar.renameProject')}
           type="button"
         >
           {projectName}
@@ -73,9 +74,9 @@ function ProjectNameControl({
       <span
         className={`toolbar-save-state ${dirty ? 'toolbar-save-state--dirty' : 'toolbar-save-state--saved'}`}
         aria-live="polite"
-        title={dirty ? 'Project has unsaved changes' : 'Project is saved'}
+        title={dirty ? t('shell.topBar.unsavedTitle') : t('shell.topBar.savedTitle')}
       >
-        {dirty ? 'Unsaved' : 'Saved'}
+        {dirty ? t('shell.topBar.unsaved') : t('shell.topBar.saved')}
       </span>
     </div>
   )

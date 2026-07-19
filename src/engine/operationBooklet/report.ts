@@ -15,6 +15,10 @@
  */
 
 import type { Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+// Presentation exception: the booklet report is a user-facing document, so
+// it maps structured warnings to localized text here via the i18n layer.
+import { translate } from '../../i18n/store'
+import { toolpathWarningTexts } from '../../i18n/warningText'
 import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
@@ -324,12 +328,12 @@ function statsRows(toolpath: ToolpathResult | null, operation: Operation, units:
 }
 
 function reportWarnings(tool: NormalizedTool | null, toolpath: ToolpathResult | null): string[] {
-  const warnings = [...(toolpath?.warnings ?? [])]
+  const warnings = toolpathWarningTexts(toolpath?.warnings ?? [])
   if (!tool) {
-    warnings.unshift('No tool is selected for this operation.')
+    warnings.unshift(translate('warnings.bookletNoTool'))
   }
   if (!toolpath) {
-    warnings.unshift('Toolpath could not be generated for this operation.')
+    warnings.unshift(translate('warnings.bookletNoToolpath'))
   }
   return warnings
 }

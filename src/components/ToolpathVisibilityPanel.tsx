@@ -16,6 +16,8 @@
 
 import { useState } from 'react'
 import type { ToolpathVisibility } from './toolpathVisibility'
+import { useI18n } from '../i18n/i18nContext'
+import type { MessageKey } from '../i18n/locales/en'
 
 interface ToolpathVisibilityPanelProps {
   visibility: ToolpathVisibility
@@ -23,15 +25,16 @@ interface ToolpathVisibilityPanelProps {
   className?: string
 }
 
-const ITEMS: Array<{ key: keyof ToolpathVisibility; label: string; swatch: string }> = [
-  { key: 'cuts', label: 'Cuts', swatch: 'viewport-toolpath-vis__swatch--cuts' },
-  { key: 'rapids', label: 'Rapids', swatch: 'viewport-toolpath-vis__swatch--rapids' },
-  { key: 'plunges', label: 'Plunges', swatch: 'viewport-toolpath-vis__swatch--plunges' },
-  { key: 'retractions', label: 'Retractions', swatch: 'viewport-toolpath-vis__swatch--retractions' },
-  { key: 'directions', label: 'Directions', swatch: 'viewport-toolpath-vis__swatch--directions' },
+const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
+  { key: 'cuts', labelKey: 'appShell.toolpath.cuts', swatch: 'viewport-toolpath-vis__swatch--cuts' },
+  { key: 'rapids', labelKey: 'appShell.toolpath.rapids', swatch: 'viewport-toolpath-vis__swatch--rapids' },
+  { key: 'plunges', labelKey: 'appShell.toolpath.plunges', swatch: 'viewport-toolpath-vis__swatch--plunges' },
+  { key: 'retractions', labelKey: 'appShell.toolpath.retractions', swatch: 'viewport-toolpath-vis__swatch--retractions' },
+  { key: 'directions', labelKey: 'appShell.toolpath.directions', swatch: 'viewport-toolpath-vis__swatch--directions' },
 ]
 
 export function ToolpathVisibilityPanel({ visibility, onChange, className }: ToolpathVisibilityPanelProps) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(true)
 
   return (
@@ -42,10 +45,10 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className }: Too
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
-        Show
+        {t('appShell.toolpath.show')}
       </button>
       {expanded ? (
-        ITEMS.map(({ key, label, swatch }) => {
+        ITEMS.map(({ key, labelKey, swatch }) => {
           const selected = visibility[key]
           return (
             <button
@@ -56,7 +59,7 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className }: Too
               onClick={() => onChange({ ...visibility, [key]: !selected })}
             >
               <span className={`viewport-toolpath-vis__swatch ${swatch}`} />
-              {label}
+              {t(labelKey)}
             </button>
           )
         })

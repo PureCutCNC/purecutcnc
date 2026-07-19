@@ -188,7 +188,7 @@ test.describe('SVG import', () => {
     expect(ops).toEqual(['add', 'line'])
   })
 
-  test('large path import completes and leaves the app interactive', async () => {
+  test('large path import completes and leaves the app interactive', async ({ baseURL }) => {
     test.setTimeout(60_000)
     const browser = await chromium.launch()
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
@@ -199,7 +199,9 @@ test.describe('SVG import', () => {
     page.on('pageerror', (error) => errors.push(error.message))
 
     try {
-      await page.goto('http://localhost:1420/')
+      // Manual browser launch bypasses the config's baseURL plumbing, so
+      // resolve it from the fixture — a hardcoded port breaks worktree runs.
+      await page.goto(baseURL ?? 'http://localhost:1420/')
       await page.waitForSelector('canvas', { timeout: 15_000 })
       const dialog = await openImportDialog(page)
 

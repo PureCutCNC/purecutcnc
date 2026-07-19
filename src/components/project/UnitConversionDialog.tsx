@@ -18,6 +18,9 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { Project } from '../../types/project'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
+import { dialogsEn } from '../../i18n/locales/en/dialogs'
+import type { MessageParams } from '../../i18n/catalog'
+import { useI18n } from '../../i18n/i18nContext'
 
 interface UnitConversionDialogProps {
   fromUnits: Project['meta']['units']
@@ -43,6 +46,11 @@ export function UnitConversionDialog({
   onCancel,
 }: UnitConversionDialogProps) {
   useRestoreCanvasFocus()
+  const { t } = useI18n()
+
+  function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
+    return t(key, params)
+  }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -54,12 +62,14 @@ export function UnitConversionDialog({
 
   const fromShort = shortUnitLabel(fromUnits)
   const toShort = shortUnitLabel(toUnits)
+  const fromName = unitName(fromUnits)
+  const toName = unitName(toUnits)
   const conversionExample = fromUnits === 'inch'
-    ? '1 in becomes 25.4 mm'
-    : '25.4 mm becomes 1 in'
+    ? td('dialogs.unitConversion.convertExample', { from: '1 in', to: '25.4 mm' })
+    : td('dialogs.unitConversion.convertExample', { from: '25.4 mm', to: '1 in' })
   const reinterpretExample = fromUnits === 'inch'
-    ? '1 in becomes 1 mm'
-    : '1 mm becomes 1 in'
+    ? td('dialogs.unitConversion.keepExample', { from: '1 in', to: '1 mm' })
+    : td('dialogs.unitConversion.keepExample', { from: '1 mm', to: '1 in' })
 
   return createPortal(
     <div className="dialog-backdrop" onClick={onCancel}>
@@ -73,24 +83,23 @@ export function UnitConversionDialog({
       >
         <div className="dialog-header">
           <div>
-            <span className="unit-conversion-eyebrow">Project scale</span>
-            <h2 className="dialog-title" id="unit-conversion-title">Change project units?</h2>
+            <span className="unit-conversion-eyebrow">{td('dialogs.unitConversion.eyebrow')}</span>
+            <h2 className="dialog-title" id="unit-conversion-title">{td('dialogs.unitConversion.title')}</h2>
           </div>
-          <button className="dialog-close" onClick={onCancel} aria-label="Close" type="button">
+          <button className="dialog-close" onClick={onCancel} aria-label={td('dialogs.common.close')} type="button">
             ✕
           </button>
         </div>
 
         <div className="dialog-body dialog-body--unit-conversion">
-          <div className="unit-conversion-route" aria-label={`Changing from ${unitName(fromUnits)} to ${unitName(toUnits)}`}>
+          <div className="unit-conversion-route" aria-label={td('dialogs.unitConversion.ariaChanging', { from: fromName, to: toName })}>
             <span>{fromShort}</span>
             <span className="unit-conversion-route__arrow" aria-hidden="true">→</span>
             <span>{toShort}</span>
           </div>
 
           <p id="unit-conversion-description" className="unit-conversion-intro">
-            Choose whether the existing measurements should keep their physical size or keep
-            their written numbers.
+            {td('dialogs.unitConversion.intro')}
           </p>
 
           <div className="unit-conversion-options">
@@ -101,10 +110,10 @@ export function UnitConversionDialog({
               autoFocus
             >
               <span className="unit-conversion-option__heading">
-                <strong>Convert values</strong>
-                <span className="unit-conversion-option__badge">Recommended</span>
+                <strong>{td('dialogs.unitConversion.convertHeading')}</strong>
+                <span className="unit-conversion-option__badge">{td('dialogs.unitConversion.convertBadge')}</span>
               </span>
-              <span>Preserves the physical size of the design, stock, dimensions, and machining values.</span>
+              <span>{td('dialogs.unitConversion.convertDescription')}</span>
               <code>{conversionExample}</code>
             </button>
 
@@ -114,9 +123,9 @@ export function UnitConversionDialog({
               onClick={onReinterpret}
             >
               <span className="unit-conversion-option__heading">
-                <strong>Keep numeric values</strong>
+                <strong>{td('dialogs.unitConversion.keepHeading')}</strong>
               </span>
-              <span>Reinterprets every number in the new units, changing the project's physical scale.</span>
+              <span>{td('dialogs.unitConversion.keepDescription')}</span>
               <code>{reinterpretExample}</code>
             </button>
           </div>
@@ -124,7 +133,7 @@ export function UnitConversionDialog({
 
         <div className="dialog-footer">
           <button className="btn-secondary" type="button" onClick={onCancel}>
-            Cancel
+            {td('dialogs.common.cancel')}
           </button>
         </div>
       </div>

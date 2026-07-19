@@ -67,7 +67,10 @@
   --role-construction: #8a9aab;
   --role-construction-text: #a9b6c4;
 
-  font-family: 'Avenir Next', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  /* CJK fallbacks precede the generic family so Simplified Chinese UI text
+     gets a deliberate face (PingFang on macOS/iOS, YaHei on Windows) instead
+     of whatever sans-serif resolves to. */
+  font-family: 'Avenir Next', 'IBM Plex Sans', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   color: var(--text);
   background: radial-gradient(circle at 18% -10%, var(--bg-elev-2), var(--surface-app) 58%);
   font-synthesis: none;
