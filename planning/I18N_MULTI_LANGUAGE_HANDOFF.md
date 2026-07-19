@@ -452,8 +452,16 @@ footer — repo rule).
   covered by `e2e/language.smoke.spec.ts`; manager/editor flows by
   `e2e/languageManager.smoke.spec.ts`; full manual CJK layout pass happens
   in the final phase.
-- Known limitations: none blocking — all six phases merged. Final phase
-  (full-suite e2e on integration + manual CJK pass + user review) pending.
+- Final verification (2026-07-18, post-S6-merge): complete e2e suite on the
+  integration branch 66/66 against a fresh-port dev server. Manual CJK
+  check in controlled Chrome (desktop 1440×900 + narrow 900×700): zh-CN
+  shell/toolbars/tree/CAM/status bar, language manager + editor (duplicate
+  简体中文 → base-reference rows → delete), theme manager + editor with the
+  newly extracted strings — layouts clean, no clipped CJK, zero console
+  errors. Declared-boundary English confirmed as intended (theme token/
+  group/contrast labels, example-project metadata, numeric samples).
+- Known limitations: none blocking — all six phases merged and verified.
+  Awaiting user review before the single PR to `main`.
 
 ## User-review handoff
 
