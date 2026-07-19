@@ -1,8 +1,10 @@
-# CNC Terminology Glossary (en ↔ zh-CN)
+# CNC Terminology Glossary
 
 Reference for translators and future locales. Decide a term once here, then
 use it consistently in every catalog module. User-authored names, filenames,
 machine IDs, G-code tokens, and serialized enum values are never translated.
+
+## Simplified Chinese (zh-CN)
 
 | English | 简体中文 | Notes |
 | --- | --- | --- |
@@ -42,7 +44,7 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
 | placeholder | 占位符 | the `{name}` tokens in catalog strings |
 | unsaved changes | 未保存的更改 | |
 
-## Punctuation & style
+### Punctuation & style
 
 - Chinese copy uses fullwidth punctuation（，。？：）and corner quotes（“ ”）.
 - Keep a space between CJK text and embedded Latin/numeric tokens ("macOS"、
@@ -52,3 +54,116 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
   editor enforces it per key for custom packs.
 - Chinese has no grammatical plural: `….one`/`….other` variants share one
   string.
+
+## German (de)
+
+Translate into the vocabulary German-speaking machinists actually use, not
+dictionary-literal renderings. Machining German freely mixes native terms
+(Schruppen, Schlichten, Vorschub, Zustellung) with accepted anglicisms
+(Feature, Offset, Spline) — prefer whichever a shop would write on a job
+sheet. Where a term is genuinely contested, a native-speaking machinist (or
+the requester) settles it; the choice below is the shipped default.
+
+| English | Deutsch | Notes |
+| --- | --- | --- |
+| project | Projekt | |
+| sketch | Skizze | |
+| feature | Feature | CAD object; German CAD (Fusion/Inventor/Onshape) keeps "Feature". Alt: Element |
+| operation | Operation | machining operation, Fusion convention; plural Operationen. Alt: Bearbeitung |
+| toolpath | Werkzeugweg | also Werkzeugpfad |
+| tool | Werkzeug | the cutter; a specific end mill is a Fräser |
+| flat / ball end mill | Schaftfräser (flach) / Kugelfräser | |
+| V-bit | V-Nutfräser | hobby shops also say "V-Bit" or "Gravierfräser" |
+| drill (tool) | Bohrer | |
+| stock | Rohteil | the raw blank |
+| machine | Maschine | the CNC machine |
+| origin (work zero) | Nullpunkt | Werkstücknullpunkt; machine X0 Y0 |
+| pocket | Tasche | |
+| edge route inside / outside | Kontur innen / Kontur außen | contour routing |
+| V-carve | V-Gravur | kept distinct from Gravieren (engrave) |
+| engrave (follow line) | Gravieren | |
+| drill (operation) | Bohren | |
+| surface clean | Oberfläche säubern | clears flats around raised features |
+| rough / roughing | Schruppen | standard machining term |
+| finish / finishing | Schlichten | standard machining term |
+| 3D surface rough/finish/cleanup | 3D-Oberfläche schruppen / schlichten / nacharbeiten | |
+| stepdown | Zustellung | axial depth per pass |
+| stepover | Bahnabstand | |
+| stepover ratio | Bahnabstand-Verhältnis | fraction of tool diameter |
+| contour spacing | Konturabstand | |
+| feed | Vorschub | |
+| plunge / plunge feed | Eintauchen / Eintauchvorschub | |
+| slot feed | Nutvorschub | fully engaged (slotting) cut |
+| rapid | Eilgang | G0 |
+| retract | Rückzug | |
+| cut (machining) / cut depth | Schnitt / Schnitttiefe | |
+| carve depth | Gravurtiefe | |
+| climb / conventional | Gleichlauf / Gegenlauf | milling direction |
+| cut direction | Schnittrichtung | |
+| RPM / spindle speed | Drehzahl | |
+| flutes | Schneiden | cutting edges |
+| carbide / HSS | Hartmetall / HSS | |
+| pocket pattern: offset/parallel/waterline | Offset / Parallel / Wasserlinie | |
+| rest machining | Restbearbeitung | |
+| tab | Haltesteg | plural Haltestege |
+| clamp | Spannzwinge | workholding keep-out |
+| region (mask) | Bereich (Maske) | machining filter, not a shape |
+| construction geometry | Konstruktion / Konstruktionsgeometrie | never machined |
+| backdrop | Hintergrundbild | reference image |
+| grid | Raster | |
+| snap / snapping | Fang / fangen | osnaps below |
+| midpoint / center | Mittelpunkt / Zentrum | segment midpoint vs. circle center |
+| intersection | Schnittpunkt | |
+| perpendicular (snap) | Lot | the perpendicular foot |
+| dimension (annotation) | Bemaßung | |
+| tape measure | Maßband | |
+| constraint | Bedingung | Autodesk calls it "Abhängigkeit" |
+| fillet | Verrundung | verb: verrunden |
+| chamfer | Fase | verb: anfasen |
+| trim / extend | Stutzen / Dehnen | AutoCAD osnap verbs |
+| offset | Offset | native alt: Versatz |
+| join / boolean cut | Vereinigen / Abziehen | boolean union / difference |
+| mirror / rotate / move / copy | Spiegeln / Drehen / Verschieben / Kopieren | |
+| resize / scale | Größe ändern / Skalieren | |
+| align / distribute | Ausrichten / Verteilen | |
+| group / ungroup | Gruppieren / Gruppierung aufheben | |
+| folder | Ordner | |
+| undo / redo | Rückgängig / Wiederholen | |
+| save / open / import / export | Speichern / Öffnen / Importieren / Exportieren | |
+| print | Drucken | print scale = Maßstab |
+| design (the drawing) | Design | kept — so "theme" is NOT "Design" |
+| appearance | Darstellung | |
+| theme | Farbschema | avoids clashing with Design |
+| dark / light | Dunkel / Hell | |
+| system (follow OS) | System | |
+| language / language pack | Sprache / Sprachpaket | |
+| built-in / custom | Integriert / Benutzerdefiniert | themes, languages, machines |
+| placeholder | Platzhalter | the `{name}` tokens |
+| unsaved changes | nicht gespeicherte Änderungen | |
+| units; mm / inch | Einheiten; Millimeter / Zoll | symbol "mm" stays literal |
+| gear terms | Zahnrad, Zähnezahl, Zahntiefe, Eingriffswinkel, Evolvente, Zahnfuß, Zahnkopf, Flanke, Bohrung | gear/tooth count/whole depth/pressure angle/involute/root/crest/flank/bore |
+| coolant: flood / mist | Kühlmittel: Flutkühlung / Sprühnebel | |
+| move kinds | Eilgang / Eintauchen / Anfahren / Abfahren / Schnitt | rapid/plunge/lead-in/lead-out/cut |
+| booklet | Broschüre | printable operation report |
+
+### Grammar & style
+
+- **Register:** formal *Sie* for full sentences addressed to the user; bare
+  infinitive/imperative for buttons and commands ("Speichern", "Bemaßung
+  hinzufügen").
+- **Capitalization:** German nouns are always capitalized, even mid-sentence
+  (Breite, Höhe, Werkzeug). Only leading adjectives on two-word shape names
+  stay lowercase ("abgerundetes Rechteck").
+- **Plural:** unlike Chinese, German inflects. `….one` (used only for
+  `count === 1`) and `….other` (everything else, including 0) take **different**
+  strings — singular vs. plural noun ("{count} Modus" / "{count} Modi").
+- **Umlauts / ß:** use proper ä ö ü ß. Booklet and design-print PDFs render
+  them since #321 (the Unicode-font fix); do not ASCII-fold.
+- **Quotation marks:** German „…" around user content, mirroring the English
+  "…" pair.
+- **Length:** German compounds run longer than English — keep labels tight and
+  check desktop and tablet truncation (acceptance criterion).
+- **`{placeholder}` tokens** are preserved exactly (registry parity test
+  enforces it). Machine-facing tokens stay literal: G-code words, G81/G83/M6/G0,
+  the unit symbol "mm", serialized enum ids, and tool/operation type ids.
+  Deterministic number formatting happens outside the catalog and is unchanged.
