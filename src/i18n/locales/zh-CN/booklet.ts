@@ -1,0 +1,106 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { bookletEn } from '../en/booklet'
+
+/** Simplified Chinese operation-booklet content. */
+export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
+  'booklet.operation.pocket': '挖槽',
+  'booklet.operation.vCarve': 'V雕',
+  'booklet.operation.vCarveMedial': 'V雕（中轴）',
+  'booklet.operation.insideEdgeRoute': '内侧沿边加工',
+  'booklet.operation.outsideEdgeRoute': '外侧沿边加工',
+  'booklet.operation.surfaceClean': '曲面清理',
+  'booklet.operation.roughSurface': '曲面粗加工',
+  'booklet.operation.finishSurface': '曲面精加工',
+  'booklet.operation.finishSurfaceCleanup': '曲面精加工清理',
+  'booklet.operation.followLine': '沿线雕刻',
+  'booklet.operation.drilling': '钻孔',
+  'booklet.pass.finish': '精加工',
+  'booklet.pass.rough': '粗加工',
+  'booklet.cutDirection.climb': '顺铣',
+  'booklet.cutDirection.conventional': '逆铣',
+  'booklet.machiningOrder.featureFirst': '按特征优先',
+  'booklet.machiningOrder.levelFirst': '按层优先',
+  'booklet.target.stock': '毛坯',
+  'booklet.target.missingFeature': '缺少特征 {id}',
+  'booklet.units.inch': '英寸',
+  'booklet.units.millimeter': '毫米',
+  'booklet.duration.seconds': '{seconds} s',
+  'booklet.duration.minutesSeconds': '{minutes} min {seconds} s',
+  'booklet.duration.hoursMinutesSeconds': '{hours} h {minutes} min {seconds} s',
+  'booklet.value.unavailable': '不可用',
+  'booklet.value.noToolSelected': '未选择刀具',
+  'booklet.value.enabled': '已启用',
+  'booklet.value.notGenerated': '未生成',
+  'booklet.value.slotFeed': '进给的 {percent}%',
+  'booklet.value.unavailableInvalidFeed': '不可用（无效进给）',
+  'booklet.value.estimatedFeedTime': '{duration}（不含 G0 快速移动时间）',
+  'booklet.value.feedTravel': '{distance}（进给和下刀移动）',
+  'booklet.value.rapidTravel': '{distance}（G0 速度由机床定义）',
+  'booklet.label.tool': '刀具',
+  'booklet.label.name': '名称',
+  'booklet.label.type': '类型',
+  'booklet.label.diameter': '直径',
+  'booklet.label.vBitAngle': 'V刀角度',
+  'booklet.label.flutes': '刃数',
+  'booklet.label.material': '材料',
+  'booklet.label.maxCutDepth': '最大切削深度',
+  'booklet.label.kind': '类型',
+  'booklet.label.pass': '加工阶段',
+  'booklet.label.target': '目标',
+  'booklet.label.feed': '进给',
+  'booklet.label.plungeFeed': '下刀进给',
+  'booklet.label.rpm': '转速',
+  'booklet.label.stepdown': '每层切深',
+  'booklet.label.stepover': '步距',
+  'booklet.label.cutDirection': '切削方向',
+  'booklet.label.machiningOrder': '加工顺序',
+  'booklet.label.roundOutsideCorners': '圆角外侧拐角',
+  'booklet.label.pattern': '路径图案',
+  'booklet.label.pocketAngle': '挖槽角度',
+  'booklet.label.slotFeed': '槽进给',
+  'booklet.label.drillType': '钻孔类型',
+  'booklet.label.peckDepth': '啄钻深度',
+  'booklet.label.dwellTime': '停留时间',
+  'booklet.label.retractHeight': '回退高度',
+  'booklet.label.carveDepth': '雕刻深度',
+  'booklet.label.stockToLeaveRadial': '径向留量',
+  'booklet.label.stockToLeaveAxial': '轴向留量',
+  'booklet.label.toolpath': '刀路',
+  'booklet.label.moves': '移动',
+  'booklet.label.cutMoves': '切削移动',
+  'booklet.label.rapidMoves': '快速移动',
+  'booklet.label.plungeMoves': '下刀移动',
+  'booklet.label.estimatedFeedTime': '预计进给时间',
+  'booklet.label.feedTravel': '进给行程',
+  'booklet.label.rapidTravel': '快速行程',
+  'booklet.label.topZ': '顶部 Z',
+  'booklet.label.bottomZ': '底部 Z',
+  'booklet.label.project': '项目',
+  'booklet.label.generated': '生成时间',
+  'booklet.label.units': '单位',
+  'booklet.label.stockSize': '毛坯尺寸',
+  'booklet.label.originZ': '原点 Z',
+  'booklet.pdf.title': '加工操作手册',
+  'booklet.pdf.snapshot': '加工操作快照',
+  'booklet.pdf.page': '第 {page} 页，共 {total} 页',
+  'booklet.section.overview': '概览',
+  'booklet.section.tool': '刀具',
+  'booklet.section.operationSettings': '加工操作设置',
+  'booklet.section.toolpath': '刀路',
+  'booklet.section.warnings': '警告',
+}

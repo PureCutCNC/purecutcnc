@@ -16,6 +16,7 @@
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { PDFPage, PDFFont } from 'pdf-lib'
+import { translate } from '../../i18n/store'
 import { buildOperationBookletReport } from './report'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
@@ -52,7 +53,79 @@ interface DrawState {
 }
 
 function pdfSafeText(text: string): string {
-  return text.replace(/[^\x20-\x7E]/g, '?')
+  return text
+}
+
+type BookletUnicodeFontWeight = 'regular' | 'bold'
+
+interface BookletUnicodeFonts {
+  regular: Uint8Array
+  bold: Uint8Array
+}
+
+function bookletUnicodeFontUrl(weight: BookletUnicodeFontWeight): string {
+  const suffix = weight === 'bold' ? '-bold' : ''
+  return `${import.meta.env?.BASE_URL ?? './'}fonts/noto-sans-sc-booklet${suffix}.ttf`
+}
+
+let unicodeFonts: Promise<BookletUnicodeFonts> | undefined
+
+async function loadUnicodeFontBytes(weight: BookletUnicodeFontWeight): Promise<Uint8Array> {
+  const response = await fetch(bookletUnicodeFontUrl(weight))
+  if (!response.ok) throw new Error(`Unable to load booklet ${weight} font: ${response.status}`)
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+function loadUnicodeFonts(): Promise<BookletUnicodeFonts> {
+  if (unicodeFonts) return unicodeFonts
+
+  const retryableLoad = Promise.all([
+    loadUnicodeFontBytes('regular'),
+    loadUnicodeFontBytes('bold'),
+  ]).then(([regular, bold]) => ({ regular, bold })).catch((error: unknown) => {
+    if (unicodeFonts === retryableLoad) unicodeFonts = undefined
+    throw error
+  })
+  unicodeFonts = retryableLoad
+  return retryableLoad
+}
+
+function reportText(report: OperationBookletReport): string[] {
+  return [
+    ...descriptionRows(report).flatMap((row) => [row.label, row.value]),
+    translate('booklet.pdf.page', { page: 1, total: 1 }),
+    report.projectName,
+    report.operationName,
+    report.operationDescription,
+    report.generatedDate,
+    report.units,
+    report.originZSummary,
+    report.stockSizeSummary,
+    report.targetSummary,
+    ...report.targetFeatureNames,
+    ...report.toolRows.flatMap((row) => [row.label, row.value]),
+    ...report.settingRows.flatMap((row) => [row.label, row.value]),
+    ...report.toolpathStats.flatMap((row) => [row.label, row.value]),
+    ...report.warnings,
+    translate('booklet.pdf.title'),
+    translate('booklet.pdf.snapshot'),
+    translate('booklet.section.overview'),
+    translate('booklet.section.tool'),
+    translate('booklet.section.operationSettings'),
+    translate('booklet.section.toolpath'),
+    translate('booklet.section.warnings'),
+  ]
+}
+
+function requiresUnicodeFont(font: PDFFont, text: readonly string[]): boolean {
+  return text.some((value) => {
+    try {
+      font.encodeText(value)
+      return false
+    } catch {
+      return true
+    }
+  })
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -189,11 +262,11 @@ function drawRows(state: DrawState, rows: OperationBookletRow[]): void {
 
 function descriptionRows(report: OperationBookletReport): OperationBookletRow[] {
   return [
-    { label: 'Project', value: report.projectName },
-    { label: 'Generated', value: report.generatedDate },
-    { label: 'Units', value: report.units },
-    { label: 'Stock Size', value: report.stockSizeSummary },
-    { label: 'Origin Z', value: report.originZSummary },
+    { label: translate('booklet.label.project'), value: report.projectName },
+    { label: translate('booklet.label.generated'), value: report.generatedDate },
+    { label: translate('booklet.label.units'), value: report.units },
+    { label: translate('booklet.label.stockSize'), value: report.stockSizeSummary },
+    { label: translate('booklet.label.originZ'), value: report.originZSummary },
   ]
 }
 
@@ -201,7 +274,7 @@ function drawPageFooters(pdfDoc: PDFDocument, font: PDFFont, report: OperationBo
   const pages = pdfDoc.getPages()
   for (let index = 0; index < pages.length; index += 1) {
     const page = pages[index]
-    const label = `Page ${index + 1} of ${pages.length}`
+    const label = translate('booklet.pdf.page', { page: index + 1, total: pages.length })
     const size = 8
     const footerText = truncateToWidth(`${report.projectName} - ${report.operationName}`, font, size, 300)
     page.drawLine({
@@ -249,7 +322,7 @@ function drawHeader(state: DrawState, report: OperationBookletReport): void {
     y -= 23
   }
 
-  state.page.drawText('Operation Booklet', {
+  state.page.drawText(translate('booklet.pdf.title'), {
     x: MARGIN,
     y,
     size: 10,
@@ -347,7 +420,7 @@ async function drawSnapshotFrame(state: DrawState, input: OperationBookletInput)
     borderColor: COLORS.border,
     borderWidth: 0.5,
   })
-  state.page.drawText('Operation Snapshot', {
+  state.page.drawText(translate('booklet.pdf.snapshot'), {
     x: MARGIN + 12,
     y: state.y - 16,
     size: 9,
@@ -370,8 +443,18 @@ export async function createOperationBookletPdf(input: OperationBookletInput): P
   pdfDoc.setSubject('PureCutCNC operation booklet')
   pdfDoc.setProducer('PureCutCNC')
 
-  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica)
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  let regular = await pdfDoc.embedFont(StandardFonts.Helvetica)
+  let bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  if (requiresUnicodeFont(regular, reportText(report))) {
+    const { default: fontkit } = await import('@pdf-lib/fontkit')
+    pdfDoc.registerFontkit(fontkit)
+    // The fetched assets are pre-subset to the shipped Chinese catalog and
+    // Latin extensions. Embed them as-is: fontkit's runtime subsets of these
+    // variable fonts omit glyphs in some PDF viewers.
+    const unicodeFonts = await loadUnicodeFonts()
+    regular = await pdfDoc.embedFont(unicodeFonts.regular, { subset: false })
+    bold = await pdfDoc.embedFont(unicodeFonts.bold, { subset: false })
+  }
   const state: DrawState = {
     pdfDoc,
     page: pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
@@ -388,20 +471,20 @@ export async function createOperationBookletPdf(input: OperationBookletInput): P
 
   await drawSnapshotFrame(state, input)
 
-  drawSection(state, 'Overview')
+  drawSection(state, translate('booklet.section.overview'))
   drawRows(state, descriptionRows(report))
 
-  drawSection(state, 'Tool')
+  drawSection(state, translate('booklet.section.tool'))
   drawRows(state, report.toolRows)
 
-  drawSection(state, 'Operation Settings')
+  drawSection(state, translate('booklet.section.operationSettings'))
   drawRows(state, report.settingRows)
 
-  drawSection(state, 'Toolpath')
+  drawSection(state, translate('booklet.section.toolpath'))
   drawRows(state, report.toolpathStats)
 
   if (report.warnings.length > 0) {
-    drawSection(state, 'Warnings')
+    drawSection(state, translate('booklet.section.warnings'))
     for (const warning of report.warnings) {
       drawWrapped(state, `- ${warning}`, MARGIN, PAGE_WIDTH - MARGIN * 2)
     }

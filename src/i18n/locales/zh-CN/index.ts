@@ -26,6 +26,8 @@ import { appShellZhCN } from './appShell'
 import { warningsZhCN } from './warnings'
 import { languageManagerZhCN } from './languageManager'
 import { themeManagerZhCN } from './themeManager'
+import { bookletZhCN } from './booklet'
+import { printZhCN } from './print'
 
 /**
  * The complete Simplified Chinese catalog, merged from per-area modules that
@@ -45,4 +47,6 @@ export const zhCN: Record<MessageKey, string> = {
   ...appShellZhCN,
   ...languageManagerZhCN,
   ...themeManagerZhCN,
+  ...bookletZhCN,
+  ...printZhCN,
 }

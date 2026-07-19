@@ -22,6 +22,7 @@
 
 import { newProject, rectProfile, circleProfile } from '../../types/project'
 import type { DimensionAnnotation, Project, SketchFeature } from '../../types/project'
+import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import {
   FOOTER_HEIGHT_MM,
@@ -471,6 +472,21 @@ function buildTestSvg(mutate?: (project: Project) => void, optionOverrides: Test
   })
   assert(svg.includes('A &lt;b&gt; &amp; &quot;quote&quot;'), 'project name is XML-escaped in footer')
   assert(!svg.includes('A <b>'), 'raw markup never lands in the svg')
+}
+
+{
+  // The print footer is a generated document surface, so its labels use the
+  // active non-React i18n catalog while the unit symbol remains stable.
+  setActiveLocale('zh-CN')
+  try {
+    const { svg, layout, options } = buildTestSvg()
+    assert(svg.includes(translate('print.footer.units', { units: 'mm' })), 'footer localizes its units label')
+    assert(svg.includes(translate('print.footer.scale', { scale: translate('print.scale.fit', { ratio: formatScaleRatio(layout.scaleRatio) }) })), 'footer localizes its scale label')
+    const orientationKey = options.orientation === 'landscape' ? 'print.orientation.landscape' : 'print.orientation.portrait'
+    assert(svg.includes(translate(orientationKey)), 'footer localizes its orientation')
+  } finally {
+    resetI18nStoreForTests()
+  }
 }
 
 // ── Geometry-only SVG export (issue #257) ────────────────────

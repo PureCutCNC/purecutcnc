@@ -20,6 +20,8 @@
  * Run with: npx tsx src/engine/operationBooklet/operationBooklet.test.ts
  */
 
+import { readFile } from 'node:fs/promises'
+import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
@@ -134,15 +136,15 @@ function testReportContent(): void {
   assert(report.targetSummary === 'Pocket Region', 'target summary should list target feature names')
   assert(report.targetFeatureNames.includes('Pocket Region'), 'target feature name should be included')
   assert(report.warnings.includes('Test warning'), 'toolpath warnings should be included')
-  assert(report.settingRows.some((row) => row.label === 'Cut Direction' && row.value === 'Climb'), 'cut direction should be included')
-  assert(report.settingRows.some((row) => row.label === 'Machining Order' && row.value === 'Feature first'), 'machining order should be included')
-  assert(!report.settingRows.some((row) => row.label === 'Round Outside Corners'), 'disabled round outside corners should not be included')
-  assert(report.toolpathStats.some((row) => row.label === 'Moves' && row.value === '3'), 'toolpath move count should be included')
-  assert(report.toolpathStats.some((row) => row.label === 'Estimated Feed Time' && row.value === '2.9 s (excludes G0 rapid time)'), 'estimated feed time should be included')
-  assert(report.toolpathStats.some((row) => row.label === 'Feed Travel' && row.value === '25.12 mm (feed and plunge moves)'), 'feed travel should be rounded to 2 decimals')
-  assert(report.toolpathStats.some((row) => row.label === 'Rapid Travel' && row.value.includes('G0 speed machine-defined')), 'rapid travel should be included')
-  assert(report.toolpathStats.some((row) => row.label === 'Top Z' && row.value === '5 mm'), 'top Z should be included')
-  assert(report.toolpathStats.some((row) => row.label === 'Bottom Z' && row.value === '0 mm'), 'bottom Z should be included')
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.cutDirection') && row.value === translate('booklet.cutDirection.climb')), 'cut direction should be included')
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.machiningOrder') && row.value === translate('booklet.machiningOrder.featureFirst')), 'machining order should be included')
+  assert(!report.settingRows.some((row) => row.label === translate('booklet.label.roundOutsideCorners')), 'disabled round outside corners should not be included')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.moves') && row.value === '3'), 'toolpath move count should be included')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.estimatedFeedTime') && row.value === translate('booklet.value.estimatedFeedTime', { duration: '2.9 s' })), 'estimated feed time should be included')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.feedTravel') && row.value === translate('booklet.value.feedTravel', { distance: '25.12 mm' })), 'feed travel should be rounded to 2 decimals')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.rapidTravel') && row.value.includes('G0')), 'rapid travel should be included')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.topZ') && row.value === '5 mm'), 'top Z should be included')
+  assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.bottomZ') && row.value === '0 mm'), 'bottom Z should be included')
 }
 
 function testReportIncludesEnabledRoundOutsideCorners(): void {
@@ -161,7 +163,7 @@ function testReportIncludesEnabledRoundOutsideCorners(): void {
   })
 
   assert(
-    report.settingRows.some((row) => row.label === 'Round Outside Corners' && row.value === 'Enabled'),
+    report.settingRows.some((row) => row.label === translate('booklet.label.roundOutsideCorners') && row.value === translate('booklet.value.enabled')),
     'enabled round outside corners should be reported for outside edge routes',
   )
 }
@@ -180,6 +182,77 @@ async function testPdfSmoke(): Promise<void> {
   assert(pdfBytes.byteLength > 500, `expected non-empty PDF, got ${pdfBytes.byteLength} bytes`)
   const header = new TextDecoder().decode(pdfBytes.slice(0, 5))
   assert(header === '%PDF-', `expected PDF header, got ${header}`)
+}
+
+function testLocalizedReportContent(): void {
+  console.log('Testing localized operation booklet report content...')
+  const { project, operation, toolpath } = fixture()
+  setActiveLocale('zh-CN')
+  try {
+    const report = buildOperationBookletReport({
+      project,
+      operation,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+    assert(report.units === translate('booklet.units.millimeter'), 'unit word should use the active catalog')
+    assert(report.settingRows.some((row) => row.label === translate('booklet.label.cutDirection') && row.value === translate('booklet.cutDirection.climb')), 'localized cut-direction row should be present')
+    assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.estimatedFeedTime')), 'localized toolpath rows should be present')
+  } finally {
+    resetI18nStoreForTests()
+  }
+}
+
+async function testPdfUnicodeFontRetriesAndUsesBold(): Promise<void> {
+  console.log('Testing operation booklet Unicode PDF font retry and bold output...')
+  const { project, operation, toolpath } = fixture()
+  const originalFetch = globalThis.fetch
+  let fontRequests = 0
+  const requestedUrls: string[] = []
+  globalThis.fetch = async (input) => {
+    fontRequests += 1
+    requestedUrls.push(String(input))
+    if (fontRequests === 1) return new Response(null, { status: 503 })
+    const fontPath = String(input).includes('-bold.ttf')
+      ? '../../../public/fonts/noto-sans-sc-booklet-bold.ttf'
+      : '../../../public/fonts/noto-sans-sc-booklet.ttf'
+    return new Response(await readFile(new URL(fontPath, import.meta.url)))
+  }
+  setActiveLocale('zh-CN')
+  try {
+    project.meta.name = '中文项目'
+    toolpath.warnings = [{ code: 'debug', params: { text: translate('warnings.noToolAssigned') } }]
+    let firstAttemptFailed = false
+    try {
+      await createOperationBookletPdf({
+        project,
+        operation,
+        tool: normalizeToolForProject(project.tools[0], project),
+        toolpath,
+        generatedAt: new Date('2026-06-04T12:00:00Z'),
+      })
+    } catch {
+      firstAttemptFailed = true
+    }
+    assert(firstAttemptFailed, 'failed font fetch should reject the first PDF attempt')
+
+    const pdfBytes = await createOperationBookletPdf({
+      project,
+      operation,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+    assert(fontRequests === 4, `expected retry to request both fonts again, got ${fontRequests} requests`)
+    assert(requestedUrls.some((url) => url.includes('noto-sans-sc-booklet.ttf')), 'regular Unicode font should be requested')
+    assert(requestedUrls.some((url) => url.includes('noto-sans-sc-booklet-bold.ttf')), 'bold Unicode font should be requested')
+    assert(pdfBytes.byteLength > 200_000, `expected both embedded Unicode font assets, got ${pdfBytes.byteLength} bytes`)
+    assert(new TextDecoder().decode(pdfBytes.slice(0, 5)) === '%PDF-', 'Unicode output should be a PDF')
+  } finally {
+    globalThis.fetch = originalFetch
+    resetI18nStoreForTests()
+  }
 }
 
 function testFeedTimeUsesScaledSlotFeed(): void {
@@ -205,11 +278,11 @@ function testFeedTimeUsesScaledSlotFeed(): void {
   })
 
   assert(
-    report.toolpathStats.some((row) => row.label === 'Estimated Feed Time' && row.value === '16.5 s (excludes G0 rapid time)'),
+    report.toolpathStats.some((row) => row.label === translate('booklet.label.estimatedFeedTime') && row.value === translate('booklet.value.estimatedFeedTime', { duration: '16.5 s' })),
     'feed time should price feedScale fragments at the scaled feed',
   )
   assert(
-    report.settingRows.some((row) => row.label === 'Slot Feed' && row.value === '10 % of feed'),
+    report.settingRows.some((row) => row.label === translate('booklet.label.slotFeed') && row.value === translate('booklet.value.slotFeed', { percent: 10 })),
     'slot feed setting should be reported',
   )
 }
@@ -217,5 +290,7 @@ function testFeedTimeUsesScaledSlotFeed(): void {
 testReportContent()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
+testLocalizedReportContent()
 await testPdfSmoke()
+await testPdfUnicodeFontRetriesAndUsesBold()
 console.log('operation booklet tests passed')
