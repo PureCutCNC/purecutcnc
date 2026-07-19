@@ -84,8 +84,8 @@ export function readStoredLocaleId(storage: Pick<Storage, 'getItem'> | null): st
 }
 
 /**
- * Map the browser/OS language list onto a built-in locale. Simplified
- * Chinese matches `zh` tags unless they explicitly mark the Traditional
+ * Map the browser/OS language list onto a built-in locale. French matches
+ * any `fr` tag. Simplified Chinese matches `zh` tags unless they explicitly mark the Traditional
  * script or a Traditional-default region (`Hant`, TW, HK, MO) — issue #311's
  * contract is "prefer zh-CN when the locale resolves to zh-CN", and serving
  * Simplified text to explicit Traditional readers would be wrong more often
@@ -96,6 +96,7 @@ export function detectLocaleIdFromNavigator(languages: readonly string[]): Built
     const lower = tag.toLowerCase()
     const subtags = lower.split('-')
     if (subtags[0] === 'en') return 'en'
+    if (subtags[0] === 'fr') return 'fr'
     if (subtags[0] === 'zh') {
       const traditional = subtags.includes('hant')
         || subtags.includes('tw')

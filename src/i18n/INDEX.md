@@ -15,11 +15,13 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   `appShell`, `warnings`, `languageManager`, `themeManager`, `booklet`,
   `print`). `index.ts`
   merges the modules and derives `MessageKey`.
-- `locales/zh-CN/` — Simplified Chinese, mirroring the `en/` module layout;
-  each module is typed as a complete record of its English counterpart so
-  extraction and translation land together. Terminology in `GLOSSARY.md`.
-- `GLOSSARY.md` — en ↔ zh-CN CNC terminology and style reference for
-  translators and future locales.
+- `locales/fr/` — French, mirroring the `en/` module layout; each module is
+  typed as a complete record of its English counterpart. Terminology is in
+  `GLOSSARY.md`.
+- `locales/zh-CN/` — Simplified Chinese, also mirroring the `en/` module
+  layout and complete-record contract. Terminology is in `GLOSSARY.md`.
+- `GLOSSARY.md` — en ↔ fr and en ↔ zh-CN CNC terminology and style reference
+  for translators and future locales.
 - `registry.ts` — built-in locale metadata, custom language-pack schema
   validation (including the BCP-47 tag predicate), base+overrides
   resolution, duplication, translation progress, placeholder-issue

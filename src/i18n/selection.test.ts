@@ -38,18 +38,21 @@ const pack: CustomLanguageData = {
 
 // Navigator detection
 assert(detectLocaleIdFromNavigator(['zh-CN']) === 'zh-CN', 'zh-CN matches')
+assert(detectLocaleIdFromNavigator(['fr-FR']) === 'fr', 'French regional tag matches')
+assert(detectLocaleIdFromNavigator(['fr-CA']) === 'fr', 'Canadian French tag matches')
 assert(detectLocaleIdFromNavigator(['zh']) === 'zh-CN', 'bare zh prefers Simplified')
 assert(detectLocaleIdFromNavigator(['zh-Hans-SG']) === 'zh-CN', 'Hans script matches Simplified')
 assert(detectLocaleIdFromNavigator(['zh-TW']) === 'en', 'explicit Traditional region stays English')
 assert(detectLocaleIdFromNavigator(['zh-Hant']) === 'en', 'explicit Traditional script stays English')
 assert(detectLocaleIdFromNavigator(['zh-TW', 'zh-CN']) === 'zh-CN', 'later Simplified entry still matches')
-assert(detectLocaleIdFromNavigator(['fr-FR', 'zh-CN']) === 'zh-CN', 'unsupported first entry keeps scanning')
-assert(detectLocaleIdFromNavigator(['fr-FR', 'en-GB']) === 'en', 'English variant matches')
+assert(detectLocaleIdFromNavigator(['de-DE', 'zh-CN']) === 'zh-CN', 'unsupported first entry keeps scanning')
+assert(detectLocaleIdFromNavigator(['de-DE', 'en-GB']) === 'en', 'English variant matches')
 assert(detectLocaleIdFromNavigator(['de']) === 'en', 'no match falls back to English')
 assert(detectLocaleIdFromNavigator([]) === 'en', 'empty list falls back to English')
 
 // Initial resolution: stored explicit choice wins when it still resolves.
 assert(resolveInitialLocaleId('zh-CN', [], ['en-US']) === 'zh-CN', 'stored built-in wins over navigator')
+assert(resolveInitialLocaleId('fr', [], ['en-US']) === 'fr', 'stored French choice wins over navigator')
 assert(resolveInitialLocaleId('custom-a', [pack], ['zh-CN']) === 'custom-a', 'stored custom pack wins')
 assert(resolveInitialLocaleId('custom-gone', [], ['zh-CN']) === 'zh-CN', 'stale stored id falls back to detection')
 assert(resolveInitialLocaleId(null, [], ['zh-CN']) === 'zh-CN', 'no stored choice detects')

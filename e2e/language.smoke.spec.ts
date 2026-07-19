@@ -57,6 +57,27 @@ test('switches to Simplified Chinese, persists, and never touches the project', 
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('en')
 })
 
+test('switches to French, persists, and renders representative workflow copy', async ({ app, ui }) => {
+  const before = await getProject(app.page)
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'Français').click()
+
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'fr')
+  await expect(app.page.getByRole('button', { name: 'Nouveau projet' })).toBeVisible()
+  await expect(app.page.getByRole('button', { name: 'Accrocher à la grille' })).toBeVisible()
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Langue : Français')
+  expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('fr')
+  expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
+
+  await app.page.reload()
+  await app.page.waitForSelector('canvas', { timeout: 15000 })
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'fr')
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Langue : Français')
+  await ui.language.trigger(app.page).click()
+  await expect(ui.language.option(app.page, 'English')).toBeVisible()
+})
+
 test('keeps appearance menu copy translated and the theme selection intact', async ({ app, ui }) => {
   await ui.language.trigger(app.page).click()
   await ui.language.option(app.page, '简体中文').click()
@@ -92,5 +113,12 @@ test.describe('tablet language selector', () => {
 
     await chineseOption.click()
     await expect(app.page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+
+    await ui.language.trigger(app.page).click()
+    const frenchOption = ui.language.option(app.page, 'Français')
+    await expect(frenchOption).toBeVisible()
+    const frenchOptionBox = await frenchOption.boundingBox()
+    expect(frenchOptionBox).not.toBeNull()
+    expect(frenchOptionBox!.height).toBeGreaterThanOrEqual(44)
   })
 })

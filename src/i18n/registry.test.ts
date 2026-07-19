@@ -16,6 +16,7 @@
 
 import { placeholdersMatch } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
+import { fr } from './locales/fr'
 import { zhCN } from './locales/zh-CN'
 import {
   CUSTOM_LANGUAGE_SCHEMA_VERSION,
@@ -42,24 +43,31 @@ function assert(condition: boolean, message: string): void {
 const enKeys = Object.keys(enMessages) as MessageKey[]
 assert(enKeys.length > 0, 'English catalog is non-empty')
 
-// zh-CN ships complete: every English key has a Chinese entry (the type
-// enforces this at compile time; this guards the runtime merge too).
-for (const key of enKeys) {
-  const value = zhCN[key]
-  assert(typeof value === 'string' && value !== '', `zh-CN has a value for ${key}`)
+// Built-in overlays ship complete: every English key has a localized entry
+// (the type enforces this at compile time; this guards the runtime merge too).
+for (const [localeName, locale] of [['fr', fr], ['zh-CN', zhCN]] as const) {
+  for (const key of enKeys) {
+    const value = locale[key]
+    assert(typeof value === 'string' && value !== '', `${localeName} has a value for ${key}`)
+  }
 }
 
-// Placeholder parity: every zh-CN translation preserves its English
-// placeholder set exactly.
-for (const key of enKeys) {
-  assert(
-    placeholdersMatch(enMessages[key], zhCN[key]),
-    `zh-CN preserves placeholders of ${key}`,
-  )
+// Placeholder parity: every built-in translation preserves its English set.
+for (const [localeName, locale] of [['fr', fr], ['zh-CN', zhCN]] as const) {
+  for (const key of enKeys) {
+    assert(
+      placeholdersMatch(enMessages[key], locale[key]),
+      `${localeName} preserves placeholders of ${key}`,
+    )
+  }
 }
 
 const builtinEn = resolveBuiltinLocale('en')
 assert(builtinEn.languageTag === 'en' && builtinEn.builtin, 'en resolves as built-in')
+const builtinFr = resolveBuiltinLocale('fr')
+assert(builtinFr.languageTag === 'fr', 'fr carries its BCP-47 tag')
+assert(builtinFr.name === 'Français', 'fr presents its native name')
+assert(builtinFr.messages['file.saveProject'] === fr['file.saveProject'], 'fr resolution uses French strings')
 const builtinZh = resolveBuiltinLocale('zh-CN')
 assert(builtinZh.languageTag === 'zh-CN', 'zh-CN carries its BCP-47 tag')
 assert(builtinZh.name === '简体中文', 'zh-CN presents its native name')
@@ -87,7 +95,7 @@ assert(validateCustomLanguage({ ...validPack, name: '' }).error !== undefined, '
 assert(validateCustomLanguage({ ...validPack, name: 'x'.repeat(61) }).error !== undefined, 'over-long name rejects')
 assert(validateCustomLanguage({ ...validPack, languageTag: 'not a tag!' }).error !== undefined, 'invalid tag rejects')
 assert(validateCustomLanguage({ ...validPack, languageTag: 'pt-BR' }).ok !== undefined, 'region tag accepted')
-assert(validateCustomLanguage({ ...validPack, baseLocaleId: 'fr' }).error !== undefined, 'unknown base rejects')
+assert(validateCustomLanguage({ ...validPack, baseLocaleId: 'es' }).error !== undefined, 'unknown base rejects')
 assert(validateCustomLanguage({ ...validPack, overrides: { k: 5 } }).error !== undefined, 'non-string override rejects')
 
 // Empty-string overrides mean "untranslated" and are dropped on validation.
