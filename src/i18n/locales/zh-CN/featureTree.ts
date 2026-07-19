@@ -240,6 +240,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.multi.editSketchDisabled': '编辑草图仅适用于单个特征',
   'featureTree.properties.multi.openProfiles': '开放轮廓',
   'featureTree.properties.multi.containsModel': '包含模型特征',
+  'featureTree.properties.multi.modelLockedTooltip': '模型条目无法在此更改操作类型',
 
   // ── Properties: select values ──
   'featureTree.properties.select.mixedFolders': '混合文件夹',
@@ -255,6 +256,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.operation.region': '区域遮罩',
   'featureTree.properties.operation.construction': '构造',
   'featureTree.properties.operation.model': '模型',
+  'featureTree.properties.operation.modelLockedTooltip': '模型特征是导入的 3D 对象，无法更改操作类型',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': '遮罩模式',
@@ -297,6 +299,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.constraints.tooltip.featureCenter': '到特征中心的距离',
   'featureTree.properties.constraints.tooltip.distanceVertex': '到顶点的距离',
   'featureTree.properties.constraints.tooltip.invalid': '无效',
+  'featureTree.properties.constraints.world': '世界',
 
   // ── Properties: empty state ──
   'featureTree.properties.empty': '选择项目、网格、毛坯或树中的特征以编辑其属性。',

@@ -456,8 +456,8 @@ export function PropertiesPanel() {
                 type="button"
                 className="tree-action-btn properties-refresh-btn"
                 onClick={refreshMachineDefinitions}
-                aria-label="Refresh machine definitions"
-                title="Refresh machine definitions"
+                aria-label={t('featureTree.properties.machine.refresh')}
+                title={t('featureTree.properties.machine.refresh')}
               >
                 <Icon id="refresh" size={15} />
               </button>
@@ -498,7 +498,7 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>
-            <DraftTextInput value="Grid" disabled />
+            <DraftTextInput value={t('featureTree.properties.name.grid')} disabled />
           </label>
           <label className="properties-field">
             <span>{t("featureTree.properties.gridExtent")}</span>
@@ -871,16 +871,16 @@ export function PropertiesPanel() {
             {backdropImageLoading ? t('featureTree.properties.backdrop.loading') : backdrop ? t('featureTree.properties.backdrop.replaceImage') : t('featureTree.properties.backdrop.loadImage')}
           </button>
           <button className="feat-btn" type="button" onClick={() => { startMoveBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
-            Move
+            {t('featureTree.properties.backdrop.move')}
           </button>
           <button className="feat-btn" type="button" onClick={() => { startResizeBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
-            Resize
+            {t('featureTree.properties.backdrop.resize')}
           </button>
           <button className="feat-btn" type="button" onClick={() => { startRotateBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
-            Rotate
+            {t('featureTree.properties.backdrop.rotate')}
           </button>
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteBackdrop(); closeExpanded() }} disabled={!backdrop || backdropImageLoading}>
-            Delete
+            {t('featureTree.properties.backdrop.delete')}
           </button>
         </div>
         {backdropImageLoading ? (
@@ -907,7 +907,7 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>
-            <DraftTextInput value="Features" disabled />
+            <DraftTextInput value={t('featureTree.properties.name.features')} disabled />
           </label>
           <label className="properties-field">
             <span>{t("featureTree.properties.folders")}</span>
@@ -920,7 +920,7 @@ export function PropertiesPanel() {
         </div>
         <div className="properties-actions">
           <button className="feat-btn" type="button" onClick={() => { addFeatureFolder(); closeExpanded() }}>
-            Add Folder
+            {t('featureTree.properties.actions.addFolder')}
           </button>
         </div>
       </div>
@@ -933,7 +933,7 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>
-            <DraftTextInput value="Clamps" disabled />
+            <DraftTextInput value={t('featureTree.properties.name.clamps')} disabled />
           </label>
           <label className="properties-field">
             <span>{t("featureTree.properties.clamps")}</span>
@@ -942,7 +942,7 @@ export function PropertiesPanel() {
         </div>
         <div className="properties-actions">
           <button className="feat-btn" type="button" onClick={() => { startAddClampPlacement(); closeExpanded() }}>
-            Add Clamp
+            {t('featureTree.properties.actions.addClamp')}
           </button>
         </div>
       </div>
@@ -955,7 +955,7 @@ export function PropertiesPanel() {
         <div className="properties-group">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>
-            <DraftTextInput value="Tabs" disabled />
+            <DraftTextInput value={t('featureTree.properties.name.tabs')} disabled />
           </label>
           <label className="properties-field">
             <span>{t("featureTree.properties.tabs")}</span>
@@ -964,7 +964,7 @@ export function PropertiesPanel() {
         </div>
         <div className="properties-actions">
           <button className="feat-btn" type="button" onClick={() => { startAddTabPlacement(); closeExpanded() }}>
-            Add Tab
+            {t('featureTree.properties.actions.addTab')}
           </button>
         </div>
       </div>
@@ -1002,7 +1002,7 @@ export function PropertiesPanel() {
         </div>
         <div className="properties-actions">
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeatureFolder(selectedFolder.id); closeExpanded() }}>
-            Delete Folder
+            {t('featureTree.properties.actions.deleteFolder')}
           </button>
         </div>
       </div>
@@ -1057,7 +1057,7 @@ export function PropertiesPanel() {
             {t('featureTree.properties.stock.editSketch')}
           </button>
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteClamp(selectedClamp.id); closeExpanded() }}>
-            Delete Clamp
+            {t('featureTree.properties.actions.deleteClamp')}
           </button>
         </div>
       </div>
@@ -1112,7 +1112,7 @@ export function PropertiesPanel() {
             {t('featureTree.properties.stock.editSketch')}
           </button>
           <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteTab(selectedTab.id); closeExpanded() }}>
-            Delete Tab
+            {t('featureTree.properties.actions.deleteTab')}
           </button>
         </div>
       </div>
@@ -1171,7 +1171,7 @@ export function PropertiesPanel() {
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
               ) : allSelectedFeatures.some((f) => f.operation === 'model') ? (
-                <div className="properties-locked-field" title="Model entries cannot change operation type here">
+                <div className="properties-locked-field" title={t('featureTree.properties.multi.modelLockedTooltip')}>
                   <span>{t('featureTree.properties.multi.containsModel')}</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
@@ -1221,7 +1221,7 @@ export function PropertiesPanel() {
                     value={commonSelectedZTop}
                     units={units}
                     min={0}
-                    placeholder="Mixed values"
+                    placeholder={t('featureTree.properties.select.mixedValues')}
                     validate={(next) => multiEditMinZTop === null || next >= multiEditMinZTop}
                     onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_top: next })}
                   />
@@ -1246,7 +1246,7 @@ export function PropertiesPanel() {
                       value={commonSelectedZBottom}
                       units={units}
                       min={0}
-                      placeholder="Mixed values"
+                      placeholder={t('featureTree.properties.select.mixedValues')}
                       validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
                       onCommit={(next) => updateFeatures(selectedClosedEditableFeatures.map((f) => f.id), { z_bottom: next })}
                     />
@@ -1259,7 +1259,7 @@ export function PropertiesPanel() {
                       value={commonSelectedZBottom}
                       units={units}
                       min={0}
-                      placeholder="Mixed values"
+                      placeholder={t('featureTree.properties.select.mixedValues')}
                       validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
                       onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_bottom: next })}
                     />
@@ -1339,8 +1339,8 @@ export function PropertiesPanel() {
                 })}
               />
             ) : selectedFeature.operation === 'model' ? (
-              <div className="properties-locked-field" title="Model features are imported 3D objects and cannot change operation type">
-                <span>Model</span>
+              <div className="properties-locked-field" title={t('featureTree.properties.operation.modelLockedTooltip')}>
+                <span>{t('featureTree.properties.operation.model')}</span>
                 <span className="properties-locked-hint" aria-hidden="true">🔒</span>
               </div>
             ) : subtractDisabled ? (
@@ -1483,7 +1483,7 @@ export function PropertiesPanel() {
             <>
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
-                <div className="properties-locked-field" title="Regions are vertical filters through the stock; their Z range follows the stock automatically">
+                <div className="properties-locked-field" title={t('featureTree.properties.z.followsStockTooltip')}>
                   <span>{t('featureTree.properties.z.followsStock', { thickness: formatLength(project.stock.thickness, units) })}</span>
                   <span className="properties-locked-hint" aria-hidden="true">🔒</span>
                 </div>
@@ -1610,7 +1610,7 @@ export function PropertiesPanel() {
               const refId = c.reference_feature_id ?? c.segment_ids[0]
               const refFeature = refId ? features.find((f) => f.id === refId) : null
               const label = typeof c.value === 'number' ? formatLength(c.value, units) : '—'
-              const refName = refFeature?.name ?? (refId ? `#${refId}` : 'World')
+              const refName = refFeature?.name ?? (refId ? `#${refId}` : t('featureTree.properties.constraints.world'))
               const isIntersectionConstraint = c.reference_type === 'intersection' || c.reference_snap_mode === 'intersection'
               const typeLabel = isIntersectionConstraint
                 ? t('featureTree.properties.constraints.type.intersect')
