@@ -56,33 +56,44 @@ function pdfSafeText(text: string): string {
   return text
 }
 
-function bookletUnicodeFontUrl(): string {
-  return `${import.meta.env?.BASE_URL ?? './'}fonts/noto-sans-sc-booklet.ttf`
+type BookletUnicodeFontWeight = 'regular' | 'bold'
+
+interface BookletUnicodeFonts {
+  regular: Uint8Array
+  bold: Uint8Array
 }
 
-let unicodeFontBytes: Promise<Uint8Array> | undefined
-
-function loadUnicodeFontBytes(): Promise<Uint8Array> {
-  unicodeFontBytes ??= fetch(bookletUnicodeFontUrl()).then(async (response) => {
-    if (!response.ok) throw new Error(`Unable to load booklet font: ${response.status}`)
-    return new Uint8Array(await response.arrayBuffer())
-  })
-  return unicodeFontBytes
+function bookletUnicodeFontUrl(weight: BookletUnicodeFontWeight): string {
+  const suffix = weight === 'bold' ? '-bold' : ''
+  return `${import.meta.env?.BASE_URL ?? './'}fonts/noto-sans-sc-booklet${suffix}.ttf`
 }
 
-function requiresUnicodeFont(font: PDFFont, text: readonly string[]): boolean {
-  return text.some((value) => {
-    try {
-      font.encodeText(value)
-      return false
-    } catch {
-      return true
-    }
+let unicodeFonts: Promise<BookletUnicodeFonts> | undefined
+
+async function loadUnicodeFontBytes(weight: BookletUnicodeFontWeight): Promise<Uint8Array> {
+  const response = await fetch(bookletUnicodeFontUrl(weight))
+  if (!response.ok) throw new Error(`Unable to load booklet ${weight} font: ${response.status}`)
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+function loadUnicodeFonts(): Promise<BookletUnicodeFonts> {
+  if (unicodeFonts) return unicodeFonts
+
+  const retryableLoad = Promise.all([
+    loadUnicodeFontBytes('regular'),
+    loadUnicodeFontBytes('bold'),
+  ]).then(([regular, bold]) => ({ regular, bold })).catch((error: unknown) => {
+    if (unicodeFonts === retryableLoad) unicodeFonts = undefined
+    throw error
   })
+  unicodeFonts = retryableLoad
+  return retryableLoad
 }
 
 function reportText(report: OperationBookletReport): string[] {
   return [
+    ...descriptionRows(report).flatMap((row) => [row.label, row.value]),
+    translate('booklet.pdf.page', { page: 1, total: 1 }),
     report.projectName,
     report.operationName,
     report.operationDescription,
@@ -104,6 +115,17 @@ function reportText(report: OperationBookletReport): string[] {
     translate('booklet.section.toolpath'),
     translate('booklet.section.warnings'),
   ]
+}
+
+function requiresUnicodeFont(font: PDFFont, text: readonly string[]): boolean {
+  return text.some((value) => {
+    try {
+      font.encodeText(value)
+      return false
+    } catch {
+      return true
+    }
+  })
 }
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -426,12 +448,12 @@ export async function createOperationBookletPdf(input: OperationBookletInput): P
   if (requiresUnicodeFont(regular, reportText(report))) {
     const { default: fontkit } = await import('@pdf-lib/fontkit')
     pdfDoc.registerFontkit(fontkit)
-    // The fetched asset is pre-subset to the shipped Chinese catalog and
-    // Latin extensions. Embed it as-is: fontkit's runtime subsets of this
-    // variable font omit glyphs in some PDF viewers.
-    const unicodeFont = await pdfDoc.embedFont(await loadUnicodeFontBytes(), { subset: false })
-    regular = unicodeFont
-    bold = unicodeFont
+    // The fetched assets are pre-subset to the shipped Chinese catalog and
+    // Latin extensions. Embed them as-is: fontkit's runtime subsets of these
+    // variable fonts omit glyphs in some PDF viewers.
+    const unicodeFonts = await loadUnicodeFonts()
+    regular = await pdfDoc.embedFont(unicodeFonts.regular, { subset: false })
+    bold = await pdfDoc.embedFont(unicodeFonts.bold, { subset: false })
   }
   const state: DrawState = {
     pdfDoc,

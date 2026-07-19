@@ -204,19 +204,39 @@ function testLocalizedReportContent(): void {
   }
 }
 
-async function testPdfUnicodeFont(): Promise<void> {
-  console.log('Testing operation booklet Unicode PDF output...')
+async function testPdfUnicodeFontRetriesAndUsesBold(): Promise<void> {
+  console.log('Testing operation booklet Unicode PDF font retry and bold output...')
   const { project, operation, toolpath } = fixture()
   const originalFetch = globalThis.fetch
   let fontRequests = 0
-  globalThis.fetch = async () => {
+  const requestedUrls: string[] = []
+  globalThis.fetch = async (input) => {
     fontRequests += 1
-    return new Response(await readFile(new URL('../../../public/fonts/noto-sans-sc-booklet.ttf', import.meta.url)))
+    requestedUrls.push(String(input))
+    if (fontRequests === 1) return new Response(null, { status: 503 })
+    const fontPath = String(input).includes('-bold.ttf')
+      ? '../../../public/fonts/noto-sans-sc-booklet-bold.ttf'
+      : '../../../public/fonts/noto-sans-sc-booklet.ttf'
+    return new Response(await readFile(new URL(fontPath, import.meta.url)))
   }
   setActiveLocale('zh-CN')
   try {
     project.meta.name = '中文项目'
     toolpath.warnings = [{ code: 'debug', params: { text: translate('warnings.noToolAssigned') } }]
+    let firstAttemptFailed = false
+    try {
+      await createOperationBookletPdf({
+        project,
+        operation,
+        tool: normalizeToolForProject(project.tools[0], project),
+        toolpath,
+        generatedAt: new Date('2026-06-04T12:00:00Z'),
+      })
+    } catch {
+      firstAttemptFailed = true
+    }
+    assert(firstAttemptFailed, 'failed font fetch should reject the first PDF attempt')
+
     const pdfBytes = await createOperationBookletPdf({
       project,
       operation,
@@ -224,8 +244,10 @@ async function testPdfUnicodeFont(): Promise<void> {
       toolpath,
       generatedAt: new Date('2026-06-04T12:00:00Z'),
     })
-    assert(fontRequests === 1, `expected one Unicode font request, got ${fontRequests}`)
-    assert(pdfBytes.byteLength > 100_000, `expected embedded Unicode font data, got ${pdfBytes.byteLength} bytes`)
+    assert(fontRequests === 4, `expected retry to request both fonts again, got ${fontRequests} requests`)
+    assert(requestedUrls.some((url) => url.includes('noto-sans-sc-booklet.ttf')), 'regular Unicode font should be requested')
+    assert(requestedUrls.some((url) => url.includes('noto-sans-sc-booklet-bold.ttf')), 'bold Unicode font should be requested')
+    assert(pdfBytes.byteLength > 200_000, `expected both embedded Unicode font assets, got ${pdfBytes.byteLength} bytes`)
     assert(new TextDecoder().decode(pdfBytes.slice(0, 5)) === '%PDF-', 'Unicode output should be a PDF')
   } finally {
     globalThis.fetch = originalFetch
@@ -270,5 +292,5 @@ testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
 testLocalizedReportContent()
 await testPdfSmoke()
-await testPdfUnicodeFont()
+await testPdfUnicodeFontRetriesAndUsesBold()
 console.log('operation booklet tests passed')
