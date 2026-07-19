@@ -12,7 +12,8 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   selection.
 - `locales/en/` — the canonical English catalog, one module per UI area
   (`shell`, `sketch`, `canvas`, `featureTree`, `cam`, `dialogs`, `viewport`,
-  `appShell`, `warnings`, `languageManager`, `themeManager`). `index.ts`
+  `appShell`, `warnings`, `languageManager`, `themeManager`, `booklet`,
+  `print`). `index.ts`
   merges the modules and derives `MessageKey`.
 - `locales/zh-CN/` — Simplified Chinese, mirroring the `en/` module layout;
   each module is typed as a complete record of its English counterpart so

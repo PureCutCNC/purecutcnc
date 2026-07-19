@@ -25,6 +25,8 @@ import { appShellEn } from './appShell'
 import { warningsEn } from './warnings'
 import { languageManagerEn } from './languageManager'
 import { themeManagerEn } from './themeManager'
+import { bookletEn } from './booklet'
+import { printEn } from './print'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -44,6 +46,8 @@ export const en = {
   ...appShellEn,
   ...languageManagerEn,
   ...themeManagerEn,
+  ...bookletEn,
+  ...printEn,
 } as const
 
 export type MessageKey = keyof typeof en

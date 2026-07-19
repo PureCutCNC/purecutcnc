@@ -38,6 +38,7 @@ import type { Point, Project, SketchFeature, SketchProfile } from '../../types/p
 import { formatAngle, formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { translate } from '../../i18n/store'
 import type { ToolpathResult } from '../toolpaths/types'
 import { PAPER_PRESETS, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
 import type {
@@ -743,7 +744,7 @@ function paperLabel(options: DesignPrintOptions): string {
 
 function scaleLabel(options: DesignPrintOptions, layout: DesignPrintLayout): string {
   if (options.scaleMode === 'actual') return '1:1'
-  if (options.scaleMode === 'fit') return `Fit (${formatScaleRatio(layout.scaleRatio)})`
+  if (options.scaleMode === 'fit') return translate('print.scale.fit', { ratio: formatScaleRatio(layout.scaleRatio) })
   return formatScaleRatio(layout.scaleRatio)
 }
 
@@ -761,11 +762,14 @@ function buildFooter(
   const h = layout.footerHeightMm
   const midY = y + h / 2
 
-  const orientation = options.orientation === 'landscape' ? 'Landscape' : 'Portrait'
+  const orientation = options.orientation === 'landscape'
+    ? translate('print.orientation.landscape')
+    : translate('print.orientation.portrait')
+  const units = project.meta.units === 'inch' ? translate('print.units.inch') : 'mm'
   const fields = [
-    `Units: ${project.meta.units === 'inch' ? 'inch' : 'mm'}`,
-    `Scale: ${scaleLabel(options, layout)}`,
-    `Paper: ${paperLabel(options)} · ${orientation}`,
+    translate('print.footer.units', { units }),
+    translate('print.footer.scale', { scale: scaleLabel(options, layout) }),
+    translate('print.footer.paper', { paper: paperLabel(options), orientation }),
   ]
   if (extras.footerDate) fields.push(extras.footerDate)
 

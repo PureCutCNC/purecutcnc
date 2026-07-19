@@ -27,30 +27,30 @@ import type { OperationBookletInput, OperationBookletReport, OperationBookletRow
 
 function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
-    case 'pocket': return 'Pocket'
-    case 'v_carve': return 'V-carve'
-    case 'v_carve_medial': return 'V-carve Medial'
-    case 'edge_route_inside': return 'Inside Edge Route'
-    case 'edge_route_outside': return 'Outside Edge Route'
-    case 'surface_clean': return 'Surface Clean'
-    case 'rough_surface': return 'Rough Surface'
-    case 'finish_surface': return 'Finish Surface'
-    case 'finish_surface_cleanup': return 'Finish Surface Cleanup'
-    case 'follow_line': return 'Follow Line'
-    case 'drilling': return 'Drilling'
+    case 'pocket': return translate('booklet.operation.pocket')
+    case 'v_carve': return translate('booklet.operation.vCarve')
+    case 'v_carve_medial': return translate('booklet.operation.vCarveMedial')
+    case 'edge_route_inside': return translate('booklet.operation.insideEdgeRoute')
+    case 'edge_route_outside': return translate('booklet.operation.outsideEdgeRoute')
+    case 'surface_clean': return translate('booklet.operation.surfaceClean')
+    case 'rough_surface': return translate('booklet.operation.roughSurface')
+    case 'finish_surface': return translate('booklet.operation.finishSurface')
+    case 'finish_surface_cleanup': return translate('booklet.operation.finishSurfaceCleanup')
+    case 'follow_line': return translate('booklet.operation.followLine')
+    case 'drilling': return translate('booklet.operation.drilling')
   }
 }
 
 function operationPassLabel(pass: OperationPass): string {
-  return pass === 'finish' ? 'Finish' : 'Rough'
+  return pass === 'finish' ? translate('booklet.pass.finish') : translate('booklet.pass.rough')
 }
 
 function cutDirectionLabel(direction: NonNullable<Operation['cutDirection']>): string {
-  return direction === 'climb' ? 'Climb' : 'Conventional'
+  return direction === 'climb' ? translate('booklet.cutDirection.climb') : translate('booklet.cutDirection.conventional')
 }
 
 function machiningOrderLabel(order: NonNullable<Operation['machiningOrder']>): string {
-  return order === 'feature_first' ? 'Feature first' : 'Level first'
+  return order === 'feature_first' ? translate('booklet.machiningOrder.featureFirst') : translate('booklet.machiningOrder.levelFirst')
 }
 
 function operationSupportsCutDirection(kind: OperationKind): boolean {
@@ -79,7 +79,7 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
 
 function targetSummary(project: Project, target: OperationTarget): string {
   if (target.source === 'stock') {
-    return 'Stock'
+    return translate('booklet.target.stock')
   }
 
   return targetFeatureNames(project, target).join(', ')
@@ -87,11 +87,11 @@ function targetSummary(project: Project, target: OperationTarget): string {
 
 function targetFeatureNames(project: Project, target: OperationTarget): string[] {
   if (target.source === 'stock') {
-    return ['Stock']
+    return [translate('booklet.target.stock')]
   }
 
   return target.featureIds.map((id) => (
-    project.features.find((feature) => feature.id === id)?.name ?? `Missing feature ${id}`
+    project.features.find((feature) => feature.id === id)?.name ?? translate('booklet.target.missingFeature', { id })
   ))
 }
 
@@ -133,8 +133,8 @@ function distance3d(from: { x: number; y: number; z: number }, to: { x: number; 
 }
 
 function durationLabel(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return 'Unavailable'
-  if (seconds < 60) return `${formatNumber(seconds, 1)} s`
+  if (!Number.isFinite(seconds) || seconds < 0) return translate('booklet.value.unavailable')
+  if (seconds < 60) return translate('booklet.duration.seconds', { seconds: formatNumber(seconds, 1) })
 
   const roundedSeconds = Math.round(seconds)
   const hours = Math.floor(roundedSeconds / 3600)
@@ -142,9 +142,9 @@ function durationLabel(seconds: number): string {
   const remainingSeconds = roundedSeconds % 60
 
   if (hours > 0) {
-    return `${hours} h ${minutes} min ${remainingSeconds} s`
+    return translate('booklet.duration.hoursMinutesSeconds', { hours, minutes, seconds: remainingSeconds })
   }
-  return `${minutes} min ${remainingSeconds} s`
+  return translate('booklet.duration.minutesSeconds', { minutes, seconds: remainingSeconds })
 }
 
 function feedControlledTimeSeconds(
@@ -197,17 +197,17 @@ function feedControlledTimeSeconds(
 
 function toolRows(tool: NormalizedTool | null, units: Units): OperationBookletRow[] {
   if (!tool) {
-    return [{ label: 'Tool', value: 'No tool selected' }]
+    return [{ label: translate('booklet.label.tool'), value: translate('booklet.value.noToolSelected') }]
   }
 
   return [
-    { label: 'Name', value: tool.name },
-    { label: 'Type', value: tool.type.replace(/_/g, ' ') },
-    { label: 'Diameter', value: lengthWithUnits(tool.diameter, units) },
-    ...(tool.vBitAngle ? [{ label: 'V-bit Angle', value: `${formatNumber(tool.vBitAngle, 2)} deg` }] : []),
-    { label: 'Flutes', value: String(tool.flutes) },
-    { label: 'Material', value: tool.material },
-    { label: 'Max Cut Depth', value: lengthWithUnits(tool.maxCutDepth, units) },
+    { label: translate('booklet.label.name'), value: tool.name },
+    { label: translate('booklet.label.type'), value: tool.type.replace(/_/g, ' ') },
+    { label: translate('booklet.label.diameter'), value: lengthWithUnits(tool.diameter, units) },
+    ...(tool.vBitAngle ? [{ label: translate('booklet.label.vBitAngle'), value: `${formatNumber(tool.vBitAngle, 2)} deg` }] : []),
+    { label: translate('booklet.label.flutes'), value: String(tool.flutes) },
+    { label: translate('booklet.label.material'), value: tool.material },
+    { label: translate('booklet.label.maxCutDepth'), value: lengthWithUnits(tool.maxCutDepth, units) },
   ]
 }
 
@@ -226,61 +226,61 @@ function stockSizeSummary(project: Project): string {
 function settingRows(operation: Operation, project: Project): OperationBookletRow[] {
   const units = project.meta.units
   const rows: OperationBookletRow[] = [
-    { label: 'Kind', value: operationKindLabel(operation.kind) },
-    { label: 'Pass', value: operationPassLabel(operation.pass) },
-    { label: 'Target', value: targetSummary(project, operation.target) },
-    { label: 'Feed', value: feedWithUnits(operation.feed, units) },
-    { label: 'Plunge Feed', value: feedWithUnits(operation.plungeFeed, units) },
-    { label: 'RPM', value: `${Math.round(operation.rpm)} rpm` },
+    { label: translate('booklet.label.kind'), value: operationKindLabel(operation.kind) },
+    { label: translate('booklet.label.pass'), value: operationPassLabel(operation.pass) },
+    { label: translate('booklet.label.target'), value: targetSummary(project, operation.target) },
+    { label: translate('booklet.label.feed'), value: feedWithUnits(operation.feed, units) },
+    { label: translate('booklet.label.plungeFeed'), value: feedWithUnits(operation.plungeFeed, units) },
+    { label: translate('booklet.label.rpm'), value: `${Math.round(operation.rpm)} rpm` },
   ]
 
   if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push(
-      { label: 'Stepdown', value: lengthWithUnits(operation.stepdown, units) },
-      { label: 'Stepover', value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) },
+      { label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) },
+      { label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) },
     )
   }
 
   if (operationSupportsCutDirection(operation.kind)) {
-    rows.push({ label: 'Cut Direction', value: cutDirectionLabel(operation.cutDirection ?? 'conventional') })
+    rows.push({ label: translate('booklet.label.cutDirection'), value: cutDirectionLabel(operation.cutDirection ?? 'conventional') })
   }
 
   if (operationSupportsMachiningOrder(operation.kind)) {
-    rows.push({ label: 'Machining Order', value: machiningOrderLabel(operation.machiningOrder ?? 'level_first') })
+    rows.push({ label: translate('booklet.label.machiningOrder'), value: machiningOrderLabel(operation.machiningOrder ?? 'level_first') })
   }
 
   if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {
-    rows.push({ label: 'Round Outside Corners', value: 'Enabled' })
+    rows.push({ label: translate('booklet.label.roundOutsideCorners'), value: translate('booklet.value.enabled') })
   }
 
   if (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'finish_surface' || operation.kind === 'finish_surface_cleanup') {
     rows.push(
-      { label: 'Pattern', value: operation.pocketPattern },
-      { label: 'Pocket Angle', value: `${formatNumber(operation.pocketAngle, 2)} deg` },
+      { label: translate('booklet.label.pattern'), value: operation.pocketPattern },
+      { label: translate('booklet.label.pocketAngle'), value: `${formatNumber(operation.pocketAngle, 2)} deg` },
     )
   }
 
   if (operation.kind === 'pocket' && (operation.pocketSlotFeedPercent ?? 100) < 100) {
-    rows.push({ label: 'Slot Feed', value: `${formatNumber(operation.pocketSlotFeedPercent ?? 100, 0)} % of feed` })
+    rows.push({ label: translate('booklet.label.slotFeed'), value: translate('booklet.value.slotFeed', { percent: formatNumber(operation.pocketSlotFeedPercent ?? 100, 0) }) })
   }
 
   if (operation.kind === 'drilling') {
     rows.push(
-      { label: 'Drill Type', value: operation.drillType ?? 'simple' },
-      { label: 'Peck Depth', value: lengthWithUnits(operation.peckDepth ?? 0, units) },
-      { label: 'Dwell Time', value: `${formatNumber(operation.dwellTime ?? 0, 3)} s` },
-      { label: 'Retract Height', value: lengthWithUnits(operation.retractHeight ?? 0, units) },
+      { label: translate('booklet.label.drillType'), value: operation.drillType ?? 'simple' },
+      { label: translate('booklet.label.peckDepth'), value: lengthWithUnits(operation.peckDepth ?? 0, units) },
+      { label: translate('booklet.label.dwellTime'), value: `${formatNumber(operation.dwellTime ?? 0, 3)} s` },
+      { label: translate('booklet.label.retractHeight'), value: lengthWithUnits(operation.retractHeight ?? 0, units) },
     )
   }
 
   if (operation.kind === 'follow_line') {
-    rows.push({ label: 'Carve Depth', value: lengthWithUnits(operation.carveDepth, units) })
+    rows.push({ label: translate('booklet.label.carveDepth'), value: lengthWithUnits(operation.carveDepth, units) })
   }
 
   if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push(
-      { label: 'Stock To Leave Radial', value: lengthWithUnits(operation.stockToLeaveRadial, units) },
-      { label: 'Stock To Leave Axial', value: lengthWithUnits(operation.stockToLeaveAxial, units) },
+      { label: translate('booklet.label.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
+      { label: translate('booklet.label.stockToLeaveAxial'), value: lengthWithUnits(operation.stockToLeaveAxial, units) },
     )
   }
 
@@ -289,7 +289,7 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
 
 function statsRows(toolpath: ToolpathResult | null, operation: Operation, units: Units): OperationBookletRow[] {
   if (!toolpath) {
-    return [{ label: 'Toolpath', value: 'Not generated' }]
+    return [{ label: translate('booklet.label.toolpath'), value: translate('booklet.value.notGenerated') }]
   }
 
   const cutMoves = toolpath.moves.filter((move) => move.kind === 'cut' || move.kind === 'lead_in' || move.kind === 'lead_out').length
@@ -297,30 +297,30 @@ function statsRows(toolpath: ToolpathResult | null, operation: Operation, units:
   const plungeMoves = toolpath.moves.filter((move) => move.kind === 'plunge').length
   const timeEstimate = feedControlledTimeSeconds(toolpath, operation)
   const rows: OperationBookletRow[] = [
-    { label: 'Moves', value: String(toolpath.moves.length) },
-    { label: 'Cut Moves', value: String(cutMoves) },
-    { label: 'Rapid Moves', value: String(rapidMoves) },
-    { label: 'Plunge Moves', value: String(plungeMoves) },
+    { label: translate('booklet.label.moves'), value: String(toolpath.moves.length) },
+    { label: translate('booklet.label.cutMoves'), value: String(cutMoves) },
+    { label: translate('booklet.label.rapidMoves'), value: String(rapidMoves) },
+    { label: translate('booklet.label.plungeMoves'), value: String(plungeMoves) },
     {
-      label: 'Estimated Feed Time',
+      label: translate('booklet.label.estimatedFeedTime'),
       value: timeEstimate.seconds === null
-        ? 'Unavailable (invalid feed)'
-        : `${durationLabel(timeEstimate.seconds)} (excludes G0 rapid time)`,
+        ? translate('booklet.value.unavailableInvalidFeed')
+        : translate('booklet.value.estimatedFeedTime', { duration: durationLabel(timeEstimate.seconds) }),
     },
     {
-      label: 'Feed Travel',
-      value: `${travelDistanceWithUnits(timeEstimate.feedDistance, units)} (feed and plunge moves)`,
+      label: translate('booklet.label.feedTravel'),
+      value: translate('booklet.value.feedTravel', { distance: travelDistanceWithUnits(timeEstimate.feedDistance, units) }),
     },
     {
-      label: 'Rapid Travel',
-      value: `${travelDistanceWithUnits(timeEstimate.rapidDistance, units)} (G0 speed machine-defined)`,
+      label: translate('booklet.label.rapidTravel'),
+      value: translate('booklet.value.rapidTravel', { distance: travelDistanceWithUnits(timeEstimate.rapidDistance, units) }),
     },
   ]
 
   if (toolpath.bounds) {
     rows.push(
-      { label: 'Top Z', value: lengthWithUnits(toolpath.bounds.maxZ, units) },
-      { label: 'Bottom Z', value: lengthWithUnits(toolpath.bounds.minZ, units) },
+      { label: translate('booklet.label.topZ'), value: lengthWithUnits(toolpath.bounds.maxZ, units) },
+      { label: translate('booklet.label.bottomZ'), value: lengthWithUnits(toolpath.bounds.minZ, units) },
     )
   }
 
@@ -345,7 +345,7 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     operationName: input.operation.name,
     operationDescription: input.operation.description ?? '',
     generatedDate: generatedTimestamp(generatedAt),
-    units: input.project.meta.units === 'inch' ? 'Inch' : 'Millimeter',
+    units: input.project.meta.units === 'inch' ? translate('booklet.units.inch') : translate('booklet.units.millimeter'),
     originZSummary: originZSummary(input.project),
     stockSizeSummary: stockSizeSummary(input.project),
     targetSummary: targetSummary(input.project, input.operation.target),
