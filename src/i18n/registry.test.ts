@@ -16,6 +16,7 @@
 
 import { placeholdersMatch } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
+import { es } from './locales/es'
 import { zhCN } from './locales/zh-CN'
 import {
   CUSTOM_LANGUAGE_SCHEMA_VERSION,
@@ -49,6 +50,12 @@ for (const key of enKeys) {
   assert(typeof value === 'string' && value !== '', `zh-CN has a value for ${key}`)
 }
 
+// Spanish ships complete as a first-class built-in locale too.
+for (const key of enKeys) {
+  const value = es[key]
+  assert(typeof value === 'string' && value !== '', `es has a value for ${key}`)
+}
+
 // Placeholder parity: every zh-CN translation preserves its English
 // placeholder set exactly.
 for (const key of enKeys) {
@@ -58,12 +65,23 @@ for (const key of enKeys) {
   )
 }
 
+for (const key of enKeys) {
+  assert(
+    placeholdersMatch(enMessages[key], es[key]),
+    `es preserves placeholders of ${key}`,
+  )
+}
+
 const builtinEn = resolveBuiltinLocale('en')
 assert(builtinEn.languageTag === 'en' && builtinEn.builtin, 'en resolves as built-in')
 const builtinZh = resolveBuiltinLocale('zh-CN')
 assert(builtinZh.languageTag === 'zh-CN', 'zh-CN carries its BCP-47 tag')
 assert(builtinZh.name === '简体中文', 'zh-CN presents its native name')
 assert(builtinZh.messages['file.saveProject'] === zhCN['file.saveProject'], 'zh-CN resolution uses Chinese strings')
+const builtinEs = resolveBuiltinLocale('es')
+assert(builtinEs.languageTag === 'es', 'es carries its BCP-47 tag')
+assert(builtinEs.name === 'Español', 'es presents its native name')
+assert(builtinEs.messages['file.saveProject'] === es['file.saveProject'], 'es resolution uses Spanish strings')
 
 // ---------------------------------------------------------------------------
 // Custom-language validation
@@ -125,6 +143,7 @@ const enBased = resolveCustomLanguage({ ...validPack, id: 'custom-en-based' })
 assert(enBased.messages['file.undo'] === enMessages['file.undo'], 'en-based pack falls back to English')
 
 assert(resolveLocaleById('zh-CN', []).id === 'zh-CN', 'built-in id resolves')
+assert(resolveLocaleById('es', []).id === 'es', 'Spanish built-in resolves')
 assert(resolveLocaleById('custom-zh-based', [zhBased]).id === 'custom-zh-based', 'custom id resolves')
 assert(resolveLocaleById('gone', [zhBased]).id === 'en', 'stale id falls back to English')
 

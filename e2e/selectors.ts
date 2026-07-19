@@ -45,9 +45,9 @@ export const appearance = {
 
 export const language = {
   // The trigger's accessible name is localized ("Language: English" /
-  // "语言：简体中文"), so match both forms.
-  trigger: (page: Page) => page.getByRole('button', { name: /^(Language:|语言：)/ }),
-  menu: (page: Page) => page.getByRole('menu', { name: /^(Interface language|界面语言)$/ }),
+  // "Idioma: Español" / "语言：简体中文"), so match every shipped locale.
+  trigger: (page: Page) => page.getByRole('button', { name: /^(Language:|Idioma:|语言：)/ }),
+  menu: (page: Page) => page.getByRole('menu', { name: /^(Interface language|Idioma de la interfaz|界面语言)$/ }),
   option: (page: Page, label: string) =>
     language.menu(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
   manageEntry: (page: Page) =>

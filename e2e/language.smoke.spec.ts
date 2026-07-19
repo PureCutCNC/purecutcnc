@@ -126,6 +126,30 @@ test('switches to Simplified Chinese, persists, and never touches the project', 
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('en')
 })
 
+test('switches to Spanish, persists, and never touches the project', async ({ app, ui }) => {
+  const before = await getProject(app.page)
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'Español').click()
+
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'es')
+  await expect(app.page.getByRole('button', { name: 'Nuevo proyecto' })).toBeVisible()
+  await expect(app.page.getByRole('button', { name: 'Ajustar a la cuadrícula' })).toBeVisible()
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Idioma: Español')
+  expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('es')
+  expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
+
+  await app.page.reload()
+  await app.page.waitForSelector('canvas', { timeout: 15000 })
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'es')
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Idioma: Español')
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'English').click()
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+  expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('en')
+})
+
 test('keeps appearance menu copy translated and the theme selection intact', async ({ app, ui }) => {
   await ui.language.trigger(app.page).click()
   await ui.language.option(app.page, '简体中文').click()
@@ -193,13 +217,14 @@ test.describe('tablet language selector', () => {
     expect(triggerBox!.width).toBeGreaterThanOrEqual(44)
 
     await trigger.click()
-    const chineseOption = ui.language.option(app.page, '简体中文')
-    await expect(chineseOption).toBeVisible()
-    const optionBox = await chineseOption.boundingBox()
+    const spanishOption = ui.language.option(app.page, 'Español')
+    await expect(spanishOption).toBeVisible()
+    const optionBox = await spanishOption.boundingBox()
     expect(optionBox).not.toBeNull()
     expect(optionBox!.height).toBeGreaterThanOrEqual(44)
 
-    await chineseOption.click()
-    await expect(app.page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+    await spanishOption.click()
+    await expect(app.page.locator('html')).toHaveAttribute('lang', 'es')
+    await expect(app.page.getByRole('button', { name: 'Nuevo proyecto' })).toBeVisible()
   })
 })
