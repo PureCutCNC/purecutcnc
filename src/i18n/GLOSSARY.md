@@ -37,6 +37,9 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
 | dark / light | 深色 / 浅色 | |
 | system (follow OS) | 跟随系统 | |
 | language | 语言 | |
+| language pack | 语言包 | user-created custom language |
+| built-in / custom | 内置 / 自定义 | themes and languages |
+| placeholder | 占位符 | the `{name}` tokens in catalog strings |
 | unsaved changes | 未保存的更改 | |
 
 ## Punctuation & style
