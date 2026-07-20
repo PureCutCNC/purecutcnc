@@ -110,6 +110,20 @@ assert(
   translatePlural(1, 'shell.snap.enabledAria.one', 'shell.snap.enabledAria.other') === zhCN['shell.snap.enabledAria.other'].replace('{count}', '1'),
   'Chinese always uses the other variant',
 )
+// German inflects: the rest-op message is locale-owned, so 2 regions must read
+// "Bereichen" (dative plural), not the old interpolated English suffix
+// "Bereichs". Covers one and multiple regions.
+setActiveLocale('de')
+assert(
+  translatePlural(1, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Restoperation mit 1 Bereich erstellt; wählen Sie ein kleineres Werkzeug',
+  'German rest-op singular uses Bereich',
+)
+assert(
+  translatePlural(2, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Restoperation mit 2 Bereichen erstellt; wählen Sie ein kleineres Werkzeug',
+  'German rest-op plural uses Bereichen, not the English-suffix Bereichs',
+)
 
 // Custom pack CRUD: save re-resolves an active pack, delete falls back to base.
 resetI18nStoreForTests()

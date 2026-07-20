@@ -21,7 +21,10 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
 - `locales/es/` — built-in Spanish, mirroring the `en/` module layout.
   The catalog uses neutral terminology suitable for European Spanish and
   broader Spanish-speaking CNC users; the native picker name is `Español`.
-- `GLOSSARY.md` — en ↔ zh-CN ↔ es CNC terminology and style reference for
+- `locales/de/` — German (Deutsch), same module layout and complete-record
+  typing as zh-CN; German inflects, so `.one`/`.other` plural variants carry
+  distinct strings. Terminology in `GLOSSARY.md`.
+- `GLOSSARY.md` — CNC terminology and style reference (en ↔ zh-CN, es, de) for
   translators and future locales.
 - `registry.ts` — built-in locale metadata, custom language-pack schema
   validation (including the BCP-47 tag predicate), base+overrides

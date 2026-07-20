@@ -47,7 +47,12 @@ assert(detectLocaleIdFromNavigator(['fr-FR', 'zh-CN']) === 'zh-CN', 'unsupported
 assert(detectLocaleIdFromNavigator(['fr-FR', 'en-GB']) === 'en', 'English variant matches')
 assert(detectLocaleIdFromNavigator(['es-ES']) === 'es', 'European Spanish variant matches')
 assert(detectLocaleIdFromNavigator(['es-MX']) === 'es', 'Spanish variant matches')
-assert(detectLocaleIdFromNavigator(['de']) === 'en', 'no match falls back to English')
+assert(detectLocaleIdFromNavigator(['de']) === 'de', 'bare de matches German')
+assert(detectLocaleIdFromNavigator(['de-DE']) === 'de', 'de-DE matches German')
+assert(detectLocaleIdFromNavigator(['de-AT']) === 'de', 'Austrian German matches')
+assert(detectLocaleIdFromNavigator(['de-CH']) === 'de', 'Swiss German matches')
+assert(detectLocaleIdFromNavigator(['fr-FR', 'de']) === 'de', 'unsupported first entry keeps scanning to German')
+assert(detectLocaleIdFromNavigator(['fr']) === 'en', 'unsupported language falls back to English')
 assert(detectLocaleIdFromNavigator([]) === 'en', 'empty list falls back to English')
 
 // Initial resolution: stored explicit choice wins when it still resolves.

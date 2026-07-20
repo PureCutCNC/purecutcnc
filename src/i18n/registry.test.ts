@@ -18,6 +18,7 @@ import { interpolate, placeholdersMatch, pluralVariant } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
 import { es } from './locales/es'
 import { zhCN } from './locales/zh-CN'
+import { de } from './locales/de'
 import {
   CUSTOM_LANGUAGE_SCHEMA_VERSION,
   customLanguagePlaceholderIssues,
@@ -72,6 +73,22 @@ for (const key of enKeys) {
   )
 }
 
+// German ships complete: every English key has a German entry (the type
+// enforces this at compile time; this guards the runtime merge too).
+for (const key of enKeys) {
+  const value = de[key]
+  assert(typeof value === 'string' && value !== '', `de has a value for ${key}`)
+}
+
+// Placeholder parity: every German translation preserves its English
+// placeholder set exactly.
+for (const key of enKeys) {
+  assert(
+    placeholdersMatch(enMessages[key], de[key]),
+    `de preserves placeholders of ${key}`,
+  )
+}
+
 const builtinEn = resolveBuiltinLocale('en')
 assert(builtinEn.languageTag === 'en' && builtinEn.builtin, 'en resolves as built-in')
 const builtinZh = resolveBuiltinLocale('zh-CN')
@@ -82,6 +99,11 @@ const builtinEs = resolveBuiltinLocale('es')
 assert(builtinEs.languageTag === 'es', 'es carries its BCP-47 tag')
 assert(builtinEs.name === 'Español', 'es presents its native name')
 assert(builtinEs.messages['file.saveProject'] === es['file.saveProject'], 'es resolution uses Spanish strings')
+const builtinDe = resolveBuiltinLocale('de')
+assert(builtinDe.languageTag === 'de' && builtinDe.builtin, 'de resolves as built-in')
+assert(builtinDe.name === 'Deutsch', 'de presents its native name')
+assert(builtinDe.englishName === 'German', 'de carries its English name')
+assert(builtinDe.messages['file.saveProject'] === de['file.saveProject'], 'de resolution uses German strings')
 
 // ---------------------------------------------------------------------------
 // Custom-language validation

@@ -1,0 +1,328 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { dialogsEn } from '../en/dialogs'
+
+/** German project / export / machine-editor dialog translations. */
+export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
+  // ── Common dialog strings ──
+  'dialogs.common.close': 'Schließen',
+  'dialogs.common.cancel': 'Abbrechen',
+  'dialogs.common.none': 'Keine',
+  'dialogs.common.millimeter': 'Millimeter',
+  'dialogs.common.inch': 'Zoll',
+
+  // ── New Project dialog ──
+  'dialogs.newProject.title': 'Neues Projekt',
+  'dialogs.newProject.projectName': 'Projektname',
+  'dialogs.newProject.template': 'Vorlage',
+  'dialogs.newProject.templateBlankMetric': 'Leer metrisch',
+  'dialogs.newProject.templateBlankMetricMeta': 'Leeres Projekt in Millimetern.',
+  'dialogs.newProject.templateBlankImperial': 'Leer imperial',
+  'dialogs.newProject.templateBlankImperialMeta': 'Leeres Projekt in Zoll.',
+  'dialogs.newProject.templateCurrentProject': 'Aktuelles Projekt',
+  'dialogs.newProject.templateCurrentProjectMeta': 'Die Einstellungen des offenen Projekts als Ausgangsvorlage verwenden.',
+  'dialogs.newProject.templateFile': 'Vorlagendatei',
+  'dialogs.newProject.templateFileNoFile': 'Keine Vorlagendatei geladen.',
+  'dialogs.newProject.templateFileParseError': 'Vorlagen-Projektdatei konnte nicht verarbeitet werden.',
+  'dialogs.newProject.templatePreview': 'Vorlagen-Vorschau',
+  'dialogs.newProject.previewUnits': 'Einheiten',
+  'dialogs.newProject.previewStock': 'Rohteil',
+  'dialogs.newProject.previewFeatures': 'Features',
+  'dialogs.newProject.previewTools': 'Werkzeuge',
+  'dialogs.newProject.previewOperations': 'Operationen',
+  'dialogs.newProject.previewMachine': 'Maschine',
+  'dialogs.newProject.previewEmpty': 'Laden Sie eine Projektdatei, um sie als Vorlage zu verwenden.',
+  'dialogs.newProject.orOpenExample': 'Oder ein Beispiel öffnen',
+  'dialogs.newProject.createProject': 'Projekt erstellen',
+
+  // ── New Project: template labels (preview title) ──
+  'dialogs.newProject.templateLabel.blankMetric': 'Leer metrisch',
+  'dialogs.newProject.templateLabel.blankImperial': 'Leer imperial',
+  'dialogs.newProject.templateLabel.currentProject': 'Aktuelle Projekteinrichtung: {name}',
+  'dialogs.newProject.templateLabel.fileSetup': 'Vorlagendatei-Einrichtung: {name}',
+  'dialogs.newProject.templateLabel.fileSetupFallback': 'Vorlagendatei-Einrichtung',
+  'dialogs.newProject.templateFileMetaSettings': '{name} (nur Einstellungen)',
+
+  // ── Import Geometry dialog ──
+  'dialogs.importGeometry.title': 'Geometrie importieren',
+  'dialogs.importGeometry.sourceFile': 'Quelldatei',
+  'dialogs.importGeometry.chooseFile': 'SVG, DXF, STL, OBJ oder .camj wählen',
+  'dialogs.importGeometry.chooseDifferentFile': 'Andere Datei wählen',
+  'dialogs.importGeometry.noFileSelected': 'Keine Datei ausgewählt.',
+  'dialogs.importGeometry.settings': 'Einstellungen',
+  'dialogs.importGeometry.format': 'Format',
+  'dialogs.importGeometry.sourceUnits': 'Quelleinheiten',
+  'dialogs.importGeometry.selectUnits': 'Einheiten wählen',
+  'dialogs.importGeometry.unitsNotDetected': 'Einheiten nicht erkannt – wählen Sie vor dem Import die Quelleinheiten.',
+  'dialogs.importGeometry.camjImportNote': 'Hintergrund, Raster, Maschinendefinitionen und globale Bedingungen werden nicht importiert.',
+  'dialogs.importGeometry.importStock': 'Rohteil aus Quelle importieren',
+  'dialogs.importGeometry.stockWillBeReplaced': 'Aktuelles Rohteil und Nullpunkt werden ersetzt.',
+  'dialogs.importGeometry.projectUnits': 'Projekteinheiten',
+  'dialogs.importGeometry.axisOrientation': 'Achsenausrichtung',
+  'dialogs.importGeometry.axisOriginal': 'Original (Z-oben)',
+  'dialogs.importGeometry.axisSwapYZ': 'Y / Z tauschen (Y-oben)',
+  'dialogs.importGeometry.axisSwapXZ': 'X / Z tauschen',
+  'dialogs.importGeometry.axisSwapXY': 'X / Y tauschen',
+  'dialogs.importGeometry.silhouetteZSteps': 'Silhouetten-Z-Schritte',
+  'dialogs.importGeometry.silhouetteAuto': 'Auto',
+  'dialogs.importGeometry.joinTolerance': 'Verbindungstoleranz ({unit})',
+  'dialogs.importGeometry.crossLayerJoin': 'Ebenenübergreifendes Verbinden',
+  'dialogs.importGeometry.layers': 'Ebenen',
+  'dialogs.importGeometry.folders': 'Ordner',
+  'dialogs.importGeometry.selectAll': 'Alle auswählen',
+  'dialogs.importGeometry.deselectAll': 'Alle abwählen',
+  'dialogs.importGeometry.selectAtLeastOne': 'Mindestens 1 {type} zum Importieren auswählen.',
+  'dialogs.importGeometry.folderNoun': 'Ordner',
+  'dialogs.importGeometry.layerNoun': 'Ebene',
+  'dialogs.importGeometry.import': 'Importieren',
+
+  // ── Import Geometry: error messages (set via setDialogError) ──
+  'dialogs.importGeometry.error.unsupportedFormat': 'Nicht unterstütztes Importformat. Verwenden Sie .svg, .dxf, .stl, .obj oder .camj.',
+  'dialogs.importGeometry.error.noCamjFolders': 'Keine Ordner mit Features in der ausgewählten .camj-Datei gefunden.',
+  'dialogs.importGeometry.error.inspectFailed': 'Geometriedatei konnte nicht geprüft werden.',
+  'dialogs.importGeometry.error.chooseFile': 'Wählen Sie eine SVG-, DXF-, STL-, OBJ- oder .camj-Datei zum Importieren.',
+  'dialogs.importGeometry.error.sourceUnits': 'Quelleinheiten konnten nicht erkannt werden. Wählen Sie die Quelleinheiten, um fortzufahren.',
+  'dialogs.importGeometry.error.joinTolerance': 'Verbindungstoleranz muss eine nicht negative Zahl sein.',
+  'dialogs.importGeometry.error.selectFolder': 'Wählen Sie mindestens einen Ordner zum Importieren, oder aktivieren Sie „Rohteil aus Quelle importieren".',
+  'dialogs.importGeometry.error.noFeaturesImported': 'Aus den ausgewählten Ordnern wurden keine Features importiert.',
+  'dialogs.importGeometry.error.noGeometryFound': 'Keine importierbare Geometrie in der ausgewählten Datei gefunden.',
+  'dialogs.importGeometry.error.importFailed': 'Geometriedatei konnte nicht importiert werden.',
+
+  // ── Import Geometry: loading stages ──
+  'dialogs.importGeometry.processingModel': 'Modell wird verarbeitet',
+  'dialogs.importGeometry.preparingImport': 'Import wird vorbereitet',
+  'dialogs.importGeometry.mergingFolders': 'Ordner werden zusammengeführt',
+  'dialogs.importGeometry.importingGeometry': 'Geometrie wird importiert',
+
+  // ── Import Geometry: format labels (descriptive, not acronyms) ──
+  'dialogs.importGeometry.formatLabel.camj': 'PureCutCNC-Projekt',
+  'dialogs.importGeometry.formatLabel.unknown': 'Unbekannt',
+
+  // ── Import Geometry: import-complete alert ──
+  'dialogs.importGeometry.importedFeaturesWarnings.one': '{count} Feature mit Warnungen importiert:\n\n{warnings}',
+  'dialogs.importGeometry.importedFeaturesWarnings.other': '{count} Features mit Warnungen importiert:\n\n{warnings}',
+
+  // ── Import Geometry Mode section ──
+  'dialogs.importGeometry.mode.geometryMode': 'Geometriemodus',
+  'dialogs.importGeometry.mode.auto': 'Auto',
+  'dialogs.importGeometry.mode.paths': 'Pfade',
+  'dialogs.importGeometry.mode.solidRegions': 'Volumenkörper',
+  'dialogs.importGeometry.mode.explain.autoSvg': 'Auto: reine Strichgeometrie → Linien; gefüllte geschlossene Formen → verschachtelungsbewusste Volumenkörper.',
+  'dialogs.importGeometry.mode.explain.autoDxf': 'Auto: geschlossene Profile → verschachtelungsbewusste Volumenkörper. Verwenden Sie Pfade für reinen Linienimport.',
+  'dialogs.importGeometry.mode.explain.paths': 'Pfade: alle Profile → Linien (keine Volumenkörper-Features).',
+  'dialogs.importGeometry.mode.explain.solidRegions': 'Volumenkörper: geschlossene Profile → verschachtelungsbewusste Hinzufügen-/Abzieh-Volumenkörper.',
+  'dialogs.importGeometry.mode.analysing': 'Geometrie wird analysiert…',
+  'dialogs.importGeometry.mode.importSummary': 'Import-Zusammenfassung',
+  'dialogs.importGeometry.mode.totalImportable': 'Gesamt importierbar',
+  'dialogs.importGeometry.mode.openLines': 'Offene Linien',
+  'dialogs.importGeometry.mode.closedLines': 'Geschlossene Linien',
+  'dialogs.importGeometry.mode.addSolid': 'Hinzufügen (Volumenkörper)',
+  'dialogs.importGeometry.mode.subtractSolid': 'Abziehen (Volumenkörper)',
+
+  // ── Text Tool dialog ──
+  'dialogs.textTool.title': 'Text hinzufügen',
+  'dialogs.textTool.text': 'Text',
+  'dialogs.textTool.fontStyle': 'Schriftstil',
+  'dialogs.textTool.font': 'Schriftart',
+  'dialogs.textTool.height': 'Höhe',
+  'dialogs.textTool.operation': 'Operation',
+  'dialogs.textTool.style.skeleton': 'Skelett',
+  'dialogs.textTool.style.outline': 'Umriss',
+  'dialogs.textTool.operation.subtract': 'Abziehen',
+  'dialogs.textTool.operation.add': 'Hinzufügen',
+  'dialogs.textTool.helpText': 'Vorerst einzeiliger Text. Umriss-Text erzeugt geschlossene Features; Skelett-Text erzeugt offene Gravurpfade.',
+  'dialogs.textTool.placeText': 'Text platzieren',
+
+  // ── Unit Conversion dialog ──
+  'dialogs.unitConversion.eyebrow': 'Projektmaßstab',
+  'dialogs.unitConversion.title': 'Projekteinheiten ändern?',
+  'dialogs.unitConversion.ariaChanging': 'Wechsel von {from} zu {to}',
+  'dialogs.unitConversion.intro': 'Wählen Sie, ob die vorhandenen Maße ihre physische Größe oder ihre geschriebenen Zahlen behalten sollen.',
+  'dialogs.unitConversion.convertHeading': 'Werte umrechnen',
+  'dialogs.unitConversion.convertBadge': 'Empfohlen',
+  'dialogs.unitConversion.convertDescription': 'Behält die physische Größe von Design, Rohteil, Bemaßungen und Bearbeitungswerten bei.',
+  'dialogs.unitConversion.convertExample': 'Aus {from} wird {to}',
+  'dialogs.unitConversion.keepHeading': 'Zahlenwerte behalten',
+  'dialogs.unitConversion.keepDescription': 'Interpretiert jede Zahl in den neuen Einheiten neu und ändert so den physischen Maßstab des Projekts.',
+  'dialogs.unitConversion.keepExample': 'Aus {from} wird {to}',
+
+  // ── Example Project list ──
+  'dialogs.exampleProject.loading': 'Beispiele werden geladen…',
+  'dialogs.exampleProject.noExamples': 'Keine Beispiele verfügbar.',
+  'dialogs.exampleProject.opening': 'Wird geöffnet…',
+  'dialogs.exampleProject.errorLoad': 'Beispiele konnten nicht geladen werden.',
+  'dialogs.exampleProject.errorOpen': 'Beispiel konnte nicht geöffnet werden.',
+
+  // ── Export G-code dialog ──
+  'dialogs.export.title': 'G-Code exportieren',
+  'dialogs.export.machine': 'Maschine',
+  'dialogs.export.machineNone': 'Keine ausgewählt',
+  'dialogs.export.change': 'Ändern',
+  'dialogs.export.origin': 'Nullpunkt',
+  'dialogs.export.originDescription': 'Der Export verwendet den aktuellen Projektnullpunkt als Maschinen-X0 Y0 Z0.',
+  'dialogs.export.originNote': 'Bearbeiten Sie den Nullpunkt in der Skizze oder im Projektbaum, um den für den Export verwendeten Werkstücknullpunkt zu ändern.',
+  'dialogs.export.projectUnits': 'Projekteinheiten',
+  'dialogs.export.operations': 'Operationen',
+  'dialogs.export.noOperations': 'Keine Operationen zum Exportieren. Fügen Sie eine im Operationsbereich hinzu.',
+  'dialogs.export.options': 'Optionen',
+  'dialogs.export.emitToolChanges': 'Werkzeugwechsel ausgeben (M6)',
+  'dialogs.export.emitCoolant': 'Kühlmittelbefehle ausgeben',
+  'dialogs.export.warnings': 'Warnungen',
+  'dialogs.export.preview': 'Vorschau (erste 30 Zeilen)',
+  'dialogs.export.previewPlaceholder': 'Wählen Sie in den Projekteinstellungen eine Maschine, um eine G-Code-Vorschau zu erzeugen.',
+  'dialogs.export.previewTruncated': '…',
+  'dialogs.export.movesLines': '{moves} Bewegungen, {lines} Zeilen insgesamt',
+  'dialogs.export.warning.noOperations': 'Keine Operationen ausgewählt. Wählen Sie mindestens eine Operation zum Exportieren.',
+  'dialogs.export.warning.noMachine': 'Keine Maschine ausgewählt. Wählen Sie vor dem Export eine in den Projekteinstellungen.',
+  'dialogs.export.export': '{ext} exportieren',
+
+  // ── Export: operation reasons (from exportOperationSelection.ts) ──
+  'dialogs.export.operationDisabled': 'Operation ist aus',
+  'dialogs.export.noToolAssigned': 'Kein Werkzeug zugewiesen',
+
+  // ── Model Export dialog ──
+  'dialogs.modelExport.title': 'Modell exportieren',
+  'dialogs.modelExport.format': 'Format',
+  'dialogs.modelExport.fileName': 'Dateiname',
+  'dialogs.modelExport.fileNameHint': 'Wird als {filename} gespeichert. Der Speicherort wird im nächsten Dialog gewählt.',
+  'dialogs.modelExport.curveQuality': 'Kurvenqualität',
+  'dialogs.modelExport.curveQualityHint': 'Bestimmt, wie fein Bögen und Bézierkurven tesseliert werden. Feiner = mehr Dreiecke, glattere Kurven.',
+  'dialogs.modelExport.summary': 'Zusammenfassung',
+  'dialogs.modelExport.exportedSize': 'Exportierte Größe: {width} × {height} {unit} bei 1:1',
+  'dialogs.modelExport.exportedSizeNote': 'Bearbeitbare Vektorpfade; ausgeblendete Features werden weggelassen und die Maße folgen der Skizzeneinstellung.',
+  'dialogs.modelExport.assembling': 'Netz wird zusammengesetzt…',
+  'dialogs.modelExport.triangles': '{count} Dreiecke',
+  'dialogs.modelExport.estimatedSize': 'Geschätzte Dateigröße: {size}',
+  'dialogs.modelExport.warnings': 'Warnungen',
+  'dialogs.modelExport.error': 'Fehler',
+  'dialogs.modelExport.noGeometry': 'Keine massive Geometrie zum Exportieren – fügen Sie zuerst sichtbare Features hinzu.',
+  'dialogs.modelExport.exporting': 'Wird exportiert…',
+  'dialogs.modelExport.export': '.{ext} exportieren',
+
+  // ── Model Export: STL options ──
+  'dialogs.modelExport.stlEncoding': 'STL-Kodierung',
+  'dialogs.modelExport.stlBinary': 'Binär (empfohlen – kleiner, schneller)',
+  'dialogs.modelExport.stlAscii': 'ASCII (menschenlesbar)',
+  'dialogs.modelExport.contents': 'Inhalt',
+  'dialogs.modelExport.includeImportedMeshes': 'Importierte Netze einschließen',
+
+  // ── Model Export: SVG options ──
+  'dialogs.modelExport.svgArea': 'Exportbereich',
+  'dialogs.modelExport.svgContent': 'Inhalt',
+  'dialogs.modelExport.svgContent.tabs': 'Haltestege',
+  'dialogs.modelExport.svgContent.clamps': 'Spannzwingen',
+  'dialogs.modelExport.svgContent.featureLabels': 'Feature-Beschriftungen',
+  'dialogs.modelExport.svgContent.grid': 'Raster',
+  'dialogs.modelExport.svgContent.color': 'Farbe',
+  'dialogs.modelExport.svgContent.monochrome': 'Einfarbig',
+
+  // ── Model Export: curve quality labels ──
+  'dialogs.modelExport.curveQuality.coarse': 'Grob (10° – entspricht 3D-Viewport)',
+  'dialogs.modelExport.curveQuality.normal': 'Normal (5°)',
+  'dialogs.modelExport.curveQuality.fine': 'Fein (2°)',
+  'dialogs.modelExport.curveQuality.veryFine': 'Sehr fein (1°)',
+
+  // ── Print Design dialog ──
+  'dialogs.printDesign.title': 'Design drucken',
+  'dialogs.printDesign.paper': 'Papier',
+  'dialogs.printDesign.customSize': 'Benutzerdefinierte Größe',
+  'dialogs.printDesign.size': 'Größe ({unit})',
+  'dialogs.printDesign.customPaperWidth': 'Benutzerdefinierte Papierbreite ({unit})',
+  'dialogs.printDesign.customPaperHeight': 'Benutzerdefinierte Papierhöhe ({unit})',
+  'dialogs.printDesign.portrait': 'Hochformat',
+  'dialogs.printDesign.landscape': 'Querformat',
+  'dialogs.printDesign.margins': 'Ränder ({unit})',
+  'dialogs.printDesign.printArea': 'Druckbereich',
+  'dialogs.printDesign.printArea.visible': 'Sichtbare Design-Ausdehnung',
+  'dialogs.printDesign.printArea.stock': 'Rohteil-Ausdehnung',
+  'dialogs.printDesign.printArea.view': 'Aktuelle Skizzenansicht',
+  'dialogs.printDesign.currentViewUnavailable': 'Die aktuelle Skizzenansicht ist verfügbar, wenn die Skizzen-Zeichenfläche geöffnet ist.',
+  'dialogs.printDesign.scale': 'Maßstab',
+  'dialogs.printDesign.fitToPage': 'An Seite anpassen',
+  'dialogs.printDesign.actualSize': 'Tatsächliche Größe (1:1)',
+  'dialogs.printDesign.custom': 'Benutzerdefiniert',
+  'dialogs.printDesign.customScaleAria': 'Benutzerdefinierter Maßstab (Verhältnis, Prozentsatz oder Faktor)',
+  'dialogs.printDesign.offsetXY': 'Versatz X / Y ({unit})',
+  'dialogs.printDesign.offsetX': 'Horizontaler Versatz ({unit})',
+  'dialogs.printDesign.offsetY': 'Vertikaler Versatz ({unit})',
+  'dialogs.printDesign.content': 'Inhalt',
+  'dialogs.printDesign.content.grid': 'Raster',
+  'dialogs.printDesign.content.backdrop': 'Hintergrundbild',
+  'dialogs.printDesign.content.featureLabels': 'Feature-Beschriftungen',
+  'dialogs.printDesign.content.tabs': 'Haltestege',
+  'dialogs.printDesign.content.clamps': 'Spannzwingen',
+  'dialogs.printDesign.content.toolpaths': 'Werkzeugweg-Überlagerungen',
+  'dialogs.printDesign.content.titleBlock': 'Schriftfeld',
+  'dialogs.printDesign.content.color': 'Farbe',
+  'dialogs.printDesign.content.monochrome': 'Einfarbig',
+  'dialogs.printDesign.printedSize': 'Druckgröße: {width} × {height} {unit} bei {scale}',
+  'dialogs.printDesign.close': 'Schließen',
+  'dialogs.printDesign.print': 'Drucken…',
+
+  // ── Print Design: warnings ──
+  'dialogs.printDesign.warning.customScale': 'Benutzerdefinierter Maßstab nicht erkannt – geben Sie ein Verhältnis wie 1:2, einen Prozentsatz wie 50 % oder einen Faktor wie 0,5 ein.',
+  'dialogs.printDesign.warning.clipped': 'Die Zeichnung wird auf diesem Papier bei diesem Maßstab beschnitten. Verwenden Sie „An Seite anpassen", verringern Sie den Maßstab oder wählen Sie ein größeres Papierformat.',
+
+  // ── Print Design: disabled tooltips ──
+  'dialogs.printDesign.noTabs': 'Keine Haltestege in diesem Projekt',
+  'dialogs.printDesign.noClamps': 'Keine Spannzwingen in diesem Projekt',
+  'dialogs.printDesign.noToolpaths': 'In der Skizzenansicht sind keine Werkzeugwege sichtbar',
+  'dialogs.printDesign.noBackdrop': 'Kein Hintergrundbild in diesem Projekt',
+
+  // ── Machine Editor dialog ──
+  'dialogs.machineEditor.title': 'Maschine bearbeiten: {name}',
+  'dialogs.machineEditor.general': 'Allgemein',
+  'dialogs.machineEditor.name': 'Name',
+  'dialogs.machineEditor.fileExtension': 'Dateiendung',
+  'dialogs.machineEditor.mmCommand': 'Einheiten – mm-Befehl',
+  'dialogs.machineEditor.inchCommand': 'Einheiten – Zoll-Befehl',
+  'dialogs.machineEditor.program': 'Programm',
+  'dialogs.machineEditor.header': 'Kopfzeile',
+  'dialogs.machineEditor.operationHeader': 'Operations-Kopfzeile',
+  'dialogs.machineEditor.footer': 'Fußzeile',
+  'dialogs.machineEditor.toolChange': 'Werkzeugwechsel',
+  'dialogs.machineEditor.toolChangeCommands': 'Befehle',
+  'dialogs.machineEditor.coolant': 'Kühlmittel',
+  'dialogs.machineEditor.floodOn': 'Flutkühlung ein',
+  'dialogs.machineEditor.mistOn': 'Sprühnebel ein',
+  'dialogs.machineEditor.coolantOff': 'Kühlmittel aus',
+  'dialogs.machineEditor.advanced': 'Erweitert (Roh-JSON)',
+  'dialogs.machineEditor.variablesReference': 'Variablen-Referenz',
+  'dialogs.machineEditor.save': 'Speichern',
+  'dialogs.machineEditor.invalidJson': 'Ungültige JSON-Syntax',
+
+  // ── Machine Manager dialog ──
+  'dialogs.machineManager.title': 'Maschinen verwalten',
+  'dialogs.machineManager.builtin': 'Integriert',
+  'dialogs.machineManager.custom': 'Benutzerdefiniert',
+  'dialogs.machineManager.active': 'Aktiv',
+  'dialogs.machineManager.fileExtension': 'Dateiendung',
+  'dialogs.machineManager.description': 'Beschreibung',
+  'dialogs.machineManager.vendor': 'Hersteller',
+  'dialogs.machineManager.builtinHint': 'Integrierte Definitionen sind schreibgeschützt. Duplizieren Sie eine, um eine bearbeitbare Kopie zu erstellen.',
+  'dialogs.machineManager.useThisMachine': 'Diese Maschine verwenden',
+  'dialogs.machineManager.edit': 'Bearbeiten',
+  'dialogs.machineManager.duplicateToEdit': 'Zum Bearbeiten duplizieren',
+  'dialogs.machineManager.duplicate': 'Duplizieren',
+  'dialogs.machineManager.importMachine': 'Maschine importieren',
+  'dialogs.machineManager.exportMachine': 'Maschine exportieren',
+  'dialogs.machineManager.removeMachine': 'Maschine entfernen',
+  'dialogs.machineManager.done': 'Fertig',
+  'dialogs.machineManager.empty': 'Keine Maschinendefinitionen. Importieren Sie eine, um zu beginnen.',
+  'dialogs.machineManager.emptyDetail': 'Wählen Sie eine Maschine aus der Liste oder importieren Sie eine.',
+  'dialogs.machineManager.invalidImport': 'Ungültige Maschinendefinitions-JSON: {message}',
+}
