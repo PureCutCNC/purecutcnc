@@ -15,8 +15,9 @@
  */
 
 import type { SketchControlRef } from '../../store/types'
-import { getStockBounds, profileVertices, rectProfile } from '../../types/project'
-import type { BackdropImage, Clamp, GridSettings, Point, SketchProfile, Stock, Tab } from '../../types/project'
+import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
+import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, SketchProfile, Stock, Tab } from '../../types/project'
+import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
 import { hexToRgba } from './previewPrimitives'
@@ -216,6 +217,34 @@ export function drawSketchEditPreviewPoint(
   ctx.stroke()
 }
 
+/**
+ * Compute the union bounding box of all resolved feature world-space profiles.
+ * Returns `null` when there are no features whose bounds should affect the grid.
+ * Skips invisible features.
+ */
+export function getFeaturesWorldBounds(
+  features: ResolvedSketchFeature[],
+): Bounds2D | null {
+  let bounds: Bounds2D | null = null
+
+  for (const feature of features) {
+    if (!feature.visible) continue
+
+    const profileBounds = getProfileBounds(feature.sketch.profile)
+
+    if (!bounds) {
+      bounds = { ...profileBounds }
+    } else {
+      if (profileBounds.minX < bounds.minX) bounds.minX = profileBounds.minX
+      if (profileBounds.maxX > bounds.maxX) bounds.maxX = profileBounds.maxX
+      if (profileBounds.minY < bounds.minY) bounds.minY = profileBounds.minY
+      if (profileBounds.maxY > bounds.maxY) bounds.maxY = profileBounds.maxY
+    }
+  }
+
+  return bounds
+}
+
 export function drawGrid(
   ctx: CanvasRenderingContext2D,
   vt: ViewTransform,
@@ -224,13 +253,26 @@ export function drawGrid(
   stock: Stock,
   grid: GridSettings,
   palette: CanvasThemePalette,
+  featureWorldBounds?: Bounds2D | null,
 ): void {
   if (!grid.visible) return
 
   const bounds = getStockBounds(stock)
   const centerX = bounds.minX + (bounds.maxX - bounds.minX) / 2
   const centerY = bounds.minY + (bounds.maxY - bounds.minY) / 2
-  const halfExtent = Math.max(grid.extent / 2, 10)
+  const defaultHalfExtent = Math.max(grid.extent / 2, 10)
+  let halfExtent = defaultHalfExtent
+
+  // Dynamically extend the grid to cover feature geometry on all sides.
+  if (featureWorldBounds) {
+    const toLeft = Math.abs(featureWorldBounds.minX - centerX)
+    const toRight = Math.abs(featureWorldBounds.maxX - centerX)
+    const toTop = Math.abs(featureWorldBounds.minY - centerY)
+    const toBottom = Math.abs(featureWorldBounds.maxY - centerY)
+    const neededReach = Math.max(toLeft, toRight, toTop, toBottom)
+    const padding = grid.majorSpacing
+    halfExtent = Math.max(defaultHalfExtent, neededReach + padding)
+  }
   const minX = centerX - halfExtent
   const maxX = centerX + halfExtent
   const minY = centerY - halfExtent

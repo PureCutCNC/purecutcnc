@@ -120,6 +120,7 @@ import {
   drawSketchEditPreviewPoint,
   drawStockOutline,
   drawTabFootprint,
+  getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
 import { generateTextShapes } from '../../text'
@@ -899,7 +900,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     ctx.fillStyle = canvasPalette.background
     ctx.fillRect(0, 0, width, height)
 
-    drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette)
+    drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
 
     if (project.backdrop?.visible && backdropImage) {
       drawBackdropImage(
