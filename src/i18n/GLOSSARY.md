@@ -23,7 +23,7 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
 | engrave | gravure | |
 | rough / roughing | ébauche | |
 | finish / finishing | finition | |
-| climb / conventional milling | en avalant / conventionnel | |
+| climb / conventional milling | en avalant / en opposition | |
 | feed / plunge feed | avance / avance de plongée | |
 | stepdown / stepover | profondeur de passe / recouvrement | |
 | stock to leave | surépaisseur | Radiale or axiale as applicable |

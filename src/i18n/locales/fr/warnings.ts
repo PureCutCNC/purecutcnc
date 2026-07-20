@@ -100,7 +100,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.drillNoTargets': 'L’opération de perçage ne cible aucune entité',
   'warnings.drillWrongKind': 'Seules les opérations de perçage peuvent être résolues par le générateur de perçage',
   'warnings.drillNoValidCircles': 'Aucune entité circulaire valide n’a été trouvée pour cette opération de perçage',
-  'warnings.drillPeckDepthPositive': 'La profondeur de débourrage doit être supérieure à zéro pour le perçage par débourrage/casse-copeaux ; retour à une seule plongée',
+  'warnings.drillPeckDepthPositive': 'La profondeur de débourrage doit être supérieure à zéro pour le perçage par débourrage/brise-copeaux ; retour à une seule plongée',
   'warnings.drillNotDrillBit': 'L’outil sélectionné n’est pas un foret — les cycles de perçage exigent généralement un foret',
   'warnings.drillTargetsNotCircles': 'Certaines entités cibles ne sont pas des cercles et ont été ignorées',
   'warnings.carveDepthClamped': 'La profondeur de gravure de {name} dépasse le bas du brut ; limitée à Z 0',
