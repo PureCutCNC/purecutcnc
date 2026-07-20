@@ -60,6 +60,7 @@ function DraftTextInput({ value, disabled = false, onCommit }: DraftTextInputPro
 
   return (
     <input
+      key={disabled ? value : undefined}
       type="text"
       defaultValue={value}
       disabled={disabled}

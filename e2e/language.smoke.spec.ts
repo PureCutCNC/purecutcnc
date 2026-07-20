@@ -156,16 +156,28 @@ test('updates selected feature properties when the interface language changes', 
   await ui.language.trigger(app.page).click()
   await ui.language.option(app.page, '简体中文').click()
 
+  const disabledTextInputs = ui.properties.panel(app.page).locator('input[type="text"]:disabled')
+  await expect(disabledTextInputs).toHaveCount(2)
+  await expect(disabledTextInputs.nth(0)).toHaveValue('2 个特征')
+  await expect(disabledTextInputs.nth(1)).toHaveValue('多选时禁用')
   await expect(ui.properties.panel(app.page).getByPlaceholder('混合值')).toHaveCount(2)
   await expect(ui.properties.exactText(app.page, '操作')).toBeVisible()
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'English').click()
+
+  await expect(disabledTextInputs.nth(0)).toHaveValue('2 Features')
+  await expect(disabledTextInputs.nth(1)).toHaveValue('Disabled for multi-select')
+  await expect(ui.properties.panel(app.page).getByPlaceholder('Mixed values')).toHaveCount(2)
+  await expect(ui.properties.exactText(app.page, 'Operation')).toBeVisible()
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
   await ui.tree.rowByName(app.page, 'Imported Model').click()
-  await ui.properties.panel(app.page).getByRole('button', { name: '形状', exact: true }).click()
-  await expect(ui.properties.exactText(app.page, '模型')).toBeVisible()
+  await ui.properties.panel(app.page).getByRole('button', { name: 'Shape', exact: true }).click()
+  await expect(ui.properties.exactText(app.page, 'Model')).toBeVisible()
   await expect(ui.properties.panel(app.page).locator('.properties-locked-field')).toHaveAttribute(
     'title',
-    '模型特征是导入的 3D 对象，无法更改操作类型',
+    'Model features are imported 3D objects and cannot change operation type',
   )
 })
 
