@@ -136,8 +136,10 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   let current = ''
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth || current.length === 0) {
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
       current = candidate
+    } else if (current.length === 0) {
+      lines.push(...breakWord(word, font, size, maxWidth))
     } else {
       lines.push(current)
       current = word
@@ -157,6 +159,29 @@ function truncateToWidth(text: string, font: PDFFont, size: number, maxWidth: nu
     truncated = truncated.slice(0, -1)
   }
   return `${truncated}${ellipsis}`
+}
+
+function breakWord(word: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const lines: string[] = []
+  let start = 0
+  while (start < word.length) {
+    let lo = start + 1
+    let hi = word.length
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2)
+      if (font.widthOfTextAtSize(word.slice(start, mid), size) <= maxWidth) {
+        lo = mid
+      } else {
+        hi = mid - 1
+      }
+    }
+    if (lo <= start) {
+      lo = start + 1
+    }
+    lines.push(word.slice(start, lo))
+    start = lo
+  }
+  return lines
 }
 
 function ensureSpace(state: DrawState, required: number): void {

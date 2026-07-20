@@ -287,10 +287,69 @@ function testFeedTimeUsesScaledSlotFeed(): void {
   )
 }
 
+function testGermanLabelWrapping(): void {
+  console.log('Testing German booklet label wrapping...')
+  const { project, operation, toolpath } = fixture()
+  setActiveLocale('de')
+  try {
+    // A pocket operation with machiningOrder produces the longest single-word
+    // label in German: "Bearbeitungsreihenfolge" (24 chars, ~96 pt at 9 pt
+    // bold). This must not overflow the 82 pt ROW_LABEL_WIDTH.
+    const report = buildOperationBookletReport({
+      project,
+      operation: {
+        ...operation,
+        kind: 'pocket',
+        machiningOrder: 'feature_first',
+      },
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+
+    const row = report.settingRows.find(
+      (r) => r.label === translate('booklet.label.machiningOrder'),
+    )
+    assert(row !== undefined, 'machining order row should exist for pocket operation')
+    assert(
+      row!.value === translate('booklet.machiningOrder.featureFirst'),
+      'machining order value should be localized',
+    )
+  } finally {
+    resetI18nStoreForTests()
+  }
+}
+
+async function testGermanPdfSmoke(): Promise<void> {
+  console.log('Testing German booklet PDF smoke output...')
+  const { project, operation, toolpath } = fixture()
+  setActiveLocale('de')
+  try {
+    const pdfBytes = await createOperationBookletPdf({
+      project,
+      operation: {
+        ...operation,
+        kind: 'pocket',
+        machiningOrder: 'feature_first',
+        roundOutsideCorners: true,
+      },
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+    assert(pdfBytes.byteLength > 500, `expected non-empty PDF, got ${pdfBytes.byteLength} bytes`)
+    assert(new TextDecoder().decode(pdfBytes.slice(0, 5)) === '%PDF-', 'expected PDF header')
+  } finally {
+    resetI18nStoreForTests()
+  }
+}
+
 testReportContent()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
 testLocalizedReportContent()
+testGermanLabelWrapping()
 await testPdfSmoke()
+await testGermanPdfSmoke()
 await testPdfUnicodeFontRetriesAndUsesBold()
 console.log('operation booklet tests passed')
