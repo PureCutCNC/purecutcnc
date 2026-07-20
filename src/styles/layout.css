@@ -4313,6 +4313,7 @@
 }
 
 .empty-state-card {
+  position: relative;
   width: min(520px, 100%);
   max-height: 100%;
   overflow-y: auto;
@@ -4322,6 +4323,12 @@
   background: var(--surface-popover);
   box-shadow: 0 18px 48px var(--shadow-strong);
   box-sizing: border-box;
+}
+
+.empty-state-card__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
 }
 
 .empty-state-card__title {

@@ -45,6 +45,7 @@ export function useEmptyStateEngagement({
   emptyStateEngaged: boolean
   onDraw: () => void
   onImport: () => void
+  onDismiss: () => void
   frameOpenedProject: () => void
 } {
   // The empty-state overlay is a one-time nudge per project. Once the user has
@@ -62,6 +63,10 @@ export function useEmptyStateEngagement({
   function handleEmptyStateImport() {
     setEmptyStateEngaged(true)
     setShowImportDialog(true)
+  }
+
+  function handleDismiss() {
+    setEmptyStateEngaged(true)
   }
 
   function frameOpenedProject() {
@@ -94,6 +99,7 @@ export function useEmptyStateEngagement({
     emptyStateEngaged,
     onDraw: handleEmptyStateDraw,
     onImport: handleEmptyStateImport,
+    onDismiss: handleDismiss,
     frameOpenedProject,
   }
 }
