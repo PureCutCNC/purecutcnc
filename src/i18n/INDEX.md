@@ -18,8 +18,11 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
 - `locales/zh-CN/` — Simplified Chinese, mirroring the `en/` module layout;
   each module is typed as a complete record of its English counterpart so
   extraction and translation land together. Terminology in `GLOSSARY.md`.
-- `GLOSSARY.md` — en ↔ zh-CN CNC terminology and style reference for
-  translators and future locales.
+- `locales/de/` — German (Deutsch), same module layout and complete-record
+  typing as zh-CN; German inflects, so `.one`/`.other` plural variants carry
+  distinct strings. Terminology in `GLOSSARY.md`.
+- `GLOSSARY.md` — en ↔ zh-CN and en ↔ de CNC terminology and style reference
+  for translators and future locales.
 - `registry.ts` — built-in locale metadata, custom language-pack schema
   validation (including the BCP-47 tag predicate), base+overrides
   resolution, duplication, translation progress, placeholder-issue

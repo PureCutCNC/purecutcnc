@@ -105,7 +105,7 @@ never changes `.camj` data or machine-facing output.
   English is the canonical catalog — `MessageKey` derives from it, every
   other locale resolves against it per key, so a missing translation renders
   English, never a blank. One module per UI area (`shell.ts`, `sketch.ts`,
-  `cam.ts`, …) merged in `locales/<locale>/index.ts`; zh-CN modules are
+  `cam.ts`, …) merged in `locales/<locale>/index.ts`; zh-CN and de modules are
   typed as complete records of their English counterparts, and tests enforce
   completeness and placeholder parity.
 - **Custom language packs** (`src/i18n/registry.ts`,
@@ -131,7 +131,7 @@ never changes `.camj` data or machine-facing output.
   messages, registry-data display names (built-in theme names, theme
   token/group/contrast-check labels), and text drawn into the 2D canvas.
 - **Rules for new UI**: every new user-facing string gets a key in its area
-  module with zh-CN landing in the same change; no per-file translation
+  module with zh-CN and de landing in the same change; no per-file translation
   wrappers; no hardcoded locale checks (`localeId === 'zh-CN' ? … : …` is
   forbidden — missing variants get their own keys); memoized translated
   content includes `languageTag` in its dependency array; count-bearing

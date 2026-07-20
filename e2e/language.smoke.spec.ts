@@ -126,6 +126,38 @@ test('switches to Simplified Chinese, persists, and never touches the project', 
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('en')
 })
 
+test('switches to German, persists across reload, and never touches the project', async ({ app, ui }) => {
+  const before = await getProject(app.page)
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Language: English')
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'Deutsch').click()
+
+  // Document language and visible toolbar copy follow the locale.
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'de')
+  await expect(app.page.getByRole('button', { name: 'Neues Projekt' })).toBeVisible()
+  await expect(app.page.getByRole('button', { name: 'Am Raster fangen' })).toBeVisible()
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Sprache: Deutsch')
+
+  // Explicit choice is persisted as the bare locale id; project is untouched.
+  expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('de')
+  expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
+
+  // Survives a reload.
+  await app.page.reload()
+  await app.page.waitForSelector('canvas', { timeout: 15000 })
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'de')
+  await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Sprache: Deutsch')
+
+  // And switches back.
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'English').click()
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(app.page.getByRole('button', { name: 'New project' })).toBeVisible()
+  expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('en')
+})
+
 test('keeps appearance menu copy translated and the theme selection intact', async ({ app, ui }) => {
   await ui.language.trigger(app.page).click()
   await ui.language.option(app.page, '简体中文').click()
