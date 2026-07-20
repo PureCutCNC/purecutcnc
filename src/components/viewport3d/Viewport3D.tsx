@@ -25,6 +25,7 @@ import { modelFeatures } from '../../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
+import { getFeaturesWorldBounds } from '../canvas/scenePrimitives'
 import { getFeatureGeometryProfiles } from '../../text'
 import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
@@ -852,7 +853,22 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     syncGridVisibility()
     if (!project.grid.visible) return
 
-    const extent = Math.max(project.grid.extent, project.grid.minorSpacing)
+    const defaultExtent = Math.max(project.grid.extent, project.grid.minorSpacing)
+    let extent = defaultExtent
+
+    // Dynamically extend the grid to cover feature geometry on all sides.
+    const featureWorldBounds = getFeaturesWorldBounds(resolvedProjectFeatures(project))
+    if (featureWorldBounds) {
+      const toLeft = Math.abs(featureWorldBounds.minX - centerX)
+      const toRight = Math.abs(featureWorldBounds.maxX - centerX)
+      const toTop = Math.abs(featureWorldBounds.minY - centerZ)
+      const toBottom = Math.abs(featureWorldBounds.maxY - centerZ)
+      const neededReach = Math.max(toLeft, toRight, toTop, toBottom)
+      const padding = project.grid.majorSpacing
+      extent = Math.max(defaultExtent, (neededReach + padding) * 2)
+    }
+
+    // THREE.GridHelper expects total extent, not half-extent.
     const minorDivisions = Math.max(1, Math.round(extent / project.grid.minorSpacing))
     const majorDivisions = Math.max(1, Math.round(extent / project.grid.majorSpacing))
 
@@ -865,7 +881,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
     gridGroup.add(minorGrid)
     gridGroup.add(majorGrid)
-  }, [disposeObjectMaterial, project.grid.extent, project.grid.majorSpacing, project.grid.minorSpacing, project.grid.visible, project.stock, syncGridVisibility])
+  }, [disposeObjectMaterial, project, syncGridVisibility])
 
   useEffect(() => {
     rendererRef.current?.setClearColor(threePalette.background, 1)
