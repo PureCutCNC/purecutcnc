@@ -15,7 +15,8 @@
  */
 
 import { test, expect } from './fixtures'
-import { getProject } from './helpers'
+import { clickMenuItem, getProject, openRowContextMenu, seedProject } from './helpers'
+import { buildLinkedProjectJson } from './featureReferences.helpers'
 
 const STORAGE_KEY = 'purecutcnc.i18n.locale'
 
@@ -23,6 +24,74 @@ function withoutModified(snapshot: Record<string, unknown>): Record<string, unkn
   const meta = snapshot.meta as Record<string, unknown>
   const { modified: _modified, ...stableMeta } = meta
   return { ...snapshot, meta: stableMeta }
+}
+
+interface PropertiesFixtureFeature {
+  id: string
+  name: string
+  definitionId: string
+  transform: { a: number; b: number; c: number; d: number; e: number; f: number }
+  constraints: unknown[]
+  folderId: string | null
+  z_top: number
+  z_bottom: number
+  visible: boolean
+  locked: boolean
+}
+
+interface PropertiesFixtureProject {
+  featureDefinitions: Record<string, unknown>
+  features: PropertiesFixtureFeature[]
+}
+
+function buildPropertiesLocalizationProject(): string {
+  const project = JSON.parse(buildLinkedProjectJson()) as PropertiesFixtureProject
+  const linkedB = project.features.find((feature) => feature.id === 'f-linked-b')
+  if (!linkedB) throw new Error('linked fixture must include f-linked-b')
+  linkedB.z_top = 4
+
+  project.featureDefinitions['def-imported-model'] = {
+    id: 'def-imported-model',
+    kind: 'stl',
+    profile: {
+      start: { x: 0, y: 0 },
+      segments: [
+        { type: 'line', to: { x: 40, y: 0 } },
+        { type: 'line', to: { x: 40, y: 20 } },
+        { type: 'line', to: { x: 0, y: 20 } },
+        { type: 'line', to: { x: 0, y: 0 } },
+      ],
+      closed: true,
+    },
+    dimensions: [],
+    text: null,
+    stl: {
+      format: 'stl',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 40, y: 0 },
+        { x: 40, y: 20 },
+        { x: 0, y: 20 },
+      ]],
+    },
+    operation: 'model',
+  }
+  project.features.push({
+    id: 'f-imported-model',
+    name: 'Imported Model',
+    definitionId: 'def-imported-model',
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [],
+    folderId: null,
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  })
+
+  return JSON.stringify(project)
 }
 
 test('switches to Simplified Chinese, persists, and never touches the project', async ({ app, ui }) => {
@@ -102,6 +171,46 @@ test('keeps appearance menu copy translated and the theme selection intact', asy
   await ui.language.trigger(app.page).click()
   await ui.language.option(app.page, 'English').click()
   await expect(app.page.locator('html')).toHaveAttribute('data-theme', 'light')
+})
+
+test('updates selected feature properties when the interface language changes', async ({ app, ui }) => {
+  await seedProject(app.page, buildPropertiesLocalizationProject())
+  const before = await getProject(app.page)
+
+  const linkedA = ui.tree.rowByName(app.page, 'Linked A')
+  await linkedA.click()
+  await expect(linkedA).toHaveClass(/tree-row--selected/)
+  const menu = await openRowContextMenu(app.page, linkedA)
+  await clickMenuItem(menu, 'Select Linked Instances')
+  await expect(ui.properties.panel(app.page).getByPlaceholder('Mixed values')).toHaveCount(2)
+  await expect(ui.properties.exactText(app.page, 'Operation')).toBeVisible()
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, '简体中文').click()
+
+  const disabledTextInputs = ui.properties.panel(app.page).locator('input[type="text"]:disabled')
+  await expect(disabledTextInputs).toHaveCount(2)
+  await expect(disabledTextInputs.nth(0)).toHaveValue('2 个特征')
+  await expect(disabledTextInputs.nth(1)).toHaveValue('多选时禁用')
+  await expect(ui.properties.panel(app.page).getByPlaceholder('混合值')).toHaveCount(2)
+  await expect(ui.properties.exactText(app.page, '操作')).toBeVisible()
+
+  await ui.language.trigger(app.page).click()
+  await ui.language.option(app.page, 'English').click()
+
+  await expect(disabledTextInputs.nth(0)).toHaveValue('2 Features')
+  await expect(disabledTextInputs.nth(1)).toHaveValue('Disabled for multi-select')
+  await expect(ui.properties.panel(app.page).getByPlaceholder('Mixed values')).toHaveCount(2)
+  await expect(ui.properties.exactText(app.page, 'Operation')).toBeVisible()
+  expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
+
+  await ui.tree.rowByName(app.page, 'Imported Model').click()
+  await ui.properties.panel(app.page).getByRole('button', { name: 'Shape', exact: true }).click()
+  await expect(ui.properties.exactText(app.page, 'Model')).toBeVisible()
+  await expect(ui.properties.panel(app.page).locator('.properties-locked-field')).toHaveAttribute(
+    'title',
+    'Model features are imported 3D objects and cannot change operation type',
+  )
 })
 
 test.describe('tablet language selector', () => {
