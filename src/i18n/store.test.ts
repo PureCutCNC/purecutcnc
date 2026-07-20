@@ -124,6 +124,19 @@ assert(
     'Restoperation mit 2 Bereichen erstellt; wählen Sie ein kleineres Werkzeug',
   'German rest-op plural uses Bereichen, not the English-suffix Bereichs',
 )
+// Spanish inflects too: 2 regions must read "regiones", not the "regións" the
+// old interpolated English {plural} 's' suffix would have produced.
+setActiveLocale('es')
+assert(
+  translatePlural(1, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Se creó una operación de mecanizado de restos con 1 región; elija una herramienta más pequeña',
+  'Spanish rest-op singular uses región',
+)
+assert(
+  translatePlural(2, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Se creó una operación de mecanizado de restos con 2 regiones; elija una herramienta más pequeña',
+  'Spanish rest-op plural uses regiones, not the English-suffix regións',
+)
 
 // Custom pack CRUD: save re-resolves an active pack, delete falls back to base.
 resetI18nStoreForTests()
