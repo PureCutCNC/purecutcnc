@@ -89,13 +89,17 @@ export function readStoredLocaleId(storage: Pick<Storage, 'getItem'> | null): st
  * script or a Traditional-default region (`Hant`, TW, HK, MO) — issue #311's
  * contract is "prefer zh-CN when the locale resolves to zh-CN", and serving
  * Simplified text to explicit Traditional readers would be wrong more often
- * than helpful. Unmatched tags keep scanning; the final fallback is English.
+ * than helpful. German matches any `de` tag (de, de-DE, de-AT, de-CH) since
+ * there is no comparable script split — issue #320's contract is "prefer
+ * German when the locale resolves to German". Unmatched tags keep scanning;
+ * the final fallback is English.
  */
 export function detectLocaleIdFromNavigator(languages: readonly string[]): BuiltinLocaleId {
   for (const tag of languages) {
     const lower = tag.toLowerCase()
     const subtags = lower.split('-')
     if (subtags[0] === 'en') return 'en'
+    if (subtags[0] === 'de') return 'de'
     if (subtags[0] === 'fr') return 'fr'
     if (subtags[0] === 'zh') {
       const traditional = subtags.includes('hant')

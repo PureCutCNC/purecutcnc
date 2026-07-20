@@ -297,7 +297,8 @@ export const camEn = {
   'cam.booklet.failed': 'Failed to export booklet',
 
   // ── Rest machining ──
-  'cam.restOp.created': 'Created rest operation with {count} region{plural}; choose a smaller tool',
+  'cam.restOp.created.one': 'Created rest operation with {count} region; choose a smaller tool',
+  'cam.restOp.created.other': 'Created rest operation with {count} regions; choose a smaller tool',
   'cam.restOp.empty': 'No unreachable pocket areas found for this tool',
 
   // ── Library ──

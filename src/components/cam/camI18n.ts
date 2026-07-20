@@ -16,7 +16,7 @@
 
 import type { MessageParams } from '../../i18n/catalog'
 import type { camEn } from '../../i18n/locales/en/cam'
-import { translate } from '../../i18n/store'
+import { translate, translatePlural } from '../../i18n/store'
 
 /**
  * Typed translation helper scoped to the cam catalog module — a thin
@@ -28,3 +28,16 @@ import { translate } from '../../i18n/store'
  */
 export const camT = (key: keyof typeof camEn, params?: MessageParams): string =>
   translate(key, params)
+
+/**
+ * Plural-aware variant of `camT`: picks the `.one`/`.other` cam key for the
+ * active locale's rules. The full phrase is locale-owned (German inflects, e.g.
+ * "1 Bereich" / "2 Bereichen"), never an interpolated English `{plural}`
+ * suffix. `{count}` is injected into interpolation automatically.
+ */
+export const camTPlural = (
+  count: number,
+  oneKey: keyof typeof camEn,
+  otherKey: keyof typeof camEn,
+  params?: MessageParams,
+): string => translatePlural(count, oneKey, otherKey, params)
