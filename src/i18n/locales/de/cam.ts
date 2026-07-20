@@ -293,7 +293,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.booklet.failed': 'Broschüre konnte nicht exportiert werden',
 
   // ── Rest machining ──
-  'cam.restOp.created': 'Restoperation mit {count} Bereich{plural} erstellt; wählen Sie ein kleineres Werkzeug',
+  'cam.restOp.created.one': 'Restoperation mit {count} Bereich erstellt; wählen Sie ein kleineres Werkzeug',
+  'cam.restOp.created.other': 'Restoperation mit {count} Bereichen erstellt; wählen Sie ein kleineres Werkzeug',
   'cam.restOp.empty': 'Keine unerreichbaren Taschenbereiche für dieses Werkzeug gefunden',
 
   // ── Library ──

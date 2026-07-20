@@ -234,6 +234,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.multi.editSketchDisabled': 'Skizze bearbeiten ist nur für ein einzelnes Feature verfügbar',
   'featureTree.properties.multi.openProfiles': 'Offene Profile',
   'featureTree.properties.multi.containsModel': 'Enthält Modell-Features',
+  'featureTree.properties.multi.modelLockedTooltip': 'Modell-Einträge können hier den Operationstyp nicht ändern',
 
   // ── Properties: select values ──
   'featureTree.properties.select.mixedFolders': 'Gemischte Ordner',
@@ -249,6 +250,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.operation.region': 'Bereichsmaske',
   'featureTree.properties.operation.construction': 'Konstruktion',
   'featureTree.properties.operation.model': 'Modell',
+  'featureTree.properties.operation.modelLockedTooltip': 'Modell-Features sind importierte 3D-Objekte und können den Operationstyp nicht ändern',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Maskenmodus',
@@ -291,6 +293,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.constraints.tooltip.featureCenter': 'Abstand zum Feature-Zentrum',
   'featureTree.properties.constraints.tooltip.distanceVertex': 'Abstand zum Scheitelpunkt',
   'featureTree.properties.constraints.tooltip.invalid': 'Ungültig',
+  'featureTree.properties.constraints.world': 'Welt',
 
   // ── Properties: empty state ──
   'featureTree.properties.empty': 'Wählen Sie Projekt, Raster, Rohteil oder ein Feature im Baum, um dessen Eigenschaften zu bearbeiten.',

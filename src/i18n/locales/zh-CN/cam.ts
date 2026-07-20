@@ -296,7 +296,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.booklet.failed': '手册导出失败',
 
   // ── Rest machining ──
-  'cam.restOp.created': '已创建残料操作，包含 {count} 个区域{plural}；请选择较小的刀具',
+  'cam.restOp.created.one': '已创建残料操作，包含 {count} 个区域；请选择较小的刀具',
+  'cam.restOp.created.other': '已创建残料操作，包含 {count} 个区域；请选择较小的刀具',
   'cam.restOp.empty': '未找到此刀具无法到达的挖槽区域',
 
   // ── Library ──
