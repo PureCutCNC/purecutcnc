@@ -4329,6 +4329,20 @@
   position: absolute;
   top: 12px;
   right: 12px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.empty-state-card__close:hover {
+  background: var(--surface-sheen-mid);
+  color: var(--text);
 }
 
 .empty-state-card__title {

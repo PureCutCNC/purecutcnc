@@ -36,7 +36,7 @@ export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened, onDismiss
   return (
     <div className="empty-state-overlay">
       <div className="empty-state-card">
-        <button className="dialog-close empty-state-card__close" onClick={onDismiss} aria-label={t('dialogs.common.close')} type="button">✕</button>
+        <button className="empty-state-card__close" onClick={onDismiss} aria-label={t('dialogs.common.close')} type="button">✕</button>
         <h2 className="empty-state-card__title">{t('viewport.empty.title')}</h2>
         <p className="empty-state-card__subtitle">{t('viewport.empty.subtitle')}</p>
 
