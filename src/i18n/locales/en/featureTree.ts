@@ -239,6 +239,7 @@ export const featureTreeEn = {
   'featureTree.properties.multi.editSketchDisabled': 'Edit Sketch is only available for a single feature',
   'featureTree.properties.multi.openProfiles': 'Open profiles',
   'featureTree.properties.multi.containsModel': 'Contains model features',
+  'featureTree.properties.multi.modelLockedTooltip': 'Model entries cannot change operation type here',
 
   // ── Properties: select values ──
   'featureTree.properties.select.mixedFolders': 'Mixed folders',
@@ -254,6 +255,7 @@ export const featureTreeEn = {
   'featureTree.properties.operation.region': 'Region mask',
   'featureTree.properties.operation.construction': 'Construction',
   'featureTree.properties.operation.model': 'Model',
+  'featureTree.properties.operation.modelLockedTooltip': 'Model features are imported 3D objects and cannot change operation type',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Mask mode',
@@ -296,6 +298,7 @@ export const featureTreeEn = {
   'featureTree.properties.constraints.tooltip.featureCenter': 'Distance to feature center',
   'featureTree.properties.constraints.tooltip.distanceVertex': 'Distance to vertex',
   'featureTree.properties.constraints.tooltip.invalid': 'Invalid',
+  'featureTree.properties.constraints.world': 'World',
 
   // ── Properties: empty state ──
   'featureTree.properties.empty': 'Select Project, Grid, Stock, or a feature in the tree to edit its properties.',
