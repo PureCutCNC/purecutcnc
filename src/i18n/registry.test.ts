@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { placeholdersMatch } from './catalog'
+import { interpolate, placeholdersMatch, pluralVariant } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
 import { es } from './locales/es'
 import { zhCN } from './locales/zh-CN'
@@ -194,5 +194,42 @@ assert(
     .error !== undefined,
   'wrong envelope version rejects',
 )
+
+// ---------------------------------------------------------------------------
+// Spanish safety-string and plural guards (PR #327 translation review)
+// ---------------------------------------------------------------------------
+
+// Clamp-crossing warnings are safety-critical. Regression guard for the
+// machine-translated versions that duplicated the clamp noun and mangled the
+// {count}/{moveKind} placeholders: substitution must be clean, the move-kind
+// word must compose grammatically, and the clamp must be named exactly once.
+const clampOne = interpolate(es['warnings.clampCrossedOne'], {
+  name: 'A',
+  count: 1,
+  moveKind: es['warnings.moveKind.cut'],
+  minZ: 0,
+  requiredZ: 5,
+})
+assert(clampOne.includes('movimiento de corte'), 'es clamp warning composes the singular move-kind')
+assert(!clampOne.includes('{'), 'es clamp warning leaves no unresolved placeholders')
+assert(clampOne.split('mordaza').length === 2, 'es clamp warning names the clamp exactly once')
+
+const clampMany = interpolate(es['warnings.clampCrossedMany'], {
+  name: 'A',
+  count: 3,
+  moveKind: es['warnings.moveKind.rapid'],
+  minZ: 0,
+  requiredZ: 5,
+})
+assert(clampMany.includes('3 movimientos de avance rápido'), 'es clamp warning composes the plural move-kind')
+
+// Rest-machining count uses the .one/.other plural contract so Spanish can
+// switch región/regiones, instead of the broken "región{plural}" suffix.
+assert(pluralVariant('es', 1) === 'one' && pluralVariant('es', 2) === 'other', 'Spanish plural buckets resolve')
+const restOne = interpolate(es['cam.restOp.created.one'], { count: 1 })
+const restOther = interpolate(es['cam.restOp.created.other'], { count: 2 })
+assert(/\b1 región\b/.test(restOne), 'es rest-op singular reads "1 región"')
+assert(/\b2 regiones\b/.test(restOther), 'es rest-op plural reads "2 regiones"')
+assert(!restOne.includes('{plural}') && !restOther.includes('{plural}'), 'no legacy {plural} suffix remains')
 
 console.log('i18n registry tests passed')
