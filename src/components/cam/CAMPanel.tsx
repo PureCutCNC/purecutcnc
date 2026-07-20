@@ -52,8 +52,7 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
-import { camT } from './camI18n'
-import { translatePlural } from '../../i18n/store'
+import { camT, camTPlural } from './camI18n'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -930,7 +929,7 @@ export function CAMPanel({
 
     const result = createRestOperation(selectedOperation.id)
     const text = result.operationId
-      ? translatePlural(result.regionIds.length, 'cam.restOp.created.one', 'cam.restOp.created.other')
+      ? camTPlural(result.regionIds.length, 'cam.restOp.created.one', 'cam.restOp.created.other')
       : (result.warnings[0] ? toolpathWarningText(result.warnings[0]) : camT('cam.restOp.empty'))
     setOperationActionMessage({ operationId: result.operationId ?? selectedOperation.id, text })
     if (result.operationId) {
