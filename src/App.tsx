@@ -199,6 +199,7 @@ function App() {
     emptyStateEngaged,
     onDraw: handleEmptyStateDraw,
     onImport: handleEmptyStateImport,
+    onDismiss: handleEmptyStateDismiss,
     frameOpenedProject,
   } = useEmptyStateEngagement({
     projectKey,
@@ -400,6 +401,7 @@ function App() {
                 onDraw={handleEmptyStateDraw}
                 onImport={handleEmptyStateImport}
                 onExampleOpened={frameOpenedProject}
+                onDismiss={handleEmptyStateDismiss}
               />
             ) : null}
           </>
