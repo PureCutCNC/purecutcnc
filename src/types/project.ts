@@ -877,7 +877,7 @@ export function defaultStock(
     profile: rectProfile(0, 0, width, height),
     thickness: stockThickness,
     material: 'aluminum_6061',
-    color: '#b9a83c',
+    color: '#b9a83c', // theme-exempt: default stock colour is project data, not UI chrome
     visible: true,
     origin: { x: 0, y: 0 },
   }
@@ -898,7 +898,7 @@ export function stockFromFeature(feature: SketchFeature): Stock {
     profile,
     thickness: zTop,
     material: 'aluminum_6061',
-    color: '#b9a83c',
+    color: '#b9a83c', // theme-exempt: default stock colour is project data, not UI chrome
     visible: true,
     origin: { x: 0, y: 0 },
     sourceFeatureId: feature.id,

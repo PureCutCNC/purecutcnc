@@ -71,7 +71,7 @@ export function IconGallery({ iconIds }: GalleryProps) {
           style={{
             padding: '6px 10px',
             fontSize: 14,
-            border: '1px solid #ccc',
+            border: '1px solid #ccc', // theme-exempt: developer-only icon gallery
             borderRadius: 4,
             minWidth: 200,
           }}

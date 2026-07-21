@@ -47,7 +47,7 @@ export function canvasColors(): CanvasThemePalette {
 }
 
 /** Extract {r,g,b} from a hex or rgba() colour string. */
-function parseRgb(color: string): { r: number; g: number; b: number } {
+export function parseRgb(color: string): { r: number; g: number; b: number } {
   if (color.startsWith('#')) {
     const hex = color.replace('#', '')
     return {

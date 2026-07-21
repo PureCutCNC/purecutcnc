@@ -382,7 +382,7 @@ export function drawSnapIndicator(
     const to = worldToCanvas(resolvedSnap.guide.to, vt)
     ctx.save()
     ctx.setLineDash(resolvedSnap.mode === 'perpendicular' ? [4, 3] : [6, 4])
-    ctx.strokeStyle = resolvedSnap.mode === 'perpendicular' ? 'rgba(170, 221, 255, 0.9)' : hexToRgba(canvasColors().draft, 0.72)
+    ctx.strokeStyle = resolvedSnap.mode === 'perpendicular' ? canvasColors().snapPerpendicular : hexToRgba(canvasColors().draft, 0.72)
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.moveTo(from.cx, from.cy)

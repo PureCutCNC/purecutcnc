@@ -189,7 +189,7 @@ export function profileToPathD(profile: SketchProfile): string {
 
 function hexToRgba(hex: string, alpha: number): string {
   const match = hex.trim().match(/^#?([0-9a-f]{6})$/i)
-  if (!match) return `rgba(0, 0, 0, ${alpha})`
+  if (!match) return `rgba(0, 0, 0, ${alpha})` // theme-exempt: fallback for a malformed colour string
   const value = parseInt(match[1], 16)
   const r = (value >> 16) & 0xff
   const g = (value >> 8) & 0xff

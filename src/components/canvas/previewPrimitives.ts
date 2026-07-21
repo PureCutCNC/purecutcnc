@@ -35,7 +35,7 @@ import { pointsEqual } from './hitTest'
 import { appendProfilePath, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
-import { canvasColors, canvasRgba } from './canvasPalette'
+import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
 
 export function featureUsesSketchFill(operation: SketchFeature['operation']): boolean {
   return operation !== 'line' && operation !== 'construction'
@@ -183,9 +183,11 @@ export function drawFeature(
 
   if (feature.operation === 'subtract' && !selected && !hovered && !editing) {
     // Base RGB mirrors featureCutFill (78, 126, 170); vary G/B by depth.
-    const g = Math.round(126 - 45 * depthWeight)
-    const b = Math.round(170 + 35 * depthWeight)
-    fill = `rgba(78, ${g}, ${b}, 0.44)`
+    // Deepen the cut fill with depth, shifted from the themed base colour.
+    const base = parseRgb(p.featureCutFill)
+    const g = Math.round(base.g - 45 * depthWeight)
+    const b = Math.round(base.b + 35 * depthWeight)
+    fill = `rgba(${base.r}, ${g}, ${b}, 0.44)`
   }
 
   const profiles = getFeatureGeometryProfiles(feature)
@@ -808,7 +810,7 @@ export function drawToolpath(
 
 export function hexToRgba(hex: string, alpha: number): string {
   const normalized = hex.replace('#', '')
-  if (normalized.length !== 6) return `rgba(136, 153, 170, ${alpha})`
+  if (normalized.length !== 6) return `rgba(136, 153, 170, ${alpha})` // theme-exempt: fallback for a malformed colour string
 
   const r = Number.parseInt(normalized.slice(0, 2), 16)
   const g = Number.parseInt(normalized.slice(2, 4), 16)
