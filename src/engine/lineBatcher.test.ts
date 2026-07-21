@@ -26,6 +26,9 @@ import {
   LINE_DEFAULT_COLOR,
   LINE_SUBTRACT_COLOR,
 } from './lineBatcher'
+import { THEME_PALETTES } from '../theme/palette'
+
+const threePalette = THEME_PALETTES.dark.three
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -91,7 +94,7 @@ function testActualGeometryHasNoConnector(): void {
   const project = makeProject()
   const first = makeLineFeature('first', [{ x: 0, y: 0 }, { x: 5, y: 0 }])
   const second = makeLineFeature('second', [{ x: 100, y: 100 }, { x: 105, y: 100 }])
-  const result = buildBatchedLines(project, [first, second])
+  const result = buildBatchedLines(project, [first, second], threePalette)
 
   assert(result.lines.length === 1, 'same-colour features share one draw object')
   assert(result.lines[0] instanceof LineSegments2, 'batch uses LineSegments2')
@@ -114,7 +117,7 @@ function testBaseColourBatches(): void {
     false,
     'subtract',
   )
-  const result = buildBatchedLines(project, [green, blue])
+  const result = buildBatchedLines(project, [green, blue], threePalette)
   assert(result.lines.length === 2, 'green and subtract-blue geometry use two bounded batches')
   assert(result.lines[0].material.color.getHex() === LINE_DEFAULT_COLOR, 'default batch remains green')
   assert(result.lines[1].material.color.getHex() === LINE_SUBTRACT_COLOR, 'subtract batch remains blue')
@@ -173,7 +176,7 @@ function test2980ContoursStayOneBatch(): void {
 function testDisposalOwnsGeometryAndMaterial(): void {
   const result = buildBatchedLines(makeProject(), [
     makeLineFeature('dispose', [{ x: 0, y: 0 }, { x: 1, y: 0 }]),
-  ])
+  ], threePalette)
   let geometryDisposed = false
   let materialDisposed = false
   result.lines[0].geometry.dispose = () => { geometryDisposed = true }

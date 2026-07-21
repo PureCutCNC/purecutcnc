@@ -129,6 +129,52 @@ export interface ThreeThemePalette {
   toolpathPlunge: number
   /** Fallback stock material when the project defines no stock colour. */
   stockDefault: number
+  /** Stock mesh material fallback (project has no stock colour). */
+  stockMeshFallback: number
+  /** Stock wireframe fallback (project has no stock colour). */
+  stockWireframeFallback: number
+  /** Feature mesh — default / neutral appearance. */
+  meshFeatureDefault: number
+  /** Feature mesh — selected highlight. */
+  meshFeatureSelected: number
+  /** Feature mesh — hovered highlight. */
+  meshFeatureHovered: number
+  /** Feature mesh — region walls. */
+  meshFeatureRegion: number
+  /** Feature mesh — subtract operation. */
+  meshFeatureSubtract: number
+  /** Feature mesh — add operation. */
+  meshFeatureAdd: number
+  /** Clamp fixture — default state. */
+  clampDefault: number
+  /** Clamp fixture — selected. */
+  clampSelected: number
+  /** Clamp fixture — colliding (with tool). */
+  clampColliding: number
+  /** Clamp fixture — colliding + selected. */
+  clampCollidingSelected: number
+  /** Tab fixture — default state. */
+  tabDefault: number
+  /** Tab fixture — selected. */
+  tabSelected: number
+  /** Machine-origin axis X (red). */
+  originAxisX: number
+  /** Machine-origin axis Y (green). */
+  originAxisY: number
+  /** Machine-origin axis Z (blue). */
+  originAxisZ: number
+  /** Machine-origin centre sphere. */
+  originCenter: number
+  /** Simulation tool cutter body. */
+  toolCutter: number
+  /** Simulation tool cutter emissive. */
+  toolCutterEmissive: number
+  /** Simulation tool shank. */
+  toolShank: number
+  /** Batched-line overlay — default / add features. */
+  lineDefault: number
+  /** Batched-line overlay — subtract features. */
+  lineSubtract: number
 }
 
 export interface ThemePalette {
@@ -228,6 +274,29 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolpathRapid: 0x78b8de,
       toolpathPlunge: 0xd583df,
       stockDefault: 0xb5beca,
+      stockMeshFallback: 0x8899aa,
+      stockWireframeFallback: 0xaabbcc,
+      meshFeatureDefault: 0xb7c2cf,
+      meshFeatureSelected: 0xffaa00,
+      meshFeatureHovered: 0x44aaff,
+      meshFeatureRegion: 0x9966cc,
+      meshFeatureSubtract: 0x3366cc,
+      meshFeatureAdd: 0x33aa66,
+      clampDefault: 0x6c89d1,
+      clampSelected: 0x9db9ff,
+      clampColliding: 0xd46b6b,
+      clampCollidingSelected: 0xff9c9c,
+      tabDefault: 0x9ccd67,
+      tabSelected: 0xc7ef94,
+      originAxisX: 0xe35b5b,
+      originAxisY: 0x63c07a,
+      originAxisZ: 0x5b90e3,
+      originCenter: 0xe6edf5,
+      toolCutter: 0xd9dde3,
+      toolCutterEmissive: 0x2a3443,
+      toolShank: 0x7d8591,
+      lineDefault: 0x33aa66,
+      lineSubtract: 0x3366cc,
     },
   },
   light: {
@@ -321,6 +390,29 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolpathRapid: 0x3884b8,
       toolpathPlunge: 0xa84ab6,
       stockDefault: 0xc2cad4,
+      stockMeshFallback: 0x7a8b9b,
+      stockWireframeFallback: 0x96a7b6,
+      meshFeatureDefault: 0x8899aa,
+      meshFeatureSelected: 0xd48900,
+      meshFeatureHovered: 0x2288dd,
+      meshFeatureRegion: 0x7b4fab,
+      meshFeatureSubtract: 0x224d99,
+      meshFeatureAdd: 0x22884d,
+      clampDefault: 0x4a67b0,
+      clampSelected: 0x5a7dd4,
+      clampColliding: 0xb05050,
+      clampCollidingSelected: 0xd47070,
+      tabDefault: 0x6fa33f,
+      tabSelected: 0x8cc44a,
+      originAxisX: 0xc53030,
+      originAxisY: 0x2f855a,
+      originAxisZ: 0x2b6cb0,
+      originCenter: 0x334155,
+      toolCutter: 0x8899a6,
+      toolCutterEmissive: 0x1a2433,
+      toolShank: 0x5a6470,
+      lineDefault: 0x22884d,
+      lineSubtract: 0x224d99,
     },
   },
 }

@@ -45,6 +45,9 @@ import {
   buildClampMesh,
   buildTabMesh,
 } from './csg'
+import { THEME_PALETTES } from '../theme/palette'
+
+const threePalette = THEME_PALETTES.dark.three
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -71,7 +74,7 @@ const clamp: Clamp = {
 }
 
 // A clamp built unhighlighted (as buildScene now builds it).
-const clampMesh = buildClampMesh(clamp)
+const clampMesh = buildClampMesh(clamp, false, false, threePalette)
 const clampMaterial = standardMaterial(clampMesh)
 const clampGeometry = clampMesh.geometry
 const unselectedColor = clampMaterial.color.getHexString()
@@ -79,7 +82,7 @@ const unselectedOpacity = clampMaterial.opacity
 
 // Selecting the clamp must NOT allocate a new mesh/material/geometry — it just
 // recolors the existing material. That is what makes it cheaper than a rebuild.
-applyClampHighlight(clampMesh, true, false)
+applyClampHighlight(clampMesh, true, false, threePalette)
 assert(clampMesh.material === clampMaterial, 'clamp highlight reuses the same material instance (no rebuild)')
 assert(clampMesh.geometry === clampGeometry, 'clamp highlight leaves geometry untouched (no rebuild)')
 const selectedColor = clampMaterial.color.getHexString()
@@ -87,7 +90,7 @@ assert(selectedColor !== unselectedColor, 'selecting a clamp changes its color i
 assert(clampMaterial.opacity !== unselectedOpacity, 'selecting a clamp changes its opacity in place')
 
 // Collision is likewise a cheap recolor and is distinct from plain selection.
-applyClampHighlight(clampMesh, false, true)
+applyClampHighlight(clampMesh, false, true, threePalette)
 assert(
   clampMaterial.color.getHexString() !== unselectedColor,
   'a colliding clamp recolors without a rebuild',
@@ -98,7 +101,7 @@ assert(
 )
 
 // Returning to the neutral state restores the original appearance exactly.
-applyClampHighlight(clampMesh, false, false)
+applyClampHighlight(clampMesh, false, false, threePalette)
 assert(clampMaterial.color.getHexString() === unselectedColor, 'clearing highlight restores clamp color')
 assert(clampMaterial.opacity === unselectedOpacity, 'clearing highlight restores clamp opacity')
 
@@ -114,17 +117,17 @@ const tab: Tab = {
   visible: true,
 }
 
-const tabMesh = buildTabMesh(tab)
+const tabMesh = buildTabMesh(tab, false, threePalette)
 const tabMaterial = standardMaterial(tabMesh)
 const tabUnselectedColor = tabMaterial.color.getHexString()
 const tabUnselectedOpacity = tabMaterial.opacity
 
-applyTabHighlight(tabMesh, true)
+applyTabHighlight(tabMesh, true, threePalette)
 assert(tabMesh.material === tabMaterial, 'tab highlight reuses the same material instance (no rebuild)')
 assert(tabMaterial.color.getHexString() !== tabUnselectedColor, 'selecting a tab changes its color in place')
 assert(tabMaterial.opacity !== tabUnselectedOpacity, 'selecting a tab changes its opacity in place')
 
-applyTabHighlight(tabMesh, false)
+applyTabHighlight(tabMesh, false, threePalette)
 assert(tabMaterial.color.getHexString() === tabUnselectedColor, 'clearing highlight restores tab color')
 assert(tabMaterial.opacity === tabUnselectedOpacity, 'clearing highlight restores tab opacity')
 
@@ -138,10 +141,10 @@ const viewportSource = readFileSync(
   'utf8',
 )
 
-// buildScene takes ONLY project — no selectedClampId/selectedTabId/collidingClampIds.
+// buildScene takes project + threePalette — no selectedClampId/selectedTabId/collidingClampIds.
 assert(
-  /export async function buildScene\(project: Project\): Promise<SceneObjects>/.test(csgSource),
-  'buildScene must take only `project` so selection cannot feed the CSG model rebuild',
+  /export async function buildScene\(project: Project, threePalette: ThreeThemePalette\): Promise<SceneObjects>/.test(csgSource),
+  'buildScene must take project + threePalette so selection cannot feed the CSG model rebuild',
 )
 assert(
   !/buildScene\([^)]*selected/i.test(csgSource) && !/buildScene\([^)]*colliding/i.test(csgSource),
@@ -158,10 +161,10 @@ assert(
   'csg.ts must export applyTabHighlight for in-place tab recolor',
 )
 
-// The model-rebuild path in Viewport3D calls buildScene with project alone.
+// The model-rebuild path in Viewport3D calls buildScene with project + threePalette.
 assert(
-  /await buildScene\(project\)/.test(viewportSource),
-  'Viewport3D scene-build must call buildScene(project) with no selection arguments',
+  /await buildScene\(project,/.test(viewportSource),
+  'Viewport3D scene-build must call buildScene(project, threePalette) with no selection arguments',
 )
 
 // The scene-build effect must be keyed on geometry inputs only — selection is
