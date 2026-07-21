@@ -123,6 +123,7 @@ import {
   getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
+import { setCanvasAccent, accentRgba } from './canvasAccent'
 import { generateTextShapes } from '../../text'
 import {
   getProfileBounds,
@@ -883,7 +884,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const backdropImage = backdropImageRef.current
     const toolpaths = toolpathsRef.current
     const selectedOperationId = selectedOperationIdRef.current
-    const collidingClampIds = collidingClampIdsRef.current
     const copyCountDraft = copyCountDraftRef.current
     const operationHighlightKind = operationHighlightKindRef.current
     // A1.3: features the armed operation could act on (null = nothing armed).
@@ -891,14 +891,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ? new Set(compatibleFeatureIdsForOperation(project, operationHighlightKind))
       : null
 
-    const width = canvas.width
-    const height = canvas.height
+    const { width, height } = canvas
     const vt = computeViewTransform(project.stock, width, height, viewState)
-    const collidingClampIdSet = new Set(collidingClampIds)
+    const collidingClampIdSet = new Set(collidingClampIdsRef.current)
 
     ctx.clearRect(0, 0, width, height)
     ctx.fillStyle = canvasPalette.background
     ctx.fillRect(0, 0, width, height)
+    // Canvas 2D can't read CSS vars, so publish this theme's interaction accents
+    // for the primitive helpers before anything is drawn this frame.
+    setCanvasAccent(canvasPalette)
 
     drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
 
@@ -1042,7 +1044,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const anchorC = worldToCanvas(pendingConstraintDraw.anchor.point, vt)
       const constraintLineColor = lockModeGuideColor(lockModeRef.current)
       ctx.save()
-      ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
+      ctx.fillStyle = accentRgba('activeStrong', 0.95)
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
       ctx.beginPath()
       ctx.arc(anchorC.cx, anchorC.cy, 4, 0, Math.PI * 2)
@@ -1058,7 +1060,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.lineTo(anchorC.cx, anchorC.cy)
         ctx.stroke()
         ctx.setLineDash([])
-        ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
+        ctx.fillStyle = accentRgba('activeStrong', 0.95)
         ctx.beginPath()
         ctx.arc(refC.cx, refC.cy, 4, 0, Math.PI * 2)
         ctx.fill()
@@ -1184,8 +1186,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const w = Math.abs(zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx)
       const h = Math.abs(zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy)
       ctx.save()
-      ctx.fillStyle = 'rgba(242, 185, 92, 0.16)'
-      ctx.strokeStyle = 'rgba(247, 211, 148, 0.92)'
+      ctx.fillStyle = accentRgba('active', 0.16)
+      ctx.strokeStyle = accentRgba('activeStrong', 0.92)
       ctx.lineWidth = 1.5
       ctx.setLineDash([7, 4])
       ctx.fillRect(x, y, w, h)
@@ -1717,7 +1719,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             const growingPoint = growFromStart
               ? subjProfile.start
               : subjProfile.segments[segCount - 1].to
-            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt, 'rgba(239, 188, 122, 0.75)')
+            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt)
           }
         }
       }

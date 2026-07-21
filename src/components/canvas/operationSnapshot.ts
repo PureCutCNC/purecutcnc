@@ -186,7 +186,7 @@ function drawSnapshotOrigin(
 
   ctx.beginPath()
   ctx.arc(anchor.cx, anchor.cy, radius, 0, Math.PI * 2)
-  ctx.fillStyle = '#f97316'
+  ctx.fillStyle = '#2f7fc8'
   ctx.fill()
   ctx.strokeStyle = '#ffffff'
   ctx.lineWidth = 2 * pixelRatio
@@ -232,8 +232,8 @@ export async function renderOperationSnapshotPng(
     for (const profile of profiles) {
       drawProfile(ctx, profile, vt, isTarget
         ? {
-            fill: 'rgba(245, 125, 52, 0.20)',
-            stroke: '#e25f24',
+            fill: 'rgba(47, 127, 200, 0.20)',
+            stroke: '#2563a8',
             lineWidth: 2.4 * pixelRatio,
           }
         : {

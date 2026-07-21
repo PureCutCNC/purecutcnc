@@ -35,6 +35,7 @@ import { pointsEqual } from './hitTest'
 import { appendProfilePath, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import { canvasAccent } from './canvasAccent'
 
 export function featureUsesSketchFill(operation: SketchFeature['operation']): boolean {
   return operation !== 'line' && operation !== 'construction'
@@ -133,6 +134,7 @@ export function drawFeature(
   // Construction geometry reads as reference marks: muted grey-blue, dashed,
   // thinner, never filled — visibly "not material" next to regular features.
   const construction = feature.operation === 'construction'
+  const accent = canvasAccent()
 
   let fill = 'rgba(78, 126, 170, 0.42)'
   let stroke = '#4e8dc1'
@@ -165,18 +167,18 @@ export function drawFeature(
   }
 
   if (hovered) {
-    fill = 'rgba(203, 148, 86, 0.35)'
-    stroke = '#d2a064'
+    fill = hexToRgba(accent.draft, 0.35)
+    stroke = accent.draft
   }
 
   if (selected) {
-    fill = 'rgba(234, 170, 97, 0.45)'
-    stroke = '#efbc7a'
+    fill = hexToRgba(accent.active, 0.45)
+    stroke = accent.active
   }
 
   if (editing) {
-    fill = 'rgba(247, 201, 132, 0.30)'
-    stroke = '#f7cd87'
+    fill = hexToRgba(accent.activeStrong, 0.30)
+    stroke = accent.activeStrong
   }
 
   if (feature.operation === 'subtract' && !selected && !hovered && !editing) {
@@ -215,11 +217,11 @@ export function drawPreviewProfile(
 ): void {
   traceProfilePath(ctx, profile, vt)
   if (profile.closed) {
-    ctx.fillStyle = 'rgba(236, 184, 122, 0.18)'
+    ctx.fillStyle = hexToRgba(canvasAccent().draft, 0.18)
     ctx.fill()
   }
   ctx.setLineDash([8, 5])
-  ctx.strokeStyle = '#efbc7a'
+  ctx.strokeStyle = canvasAccent().draft
   ctx.lineWidth = 2
   ctx.stroke()
   ctx.setLineDash([])
@@ -233,7 +235,7 @@ export function drawPreviewProfile(
     vt,
   )
 
-  ctx.fillStyle = 'rgba(245, 216, 183, 0.95)'
+  ctx.fillStyle = hexToRgba(canvasAccent().draftStrong, 0.95)
   ctx.font = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
   ctx.textAlign = 'center'
   if (label) {
@@ -248,9 +250,10 @@ export function drawPendingPoint(
   highlighted = false,
 ): void {
   const { cx, cy } = worldToCanvas(point, vt)
-  const strokeColor = highlighted ? '#8fd6ff' : '#efbc7a'
-  const fillColor = highlighted ? 'rgba(143, 214, 255, 0.28)' : 'rgba(239, 188, 122, 0.25)'
-  const crossColor = highlighted ? 'rgba(170, 233, 255, 0.95)' : 'rgba(239, 188, 122, 0.9)'
+  const accent = canvasAccent()
+  const strokeColor = highlighted ? '#8fd6ff' : accent.draft
+  const fillColor = highlighted ? 'rgba(143, 214, 255, 0.28)' : hexToRgba(accent.draft, 0.25)
+  const crossColor = highlighted ? 'rgba(170, 233, 255, 0.95)' : hexToRgba(accent.draft, 0.9)
 
   ctx.beginPath()
   ctx.arc(cx, cy, 6, 0, Math.PI * 2)
@@ -275,7 +278,7 @@ export function drawMoveGuide(
   fromPoint: Point,
   toPoint: Point,
   vt: ViewTransform,
-  color = 'rgba(239, 188, 122, 0.75)',
+  color = hexToRgba(canvasAccent().draft, 0.75),
 ): void {
   const start = worldToCanvas(fromPoint, vt)
   const end = worldToCanvas(toPoint, vt)
@@ -358,7 +361,7 @@ export function drawPendingPathLoop(
   label: string,
   units: 'mm' | 'inch',
   previewHighlighted = false,
-  strokeColor = '#efbc7a',
+  strokeColor = canvasAccent().draft,
 ): void {
   if (points.length === 0) return
 
@@ -408,9 +411,9 @@ export function drawPendingPathLoop(
     const isCloseTarget = isStart && points.length >= 3 && closePreview
     ctx.beginPath()
     ctx.arc(vertex.cx, vertex.cy, isCloseTarget ? 7 : 5, 0, Math.PI * 2)
-    ctx.fillStyle = isStart ? 'rgba(239, 188, 122, 0.32)' : 'rgba(210, 221, 230, 0.22)'
+    ctx.fillStyle = isStart ? hexToRgba(canvasAccent().draft, 0.32) : 'rgba(210, 221, 230, 0.22)'
     ctx.fill()
-    ctx.strokeStyle = isCloseTarget ? '#ffd095' : isStart ? '#efbc7a' : '#d2dde6'
+    ctx.strokeStyle = isCloseTarget ? canvasAccent().draftStrong : isStart ? canvasAccent().draft : '#d2dde6'
     ctx.lineWidth = 2
     ctx.stroke()
   }
@@ -424,7 +427,7 @@ export function drawPendingSplineLoop(
   closePreview: boolean,
   units: 'mm' | 'inch',
   previewHighlighted = false,
-  strokeColor = '#efbc7a',
+  strokeColor = canvasAccent().draft,
 ): void {
   if (points.length === 0) return
 
@@ -463,9 +466,9 @@ export function drawPendingSplineLoop(
     const isCloseTarget = isStart && points.length >= 3 && closePreview
     ctx.beginPath()
     ctx.arc(vertex.cx, vertex.cy, isCloseTarget ? 7 : 5, 0, Math.PI * 2)
-    ctx.fillStyle = isStart ? 'rgba(239, 188, 122, 0.32)' : 'rgba(210, 221, 230, 0.22)'
+    ctx.fillStyle = isStart ? hexToRgba(canvasAccent().draft, 0.32) : 'rgba(210, 221, 230, 0.22)'
     ctx.fill()
-    ctx.strokeStyle = isCloseTarget ? '#ffd095' : isStart ? '#efbc7a' : '#d2dde6'
+    ctx.strokeStyle = isCloseTarget ? canvasAccent().draftStrong : isStart ? canvasAccent().draft : '#d2dde6'
     ctx.lineWidth = 2
     ctx.stroke()
   }
@@ -625,7 +628,7 @@ export function drawToolpath(
   }
 
   // Collision warning overlay: segments that cross a clamp zone below required
-  // clearance are re-drawn in amber on top, regardless of layer visibility.
+  // clearance are re-drawn in red on top, regardless of layer visibility.
   if (toolpath.collidingMoveIndices && toolpath.collidingMoveIndices.length > 0) {
     ctx.beginPath()
     for (const index of toolpath.collidingMoveIndices) {
@@ -636,7 +639,7 @@ export function drawToolpath(
       ctx.moveTo(from.cx, from.cy)
       ctx.lineTo(to.cx, to.cy)
     }
-    ctx.strokeStyle = 'rgba(255, 180, 60, 0.95)'
+    ctx.strokeStyle = 'rgba(227, 91, 91, 0.95)'
     ctx.globalAlpha = emphasized ? 1 : 0.55
     ctx.lineWidth = emphasized ? 3 : 2.2
     ctx.setLineDash([])

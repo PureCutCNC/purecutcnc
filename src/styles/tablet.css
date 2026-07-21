@@ -388,8 +388,8 @@
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 165, 0, 0.2);
-  color: orange;
+  background: rgba(207, 138, 224, 0.2);
+  color: var(--warning-text);
   font-family: monospace;
   margin-left: auto;
 }
@@ -442,7 +442,7 @@
 }
 
 .tablet-cmd-btn--active {
-  background: rgba(220, 165, 106, 0.18);
+  background: rgba(79, 147, 214, 0.18);
   border-color: var(--accent);
   color: var(--accent-strong);
 }
@@ -584,7 +584,7 @@
 }
 
 .top-cmd-btn--active {
-  background: rgba(220, 165, 106, 0.25);
+  background: rgba(79, 147, 214, 0.25);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -726,7 +726,7 @@
 }
 
 .tool-rail__btn--active {
-  background: rgba(220, 165, 106, 0.28);
+  background: rgba(79, 147, 214, 0.28);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -862,7 +862,7 @@
 }
 
 .tool-rail__popover button.tool-rail__popover-btn--active {
-  background: rgba(220, 165, 106, 0.22);
+  background: rgba(79, 147, 214, 0.22);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -969,7 +969,7 @@
 
 .snap-popover-item--active,
 .snap-popover-item--active:hover {
-  background: rgba(220, 165, 106, 0.18);
+  background: rgba(79, 147, 214, 0.18);
   color: var(--accent-strong);
 }
 
@@ -1202,7 +1202,7 @@
   height: 22px;
   padding: 0 6px;
   border-radius: 11px;
-  background: rgba(220, 165, 106, 0.2);
+  background: rgba(79, 147, 214, 0.2);
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 700;

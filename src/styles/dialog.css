@@ -199,7 +199,7 @@
 }
 
 .unit-conversion-option--reinterpret:hover {
-  border-color: rgba(247, 184, 106, 0.58);
+  border-color: rgba(207, 138, 224, 0.58);
 }
 
 .unit-conversion-option__heading {
@@ -218,7 +218,7 @@
 .unit-conversion-option__badge {
   padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(220, 165, 106, 0.18);
+  background: rgba(79, 147, 214, 0.18);
   color: var(--accent-strong);
   font-size: 9px;
   font-weight: 700;
@@ -489,8 +489,8 @@
 
 .export-warning {
   padding: 10px 12px;
-  background: rgba(255, 130, 30, 0.08);
-  border: 1px solid rgba(255, 160, 60, 0.4);
+  background: rgba(207, 138, 224, 0.08);
+  border: 1px solid rgba(207, 138, 224, 0.4);
   border-radius: 8px;
   color: var(--warning-text);
   font-size: 12px;
@@ -1252,8 +1252,8 @@
 .machine-editor-error {
   margin-top: 8px;
   padding: 8px 12px;
-  background: rgba(255, 80, 60, 0.08);
-  border: 1px solid rgba(255, 100, 80, 0.4);
+  background: rgba(227, 91, 91, 0.08);
+  border: 1px solid rgba(227, 91, 91, 0.4);
   border-radius: 7px;
   color: var(--danger-text);
   font-size: 12px;
@@ -1281,7 +1281,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--accent);
-  background: rgba(255, 170, 60, 0.08);
+  background: rgba(79, 147, 214, 0.08);
   padding: 1px 5px;
   border-radius: 4px;
   white-space: nowrap;
@@ -1389,7 +1389,7 @@
 }
 
 .machine-manager-badge--active {
-  background: rgba(255, 170, 60, 0.18);
+  background: rgba(79, 147, 214, 0.18);
   color: var(--accent);
 }
 

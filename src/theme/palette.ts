@@ -24,6 +24,14 @@ export interface CanvasThemePalette {
   labelText: string
   mutedGeometry: string
   veil: string
+  /** Active/selected control fill (was hardcoded amber). */
+  active: string
+  /** Active/selected control ring/stroke (was hardcoded amber). */
+  activeStrong: string
+  /** Drawing/preview stroke while sketching (was hardcoded amber). */
+  draft: string
+  /** Draft ring / close-target highlight (was hardcoded amber). */
+  draftStrong: string
 }
 
 export interface ThreeThemePalette {
@@ -49,6 +57,10 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       labelText: 'rgba(218, 232, 244, 0.96)',
       mutedGeometry: 'rgba(210, 221, 230, 0.62)',
       veil: 'rgba(8, 12, 18, 0.5)',
+      active: '#4ea3ef',
+      activeStrong: '#9bd0ff',
+      draft: '#5aa6e8',
+      draftStrong: '#bfe0ff',
     },
     three: {
       background: 0x141820,
@@ -67,6 +79,10 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       labelText: 'rgba(36, 45, 51, 0.96)',
       mutedGeometry: 'rgba(65, 79, 88, 0.68)',
       veil: 'rgba(246, 241, 231, 0.66)',
+      active: '#2f7fc8',
+      activeStrong: '#7fb4e6',
+      draft: '#3d84c4',
+      draftStrong: '#6fa8dc',
     },
     three: {
       background: 0xece7dd,

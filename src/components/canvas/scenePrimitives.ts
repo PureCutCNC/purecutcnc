@@ -60,7 +60,7 @@ export function drawSketchControls(
       ctx.beginPath()
       ctx.moveTo(start.cx, start.cy)
       ctx.lineTo(end.cx, end.cy)
-      ctx.strokeStyle = '#f7d394'
+      ctx.strokeStyle = palette.activeStrong
       ctx.lineWidth = 5
       ctx.lineCap = 'round'
       ctx.stroke()
@@ -68,7 +68,7 @@ export function drawSketchControls(
       ctx.beginPath()
       ctx.moveTo(start.cx, start.cy)
       ctx.lineTo(end.cx, end.cy)
-      ctx.strokeStyle = '#f2b95c'
+      ctx.strokeStyle = palette.active
       ctx.lineWidth = 3
       ctx.lineCap = 'round'
       ctx.stroke()
@@ -132,7 +132,7 @@ export function drawSketchControls(
     ctx.lineTo(center.cx + crossSize, center.cy)
     ctx.moveTo(center.cx, center.cy - crossSize)
     ctx.lineTo(center.cx, center.cy + crossSize)
-    ctx.strokeStyle = active ? '#f2b95c' : palette.mutedGeometry
+    ctx.strokeStyle = active ? palette.active : palette.mutedGeometry
     ctx.lineWidth = active ? 2 : 1.2
     ctx.stroke()
   }
@@ -144,9 +144,9 @@ export function drawSketchControls(
 
     ctx.beginPath()
     ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
-    ctx.fillStyle = active ? '#f2b95c' : palette.mutedGeometry
+    ctx.fillStyle = active ? palette.active : palette.mutedGeometry
     ctx.fill()
-    ctx.strokeStyle = active ? '#f7d394' : '#3f708f'
+    ctx.strokeStyle = active ? palette.activeStrong : '#3f708f'
     ctx.lineWidth = 2
     ctx.stroke()
   }
@@ -161,9 +161,9 @@ export function drawSketchControls(
     const control = worldToCanvas(arcControlPoint(start, segment), vt)
     const active = activeControl?.kind === 'arc_handle' && activeControl.index === index
     drawDiamond(ctx, control.cx, control.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-    ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+    ctx.fillStyle = active ? palette.active : '#9bc0dd'
     ctx.fill()
-    ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+    ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
     ctx.lineWidth = 1.5
     ctx.stroke()
   }
@@ -181,9 +181,9 @@ export function drawSketchControls(
       const point = worldToCanvas(outgoingSegment.control1, vt)
       const active = activeControl?.kind === 'out_handle' && activeControl.index === index
       drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+      ctx.fillStyle = active ? palette.active : '#9bc0dd'
       ctx.fill()
-      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+      ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
       ctx.lineWidth = 1.5
       ctx.stroke()
     }
@@ -192,9 +192,9 @@ export function drawSketchControls(
       const point = worldToCanvas(incomingSegment.control2, vt)
       const active = activeControl?.kind === 'in_handle' && activeControl.index === index
       drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? '#f2b95c' : '#9bc0dd'
+      ctx.fillStyle = active ? palette.active : '#9bc0dd'
       ctx.fill()
-      ctx.strokeStyle = active ? '#f7d394' : '#6f8fa9'
+      ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
       ctx.lineWidth = 1.5
       ctx.stroke()
     }
@@ -210,9 +210,9 @@ export function drawSketchEditPreviewPoint(
   ctx.beginPath()
   ctx.arc(cx, cy, NODE_RADIUS + 2, 0, Math.PI * 2)
   const destructive = preview.mode === 'delete_point' || preview.mode === 'delete_segment'
-  ctx.fillStyle = destructive ? '#d66c6c' : preview.mode === 'disconnect' ? '#d9945e' : '#5daeea'
+  ctx.fillStyle = destructive ? '#d66c6c' : preview.mode === 'disconnect' ? '#3bb3c4' : '#5daeea'
   ctx.fill()
-  ctx.strokeStyle = destructive ? '#efb0b0' : preview.mode === 'disconnect' ? '#f1c59d' : '#a9d2f5'
+  ctx.strokeStyle = destructive ? '#efb0b0' : preview.mode === 'disconnect' ? '#9fe0e8' : '#a9d2f5'
   ctx.lineWidth = 2
   ctx.stroke()
 }
@@ -313,7 +313,7 @@ export function drawGrid(
 }
 
 const STOCK_LABEL_MIN_WIDTH_PX = 200
-const STOCK_EXCEEDED_STROKE = 'rgba(240, 160, 40, 0.9)'
+const STOCK_EXCEEDED_STROKE = 'rgba(207, 138, 224, 0.9)'
 
 /** A hit-testable rectangle for a stock dimension label. */
 export interface StockLabelRect {
@@ -555,12 +555,12 @@ export function drawBackdropImage(
     ctx.rotate(rotation)
     ctx.beginPath()
     ctx.rect(-width / 2, -height / 2, width, height)
-    ctx.strokeStyle = '#efbc7a'
+    ctx.strokeStyle = palette.active
     ctx.lineWidth = 2
     ctx.setLineDash([8, 5])
     ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(239, 188, 122, 0.06)'
+    ctx.fillStyle = hexToRgba(palette.active, 0.06)
     ctx.fill()
     ctx.restore()
 

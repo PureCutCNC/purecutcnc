@@ -24,7 +24,8 @@ import { drawArcRadiusMeasurement, drawLineLengthMeasurement } from './measureme
 import { appendSplineDraftSegment } from './draftGeometry'
 import { distance2, pointsEqual } from './hitTest'
 import { anchorPointForIndex } from './profilePrimitives'
-import { drawPendingPoint, drawPreviewProfile, traceDraftSegments } from './previewPrimitives'
+import { drawPendingPoint, drawPreviewProfile, hexToRgba, traceDraftSegments } from './previewPrimitives'
+import { canvasAccent } from './canvasAccent'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 
@@ -111,14 +112,14 @@ function drawSnapLabel(
   }
 
   ctx.fillStyle = 'rgba(24, 28, 34, 0.88)'
-  ctx.strokeStyle = 'rgba(247, 211, 148, 0.82)'
+  ctx.strokeStyle = hexToRgba(canvasAccent().draftStrong, 0.82)
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.roundRect(x, y, labelWidth, labelHeight, 5)
   ctx.fill()
   ctx.stroke()
 
-  ctx.fillStyle = '#fff4d7'
+  ctx.fillStyle = canvasAccent().draftStrong
   const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
   const textY = textHeight > 0
     ? y + (labelHeight - textHeight) / 2 + metrics.actualBoundingBoxAscent
@@ -240,7 +241,7 @@ export function drawCompositeDraft(
   vt: ViewTransform,
   units: 'mm' | 'inch',
   previewHighlighted = false,
-  strokeColor = '#efbc7a',
+  strokeColor = canvasAccent().draft,
 ): void {
   if (!pendingAdd.start) {
     if (previewPoint) {
@@ -307,9 +308,9 @@ export function drawCompositeDraft(
     const isStart = index === 0
     ctx.beginPath()
     ctx.arc(vertex.cx, vertex.cy, isStart ? 5.5 : 5, 0, Math.PI * 2)
-    ctx.fillStyle = isStart ? 'rgba(239, 188, 122, 0.28)' : 'rgba(210, 221, 230, 0.2)'
+    ctx.fillStyle = isStart ? hexToRgba(canvasAccent().draft, 0.28) : 'rgba(210, 221, 230, 0.2)'
     ctx.fill()
-    ctx.strokeStyle = isStart ? '#efbc7a' : '#d2dde6'
+    ctx.strokeStyle = isStart ? canvasAccent().draft : '#d2dde6'
     ctx.lineWidth = 2
     ctx.stroke()
   }
@@ -381,7 +382,7 @@ export function drawSnapIndicator(
     const to = worldToCanvas(resolvedSnap.guide.to, vt)
     ctx.save()
     ctx.setLineDash(resolvedSnap.mode === 'perpendicular' ? [4, 3] : [6, 4])
-    ctx.strokeStyle = resolvedSnap.mode === 'perpendicular' ? 'rgba(170, 221, 255, 0.9)' : 'rgba(242, 185, 92, 0.72)'
+    ctx.strokeStyle = resolvedSnap.mode === 'perpendicular' ? 'rgba(170, 221, 255, 0.9)' : hexToRgba(canvasAccent().draft, 0.72)
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.moveTo(from.cx, from.cy)
@@ -392,8 +393,8 @@ export function drawSnapIndicator(
 
   const { cx, cy } = worldToCanvas(resolvedSnap.point, vt)
   ctx.save()
-  ctx.strokeStyle = '#f7d394'
-  ctx.fillStyle = 'rgba(242, 185, 92, 0.18)'
+  ctx.strokeStyle = canvasAccent().activeStrong
+  ctx.fillStyle = hexToRgba(canvasAccent().active, 0.18)
   ctx.lineWidth = 2
 
   if (resolvedSnap.mode === 'midpoint') {

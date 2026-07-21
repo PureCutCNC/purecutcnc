@@ -138,6 +138,10 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   canvas('labelText', 'Label text'),
   canvas('mutedGeometry', 'Muted geometry'),
   canvas('veil', 'Inactive veil'),
+  canvas('active', 'Active highlight'),
+  canvas('activeStrong', 'Active highlight ring'),
+  canvas('draft', 'Draft / preview stroke'),
+  canvas('draftStrong', 'Draft ring / close target'),
 
   // Three.js viewport / simulation presentation.
   three('background', '3D background'),

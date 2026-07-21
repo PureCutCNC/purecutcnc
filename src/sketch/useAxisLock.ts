@@ -80,5 +80,5 @@ export function cycleLockMode(current: LockMode): LockMode {
 export function lockModeGuideColor(mode: LockMode): string {
   if (mode === 'x') return 'rgba(220, 60, 60, 0.85)'
   if (mode === 'y') return 'rgba(60, 180, 60, 0.85)'
-  return 'rgba(239, 188, 122, 0.75)'
+  return 'rgba(79, 147, 214, 0.75)'
 }

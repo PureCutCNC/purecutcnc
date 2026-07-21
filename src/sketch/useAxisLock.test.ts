@@ -60,7 +60,7 @@ function testLockModeGuideColor() {
   const xColor = lockModeGuideColor('x')
   const yColor = lockModeGuideColor('y')
 
-  assert(noneColor.includes('239'), 'none color should be amber/default')
+  assert(noneColor.includes('147'), 'none color should be the blue default')
   assert(xColor.includes('220'), 'x color should be red-ish')
   assert(yColor.includes('180'), 'y color should be green-ish')
   assert(xColor !== yColor, 'x and y colors should differ')

@@ -36,9 +36,10 @@ import type { DimensionAnnotation, DimensionAnchor } from '../../types/project'
 import { drawMeasurementLabel } from './measurements'
 import { worldToCanvas } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
+import { accentRgba } from './canvasAccent'
 import type { DrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
 
-const ACTIVE_COLOR = 'rgba(239, 188, 122, 0.95)'
+const activeColor = (): string => accentRgba('active', 0.95)
 const LINE_COLOR = 'rgba(180, 200, 224, 0.85)'
 const EXT_COLOR = 'rgba(180, 200, 224, 0.45)'
 const SELECTED_COLOR = 'rgba(120, 200, 255, 0.98)'
@@ -167,7 +168,7 @@ export function drawDimensions(
 
 const ANCHOR_DOT_RADIUS = 3
 const ANCHOR_HELD_COLOR = 'rgba(91, 216, 165, 0.92)'
-const ANCHOR_DRIVEN_COLOR = 'rgba(239, 188, 122, 0.92)'
+const anchorDrivenColor = (): string => accentRgba('active', 0.92)
 const ANCHOR_NORMAL_COLOR = 'rgba(180, 200, 224, 0.50)'
 
 function dimensionAnchorsEqual(a: DimensionAnchor, b: DimensionAnchor): boolean {
@@ -188,7 +189,7 @@ function drawDimensionAnchorDot(
   ctx.arc(c.cx, c.cy, emphasize ? ANCHOR_DOT_RADIUS + 1 : ANCHOR_DOT_RADIUS, 0, Math.PI * 2)
   ctx.fill()
   if (ring) {
-    ctx.strokeStyle = ANCHOR_DRIVEN_COLOR
+    ctx.strokeStyle = anchorDrivenColor()
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, ANCHOR_DOT_RADIUS + 3, 0, Math.PI * 2)
@@ -230,7 +231,7 @@ export function drawDimensionAnchorDots(
       } else if (isAngleVertex) {
         color = SELECTED_COLOR
       } else if (isDriven) {
-        color = ANCHOR_DRIVEN_COLOR
+        color = anchorDrivenColor()
       }
       drawDimensionAnchorDot(ctx, pos, vt, color, isSelected || isDriving, isDriven)
     }
@@ -249,13 +250,13 @@ export function drawTapeMeasure(
     const ca = worldToCanvas(a, vt)
     const cb = worldToCanvas(b, vt)
     ctx.save()
-    ctx.strokeStyle = ACTIVE_COLOR
+    ctx.strokeStyle = activeColor()
     ctx.lineWidth = 1.25
     if (dashed) ctx.setLineDash([5, 4])
     lineTo(ctx, ca, cb)
     ctx.restore()
-    drawArrow(ctx, ca, cb, ACTIVE_COLOR)
-    drawArrow(ctx, cb, ca, ACTIVE_COLOR)
+    drawArrow(ctx, ca, cb, activeColor())
+    drawArrow(ctx, cb, ca, activeColor())
 
     const dx = b.x - a.x
     const dy = b.y - a.y
@@ -273,7 +274,7 @@ export function drawTapeMeasure(
     drawSpan(tape.first, livePoint, true)
   } else if (tape.first) {
     const c = worldToCanvas(tape.first, vt)
-    ctx.fillStyle = ACTIVE_COLOR
+    ctx.fillStyle = activeColor()
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, 4, 0, Math.PI * 2)
     ctx.fill()
@@ -296,7 +297,7 @@ export function drawPendingDimensionPreview(
 ): void {
   const dot = (p: Point): void => {
     const c = worldToCanvas(p, vt)
-    ctx.fillStyle = ACTIVE_COLOR
+    ctx.fillStyle = activeColor()
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, 4, 0, Math.PI * 2)
     ctx.fill()
@@ -319,7 +320,7 @@ export function drawPendingDimensionPreview(
     const last = pending.type === 'angle' ? (a ?? c ?? b) : (c ?? b ?? a)
     if (last && livePoint) {
       ctx.save()
-      ctx.strokeStyle = ACTIVE_COLOR
+      ctx.strokeStyle = activeColor()
       ctx.lineWidth = 1
       ctx.setLineDash([5, 4])
       lineTo(ctx, worldToCanvas(last, vt), worldToCanvas(livePoint, vt))
@@ -347,7 +348,7 @@ export function drawPendingDimensionPreview(
   const layout = dimensionLayout(temp, project)
   const value = measureValue(temp, project)
   if (layout && value !== null) {
-    drawLayout(ctx, layout, vt, units, dimensionLabelText(temp, value, fmtLen(units), formatAngle), ACTIVE_COLOR)
+    drawLayout(ctx, layout, vt, units, dimensionLabelText(temp, value, fmtLen(units), formatAngle), activeColor())
   }
 }
 
