@@ -4,6 +4,51 @@ Reference for translators and future locales. Decide a term once here, then
 use it consistently in every catalog module. User-authored names, filenames,
 machine IDs, G-code tokens, and serialized enum values are never translated.
 
+## English ↔ French
+
+| English | Français | Notes |
+| --- | --- | --- |
+| project | projet | |
+| sketch | esquisse | CAD convention |
+| feature | entité | UI geometry; use `feature` only when referring to an internal identifier |
+| operation | opération | CAM operation |
+| toolpath | parcours d’outil | Standard CAD/CAM term |
+| tool | outil | Use `fraise` or `foret` when the cutter type matters |
+| stock | brut | CNC/machining stock |
+| machine | machine | CNC machine |
+| pocket | poche | |
+| profile / edge route | contournage | Add `intérieur` / `extérieur` where needed |
+| drill / drilling | foret / perçage | Tool / operation respectively |
+| V-carve | gravure en V | |
+| engrave | gravure | |
+| rough / roughing | ébauche | |
+| finish / finishing | finition | |
+| climb / conventional milling | en avalant / en opposition | |
+| feed / plunge feed | avance / avance de plongée | |
+| stepdown / stepover | profondeur de passe / recouvrement | |
+| stock to leave | surépaisseur | Radiale or axiale as applicable |
+| safe Z / retract height | Z de sécurité / hauteur de retrait | |
+| simulation | simulation | |
+| G-code | G-code | Keep program tokens such as G1/M3 unchanged |
+| dimension | cote | |
+| snap / snapping | accrochage | |
+| grid | grille | |
+| midpoint / intersection | milieu / intersection | |
+| region | région | Machining filter, not a cut target |
+| construction geometry | géométrie de construction | |
+| tab / clamp | attache / bride | |
+
+### French style
+
+- Keep `{placeholder}` tokens byte-for-byte unchanged; the registry test
+  enforces parity.
+- Use typographic French punctuation and spacing where the UI permits it.
+- Keep `CAD`, `CAM`, `CNC`, `STL`, `SVG`, `DXF`, `PDF`, `G-code`, unit
+  symbols, enum values, and user-authored content unchanged.
+- Prefer established workshop terms above over literal translations. French
+  product documentation uses `poche`, `parcours d’outil`, `ébauche`,
+  `finition`, and `en avalant`.
+
 ## Simplified Chinese (zh-CN)
 
 | English | 简体中文 | Notes |

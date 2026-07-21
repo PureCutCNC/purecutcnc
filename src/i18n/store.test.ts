@@ -124,6 +124,18 @@ assert(
     'Restoperation mit 2 Bereichen erstellt; wählen Sie ein kleineres Werkzeug',
   'German rest-op plural uses Bereichen, not the English-suffix Bereichs',
 )
+// French likewise inflects (région/régions) and owns its full phrase.
+setActiveLocale('fr')
+assert(
+  translatePlural(1, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Opération de reprise créée avec 1 région ; choisissez un outil plus petit',
+  'French rest-op singular uses région',
+)
+assert(
+  translatePlural(2, 'cam.restOp.created.one', 'cam.restOp.created.other') ===
+    'Opération de reprise créée avec 2 régions ; choisissez un outil plus petit',
+  'French rest-op plural uses régions',
+)
 // Spanish inflects too: 2 regions must read "regiones", not the "regións" the
 // old interpolated English {plural} 's' suffix would have produced.
 setActiveLocale('es')

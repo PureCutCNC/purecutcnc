@@ -25,15 +25,16 @@
 import { placeholderNames, placeholdersMatch } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
 import { es } from './locales/es'
+import { fr } from './locales/fr'
 import { zhCN } from './locales/zh-CN'
 import { de } from './locales/de'
 
 export const CUSTOM_LANGUAGE_SCHEMA_VERSION = 1
 export const LANGUAGE_NAME_MAX_LENGTH = 60
 
-export type BuiltinLocaleId = 'en' | 'es' | 'zh-CN' | 'de'
+export type BuiltinLocaleId = 'en' | 'zh-CN' | 'de' | 'es' | 'fr'
 
-export const BUILTIN_LOCALE_IDS: readonly BuiltinLocaleId[] = ['en', 'es', 'zh-CN', 'de']
+export const BUILTIN_LOCALE_IDS: readonly BuiltinLocaleId[] = ['en', 'zh-CN', 'de', 'es', 'fr']
 
 export function isBuiltinLocaleId(value: string): value is BuiltinLocaleId {
   return (BUILTIN_LOCALE_IDS as readonly string[]).includes(value)
@@ -63,6 +64,13 @@ const BUILTIN_LOCALES: Record<BuiltinLocaleId, BuiltinLocaleDefinition> = {
     nativeName: 'Español',
     englishName: 'Spanish',
     messages: es,
+  },
+  fr: {
+    id: 'fr',
+    languageTag: 'fr',
+    nativeName: 'Français',
+    englishName: 'French',
+    messages: fr,
   },
   'zh-CN': {
     id: 'zh-CN',
