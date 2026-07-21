@@ -544,15 +544,19 @@
 }
 
 .appearance-menu__swatch--dark {
-  background: linear-gradient(135deg, #101922 0 48%, #4f93d6 49% 57%, #2a3a49 58% 100%);
+  /* theme-exempt: previews the built-in Dark theme, so it must show that theme's
+     own colours rather than the active one. Keep in step with index.css. */
+  background: linear-gradient(135deg, #101821 0 48%, #4f93d6 49% 57%, #2a3a49 58% 100%);
 }
 
 .appearance-menu__swatch--light {
-  background: linear-gradient(135deg, #f6f1e7 0 48%, #31699a 49% 57%, #d8cdbc 58% 100%);
+  /* theme-exempt: previews the built-in Light theme. Keep in step with index.css. */
+  background: linear-gradient(135deg, #f4f6f9 0 48%, #2b6cb0 49% 57%, #e2e8f0 58% 100%);
 }
 
 .appearance-menu__swatch--system {
-  background: linear-gradient(135deg, #101922 0 45%, #4f93d6 46% 53%, #f6f1e7 54% 100%);
+  /* theme-exempt: previews the Dark/Light system pairing. Keep in step with index.css. */
+  background: linear-gradient(135deg, #101821 0 45%, #4f93d6 46% 53%, #f4f6f9 54% 100%);
 }
 
 .appearance-menu__copy {
@@ -1109,8 +1113,8 @@
 }
 
 .simulation-playback-bar__btn--primary {
-  background: var(--accent, #3b82f6);
-  border-color: var(--accent, #3b82f6);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--on-accent);
 }
 
@@ -1647,7 +1651,7 @@
   bottom: 10px;
   left: 8px;
   width: 1px;
-  background: linear-gradient(180deg, var(--line-strong), rgba(60, 82, 101, 0.2));
+  background: linear-gradient(180deg, var(--line-strong), color-mix(in srgb, var(--line-strong) 20%, transparent));
 }
 
 .tree-row {
@@ -3905,7 +3909,7 @@
   display: block;
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-dim, #8899aa);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 4px;

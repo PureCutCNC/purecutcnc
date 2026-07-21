@@ -477,16 +477,16 @@ export function drawPendingSplineLoop(
 
 /** Map a DIAG source tag to a fill colour. Allowlisted diagnostics — not themeable. */
 function sourceMarkerColor(source: string): string {
-  if (source.includes('tryDirectLink'))   return '#ff6b35'   // orange
-  if (source.includes('bridgeSplitArms'))  return '#ff6b6b'  // red
-  if (source.includes('siblingBridge'))   return '#ffd93d'   // yellow
-  if (source.includes('sameChildBridge')) return '#00f2ff'   // cyan
-  if (source.includes('bootstrap'))       return '#6bcb77'   // green
-  if (source.includes('stepArms'))        return '#4d96ff'   // blue
-  if (source.includes('intCornerBridge')) return '#ff8fab'   // pink
-  if (source.includes('contour'))         return '#c084fc'   // purple
-  if (source.includes('microContour'))    return '#a8a8a8'   // gray
-  return '#ffffff'  // white (fallback)
+  if (source.includes('tryDirectLink'))   return '#ff6b35'   // theme-exempt: debug legend
+  if (source.includes('bridgeSplitArms'))  return '#ff6b6b'  // theme-exempt: debug legend
+  if (source.includes('siblingBridge'))   return '#ffd93d'   // theme-exempt: debug legend
+  if (source.includes('sameChildBridge')) return '#00f2ff'   // theme-exempt: debug legend
+  if (source.includes('bootstrap'))       return '#6bcb77'   // theme-exempt: debug legend
+  if (source.includes('stepArms'))        return '#4d96ff'   // theme-exempt: debug legend
+  if (source.includes('intCornerBridge')) return '#ff8fab'   // theme-exempt: debug legend
+  if (source.includes('contour'))         return '#c084fc'   // theme-exempt: debug legend
+  if (source.includes('microContour'))    return '#a8a8a8'   // theme-exempt: debug legend
+  return '#ffffff'  // theme-exempt: debug legend fallback
 }
 
 /**
