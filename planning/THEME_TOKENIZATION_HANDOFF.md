@@ -24,7 +24,7 @@ and the build, contrast gate, and e2e smoke are green.
 - Base commit: `d04b99077d1f0f399c6ada955911d72c6e6a39d6`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/341
 - Manager session: 2026-07-21
-- Status: `slice in progress`
+- Status: `ready for user review` (all slices merged; awaiting visual sign-off)
 - User authorization for credential-backed worker dispatch: recorded 2026-07-21 —
   "you can dispatch deepseek agent when it will help to save on tokens ... run in
   parallel when possible".
@@ -63,19 +63,19 @@ those locations.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| P1 | Light-theme re-tone (warm sepia → cool blueprint) in `index.css` + `registry.ts` + `palette.ts` | in progress |
-| P2 | Token architecture: new semantic families in `tokens.ts`/`palette.ts`/`registry.ts` | in progress |
-| P6 | Regression guard: build check + allowlist | not started |
-| P7 | Verification: build, contrast gate, e2e smoke, visual pass | not started |
+| P1 | Light-theme re-tone (warm sepia → cool blueprint) in `index.css` + `registry.ts` + `palette.ts` | done |
+| P2 | Token architecture: new semantic families in `tokens.ts`/`palette.ts`/`registry.ts` | done |
+| P6 | Regression guard: `scripts/check-color-literals.ts`, wired into `npm run build` | done |
+| P7 | Verification: build + contrast gate green, e2e smoke, visual pass | build/contrast green; visual pass pending user |
 
 ## Slice ledger
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Centralize print/export colour literals | `d04b990` | `feat/issue-341-print-palette` | `dispatched` | `pending` | `-` | `scripts/build-summary.sh` | Independent of P2 |
-| S2 | CSS literals → `var(--…)` | `-` | `feat/issue-341-css-tokens` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Needs P1+P2 |
-| S3 | Canvas renderers → palette tokens | `-` | `feat/issue-341-canvas-tokens` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Needs P2 |
-| S4 | 3D/simulation → palette tokens | `-` | `feat/issue-341-three-tokens` | `not started` | `pending` | `-` | `scripts/build-summary.sh` | Needs P2 |
+| S1 | Centralize print/export colour literals | `a02228c` | `feat/issue-341-print-palette` | `complete` | `accepted` | `cea22b1` → merge `58346e4` | build gate passed | Verified: 46 colours out, 46 in, none lost or invented. Worker reported `COMMIT: none`; manager committed. |
+| S2 | CSS literals → `var(--…)` | `9359dbc` | `feat/issue-341-css-tokens` | `complete` | `accepted` | `e3c5997` → merge `b23ca9e` | build gate passed | tablet/dialog/about to zero; layout.css 142→24. Worker reported `COMMIT: none`; manager committed. |
+| S3 | Canvas renderers → palette tokens | `9359dbc` | `feat/issue-341-canvas-tokens` | `complete` | `accepted` | `94818b7` → merge `0d23887` | build gate passed | 4 renderers to zero. Silently mapped 10 alpha-variant literals instead of reporting; manager corrected. Worker reported `COMMIT: none`. |
+| S4 | 3D/simulation → palette tokens | `3c94c8a` | `feat/issue-341-three-tokens` | `complete` | `accepted` | `24004cb` → merge `52a1bd8` | build gate + colour guard passed | 23 role-named `three.*` tokens; lighting exempted not tokenized. Committed correctly. Surfaced an orange 3D selection highlight the manager then re-coloured. |
 
 ## Slice instructions
 
@@ -156,7 +156,22 @@ and the CSS legend swatches.
 
 ## Integration verification
 
-- Accepted commits and merge order: `<pending>`
-- Repository checks: `<pending>`
-- Browser/tablet checks: `<pending>`
+- Accepted commits and merge order: S1 `58346e4` → S3 `0d23887` → S2 `b23ca9e` → S4 `52a1bd8`,
+  with manager commits for the light re-tone, token architecture, guard, and final migrations.
+- Repository checks: `npm run build` green (docs, lint, colour guard, tsc, 127 test files, vite);
+  theme parity and contrast gates green with zero blocking findings.
+- Colour literals outside the allowed files: **0** (was 349 at the start of the migration).
+- Browser/tablet checks: `npm run test:e2e` — see result below; visual pass over both themes
+  still owed by the user on a real screen.
 - Known limitations or deferred work: none — #341 defers nothing to a follow-up.
+
+### Lessons for the next delegated effort
+
+- Three of four workers finished with `COMMIT: none` despite completing the work and passing
+  the build gate. The S4 prompt added an explicit "you MUST commit and verify with `git log -1`"
+  instruction and that worker committed correctly — fold that line into the prompt template.
+- Fresh task worktrees have no `node_modules`, so the first build gate dies with exit 127.
+  Pre-install after `dispatch-task.sh` creates the worktree, or teach the script to do it.
+- "If no token fits, STOP and report it" was ignored by S3, which silently mapped ten
+  alpha-variant literals to near-matching tokens. Ask for an explicit unmapped-literal list in
+  the completion block rather than relying on `RISKS`.
