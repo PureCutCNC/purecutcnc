@@ -123,6 +123,12 @@ export interface ThreeThemePalette {
   gridMinor: number
   gridMajorCenter: number
   gridMajor: number
+  /** Toolpath overlay colours; kept in step with the canvas + CSS legend. */
+  toolpathCut: number
+  toolpathRapid: number
+  toolpathPlunge: number
+  /** Fallback stock material when the project defines no stock colour. */
+  stockDefault: number
 }
 
 export interface ThemePalette {
@@ -218,6 +224,10 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       gridMinor: 0x223344,
       gridMajorCenter: 0x334455,
       gridMajor: 0x51657a,
+      toolpathCut: 0xff735c,
+      toolpathRapid: 0x78b8de,
+      toolpathPlunge: 0xd583df,
+      stockDefault: 0xb5beca,
     },
   },
   light: {
@@ -307,6 +317,10 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       gridMinor: 0xd6dee9,
       gridMajorCenter: 0x94a3b8,
       gridMajor: 0xb4c0d0,
+      toolpathCut: 0xd64a34,
+      toolpathRapid: 0x3884b8,
+      toolpathPlunge: 0xa84ab6,
+      stockDefault: 0xc2cad4,
     },
   },
 }

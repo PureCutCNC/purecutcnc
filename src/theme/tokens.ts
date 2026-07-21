@@ -222,6 +222,10 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   three('gridMinor', '3D grid minor'),
   three('gridMajorCenter', '3D grid major (center)'),
   three('gridMajor', '3D grid major'),
+  three('toolpathCut', '3D cut move'),
+  three('toolpathRapid', '3D rapid move'),
+  three('toolpathPlunge', '3D plunge move'),
+  three('stockDefault', '3D default stock'),
 ] as const
 
 export type ThemeTokenKey = (typeof THEME_TOKENS)[number]['key']
