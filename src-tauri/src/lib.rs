@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 #[derive(Default)]
 struct ExitCoordinator {
@@ -32,6 +33,7 @@ fn set_update_channel(channel: String, items: tauri::State<ChannelMenuItems>) {
 fn request_app_exit(app: tauri::AppHandle, exit_coordinator: tauri::State<ExitCoordinator>) {
   exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
   exit_coordinator.exit_confirmed.store(true, Ordering::SeqCst);
+  let _ = app.save_window_state(StateFlags::all());
   app.exit(0);
 }
 
@@ -159,6 +161,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_window_state::Builder::default().build())
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
 
