@@ -123,7 +123,7 @@ import {
   getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
-import { setCanvasAccent, accentRgba } from './canvasAccent'
+import { setCanvasPalette, canvasRgba } from './canvasPalette'
 import { generateTextShapes } from '../../text'
 import {
   getProfileBounds,
@@ -898,9 +898,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     ctx.clearRect(0, 0, width, height)
     ctx.fillStyle = canvasPalette.background
     ctx.fillRect(0, 0, width, height)
-    // Canvas 2D can't read CSS vars, so publish this theme's interaction accents
+    // Canvas 2D can't read CSS vars, so publish this theme's full palette
     // for the primitive helpers before anything is drawn this frame.
-    setCanvasAccent(canvasPalette)
+    setCanvasPalette(canvasPalette)
 
     drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
 
@@ -1044,7 +1044,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const anchorC = worldToCanvas(pendingConstraintDraw.anchor.point, vt)
       const constraintLineColor = lockModeGuideColor(lockModeRef.current)
       ctx.save()
-      ctx.fillStyle = accentRgba('activeStrong', 0.95)
+      ctx.fillStyle = canvasRgba('activeStrong', 0.95)
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
       ctx.beginPath()
       ctx.arc(anchorC.cx, anchorC.cy, 4, 0, Math.PI * 2)
@@ -1060,7 +1060,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.lineTo(anchorC.cx, anchorC.cy)
         ctx.stroke()
         ctx.setLineDash([])
-        ctx.fillStyle = accentRgba('activeStrong', 0.95)
+        ctx.fillStyle = canvasRgba('activeStrong', 0.95)
         ctx.beginPath()
         ctx.arc(refC.cx, refC.cy, 4, 0, Math.PI * 2)
         ctx.fill()
@@ -1090,7 +1090,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const isInvalid = !!c.is_invalid
         const lineColor = isInvalid ? 'rgba(220, 60, 60, 0.85)' : 'rgba(91, 165, 216, 0.8)'
         const dotColor = isInvalid ? 'rgba(220, 60, 60, 0.9)' : 'rgba(91, 165, 216, 0.9)'
-        const labelColor = isInvalid ? 'rgba(255, 180, 180, 0.95)' : canvasPalette.labelText
+        const labelColor = isInvalid ? canvasPalette.invalidText : canvasPalette.labelText
         const aC = worldToCanvas(c.anchor_point, vt)
         const rC = worldToCanvas(c.reference_point, vt)
         ctx.save()
@@ -1121,7 +1121,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const padY = 2
           const halfW = metrics.width / 2 + padX
           const halfH = 7 + padY
-          ctx.fillStyle = isInvalid ? 'rgba(80, 20, 20, 0.9)' : canvasPalette.labelBackground
+          ctx.fillStyle = isInvalid ? canvasPalette.invalidBackdrop : canvasPalette.labelBackground
           ctx.fillRect(midX - halfW, midY - halfH, halfW * 2, halfH * 2)
           ctx.fillStyle = labelColor
           ctx.textAlign = 'center'
@@ -1186,8 +1186,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const w = Math.abs(zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx)
       const h = Math.abs(zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy)
       ctx.save()
-      ctx.fillStyle = accentRgba('active', 0.16)
-      ctx.strokeStyle = accentRgba('activeStrong', 0.92)
+      ctx.fillStyle = canvasRgba('active', 0.16)
+      ctx.strokeStyle = canvasRgba('activeStrong', 0.92)
       ctx.lineWidth = 1.5
       ctx.setLineDash([7, 4])
       ctx.fillRect(x, y, w, h)
