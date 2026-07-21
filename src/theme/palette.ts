@@ -115,6 +115,15 @@ export interface CanvasThemePalette {
   stockExceeded: string
   invalidText: string
   invalidBackdrop: string
+
+  // Sketch constraint overlays (anchor/reference picking and fixed distances).
+  constraint: string
+  constraintHighlight: string
+  constraintInvalid: string
+  /** Light halo drawn behind a marker so it reads on busy geometry. */
+  markerHalo: string
+  /** Dark outline drawn around a marker for the same reason. */
+  markerOutline: string
 }
 
 export interface ThreeThemePalette {
@@ -263,6 +272,12 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       stockExceeded: 'rgba(207, 138, 224, 0.9)',
       invalidText: 'rgba(255, 180, 180, 0.95)',
       invalidBackdrop: 'rgba(80, 20, 20, 0.9)',
+
+      constraint: '#5ba5d8',
+      constraintHighlight: '#7bc7f6',
+      constraintInvalid: '#dc3c3c',
+      markerHalo: 'rgba(255, 255, 255, 0.9)',
+      markerOutline: 'rgba(0, 0, 0, 0.4)',
     },
     three: {
       background: 0x141820,
@@ -277,7 +292,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       stockMeshFallback: 0x8899aa,
       stockWireframeFallback: 0xaabbcc,
       meshFeatureDefault: 0xb7c2cf,
-      meshFeatureSelected: 0xffaa00,
+      meshFeatureSelected: 0x9bd0ff,
       meshFeatureHovered: 0x44aaff,
       meshFeatureRegion: 0x9966cc,
       meshFeatureSubtract: 0x3366cc,
@@ -379,6 +394,12 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       stockExceeded: 'rgba(142, 58, 134, 0.9)',
       invalidText: 'rgba(150, 30, 30, 0.95)',
       invalidBackdrop: 'rgba(255, 235, 235, 0.92)',
+
+      constraint: '#2f7fc8',
+      constraintHighlight: '#1f5f9e',
+      constraintInvalid: '#c53030',
+      markerHalo: 'rgba(255, 255, 255, 0.95)',
+      markerOutline: 'rgba(15, 23, 42, 0.35)',
     },
     three: {
       background: 0xeef2f7,
@@ -393,7 +414,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       stockMeshFallback: 0x7a8b9b,
       stockWireframeFallback: 0x96a7b6,
       meshFeatureDefault: 0x8899aa,
-      meshFeatureSelected: 0xd48900,
+      meshFeatureSelected: 0x0d4f8c,
       meshFeatureHovered: 0x2288dd,
       meshFeatureRegion: 0x7b4fab,
       meshFeatureSubtract: 0x224d99,

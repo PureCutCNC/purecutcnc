@@ -130,6 +130,12 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   css('danger-text', 'status', 'Danger text'),
   css('warning-text', 'status', 'Warning text'),
 
+  // Toolpath legend swatches; mirror the canvas and 3D overlay colours.
+  css('toolpath-cut', 'status', 'Toolpath cut'),
+  css('toolpath-rapid', 'status', 'Toolpath rapid'),
+  css('toolpath-plunge', 'status', 'Toolpath plunge'),
+  css('toolpath-direction', 'status', 'Toolpath direction'),
+
   // Semantic sketch feature roles.
   css('role-line', 'sketch-roles', 'Line role'),
   css('role-line-text', 'sketch-roles', 'Line role text'),
@@ -215,6 +221,11 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   canvas('stockExceeded', 'Stock exceeded warning', 'canvas-annotation'),
   canvas('invalidText', 'Invalid value text', 'canvas-annotation'),
   canvas('invalidBackdrop', 'Invalid value background', 'canvas-annotation'),
+  canvas('constraint', 'Constraint overlay', 'canvas-annotation'),
+  canvas('constraintHighlight', 'Constraint highlight', 'canvas-annotation'),
+  canvas('constraintInvalid', 'Constraint invalid', 'canvas-annotation'),
+  canvas('markerHalo', 'Marker halo', 'canvas-annotation'),
+  canvas('markerOutline', 'Marker outline', 'canvas-annotation'),
 
   // Three.js viewport / simulation presentation.
   three('background', '3D background'),

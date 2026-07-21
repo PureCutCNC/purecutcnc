@@ -20,6 +20,7 @@
  */
 
 import { cycleLockMode, lockModeGuideColor } from './useAxisLock'
+import { THEME_PALETTES } from '../theme/palette'
 import type { LockMode } from '../types/axisLock'
 
 function assert(condition: boolean, message: string) {
@@ -60,9 +61,16 @@ function testLockModeGuideColor() {
   const xColor = lockModeGuideColor('x')
   const yColor = lockModeGuideColor('y')
 
-  assert(noneColor.includes('147'), 'none color should be the blue default')
-  assert(xColor.includes('220'), 'x color should be red-ish')
-  assert(yColor.includes('180'), 'y color should be green-ish')
+  // Guide colours come from the theme palette, so assert the ROLE each mode
+  // uses rather than a hardcoded literal that would rot on every re-tone.
+  const rgbOf = (hex: string): string => {
+    const h = hex.replace('#', '')
+    return `${Number.parseInt(h.slice(0, 2), 16)}, ${Number.parseInt(h.slice(2, 4), 16)}, ${Number.parseInt(h.slice(4, 6), 16)}`
+  }
+  const canvas = THEME_PALETTES.dark.canvas
+  assert(xColor.includes(rgbOf(canvas.originAxisX)), 'x lock should use the origin X axis colour')
+  assert(yColor.includes(rgbOf(canvas.originAxisY)), 'y lock should use the origin Y axis colour')
+  assert(noneColor.includes(rgbOf(canvas.draft)), 'unlocked guide should use the draft accent')
   assert(xColor !== yColor, 'x and y colors should differ')
   assert(xColor !== noneColor, 'x and none colors should differ')
   assert(yColor !== noneColor, 'y and none colors should differ')

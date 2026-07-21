@@ -60,6 +60,10 @@
   --on-accent: #fff;
   --danger-text: #f0bbb6;
   --warning-text: #cf8ae0;
+  --toolpath-cut: #ff735c;
+  --toolpath-rapid: #78b8de;
+  --toolpath-plunge: #d583df;
+  --toolpath-direction: #5ec4c4;
   --role-line: #5a8fcc;
   --role-line-text: #8fb6f4;
   --role-region: #9966cc;
@@ -120,6 +124,10 @@
   --on-accent: #ffffff;
   --danger-text: #b3261e;
   --warning-text: #8e3a86;
+  --toolpath-cut: #d64a34;
+  --toolpath-rapid: #3884b8;
+  --toolpath-plunge: #a84ab6;
+  --toolpath-direction: #149494;
   --role-line: #2f7cb8;
   --role-line-text: #215d8f;
   --role-region: #7947a5;

@@ -19,6 +19,7 @@ import type { LockMode } from '../types/axisLock'
 import type { Point } from '../types/project'
 import { useStableEvent } from '../hooks/useStableEvent'
 import { useWindowEvent } from '../hooks/useEventListener'
+import { canvasRgba } from '../components/canvas/canvasPalette'
 
 /**
  * @param onLockChange - Called whenever the lock mode changes so the caller can redraw.
@@ -78,7 +79,9 @@ export function cycleLockMode(current: LockMode): LockMode {
 
 /** Returns the stroke color for the move guide based on lock mode. */
 export function lockModeGuideColor(mode: LockMode): string {
-  if (mode === 'x') return 'rgba(220, 60, 60, 0.85)'
-  if (mode === 'y') return 'rgba(60, 180, 60, 0.85)'
-  return 'rgba(79, 147, 214, 0.75)'
+  // Reuses the origin axis colours so an X/Y lock reads the same as the axis it
+  // constrains to; the unlocked guide follows the draft accent.
+  if (mode === 'x') return canvasRgba('originAxisX', 0.85)
+  if (mode === 'y') return canvasRgba('originAxisY', 0.85)
+  return canvasRgba('draft', 0.75)
 }

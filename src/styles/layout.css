@@ -544,8 +544,8 @@
 }
 
 .appearance-menu__swatch--dark {
-  /* theme-exempt: previews the built-in Dark theme, so it must show that theme's
-     own colours rather than the active one. Keep in step with index.css. */
+  /* Previews the built-in Dark theme, so it shows that theme's own colours
+     rather than the active one. theme-exempt: keep in step with index.css. */
   background: linear-gradient(135deg, #101821 0 48%, #4f93d6 49% 57%, #2a3a49 58% 100%);
 }
 
@@ -1218,23 +1218,23 @@
 }
 
 /* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
- *   cut / lead_in / lead_out → #ff735c (red)
- *   plunge                  → #d583df (purple)
- *   rapid                   → #78b8de (blue)
+ *   cut / lead_in / lead_out → var(--toolpath-cut)
+ *   plunge                  → var(--toolpath-plunge)
+ *   rapid                   → var(--toolpath-rapid)
  *   idle                    → transparent
  */
 .simulation-playback-bar__move-kind--cut,
 .simulation-playback-bar__move-kind--lead_in,
 .simulation-playback-bar__move-kind--lead_out {
-  background: #ff735c;
+  background: var(--toolpath-cut);
 }
 
 .simulation-playback-bar__move-kind--plunge {
-  background: #d583df;
+  background: var(--toolpath-plunge);
 }
 
 .simulation-playback-bar__move-kind--rapid {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .simulation-playback-bar__move-kind--none {
@@ -2611,23 +2611,23 @@
 }
 
 .viewport-toolpath-vis__swatch--cuts {
-  background: #ff735c;
+  background: var(--toolpath-cut);
 }
 
 .viewport-toolpath-vis__swatch--rapids {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .viewport-toolpath-vis__swatch--plunges {
-  background: #d583df;
+  background: var(--toolpath-plunge);
 }
 
 .viewport-toolpath-vis__swatch--retractions {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .viewport-toolpath-vis__swatch--directions {
-  background: #5ec4c4;
+  background: var(--toolpath-direction);
 }
 
 .feature-context-menu {

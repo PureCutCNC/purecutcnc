@@ -123,7 +123,7 @@ import {
   getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
-import { setCanvasPalette, canvasRgba } from './canvasPalette'
+import { setCanvasPalette, canvasRgba, canvasColors } from './canvasPalette'
 import { generateTextShapes } from '../../text'
 import {
   getProfileBounds,
@@ -958,8 +958,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.save()
         if (operationHighlightIds.has(feature.id)) {
           ctx.lineWidth = 3
-          ctx.strokeStyle = 'rgba(123, 199, 246, 0.95)'
-          ctx.shadowColor = 'rgba(123, 199, 246, 0.85)'
+          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
           ctx.shadowBlur = 8
           ctx.stroke()
         } else if (feature.sketch.profile.closed) {
@@ -1007,14 +1007,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const badgeWorld = { x: b.minX, y: b.maxY }
         const badgeC = worldToCanvas(badgeWorld, vt)
         ctx.save()
-        ctx.fillStyle = 'rgba(91, 165, 216, 0.85)'
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+        ctx.fillStyle = canvasRgba('constraint', 0.85)
+        ctx.strokeStyle = canvasColors().markerHalo
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.arc(badgeC.cx - 8, badgeC.cy - 8, 7, 0, Math.PI * 2)
         ctx.fill()
         ctx.stroke()
-        ctx.fillStyle = '#fff'
+        ctx.fillStyle = canvasColors().markerHalo
         ctx.font = 'bold 10px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
@@ -1045,7 +1045,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const constraintLineColor = lockModeGuideColor(lockModeRef.current)
       ctx.save()
       ctx.fillStyle = canvasRgba('activeStrong', 0.95)
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
+      ctx.strokeStyle = canvasColors().markerOutline
       ctx.beginPath()
       ctx.arc(anchorC.cx, anchorC.cy, 4, 0, Math.PI * 2)
       ctx.fill()
@@ -1088,8 +1088,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid
-        const lineColor = isInvalid ? 'rgba(220, 60, 60, 0.85)' : 'rgba(91, 165, 216, 0.8)'
-        const dotColor = isInvalid ? 'rgba(220, 60, 60, 0.9)' : 'rgba(91, 165, 216, 0.9)'
+        const lineColor = isInvalid ? canvasRgba('constraintInvalid', 0.85) : canvasRgba('constraint', 0.8)
+        const dotColor = isInvalid ? canvasRgba('constraintInvalid', 0.9) : canvasRgba('constraint', 0.9)
         const labelColor = isInvalid ? canvasPalette.invalidText : canvasPalette.labelText
         const aC = worldToCanvas(c.anchor_point, vt)
         const rC = worldToCanvas(c.reference_point, vt)
@@ -1171,8 +1171,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const w = Math.abs(marqueeCurrentRef.current.cx - marqueeStartRef.current.cx)
       const h = Math.abs(marqueeCurrentRef.current.cy - marqueeStartRef.current.cy)
       ctx.save()
-      ctx.fillStyle = 'rgba(91, 165, 216, 0.16)'
-      ctx.strokeStyle = 'rgba(123, 199, 246, 0.9)'
+      ctx.fillStyle = canvasRgba('constraint', 0.16)
+      ctx.strokeStyle = canvasRgba('constraintHighlight', 0.9)
       ctx.lineWidth = 1.5
       ctx.setLineDash([6, 4])
       ctx.fillRect(x, y, w, h)
@@ -1731,7 +1731,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.beginPath()
         ctx.moveTo(from.cx, from.cy)
         ctx.lineTo(to.cx, to.cy)
-        ctx.strokeStyle = 'rgba(220, 80, 60, 0.85)'
+        ctx.strokeStyle = canvasRgba('constraintInvalid', 0.85)
         ctx.lineWidth = 2.5
         ctx.setLineDash([6, 4])
         ctx.stroke()
