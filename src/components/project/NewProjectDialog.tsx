@@ -68,7 +68,6 @@ function setupOnlyTemplate(template: Project): Project {
     featureFolders: [],
     featureTree: [],
     global_constraints: [],
-    tools: [],
     operations: [],
     tabs: [],
     clamps: [],
