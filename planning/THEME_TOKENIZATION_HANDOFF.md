@@ -161,8 +161,11 @@ and the CSS legend swatches.
 - Repository checks: `npm run build` green (docs, lint, colour guard, tsc, 127 test files, vite);
   theme parity and contrast gates green with zero blocking findings.
 - Colour literals outside the allowed files: **0** (was 349 at the start of the migration).
-- Browser/tablet checks: `npm run test:e2e` — see result below; visual pass over both themes
-  still owed by the user on a real screen.
+- Browser/tablet checks: `npm run test:e2e` — 70 passed, 0 failed. The four
+  `appearance.smoke.spec.ts` guards initially failed because they pinned exact light-theme
+  colour literals; they now resolve the expected colour from the theme registry, so they keep
+  their legibility intent without breaking on a re-tone.
+- Visual pass over both themes on a real screen: still owed by the user.
 - Known limitations or deferred work: none — #341 defers nothing to a follow-up.
 
 ### Lessons for the next delegated effort
