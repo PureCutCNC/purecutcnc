@@ -41,6 +41,7 @@ import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { translate } from '../../i18n/store'
 import type { ToolpathResult } from '../toolpaths/types'
 import { PAPER_PRESETS, formatScaleRatio, resolvePrintBounds, unitToMm } from './layout'
+import { printPalette } from './printPalette'
 import type {
   DesignPrintContent,
   DesignPrintLayout,
@@ -64,76 +65,32 @@ export interface DesignPrintSvgExtras {
 }
 
 interface PrintPalette {
-  stock: string
-  subtract: string
-  add: string
-  model: string
-  region: string
-  regionExclude: string
-  construction: string
-  tab: string
-  clamp: string
-  dimension: string
-  dimensionExt: string
-  label: string
-  originX: string
-  originY: string
-  originDot: string
-  gridMinor: string
-  gridMajor: string
-  cut: string
-  rapid: string
-  plunge: string
-  footer: string
+  stockOutline: string
+  subtractFeatureStroke: string
+  addFeatureStroke: string
+  modelFeatureStroke: string
+  regionStroke: string
+  regionExcludeStroke: string
+  constructionStroke: string
+  tabOutline: string
+  clampOutline: string
+  dimensionLine: string
+  dimensionExtensionLine: string
+  featureLabelText: string
+  originXAxis: string
+  originYAxis: string
+  originDotFill: string
+  gridMinorLine: string
+  gridMajorLine: string
+  cutToolpath: string
+  rapidToolpath: string
+  plungeToolpath: string
+  footerText: string
+  textHalo: string
 }
 
-const COLOR_PALETTE: PrintPalette = {
-  stock: '#6b6b6b',
-  subtract: '#1f6fb2',
-  add: '#2e8b57',
-  model: '#75828f',
-  region: '#8a5fc0',
-  regionExclude: '#a37fd4',
-  construction: '#8a97a5',
-  tab: '#5f8f33',
-  clamp: '#5b6fb5',
-  dimension: '#333333',
-  dimensionExt: '#8c8c8c',
-  label: '#333333',
-  originX: '#c0392b',
-  originY: '#27ae60',
-  originDot: '#2e6fb2',
-  gridMinor: '#d9dde2',
-  gridMajor: '#b8bfc7',
-  cut: '#d84315',
-  rapid: '#1e88e5',
-  plunge: '#8e24aa',
-  footer: '#333333',
-}
-
-const MONO_PALETTE: PrintPalette = {
-  stock: '#555555',
-  subtract: '#222222',
-  add: '#222222',
-  model: '#666666',
-  region: '#444444',
-  regionExclude: '#666666',
-  construction: '#777777',
-  tab: '#555555',
-  clamp: '#555555',
-  dimension: '#222222',
-  dimensionExt: '#777777',
-  label: '#222222',
-  originX: '#222222',
-  originY: '#222222',
-  originDot: '#222222',
-  gridMinor: '#dddddd',
-  gridMajor: '#bbbbbb',
-  cut: '#333333',
-  rapid: '#888888',
-  plunge: '#666666',
-  footer: '#222222',
-}
+const COLOR_PALETTE: PrintPalette = printPalette.svgColor
+const MONO_PALETTE: PrintPalette = printPalette.svgMono
 
 // Stroke widths and lettering sizes in paper millimetres.
 const STROKE_FEATURE_MM = 0.3
@@ -345,7 +302,7 @@ function textEl(
       : ''
   const halo = options.halo === false
     ? ''
-    : ` stroke="#ffffff" stroke-width="${fmt(mm(ctx, TEXT_HALO_MM))}" paint-order="stroke" stroke-linejoin="round"`
+    : ` stroke="${ctx.palette.textHalo}" stroke-width="${fmt(mm(ctx, TEXT_HALO_MM))}" paint-order="stroke" stroke-linejoin="round"`
   const weight = options.weight ? ` font-weight="${options.weight}"` : ''
   return (
     `<text x="${fmt(x)}" y="${fmt(y)}" font-family="Helvetica, Arial, sans-serif"` +
@@ -401,12 +358,12 @@ function buildGrid(
 
   if (minorLines.length > 0) {
     parts.push(
-      `<path class="pc-grid" d="${minorLines.join(' ')}" fill="none" stroke="${ctx.palette.gridMinor}" stroke-width="${fmt(mm(ctx, STROKE_GRID_MINOR_MM))}"/>`,
+      `<path class="pc-grid" d="${minorLines.join(' ')}" fill="none" stroke="${ctx.palette.gridMinorLine}" stroke-width="${fmt(mm(ctx, STROKE_GRID_MINOR_MM))}"/>`,
     )
   }
   if (majorLines.length > 0) {
     parts.push(
-      `<path class="pc-grid" d="${majorLines.join(' ')}" fill="none" stroke="${ctx.palette.gridMajor}" stroke-width="${fmt(mm(ctx, STROKE_GRID_MAJOR_MM))}"/>`,
+      `<path class="pc-grid" d="${majorLines.join(' ')}" fill="none" stroke="${ctx.palette.gridMajorLine}" stroke-width="${fmt(mm(ctx, STROKE_GRID_MAJOR_MM))}"/>`,
     )
   }
   return parts
@@ -434,7 +391,7 @@ function buildStock(project: Project, ctx: WorldContext): string[] {
   if (!project.stock.visible) return []
   const d = profileToPathD(project.stock.profile)
   return [
-    `<path class="pc-stock" d="${d}" fill="none" stroke="${ctx.palette.stock}"` +
+    `<path class="pc-stock" d="${d}" fill="none" stroke="${ctx.palette.stockOutline}"` +
       ` stroke-width="${fmt(mm(ctx, STROKE_STOCK_MM))}" stroke-dasharray="${dash(ctx, 2.5, 1.5)}"/>`,
   ]
 }
@@ -442,17 +399,17 @@ function buildStock(project: Project, ctx: WorldContext): string[] {
 function featureStroke(feature: SketchFeature, palette: PrintPalette): { stroke: string; dashed: boolean } {
   switch (feature.operation) {
     case 'add':
-      return { stroke: palette.add, dashed: false }
+      return { stroke: palette.addFeatureStroke, dashed: false }
     case 'model':
-      return { stroke: palette.model, dashed: false }
+      return { stroke: palette.modelFeatureStroke, dashed: false }
     case 'region':
       return feature.regionMaskMode === 'exclude'
-        ? { stroke: palette.regionExclude, dashed: true }
-        : { stroke: palette.region, dashed: false }
+        ? { stroke: palette.regionExcludeStroke, dashed: true }
+        : { stroke: palette.regionStroke, dashed: false }
     case 'construction':
-      return { stroke: palette.construction, dashed: true }
+      return { stroke: palette.constructionStroke, dashed: true }
     default:
-      return { stroke: palette.subtract, dashed: false }
+      return { stroke: palette.subtractFeatureStroke, dashed: false }
   }
 }
 
@@ -519,7 +476,7 @@ function buildFeatureLabels(project: Project, ctx: WorldContext): string[] {
     const cy = bounds.minY + (bounds.maxY - bounds.minY) / 2
     parts.push(textEl(ctx, cx, cy - mm(ctx, 1.8), feature.name, {
       sizeMm: FONT_LABEL_MM,
-      fill: ctx.palette.label,
+      fill: ctx.palette.featureLabelText,
     }))
     if (feature.operation !== 'construction') {
       const zTop = typeof feature.z_top === 'number' ? feature.z_top : 0
@@ -529,7 +486,7 @@ function buildFeatureLabels(project: Project, ctx: WorldContext): string[] {
         cx,
         cy + mm(ctx, 1.8),
         `z ${formatLength(zTop, ctx.units)} → ${formatLength(zBottom, ctx.units)}`,
-        { sizeMm: FONT_LABEL_MM * 0.85, fill: ctx.palette.label },
+        { sizeMm: FONT_LABEL_MM * 0.85, fill: ctx.palette.featureLabelText },
       ))
     }
   }
@@ -549,7 +506,7 @@ function buildTabsAndClamps(
       if (!tab.visible) continue
       parts.push(
         `<path class="pc-tab" d="${profileToPathD(rectProfile(tab.x, tab.y, tab.w, tab.h))}"` +
-          ` fill="${ctx.fills ? hexToRgba(ctx.palette.tab, 0.08) : 'none'}" stroke="${ctx.palette.tab}"` +
+          ` fill="${ctx.fills ? hexToRgba(ctx.palette.tabOutline, 0.08) : 'none'}" stroke="${ctx.palette.tabOutline}"` +
           ` stroke-width="${strokeWidth}" stroke-dasharray="${dash(ctx, 1.8, 1.2)}"/>`,
       )
     }
@@ -560,7 +517,7 @@ function buildTabsAndClamps(
       if (!clamp.visible) continue
       parts.push(
         `<path class="pc-clamp" d="${profileToPathD(rectProfile(clamp.x, clamp.y, clamp.w, clamp.h))}"` +
-          ` fill="${ctx.fills ? hexToRgba(ctx.palette.clamp, 0.08) : 'none'}" stroke="${ctx.palette.clamp}"` +
+          ` fill="${ctx.fills ? hexToRgba(ctx.palette.clampOutline, 0.08) : 'none'}" stroke="${ctx.palette.clampOutline}"` +
           ` stroke-width="${strokeWidth}" stroke-dasharray="${dash(ctx, 1.8, 1.2)}"/>`,
       )
     }
@@ -584,7 +541,7 @@ function buildToolpaths(ctx: WorldContext, extras: DesignPrintSvgExtras): string
   }> = [
     {
       className: 'pc-toolpath-cut',
-      stroke: ctx.palette.cut,
+      stroke: ctx.palette.cutToolpath,
       widthMm: STROKE_CUT_MM,
       dashed: false,
       filter: (move) =>
@@ -592,7 +549,7 @@ function buildToolpaths(ctx: WorldContext, extras: DesignPrintSvgExtras): string
     },
     {
       className: 'pc-toolpath-rapid',
-      stroke: ctx.palette.rapid,
+      stroke: ctx.palette.rapidToolpath,
       widthMm: STROKE_RAPID_MM,
       dashed: true,
       filter: (move) => {
@@ -604,7 +561,7 @@ function buildToolpaths(ctx: WorldContext, extras: DesignPrintSvgExtras): string
     },
     {
       className: 'pc-toolpath-plunge',
-      stroke: ctx.palette.plunge,
+      stroke: ctx.palette.plungeToolpath,
       widthMm: STROKE_PLUNGE_MM,
       dashed: true,
       filter: (move) => visibility.plunges && move.kind === 'plunge',
@@ -642,13 +599,13 @@ function buildOrigin(project: Project, ctx: WorldContext): string[] {
 
   return [
     `<g class="pc-origin">` +
-      `<path d="M ${fmt(x)} ${fmt(y)} L ${fmt(x + len)} ${fmt(y)}" stroke="${ctx.palette.originX}" stroke-width="${strokeWidth}" fill="none"/>` +
-      `<polygon points="${fmt(x + len)},${fmt(y)} ${fmt(x + len - head)},${fmt(y - halfHead)} ${fmt(x + len - head)},${fmt(y + halfHead)}" fill="${ctx.palette.originX}"/>` +
-      `<path d="M ${fmt(x)} ${fmt(y)} L ${fmt(x)} ${fmt(y - len)}" stroke="${ctx.palette.originY}" stroke-width="${strokeWidth}" fill="none"/>` +
-      `<polygon points="${fmt(x)},${fmt(y - len)} ${fmt(x - halfHead)},${fmt(y - len + head)} ${fmt(x + halfHead)},${fmt(y - len + head)}" fill="${ctx.palette.originY}"/>` +
-      `<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(mm(ctx, 1))}" fill="${ctx.palette.originDot}"/>` +
-      textEl(ctx, x + len + mm(ctx, 2), y, 'X', { sizeMm: FONT_ORIGIN_MM, fill: ctx.palette.originX, anchor: 'start' }) +
-      textEl(ctx, x, y - len - mm(ctx, 2), 'Y', { sizeMm: FONT_ORIGIN_MM, fill: ctx.palette.originY }) +
+      `<path d="M ${fmt(x)} ${fmt(y)} L ${fmt(x + len)} ${fmt(y)}" stroke="${ctx.palette.originXAxis}" stroke-width="${strokeWidth}" fill="none"/>` +
+      `<polygon points="${fmt(x + len)},${fmt(y)} ${fmt(x + len - head)},${fmt(y - halfHead)} ${fmt(x + len - head)},${fmt(y + halfHead)}" fill="${ctx.palette.originXAxis}"/>` +
+      `<path d="M ${fmt(x)} ${fmt(y)} L ${fmt(x)} ${fmt(y - len)}" stroke="${ctx.palette.originYAxis}" stroke-width="${strokeWidth}" fill="none"/>` +
+      `<polygon points="${fmt(x)},${fmt(y - len)} ${fmt(x - halfHead)},${fmt(y - len + head)} ${fmt(x + halfHead)},${fmt(y - len + head)}" fill="${ctx.palette.originYAxis}"/>` +
+      `<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(mm(ctx, 1))}" fill="${ctx.palette.originDotFill}"/>` +
+      textEl(ctx, x + len + mm(ctx, 2), y, 'X', { sizeMm: FONT_ORIGIN_MM, fill: ctx.palette.originXAxis, anchor: 'start' }) +
+      textEl(ctx, x, y - len - mm(ctx, 2), 'Y', { sizeMm: FONT_ORIGIN_MM, fill: ctx.palette.originYAxis }) +
       `</g>`,
   ]
 }
@@ -689,7 +646,7 @@ function buildDimensions(project: Project, ctx: WorldContext): string[] {
     const extWidth = fmt(mm(ctx, STROKE_EXTENSION_MM))
     for (const [from, to] of layout.extensions) {
       pieces.push(
-        `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" stroke="${ctx.palette.dimensionExt}" stroke-width="${extWidth}" fill="none"/>`,
+        `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" stroke="${ctx.palette.dimensionExtensionLine}" stroke-width="${extWidth}" fill="none"/>`,
       )
     }
 
@@ -709,15 +666,15 @@ function buildDimensions(project: Project, ctx: WorldContext): string[] {
       pieces.push(
         `<path d="M ${fmt(layout.lineStart.x)} ${fmt(layout.lineStart.y)}` +
           ` A ${fmt(radius)} ${fmt(radius)} 0 ${largeArc} ${sweepFlag} ${fmt(layout.lineEnd.x)} ${fmt(layout.lineEnd.y)}"` +
-          ` stroke="${ctx.palette.dimension}" stroke-width="${lineWidth}" fill="none"/>`,
+          ` stroke="${ctx.palette.dimensionLine}" stroke-width="${lineWidth}" fill="none"/>`,
       )
     } else {
       pieces.push(
         `<path d="M ${fmt(layout.lineStart.x)} ${fmt(layout.lineStart.y)} L ${fmt(layout.lineEnd.x)} ${fmt(layout.lineEnd.y)}"` +
-          ` stroke="${ctx.palette.dimension}" stroke-width="${lineWidth}" fill="none"/>`,
+          ` stroke="${ctx.palette.dimensionLine}" stroke-width="${lineWidth}" fill="none"/>`,
       )
-      pieces.push(dimensionArrow(ctx, layout.lineStart, layout.lineEnd, ctx.palette.dimension))
-      pieces.push(dimensionArrow(ctx, layout.lineEnd, layout.lineStart, ctx.palette.dimension))
+      pieces.push(dimensionArrow(ctx, layout.lineStart, layout.lineEnd, ctx.palette.dimensionLine))
+      pieces.push(dimensionArrow(ctx, layout.lineEnd, layout.lineStart, ctx.palette.dimensionLine))
     }
 
     const labelText = dimensionLabelText(dim, value, lenFmt, formatAngle)
@@ -726,7 +683,7 @@ function buildDimensions(project: Project, ctx: WorldContext): string[] {
     if (rotateDeg < -90) rotateDeg += 180
     pieces.push(textEl(ctx, layout.labelPos.x, layout.labelPos.y, labelText, {
       sizeMm: FONT_DIMENSION_MM,
-      fill: ctx.palette.dimension,
+      fill: ctx.palette.dimensionLine,
       rotateDeg,
     }))
 
@@ -778,11 +735,11 @@ function buildFooter(
 
   return [
     `<g class="pc-footer">` +
-      `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="none" stroke="${palette.footer}" stroke-width="0.25"/>` +
+      `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="none" stroke="${palette.footerText}" stroke-width="0.25"/>` +
       `<text x="${fmt(x + 3)}" y="${fmt(midY)}" font-family="Helvetica, Arial, sans-serif" font-size="3.2"` +
-      ` font-weight="600" fill="${palette.footer}" text-anchor="start" dominant-baseline="middle">${name}</text>` +
+      ` font-weight="600" fill="${palette.footerText}" text-anchor="start" dominant-baseline="middle">${name}</text>` +
       `<text x="${fmt(x + w - 3)}" y="${fmt(midY)}" font-family="Helvetica, Arial, sans-serif" font-size="2.6"` +
-      ` fill="${palette.footer}" text-anchor="end" dominant-baseline="middle">${meta}</text>` +
+      ` fill="${palette.footerText}" text-anchor="end" dominant-baseline="middle">${meta}</text>` +
       `</g>`,
   ]
 }
@@ -873,7 +830,7 @@ export function buildDesignPrintSvg(
       ` viewBox="0 0 ${fmt(layout.paperWidthMm)} ${fmt(layout.paperHeightMm)}">`,
   )
   parts.push(
-    `<rect x="0" y="0" width="${fmt(layout.paperWidthMm)}" height="${fmt(layout.paperHeightMm)}" fill="#ffffff"/>`,
+    `<rect x="0" y="0" width="${fmt(layout.paperWidthMm)}" height="${fmt(layout.paperHeightMm)}" fill="${printPalette.sheetBackground}"/>`,
   )
   parts.push(
     `<defs><clipPath id="pc-print-clip"><rect x="${fmt(layout.drawableXMm)}" y="${fmt(layout.drawableYMm)}"` +
