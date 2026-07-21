@@ -57,6 +57,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
+import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -403,6 +404,9 @@ function generateRoughBandMoves(
         maxLinkDistance,
         currentPosition,
         direction,
+        undefined,
+        'outer-first',
+        cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover),
       )
     }
 
@@ -446,8 +450,12 @@ function generateFinishBandMoves(
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
+  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, stepoverDistance)
   const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
-    ? applyContourDirection(buildPocketFloorContours(finishRegions, 0, stepoverDistance), direction)
+    ? applyContourDirection(
+      smoothClosedContours(buildPocketFloorContours(finishRegions, 0, stepoverDistance), floorSmoothRadius),
+      direction,
+    )
     : []
   const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)

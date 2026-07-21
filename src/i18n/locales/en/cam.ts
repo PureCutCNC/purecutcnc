@@ -137,7 +137,7 @@ export const camEn = {
   'cam.operation.machiningOrder': 'Machining Order',
   'cam.operation.featureFirst': 'Feature first',
   'cam.operation.levelFirst': 'Level first',
-  'cam.operation.roundOutsideCorners': 'Round outside corners',
+  'cam.operation.roundOutsideCorners': 'Round corners',
   'cam.operation.drillType': 'Drill Type',
   'cam.operation.peckDepth': 'Peck Depth',
   'cam.operation.dwellTime': 'Dwell Time (s)',

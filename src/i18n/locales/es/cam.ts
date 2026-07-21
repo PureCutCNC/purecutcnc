@@ -115,7 +115,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   "cam.operation.machiningOrder": "Orden de mecanizado",
   "cam.operation.featureFirst": "Primero por elemento",
   "cam.operation.levelFirst": "Primero por nivel",
-  "cam.operation.roundOutsideCorners": "Redondear las esquinas exteriores",
+  "cam.operation.roundOutsideCorners": "Redondear las esquinas",
   "cam.operation.drillType": "Tipo de taladrado",
   "cam.operation.peckDepth": "Profundidad de picoteo",
   "cam.operation.dwellTime": "Tiempo de permanencia (s)",

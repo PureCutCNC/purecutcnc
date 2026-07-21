@@ -23,6 +23,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `index.ts` — barrel export — add new files here when adding a strategy
 - `types.ts` — shared toolpath types (segments, passes, parameters)
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
+- `offsetSmoothing.ts` — emit-time corner fillet for offset clearing rings (`roundContourCorners`, `smoothClosedContours`, `cornerSmoothingRadius`); shared by pocket + surface clearing when `roundOutsideCorners` is enabled. Leaves wall-defining passes exact.
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
 - `regions.ts` — region computation (which area belongs to which op)
 - `resolver.ts` — resolves features+operations into clipper input regions; V-carve accepts closed Subtract and Line features (S2), Pocket remains Subtract-only; Line paths use even-odd fill semantics for nested contour holes

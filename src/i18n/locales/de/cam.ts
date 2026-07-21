@@ -133,7 +133,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.machiningOrder': 'Bearbeitungsreihenfolge',
   'cam.operation.featureFirst': 'Feature zuerst',
   'cam.operation.levelFirst': 'Ebene zuerst',
-  'cam.operation.roundOutsideCorners': 'Außenecken abrunden',
+  'cam.operation.roundOutsideCorners': 'Ecken abrunden',
   'cam.operation.drillType': 'Bohrtyp',
   'cam.operation.peckDepth': 'Entspantiefe',
   'cam.operation.dwellTime': 'Verweilzeit (s)',
