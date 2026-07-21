@@ -1199,6 +1199,7 @@ function cutOffsetRegionNode(
   traversalMode: OffsetTraversalMode,
   loops: 'all' | 'outer' = 'all',
   smoothRadius?: number,
+  depth = 0,
 ): ToolpathPoint | null {
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
@@ -1216,7 +1217,15 @@ function cutOffsetRegionNode(
     // Emit-time corner smoothing: fillet the clearing-ring polyline the tool
     // follows while the offset tree keeps stepping from the exact region, so
     // successive insets never drift. undefined radius = today's exact output.
-    const contours = smoothRadius
+    //
+    // The root ring (depth 0) is the boundary-adjacent ring — nearest the wall,
+    // and its island loops nearest each island. It is left sharp so it reaches
+    // every corner: a rounded ring leaves a corner crescent that, at depth, the
+    // wall-finish pass (bottom only) cannot reach, stacking into a tall chip.
+    // Interior rings (depth > 0) are rounded freely — the straight edges of the
+    // ring outside them already sweep their rounded-corner crescents, so no
+    // stock is left. This is why no per-ring corner cleanup is needed.
+    const contours = smoothRadius && depth > 0
       ? rawContours.map((contour) => roundContourCorners(contour, smoothRadius))
       : rawContours
     const preparedContours = contours.map((contour) => rotateContourToBestEntry(
@@ -1261,6 +1270,7 @@ function cutOffsetRegionNode(
       traversalMode,
       loops,
       smoothRadius,
+      depth + 1,
     )
   }
 

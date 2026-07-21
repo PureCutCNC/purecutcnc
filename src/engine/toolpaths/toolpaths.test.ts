@@ -2149,6 +2149,35 @@ function testPocketRoughRoundsInnerRings() {
   console.log('pocket rough rounds inner rings: PASSED')
 }
 
+function testPocketRoughKeepsBoundaryRingSharpEveryLevel() {
+  console.log('Testing rounded rough keeps the wall-adjacent ring sharp at every Z level (no corner column)...')
+  const tool = makeFlatEndmill('t1', 4)
+  // 6 mm deep, stepdown 2 => rough levels at z = 4, 2, 0.
+  const pocket = makePocketFeature('p1', 0, 0, 40, 40, 6, 0)
+  const project = baseProject([tool], [pocket])
+  const result = generatePocketToolpath(project, makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    finishWalls: false,
+    finishFloor: false,
+    roundOutsideCorners: true,
+  }))
+
+  // The wall-adjacent ring corner sits one tool radius in from the pocket
+  // corner, at (2, 2). If the outermost ring were rounded away, no cut would
+  // reach it — and the uncut crescent would stack into a tall chip. With walls
+  // and floor finish OFF, only the rough pass runs, so reaching (2, 2) at every
+  // level proves the boundary ring stays sharp per level.
+  const corner = { x: 2, y: 2 }
+  const near = (p: { x: number; y: number }) => Math.hypot(p.x - corner.x, p.y - corner.y) < 0.3
+  for (const z of [4, 2, 0]) {
+    const reached = cutMoves(result.moves).some((move) => approx(move.to.z, z) && (near(move.to) || near(move.from)))
+    assert(reached, `rough level z=${z} must reach the wall-adjacent corner (boundary ring must not be rounded away)`)
+  }
+  console.log('pocket rough keeps boundary ring sharp every level: PASSED')
+}
+
 function testPocketFinishFloorRoundsWhenEnabled() {
   console.log('Testing pocket finish-floor clearing rings round when enabled, exact when off...')
   const tool = makeFlatEndmill('t1', 4)
@@ -2628,6 +2657,7 @@ try {
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()
   testPocketFinishRoundsIslandWallsOnly()
   testPocketRoughRoundsInnerRings()
+  testPocketRoughKeepsBoundaryRingSharpEveryLevel()
   testPocketFinishFloorRoundsWhenEnabled()
   testSurfaceCleanRoughRoundsInnerRings()
   testPocketOffsetSlotFeedSimple()

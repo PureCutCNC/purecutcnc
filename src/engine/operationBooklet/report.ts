@@ -76,7 +76,6 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
     || operation.kind === 'pocket'
     || operation.kind === 'surface_clean'
     || operation.kind === 'rough_surface'
-    || operation.kind === 'finish_surface_cleanup'
   )
 }
 

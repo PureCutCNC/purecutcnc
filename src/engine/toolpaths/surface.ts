@@ -57,7 +57,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
-import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
+import { cornerSmoothingRadius } from './offsetSmoothing'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -450,12 +450,11 @@ function generateFinishBandMoves(
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
-  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, stepoverDistance)
+  // Finish-floor rings stay exact: this flat-list path can't exempt the
+  // boundary ring the way the offset-tree emitter does, and a finish pass is
+  // single-level so there is no chip risk to trade for the smoothing.
   const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
-    ? applyContourDirection(
-      smoothClosedContours(buildPocketFloorContours(finishRegions, 0, stepoverDistance), floorSmoothRadius),
-      direction,
-    )
+    ? applyContourDirection(buildPocketFloorContours(finishRegions, 0, stepoverDistance), direction)
     : []
   const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
