@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import ClipperLib from 'clipper-lib'
 import type { Project } from '../../types/project'
 import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
@@ -42,6 +43,9 @@ export function generateRoughSurfaceToolpath(
     resolved.tool.radius,
     resolved.effectiveStepover,
   )
+  const islandJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
   let currentPosition: ToolpathPoint | null = null
 
   for (const level of resolved.levels) {
@@ -72,6 +76,7 @@ export function generateRoughSurfaceToolpath(
         safeLinkCheck,
         'outer-first',
         smoothRadius,
+        islandJoinType,
       )
     }
   }

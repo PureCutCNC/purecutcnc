@@ -2178,6 +2178,52 @@ function testPocketRoughKeepsBoundaryRingSharpEveryLevel() {
   console.log('pocket rough keeps boundary ring sharp every level: PASSED')
 }
 
+function testPocketRoughRoundsIslandRings() {
+  console.log('Testing pocket rough wraps islands with rounded (non-gouging) rings when enabled...')
+  const tool = makeFlatEndmill('t1', 4) // radius 2
+  const pocket = makePocketFeature('p1', 0, 0, 50, 40, 2, 0)
+  const island = makeIslandFeature('i1', 16, 12, 18, 16, 2, 0) // rect island 16..34 x 12..28
+  const project = baseProject([tool], [pocket, island])
+  const baseOp = makePocketOp({ kind: 'pocket', target: { source: 'features', featureIds: ['p1'] }, toolRef: 't1' })
+
+  const off = generatePocketToolpath(project, baseOp)
+  const on = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
+
+  const distIsland = (x: number, y: number) =>
+    Math.hypot(Math.max(16 - x, 0, x - 34), Math.max(12 - y, 0, y - 28))
+  const minToolDistToIsland = (moves: ToolpathMove[]) =>
+    Math.min(...cutMoves(moves).flatMap((move) => {
+      const steps = Math.max(1, Math.ceil(Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) / 0.2))
+      const distances: number[] = []
+      for (let i = 0; i <= steps; i += 1) {
+        const t = i / steps
+        distances.push(distIsland(move.from.x + (move.to.x - move.from.x) * t, move.from.y + (move.to.y - move.from.y) * t))
+      }
+      return distances
+    }))
+
+  // Rounded island rings must never pull the tool into the island. The tool
+  // radius is 2; allow only the jtRound arc-tessellation tolerance (~0.01 mm).
+  assert(
+    minToolDistToIsland(on.moves) > 2 - 0.05,
+    `rounded island rings must not gouge the island (min tool-center distance ${minToolDistToIsland(on.moves).toFixed(3)} vs radius 2)`,
+  )
+
+  // The island-hugging ring (~2 mm off the island) is a sharp rectangle when
+  // off (corners sit at ~2.8 mm, no vertices in the band) and a tessellated
+  // rounded rectangle when on (many arc vertices land in the band).
+  const hugRingVertices = (moves: ToolpathMove[]) =>
+    cutMoves(moves).filter((move) => Math.abs(distIsland(move.to.x, move.to.y) - 2) < 0.25).length
+  assert(
+    hugRingVertices(on.moves) > hugRingVertices(off.moves) + 8,
+    `enabled island ring should be tessellated into arcs (${hugRingVertices(off.moves)} -> ${hugRingVertices(on.moves)})`,
+  )
+
+  const undefinedFlag = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
+  assert(movesEqual(off.moves, undefinedFlag.moves), 'off vs undefined must be identical around islands')
+  console.log('pocket rough rounds island rings: PASSED')
+}
+
 function testPocketFinishFloorRoundsWhenEnabled() {
   console.log('Testing pocket finish-floor clearing rings round when enabled, exact when off...')
   const tool = makeFlatEndmill('t1', 4)
@@ -2658,6 +2704,7 @@ try {
   testPocketFinishRoundsIslandWallsOnly()
   testPocketRoughRoundsInnerRings()
   testPocketRoughKeepsBoundaryRingSharpEveryLevel()
+  testPocketRoughRoundsIslandRings()
   testPocketFinishFloorRoundsWhenEnabled()
   testSurfaceCleanRoughRoundsInnerRings()
   testPocketOffsetSlotFeedSimple()

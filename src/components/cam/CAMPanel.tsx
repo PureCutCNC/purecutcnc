@@ -1393,7 +1393,8 @@ export function CAMPanel({
                   {(selectedOperation.kind === 'edge_route_outside'
                     || selectedOperation.kind === 'pocket'
                     || selectedOperation.kind === 'surface_clean'
-                    || selectedOperation.kind === 'rough_surface') ? (
+                    || selectedOperation.kind === 'rough_surface'
+                    || selectedOperation.kind === 'finish_surface_cleanup') ? (
                     <label className="properties-check">
                       <input
                         type="checkbox"

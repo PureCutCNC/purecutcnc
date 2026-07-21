@@ -57,7 +57,7 @@ import {
   toOpenCutMoves,
   updateBounds,
 } from './pocket'
-import { cornerSmoothingRadius } from './offsetSmoothing'
+import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -381,8 +381,17 @@ function generateRoughBandMoves(
     return { moves, stepLevels, warnings }
   }
 
+  // Round joins on islands (bumps we clear around) when the option is on, so
+  // the tool wraps convex corners smoothly without gouging; outer/wall rings
+  // stay mitered and are filleted at emit time. Matches the pocket rough pass.
+  const islandJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
+  const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
+
   for (const z of stepLevels) {
-    const currentRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
+    const currentRegions = coverageRegions.flatMap((region) =>
+      buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     if (currentRegions.length === 0) {
       warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
@@ -406,7 +415,8 @@ function generateRoughBandMoves(
         direction,
         undefined,
         'outer-first',
-        cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover),
+        smoothRadius,
+        islandJoinType,
       )
     }
 
@@ -450,11 +460,15 @@ function generateFinishBandMoves(
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
-  // Finish-floor rings stay exact: this flat-list path can't exempt the
-  // boundary ring the way the offset-tree emitter does, and a finish pass is
-  // single-level so there is no chip risk to trade for the smoothing.
+  // Finish-floor rings are filleted when the option is on. This is a single-
+  // level pass (no chip risk) and the floor rings run one stepover inside the
+  // wall, so the wall-finish pass backstops the outermost ring's corners.
+  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, stepoverDistance)
   const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
-    ? applyContourDirection(buildPocketFloorContours(finishRegions, 0, stepoverDistance), direction)
+    ? applyContourDirection(
+      smoothClosedContours(buildPocketFloorContours(finishRegions, 0, stepoverDistance), floorSmoothRadius),
+      direction,
+    )
     : []
   const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)

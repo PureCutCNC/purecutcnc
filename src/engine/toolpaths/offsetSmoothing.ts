@@ -80,6 +80,24 @@ function normalizeSignedAngle(angle: number): number {
 }
 
 /**
+ * Fillet the corners of every closed contour when a radius is given; otherwise
+ * return the contours unchanged. undefined/0 radius = today's exact output, so
+ * callers can gate smoothing by passing the derived radius straight through.
+ * For flat lists of outer clearing contours (e.g. finish-floor rings) where the
+ * offset-tree boundary exemption is unavailable.
+ */
+export function smoothClosedContours(
+  contours: Point[][],
+  radius: number | undefined,
+  options?: RoundContourOptions,
+): Point[][] {
+  if (!radius) {
+    return contours
+  }
+  return contours.map((contour) => roundContourCorners(contour, radius, options))
+}
+
+/**
  * Round the sharp corners of a closed contour with tangent-arc fillets.
  *
  * `points` is a closed ring given as distinct vertices with no duplicated
