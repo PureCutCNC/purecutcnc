@@ -56,8 +56,22 @@ literal (`#rgb`, `#rrggbb`, `rgb()/rgba()`, `0xRRGGBB`) may appear **only** in:
 4. an explicit allowlist for developer-only diagnostics.
 
 Everything else reads a token: `var(--<token>)` in CSS, `palette.*` in canvas and
-Three renderers. Phase 6 adds a build check that fails on any literal outside
-those locations.
+Three renderers.
+
+Two build guards keep this from drifting back:
+
+1. **`scripts/check-color-literals.ts`** (wired into `npm run build`) fails on any
+   colour literal outside the locations above.
+2. **`src/theme/editorCoverage.test.ts`** fails when a palette field has no
+   `tokens.ts` entry (which would resolve to `undefined` at runtime *and* be
+   invisible in the Theme Editor), when a token has no palette field, when the
+   dark and light palettes declare different fields, when a token sits in a group
+   the editor does not render, or when a built-in theme is missing a token value.
+
+Translation coverage needs no extra guard: every locale namespace is typed
+`Record<keyof typeof <ns>En, string>`, so `tsc` already fails when an English
+string has no translation in `de`/`es`/`fr`/`zh-CN`. Localizing the token labels
+themselves is tracked separately in issue #343.
 
 ## Manager-owned work (not delegated)
 
