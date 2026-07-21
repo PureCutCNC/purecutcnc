@@ -99,6 +99,7 @@ export function detectLocaleIdFromNavigator(languages: readonly string[]): Built
     const lower = tag.toLowerCase()
     const subtags = lower.split('-')
     if (subtags[0] === 'en') return 'en'
+    if (subtags[0] === 'es') return 'es'
     if (subtags[0] === 'de') return 'de'
     if (subtags[0] === 'zh') {
       const traditional = subtags.includes('hant')

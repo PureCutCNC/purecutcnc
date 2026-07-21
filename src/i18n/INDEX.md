@@ -18,18 +18,21 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
 - `locales/zh-CN/` — Simplified Chinese, mirroring the `en/` module layout;
   each module is typed as a complete record of its English counterpart so
   extraction and translation land together. Terminology in `GLOSSARY.md`.
+- `locales/es/` — built-in Spanish, mirroring the `en/` module layout.
+  The catalog uses neutral terminology suitable for European Spanish and
+  broader Spanish-speaking CNC users; the native picker name is `Español`.
 - `locales/de/` — German (Deutsch), same module layout and complete-record
   typing as zh-CN; German inflects, so `.one`/`.other` plural variants carry
   distinct strings. Terminology in `GLOSSARY.md`.
-- `GLOSSARY.md` — en ↔ zh-CN and en ↔ de CNC terminology and style reference
-  for translators and future locales.
+- `GLOSSARY.md` — CNC terminology and style reference (en ↔ zh-CN, es, de) for
+  translators and future locales.
 - `registry.ts` — built-in locale metadata, custom language-pack schema
   validation (including the BCP-47 tag predicate), base+overrides
   resolution, duplication, translation progress, placeholder-issue
   reporting, and the versioned import/export envelope. Backs the manager and
   editor dialogs in `src/components/language/`.
 - `selection.ts` — storage keys/codecs, stored-data sanitization, navigator
-  locale detection (`zh` → zh-CN unless explicitly Traditional), and
+  locale detection (`es` → es; `zh` → zh-CN unless explicitly Traditional), and
   initial-locale resolution (explicit stored choice wins).
 - `store.ts` — framework-agnostic active-locale store: `translate()` /
   `translatePlural()` for non-React call sites, custom-pack CRUD,
@@ -44,5 +47,5 @@ user-created — are overlays. Mirrors the `src/theme/` architecture.
   `t`/`tPlural`/`setLocale`/pack CRUD) over the store via
   `useSyncExternalStore`.
 - `*.test.ts` — catalog helpers, registry validation/resolution (including
-  zh-CN completeness and placeholder parity), selection/detection, and store
+  Spanish and zh-CN completeness and placeholder parity), selection/detection, and store
   behavior.

@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { placeholdersMatch } from './catalog'
+import { interpolate, placeholdersMatch, pluralVariant } from './catalog'
 import { enMessages, type MessageKey } from './locales/en'
+import { es } from './locales/es'
 import { zhCN } from './locales/zh-CN'
 import { de } from './locales/de'
 import {
@@ -50,12 +51,25 @@ for (const key of enKeys) {
   assert(typeof value === 'string' && value !== '', `zh-CN has a value for ${key}`)
 }
 
+// Spanish ships complete as a first-class built-in locale too.
+for (const key of enKeys) {
+  const value = es[key]
+  assert(typeof value === 'string' && value !== '', `es has a value for ${key}`)
+}
+
 // Placeholder parity: every zh-CN translation preserves its English
 // placeholder set exactly.
 for (const key of enKeys) {
   assert(
     placeholdersMatch(enMessages[key], zhCN[key]),
     `zh-CN preserves placeholders of ${key}`,
+  )
+}
+
+for (const key of enKeys) {
+  assert(
+    placeholdersMatch(enMessages[key], es[key]),
+    `es preserves placeholders of ${key}`,
   )
 }
 
@@ -81,6 +95,10 @@ const builtinZh = resolveBuiltinLocale('zh-CN')
 assert(builtinZh.languageTag === 'zh-CN', 'zh-CN carries its BCP-47 tag')
 assert(builtinZh.name === '简体中文', 'zh-CN presents its native name')
 assert(builtinZh.messages['file.saveProject'] === zhCN['file.saveProject'], 'zh-CN resolution uses Chinese strings')
+const builtinEs = resolveBuiltinLocale('es')
+assert(builtinEs.languageTag === 'es', 'es carries its BCP-47 tag')
+assert(builtinEs.name === 'Español', 'es presents its native name')
+assert(builtinEs.messages['file.saveProject'] === es['file.saveProject'], 'es resolution uses Spanish strings')
 const builtinDe = resolveBuiltinLocale('de')
 assert(builtinDe.languageTag === 'de' && builtinDe.builtin, 'de resolves as built-in')
 assert(builtinDe.name === 'Deutsch', 'de presents its native name')
@@ -147,6 +165,7 @@ const enBased = resolveCustomLanguage({ ...validPack, id: 'custom-en-based' })
 assert(enBased.messages['file.undo'] === enMessages['file.undo'], 'en-based pack falls back to English')
 
 assert(resolveLocaleById('zh-CN', []).id === 'zh-CN', 'built-in id resolves')
+assert(resolveLocaleById('es', []).id === 'es', 'Spanish built-in resolves')
 assert(resolveLocaleById('custom-zh-based', [zhBased]).id === 'custom-zh-based', 'custom id resolves')
 assert(resolveLocaleById('gone', [zhBased]).id === 'en', 'stale id falls back to English')
 
@@ -197,5 +216,42 @@ assert(
     .error !== undefined,
   'wrong envelope version rejects',
 )
+
+// ---------------------------------------------------------------------------
+// Spanish safety-string and plural guards (PR #327 translation review)
+// ---------------------------------------------------------------------------
+
+// Clamp-crossing warnings are safety-critical. Regression guard for the
+// machine-translated versions that duplicated the clamp noun and mangled the
+// {count}/{moveKind} placeholders: substitution must be clean, the move-kind
+// word must compose grammatically, and the clamp must be named exactly once.
+const clampOne = interpolate(es['warnings.clampCrossedOne'], {
+  name: 'A',
+  count: 1,
+  moveKind: es['warnings.moveKind.cut'],
+  minZ: 0,
+  requiredZ: 5,
+})
+assert(clampOne.includes('movimiento de corte'), 'es clamp warning composes the singular move-kind')
+assert(!clampOne.includes('{'), 'es clamp warning leaves no unresolved placeholders')
+assert(clampOne.split('mordaza').length === 2, 'es clamp warning names the clamp exactly once')
+
+const clampMany = interpolate(es['warnings.clampCrossedMany'], {
+  name: 'A',
+  count: 3,
+  moveKind: es['warnings.moveKind.rapid'],
+  minZ: 0,
+  requiredZ: 5,
+})
+assert(clampMany.includes('3 movimientos de avance rápido'), 'es clamp warning composes the plural move-kind')
+
+// Rest-machining count uses the .one/.other plural contract so Spanish can
+// switch región/regiones, instead of the broken "región{plural}" suffix.
+assert(pluralVariant('es', 1) === 'one' && pluralVariant('es', 2) === 'other', 'Spanish plural buckets resolve')
+const restOne = interpolate(es['cam.restOp.created.one'], { count: 1 })
+const restOther = interpolate(es['cam.restOp.created.other'], { count: 2 })
+assert(/\b1 región\b/.test(restOne), 'es rest-op singular reads "1 región"')
+assert(/\b2 regiones\b/.test(restOther), 'es rest-op plural reads "2 regiones"')
+assert(!restOne.includes('{plural}') && !restOther.includes('{plural}'), 'no legacy {plural} suffix remains')
 
 console.log('i18n registry tests passed')

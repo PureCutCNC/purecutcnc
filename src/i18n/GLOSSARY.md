@@ -55,6 +55,73 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
 - Chinese has no grammatical plural: `….one`/`….other` variants share one
   string.
 
+## Spanish (es)
+
+Keep terms neutral across Spain and Latin America; avoid regional slang and
+second-person regional forms. Use European-CNC vocabulary where it differs
+(e.g. `cajera`, not literal `bolsillo`).
+
+| English | Español | Notes |
+| --- | --- | --- |
+| project | proyecto | |
+| sketch | croquis | CAD sense |
+| feature | elemento | CAD sense; avoids overloading `operación` |
+| operation | operación | CAM operation |
+| toolpath | trayectoria de herramienta | full term in UI; `toolpath` only where space is tight |
+| tool | herramienta | cutter, not software tool |
+| stock | material en bruto | |
+| machine | máquina | CNC machine in context |
+| profile (operation) | perfil | |
+| pocket (operation) | cajera | Common European-CNC term; avoid literal `bolsillo`. |
+| edge route inside / outside | fresado de borde interior / exterior | |
+| drill (operation) | taladrado | the tool bit is a `broca` |
+| V-carve | V-carve | Established product/operation name (kept in English) |
+| engrave | grabado | operation label; `tallado` = carve / V-carve depth |
+| simulation | simulación | |
+| G-code | G-code | the token "G-code"/G1/M3 etc. stays untranslated in output |
+| dimension (annotation) | cota | |
+| tape measure | cinta métrica | |
+| snap / snapping | ajuste | CAD convention: `ajustar a…` |
+| grid | cuadrícula | |
+| midpoint / center | punto medio / centro | |
+| intersection | intersección | |
+| perpendicular (snap) | perpendicular | |
+| clamp | mordaza | fixture component |
+| tab | pestaña | workholding tab |
+| region (mask) | máscara de región | machining filter, not a shape |
+| construction geometry | geometría de construcción | never machined |
+| backdrop | fondo | reference image |
+| rough / finish | desbaste / acabado | machining passes |
+| climb / conventional | en concordancia / en oposición | milling direction |
+| feed / plunge feed | avance / avance de penetración | plunge move = `penetración` |
+| stepdown / stepover | profundidad de pasada / paso lateral | |
+| stock to leave | material a dejar | radial or axial as applicable |
+| dwell | permanencia | drill dwell (G82) |
+| offset | desfase | pattern/param and the offset tool |
+| clearance | holgura | safe distance / height |
+| undo / redo | deshacer / rehacer | |
+| save / open / import / export | guardar / abrir / importar / exportar | |
+| print | imprimir | |
+| appearance | apariencia | |
+| theme | tema | |
+| dark / light | oscuro / claro | |
+| system (follow OS) | sistema | |
+| language / language pack | idioma / paquete de idioma | |
+| built-in / custom | integrado / personalizado | themes and languages |
+| placeholder | marcador de posición | the `{name}` tokens in catalog strings |
+| unsaved changes | cambios sin guardar | |
+| booklet | cuaderno de operaciones | printable operation report |
+
+### Grammar & style
+
+- **Register:** formal *usted* for sentences addressed to the user; bare
+  infinitive/imperative for buttons and commands ("Guardar", "Añadir cota").
+- **Plural:** Spanish uses the existing `.one` / `.other` variants with
+  distinct strings — singular vs. plural noun ("1 región" / "2 regiones").
+- **Accents & tokens:** preserve accents (á é í ó ú ñ ¿ ¡) and `{placeholder}`
+  tokens exactly; machine-facing tokens (G-code words, G81/G83/M6/G0, the "mm"
+  symbol, serialized enum ids) stay literal.
+
 ## German (de)
 
 Translate into the vocabulary German-speaking machinists actually use, not

@@ -611,6 +611,8 @@
    selector is (0,3,0) and beats the theme option rule regardless of order. */
 .language-control .appearance-menu__option:not(.appearance-menu__option--manage) {
   grid-template-columns: 1fr 20px;
+  /* Keep swatch-less locale rows above the global 40px control minimum. */
+  min-height: 52px;
 }
 
 .toolbar-action:hover .toolbar-tooltip,
