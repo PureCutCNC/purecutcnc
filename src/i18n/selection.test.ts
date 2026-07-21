@@ -45,6 +45,8 @@ assert(detectLocaleIdFromNavigator(['zh-Hans-SG']) === 'zh-CN', 'Hans script mat
 assert(detectLocaleIdFromNavigator(['zh-TW']) === 'en', 'explicit Traditional region stays English')
 assert(detectLocaleIdFromNavigator(['zh-Hant']) === 'en', 'explicit Traditional script stays English')
 assert(detectLocaleIdFromNavigator(['zh-TW', 'zh-CN']) === 'zh-CN', 'later Simplified entry still matches')
+assert(detectLocaleIdFromNavigator(['es-ES']) === 'es', 'European Spanish variant matches')
+assert(detectLocaleIdFromNavigator(['es-MX']) === 'es', 'Spanish variant matches')
 assert(detectLocaleIdFromNavigator(['de']) === 'de', 'bare de matches German')
 assert(detectLocaleIdFromNavigator(['de-DE']) === 'de', 'de-DE matches German')
 assert(detectLocaleIdFromNavigator(['de-AT']) === 'de', 'Austrian German matches')
@@ -63,6 +65,7 @@ assert(resolveInitialLocaleId('fr', [], ['en-US']) === 'fr', 'stored French choi
 assert(resolveInitialLocaleId('custom-a', [pack], ['zh-CN']) === 'custom-a', 'stored custom pack wins')
 assert(resolveInitialLocaleId('custom-gone', [], ['zh-CN']) === 'zh-CN', 'stale stored id falls back to detection')
 assert(resolveInitialLocaleId(null, [], ['zh-CN']) === 'zh-CN', 'no stored choice detects')
+assert(resolveInitialLocaleId(null, [], ['es-ES']) === 'es', 'Spanish browser locale detects')
 assert(resolveInitialLocaleId('junk!', [], []) === 'en', 'garbage stored id lands on English')
 
 // Stored custom list sanitization

@@ -611,10 +611,10 @@
    selector is (0,3,0) and beats the theme option rule regardless of order. */
 .language-control .appearance-menu__option:not(.appearance-menu__option--manage) {
   grid-template-columns: 1fr 20px;
-  /* This must outrank `.app-shell button`, whose 44px minimum can round down
-     to 43px in Chromium. Keep locale choices comfortably above the touch
-     target floor across browser font and layout metrics. */
-  min-height: 48px;
+  /* Keep swatch-less locale rows above the touch-target floor: this must
+     outrank `.app-shell button`, whose 44px minimum can round down to 43px in
+     Chromium, and also clear the global 40px control minimum. */
+  min-height: 52px;
 }
 
 .toolbar-action:hover .toolbar-tooltip,
@@ -4317,6 +4317,7 @@
 }
 
 .empty-state-card {
+  position: relative;
   width: min(520px, 100%);
   max-height: 100%;
   overflow-y: auto;
@@ -4326,6 +4327,26 @@
   background: var(--surface-popover);
   box-shadow: 0 18px 48px var(--shadow-strong);
   box-sizing: border-box;
+}
+
+.empty-state-card__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.empty-state-card__close:hover {
+  background: var(--surface-sheen-mid);
+  color: var(--text);
 }
 
 .empty-state-card__title {

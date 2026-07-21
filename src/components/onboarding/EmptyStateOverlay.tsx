@@ -28,13 +28,15 @@ interface EmptyStateOverlayProps {
   onImport: () => void
   /** Called after a bundled example has been loaded into the store. */
   onExampleOpened: () => void
+  onDismiss: () => void
 }
 
-export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened }: EmptyStateOverlayProps) {
+export function EmptyStateOverlay({ onDraw, onImport, onExampleOpened, onDismiss }: EmptyStateOverlayProps) {
   const { t } = useI18n()
   return (
     <div className="empty-state-overlay">
       <div className="empty-state-card">
+        <button className="empty-state-card__close" onClick={onDismiss} aria-label={t('dialogs.common.close')} type="button">✕</button>
         <h2 className="empty-state-card__title">{t('viewport.empty.title')}</h2>
         <p className="empty-state-card__subtitle">{t('viewport.empty.subtitle')}</p>
 
