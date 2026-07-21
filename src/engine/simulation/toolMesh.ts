@@ -16,10 +16,7 @@
 
 import * as THREE from 'three'
 import type { ToolType } from '../../types/project'
-
-const TOOL_COLOR = 0xd9dde3
-const TOOL_EMISSIVE = 0x2a3443
-const SHANK_COLOR = 0x7d8591
+import type { ThreeThemePalette } from '../../theme/palette'
 
 export interface ToolMeshInfo {
   toolType: ToolType
@@ -29,6 +26,8 @@ export interface ToolMeshInfo {
   cutLength?: number
   /** Length of the shank above the flutes. Falls back to ~4× diameter, clamped. */
   shankLength?: number
+  /** Theme palette for surface colours. */
+  threePalette: ThreeThemePalette
 }
 
 function resolveCutLength(radius: number, explicit: number | undefined): number {
@@ -62,15 +61,15 @@ export function buildToolMesh(info: ToolMeshInfo): THREE.Group {
   group.name = 'toolMesh'
 
   const cutterMaterial = new THREE.MeshStandardMaterial({
-    color: TOOL_COLOR,
-    emissive: TOOL_EMISSIVE,
+    color: info.threePalette.toolCutter,
+    emissive: info.threePalette.toolCutterEmissive,
     emissiveIntensity: 0.35,
     roughness: 0.3,
     metalness: 0.85,
   })
 
   const shankMaterial = new THREE.MeshStandardMaterial({
-    color: SHANK_COLOR,
+    color: info.threePalette.toolShank,
     roughness: 0.45,
     metalness: 0.7,
   })

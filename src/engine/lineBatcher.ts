@@ -21,9 +21,10 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { getFeatureGeometryProfiles } from '../text'
 import type { Project, SketchFeature, SketchProfile } from '../types/project'
 import { closeLinePolygonIfNeeded, profileToPolygon } from './profilePolyline'
+import type { ThreeThemePalette } from '../theme/palette'
 
-export const LINE_DEFAULT_COLOR = 0x33aa66
-export const LINE_SUBTRACT_COLOR = 0x3366cc
+export const LINE_DEFAULT_COLOR = 0x33aa66 // theme-exempt: legacy constant, prefer palette.lineDefault
+export const LINE_SUBTRACT_COLOR = 0x3366cc // theme-exempt: legacy constant, prefer palette.lineSubtract
 
 export interface BatchLineMeta {
   objectCount: number
@@ -143,6 +144,7 @@ function buildLineSegmentsBatch(
 export function buildBatchedLines(
   project: Project,
   visibleFeatures: SketchFeature[],
+  threePalette: ThreeThemePalette,
 ): BatchLineResult {
   const defaultFeatures: SketchFeature[] = []
   const subtractFeatures: SketchFeature[] = []
@@ -155,8 +157,8 @@ export function buildBatchedLines(
   let vertexCount = 0
   let segmentCount = 0
   for (const [features, color] of [
-    [defaultFeatures, LINE_DEFAULT_COLOR],
-    [subtractFeatures, LINE_SUBTRACT_COLOR],
+    [defaultFeatures, threePalette.lineDefault],
+    [subtractFeatures, threePalette.lineSubtract],
   ] as const) {
     const batch = buildLineSegmentsBatch(project, features, color)
     if (batch.line) lines.push(batch.line)
