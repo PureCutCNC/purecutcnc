@@ -54,7 +54,7 @@ export function drawMeasurementLabel(
   ctx.roundRect(-width / 2, -height / 2, width, height, 5)
   ctx.fill()
   ctx.stroke()
-  ctx.fillStyle = canvasRgba('draftStrong', 0.96)
+  ctx.fillStyle = canvasColors().measurementText
   ctx.fillText(text, 0, 0)
   ctx.restore()
 }

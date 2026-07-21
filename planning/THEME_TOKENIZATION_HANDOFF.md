@@ -66,7 +66,26 @@ Two build guards keep this from drifting back:
    `tokens.ts` entry (which would resolve to `undefined` at runtime *and* be
    invisible in the Theme Editor), when a token has no palette field, when the
    dark and light palettes declare different fields, when a token sits in a group
-   the editor does not render, or when a built-in theme is missing a token value.
+   the editor does not render, when a built-in theme is missing a token value, or
+   when **a token is read by nothing** — a dead control the user can edit with no
+   effect.
+
+### Deprecating a token
+
+A token that has fallen out of use cannot simply be deleted:
+`validateCustomTheme` rejects unknown keys, so removing a released token makes
+every custom theme that overrode it fail to import outright.
+
+Mark it instead:
+
+```ts
+css('bg', 'surfaces', 'App background', 'Superseded by surface-app; no rule reads var(--bg).')
+```
+
+A deprecated token is hidden from the Theme Editor (`editableThemeTokens()`) but
+stays a valid key, so old theme files still import. Delete the entry only once no
+saved theme can still reference it. The guard also asserts the converse: a token
+marked deprecated that is still read fails, so the note cannot go stale.
 
 Translation coverage needs no extra guard: every locale namespace is typed
 `Record<keyof typeof <ns>En, string>`, so `tsc` already fails when an English

@@ -24,8 +24,11 @@
  * both directions. These assertions make that impossible to merge.
  */
 
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { THEME_PALETTES } from './palette'
-import { THEME_TOKENS, THEME_TOKEN_GROUPS, themeTokenKeys } from './tokens'
+import { THEME_TOKENS, THEME_TOKEN_GROUPS, editableThemeTokens, themeTokenKeys } from './tokens'
 import { BUILTIN_THEMES } from './registry'
 
 function assert(condition: boolean, message: string): void {
@@ -89,9 +92,58 @@ for (const token of THEME_TOKENS) {
 
 for (const group of THEME_TOKEN_GROUPS) {
   assert(
-    THEME_TOKENS.some((token) => token.group === group.id),
-    `Theme Editor group "${group.id}" has no tokens and would render empty`,
+    editableThemeTokens().some((token) => token.group === group.id),
+    `Theme Editor group "${group.id}" has no editable tokens and would render empty`,
   )
+}
+
+// --- Every token must actually be consumed -------------------------------
+// A token nothing reads is a dead control: the user edits it in the Theme
+// Editor and nothing changes. Such a token must either be wired up, or marked
+// `deprecated` so it is hidden from the editor while still importing cleanly
+// from themes saved by older builds.
+
+const SRC = fileURLToPath(new URL('..', import.meta.url))
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) {
+      walk(full, out)
+      continue
+    }
+    if (/\.(ts|tsx|css)$/.test(entry) && !/\.test\.(ts|tsx)$/.test(entry)) out.push(full)
+  }
+  return out
+}
+
+// The theme layer defines and plumbs tokens generically, so it never counts as
+// a consumer — otherwise every token would look used by its own definition.
+const consumers = walk(SRC)
+  .filter((file) => !relative(SRC, file).startsWith('theme/'))
+  .map((file) => readFileSync(file, 'utf8'))
+
+function isConsumed(token: (typeof THEME_TOKENS)[number]): boolean {
+  if (token.kind === 'css') return consumers.some((text) => text.includes(`var(--${token.key})`))
+  const name = token.key.slice(token.key.indexOf('.') + 1)
+  const pattern = new RegExp(`\\b${name}\\b`)
+  return consumers.some((text) => pattern.test(text))
+}
+
+for (const token of THEME_TOKENS) {
+  const consumed = isConsumed(token)
+  if (token.deprecated === undefined) {
+    assert(
+      consumed,
+      `Token ${token.key} is not read anywhere, so editing it in the Theme Editor does nothing. `
+      + 'Wire it up, delete it, or mark it deprecated with a reason in tokens.ts.',
+    )
+  } else {
+    assert(
+      !consumed,
+      `Token ${token.key} is marked deprecated but is still read — drop the deprecation note.`,
+    )
+  }
 }
 
 // --- Built-ins must resolve every token to a real value ------------------
@@ -106,6 +158,8 @@ for (const theme of BUILTIN_THEMES) {
   }
 }
 
+const deprecatedCount = THEME_TOKENS.length - editableThemeTokens().length
 console.log(
-  `editorCoverage tests passed (${THEME_TOKENS.length} tokens across ${THEME_TOKEN_GROUPS.length} editor groups)`,
+  `editorCoverage tests passed (${editableThemeTokens().length} editable tokens across `
+  + `${THEME_TOKEN_GROUPS.length} groups, ${deprecatedCount} deprecated and hidden)`,
 )

@@ -26,7 +26,7 @@ import {
   type CustomThemeData,
 } from '../../theme/registry'
 import { useTheme } from '../../theme/themeContext'
-import { THEME_TOKEN_GROUPS, THEME_TOKENS, type ThemeTokenKey } from '../../theme/tokens'
+import { THEME_TOKEN_GROUPS, editableThemeTokens, type ThemeTokenKey } from '../../theme/tokens'
 import { ThemeColorRow } from './ThemeColorRow'
 import { ThemePreviewSamples } from './ThemePreviewSamples'
 
@@ -192,7 +192,7 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
             </div>
 
             {THEME_TOKEN_GROUPS.map((group) => {
-              const tokens = THEME_TOKENS.filter((token) => token.group === group.id)
+              const tokens = editableThemeTokens().filter((token) => token.group === group.id)
               return (
                 <section key={group.id} className="theme-editor-group">
                   <h3 className="theme-editor-group__title">{group.label}</h3>

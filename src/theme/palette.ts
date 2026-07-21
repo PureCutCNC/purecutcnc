@@ -70,7 +70,6 @@ export interface CanvasThemePalette {
   toolpathRapid: string
   toolpathPlunge: string
   toolpathCollision: string
-  toolpathDirection: string
 
   // Dimension annotations.
   dimensionLine: string
@@ -233,7 +232,6 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolpathRapid: 'rgba(124, 184, 222, 0.8)',
       toolpathPlunge: 'rgba(213, 131, 223, 0.95)',
       toolpathCollision: 'rgba(227, 91, 91, 0.95)',
-      toolpathDirection: '#5ec4c4',
 
       dimensionLine: 'rgba(180, 200, 224, 0.85)',
       dimensionText: 'rgba(200, 220, 240, 0.65)',
@@ -355,7 +353,6 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolpathRapid: 'rgba(56, 132, 184, 0.85)',
       toolpathPlunge: 'rgba(168, 74, 182, 0.95)',
       toolpathCollision: 'rgba(200, 60, 60, 0.95)',
-      toolpathDirection: '#149494',
 
       dimensionLine: 'rgba(90, 116, 148, 0.85)',
       dimensionText: 'rgba(51, 65, 85, 0.75)',

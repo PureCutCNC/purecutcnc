@@ -68,10 +68,18 @@ export interface ThemeTokenMeta {
   kind: ThemeTokenKind
   group: ThemeTokenGroup
   label: string
+  /**
+   * Why this token no longer drives any UI. Deprecated tokens are hidden from
+   * the Theme Editor (editing them would do nothing) but remain valid keys, so
+   * a custom theme saved by an older build still imports — `validateCustomTheme`
+   * rejects unknown keys, so deleting a released token would break those files.
+   * Remove the entry outright only once no saved theme can still reference it.
+   */
+  deprecated?: string
 }
 
-function css(key: string, group: ThemeTokenGroup, label: string): ThemeTokenMeta {
-  return { key, kind: 'css', group, label }
+function css(key: string, group: ThemeTokenGroup, label: string, deprecated?: string): ThemeTokenMeta {
+  return { key, kind: 'css', group, label, ...(deprecated === undefined ? {} : { deprecated }) }
 }
 
 function canvas(name: string, label: string, group: ThemeTokenGroup = 'canvas'): ThemeTokenMeta {
@@ -84,11 +92,11 @@ function three(name: string, label: string): ThemeTokenMeta {
 
 export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   // Application and panel surfaces.
-  css('bg', 'surfaces', 'App background'),
+  css('bg', 'surfaces', 'App background', 'Superseded by surface-app, which carries the same value; no rule reads var(--bg).'),
   css('bg-elev-1', 'surfaces', 'Raised background 1'),
   css('bg-elev-2', 'surfaces', 'Raised background 2'),
   css('surface-app', 'surfaces', 'App surface'),
-  css('surface-canvas', 'surfaces', 'Canvas surface'),
+  css('surface-canvas', 'surfaces', 'Canvas surface', 'The 2D canvas paints from canvas.background; no rule reads var(--surface-canvas).'),
   css('surface-panel', 'surfaces', 'Panel surface'),
   css('surface-subtle', 'surfaces', 'Subtle surface'),
   css('surface-raised', 'surfaces', 'Raised surface'),
@@ -186,7 +194,6 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   canvas('toolpathRapid', 'Rapid move', 'canvas-toolpath'),
   canvas('toolpathPlunge', 'Plunge move', 'canvas-toolpath'),
   canvas('toolpathCollision', 'Collision warning', 'canvas-toolpath'),
-  canvas('toolpathDirection', 'Direction marker', 'canvas-toolpath'),
 
   // Dimensions, origin, clamps, tabs, snapping, validation.
   canvas('dimensionLine', 'Dimension line', 'canvas-annotation'),
@@ -265,6 +272,11 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
 export type ThemeTokenKey = (typeof THEME_TOKENS)[number]['key']
 
 const TOKEN_BY_KEY = new Map<string, ThemeTokenMeta>(THEME_TOKENS.map((token) => [token.key, token]))
+
+/** Tokens the Theme Editor should offer — everything except deprecated ones. */
+export function editableThemeTokens(): ThemeTokenMeta[] {
+  return THEME_TOKENS.filter((token) => token.deprecated === undefined)
+}
 
 export function isThemeTokenKey(key: string): key is ThemeTokenKey {
   return TOKEN_BY_KEY.has(key)
