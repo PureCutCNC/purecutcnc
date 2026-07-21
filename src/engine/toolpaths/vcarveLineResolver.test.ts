@@ -154,45 +154,126 @@ const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
   w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
 
 
-	test('Z-span isolation: add inside line is a true island, add enclosing line is not (issue #340)', () => {
-	  // Outer Line: 30×30, Z 5→3 (top band only)
-	  // Inner Line: 10×10 nested at same center, Z 2→0 (bottom band only)
-	  // Add feature: 5×5 inside inner contour, Z 5→0 (spans both bands)
-	  //
-	  // The add (5×5) is INSIDE both lines → true island, must be
-	  // discovered and subtracted (the add does NOT enclose the lines).
-	  // Contrast with an add that ENCLOSES the line → parent material.
-	  const outer = makeFeature('outer', 'line', closedProfile(30, 30, 15, 15), 5, 3)
-	  const inner = makeFeature('inner', 'line', closedProfile(10, 10, 15, 15), 2, 0)
-	  const addIsland = makeFeature('add1', 'add', closedProfile(5, 5, 15, 15), 5, 0)
-	  const project = makeProject([outer, inner, addIsland])
-	  const op = makeVCarveOp('op1', ['outer', 'inner'])
-	  const result = resolvePocketRegions(project, op)
+test('Z-span isolation: add inside line is a true island, add enclosing line is not (issue #340)', () => {
+  // Outer Line: 30×30, Z 5→3 (top band only)
+  // Inner Line: 10×10 nested at same center, Z 2→0 (bottom band only)
+  // Add feature: 5×5 inside inner contour, Z 5→0 (spans both bands)
+  //
+  // The add (5×5) is INSIDE both lines → true island, must be
+  // discovered and subtracted (the add does NOT enclose the lines).
+  // Contrast with an add that ENCLOSES the line → parent material.
+  const outer = makeFeature('outer', 'line', closedProfile(30, 30, 15, 15), 5, 3)
+  const inner = makeFeature('inner', 'line', closedProfile(10, 10, 15, 15), 2, 0)
+  const addIsland = makeFeature('add1', 'add', closedProfile(5, 5, 15, 15), 5, 0)
+  const project = makeProject([outer, inner, addIsland])
+  const op = makeVCarveOp('op1', ['outer', 'inner'])
+  const result = resolvePocketRegions(project, op)
 
-	  assert(result.bands.length === 2,
-	    `expected 2 bands (5→3 and 2→0), got ${result.bands.length}`)
+  assert(result.bands.length === 2,
+    `expected 2 bands (5→3 and 2→0), got ${result.bands.length}`)
 
-	  // Top band (5→3): only outer Line active.  add1 (5×5) is inside
-	  // outer (30×30) → true island, must be protected.
-	  const topBand = result.bands.find((b) => b.topZ === 5 && b.bottomZ === 3)
-	  assert(topBand !== undefined, 'top band 5→3 must exist')
-	  assert(topBand.islandFeatureIds.includes('add1'),
-	    `add inside line must be an island, got: ${topBand.islandFeatureIds.join(', ')}`)
-	  // Area = 30×30 outer minus 5×5 island = 900 - 25 = 875
-	  const topArea = topBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
-	  assert(approx(topArea, 875),
-	    `top band area should be ~875, got ${topArea}`)
+  // Top band (5→3): only outer Line active.  add1 (5×5) is inside
+  // outer (30×30) → true island, must be protected.
+  const topBand = result.bands.find((b) => b.topZ === 5 && b.bottomZ === 3)
+  assert(topBand !== undefined, 'top band 5→3 must exist')
+  assert(topBand.islandFeatureIds.includes('add1'),
+    `add inside line must be an island, got: ${topBand.islandFeatureIds.join(', ')}`)
+  // Area = 30×30 outer minus 5×5 island = 900 - 25 = 875
+  const topArea = topBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
+  assert(approx(topArea, 875),
+    `top band area should be ~875, got ${topArea}`)
 
-	  // Bottom band (2→0): only inner Line active.  Same expectation.
-	  const bottomBand = result.bands.find((b) => b.topZ === 2 && b.bottomZ === 0)
-	  assert(bottomBand !== undefined, 'bottom band 2→0 must exist')
-	  assert(bottomBand.islandFeatureIds.includes('add1'),
-	    `add inside line must be an island, got: ${bottomBand.islandFeatureIds.join(', ')}`)
-	  // Area = 10×10 inner minus 5×5 island = 100 - 25 = 75
-	  const bottomArea = bottomBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
-	  assert(approx(bottomArea, 75),
-	    `bottom band area should be ~75, got ${bottomArea}`)
-	})
+  // Bottom band (2→0): only inner Line active.  Same expectation.
+  const bottomBand = result.bands.find((b) => b.topZ === 2 && b.bottomZ === 0)
+  assert(bottomBand !== undefined, 'bottom band 2→0 must exist')
+  assert(bottomBand.islandFeatureIds.includes('add1'),
+    `add inside line must be an island, got: ${bottomBand.islandFeatureIds.join(', ')}`)
+  // Area = 10×10 inner minus 5×5 island = 100 - 25 = 75
+  const bottomArea = bottomBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
+  assert(approx(bottomArea, 75),
+    `bottom band area should be ~75, got ${bottomArea}`)
+})
+
+// ═══════════════════════════════════════════════════════════════════════
+// Enclosing-add vs true-island discrimination (issue #340)
+// ═══════════════════════════════════════════════════════════════════════
+
+test('add fully enclosing a closed Line is parent material, not a subtracted island (issue #340)', () => {
+  // Line 10×10 centered (15,15); Add 30×30 centered (15,15) fully encloses it.
+  // The Add is the parent stock the closed line carves into — it must NOT be
+  // subtracted, so the line interior (~100) stays machinable rather than being
+  // wiped to an empty band (the original #340 symptom).
+  const line = makeFeature('line1', 'line', closedProfile(10, 10, 15, 15), 5, 0)
+  const parent = makeFeature('parent', 'add', closedProfile(30, 30, 15, 15), 5, 0)
+  const project = makeProject([line, parent])
+  const op = makeVCarveOp('op1', ['line1'])
+  const result = resolvePocketRegions(project, op)
+
+  assert(!result.warnings.some((w) => w.code === 'bandEmptySubject'),
+    `enclosing add must not wipe the line to an empty band, warnings: ${result.warnings.map(wtext).join('; ')}`)
+  assert(result.bands.length > 0, 'should produce at least one band')
+  const totalArea = result.bands.reduce(
+    (sum, b) => sum + b.regions.reduce((s, r) => s + regionArea(r), 0), 0,
+  )
+  assert(approx(totalArea, 100),
+    `line carved into parent add should keep ~100 area, got ${totalArea}`)
+})
+
+test('add enclosing a nested even-odd Line pair is parent, ring hole preserved (issue #340)', () => {
+  // Outer 30×30 + inner 10×10 → even-odd ring (area 800); Add 40×40 encloses
+  // both lines. The whole ring carves into the parent add → ~800 preserved.
+  const outer = makeFeature('outer', 'line', closedProfile(30, 30, 20, 20), 5, 0)
+  const inner = makeFeature('inner', 'line', closedProfile(10, 10, 20, 20), 5, 0)
+  const parent = makeFeature('parent', 'add', closedProfile(40, 40, 20, 20), 5, 0)
+  const project = makeProject([outer, inner, parent])
+  const op = makeVCarveOp('op1', ['outer', 'inner'])
+  const result = resolvePocketRegions(project, op)
+
+  assert(!result.warnings.some((w) => w.code === 'bandEmptySubject'),
+    `enclosing add must not wipe the ring, warnings: ${result.warnings.map(wtext).join('; ')}`)
+  const totalArea = result.bands.reduce(
+    (sum, b) => sum + b.regions.reduce((s, r) => s + regionArea(r), 0), 0,
+  )
+  assert(approx(totalArea, 800),
+    `ring carved into parent add should keep ~800 area, got ${totalArea}`)
+})
+
+test('add inside a single closed Line is a true island and is subtracted (issue #340)', () => {
+  // Direct contrast to the enclosing case: Line 30×30 (area 900) with an
+  // Add 10×10 fully inside it → protected island → machinable ~800.
+  const line = makeFeature('line1', 'line', closedProfile(30, 30, 15, 15), 5, 0)
+  const island = makeFeature('isl', 'add', closedProfile(10, 10, 15, 15), 5, 0)
+  const project = makeProject([line, island])
+  const op = makeVCarveOp('op1', ['line1'])
+  const result = resolvePocketRegions(project, op)
+  const totalArea = result.bands.reduce(
+    (sum, b) => sum + b.regions.reduce((s, r) => s + regionArea(r), 0), 0,
+  )
+  assert(approx(totalArea, 800),
+    `line minus inner island should be ~800, got ${totalArea}`)
+})
+
+test('add enclosing one of two disjoint Lines is parent for that line only (issue #340)', () => {
+  // lineA 10×10 @ (10,10) and lineB 10×10 @ (40,10) are disjoint (total 200).
+  // Add 20×20 @ (10,10) encloses ONLY lineA. lineA carves into the parent add;
+  // lineB is untouched by the add. Both must survive → total ~200.
+  //
+  // Regression guard for the all-or-nothing enclosure decision: an add that
+  // encloses *some* but not all line targets must not erase the line(s) it
+  // does enclose.
+  const lineA = makeFeature('a', 'line', closedProfile(10, 10, 10, 10), 5, 0)
+  const lineB = makeFeature('b', 'line', closedProfile(10, 10, 40, 10), 5, 0)
+  const add = makeFeature('add1', 'add', closedProfile(20, 20, 10, 10), 5, 0)
+  const project = makeProject([lineA, lineB, add])
+  const op = makeVCarveOp('op1', ['a', 'b'])
+  const result = resolvePocketRegions(project, op)
+
+  const totalArea = result.bands.reduce(
+    (sum, b) => sum + b.regions.reduce((s, r) => s + regionArea(r), 0), 0,
+  )
+  assert(approx(totalArea, 200),
+    `both disjoint lines should be preserved (parent add only covers lineA), got ${totalArea}`)
+})
 
 // ═══════════════════════════════════════════════════════════════════════
 // S2 REQUIRED: geometry area assertions for even-odd and region clipping
