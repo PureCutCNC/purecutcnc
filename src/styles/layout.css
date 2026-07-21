@@ -1119,6 +1119,14 @@
 }
 
 .simulation-playback-bar__btn--primary:hover {
+  /* Re-assert the accent surface. `.simulation-playback-bar__btn:hover` is a
+     class plus a pseudo-class (0,2,0) and so outranks the `--primary` modifier
+     (0,1,0); without this the hover background falls back to the sheen wash
+     while the text stays --on-accent, which is white-on-white in the light
+     theme. */
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
   filter: brightness(1.08);
 }
 
