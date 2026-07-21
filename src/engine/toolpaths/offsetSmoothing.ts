@@ -168,13 +168,13 @@ export function roundContourCorners(
     //  - to a share of each adjacent edge, so neighbouring fillets never
     //    overlap, and
     //  - to the radius itself, which bounds how far the fillet retreats from a
-    //    corner. Without the second cap an acute corner (small tan(half)) would
-    //    pull the path far back from its apex, leaving a crescent of uncut
-    //    material the sharp path would have reached. Capping the tangent at the
-    //    radius keeps the smoothed path's closest approach to every apex within
-    //    ~radius (<= tool radius), so the tool still clears the corner at any
-    //    angle; 90 deg and blunter corners are unaffected (their tangent is
-    //    already <= radius).
+    //    corner. A rounded rough ring always leaves a little stock at a corner
+    //    (the exact finish pass removes it — walls are never smoothed); this cap
+    //    keeps that stock within ~radius (<= tool radius) of the apex so the
+    //    finish pass can reach it. Without it an acute corner (small tan(half))
+    //    would pull the path far back, leaving a crescent too deep for the
+    //    finish pass to clean. 90 deg and blunter corners are unaffected (their
+    //    tangent is already <= radius).
     const desiredTangent = radius / tanHalf
     const maxTangent = Math.min(maxEdgeFraction * Math.min(prevLen, nextLen), radius)
     const tangent = Math.min(desiredTangent, maxTangent)
