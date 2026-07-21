@@ -164,10 +164,19 @@ export function roundContourCorners(
       continue
     }
 
-    // Tangent length for the requested radius, clamped so the fillet never
-    // eats more than its share of either adjacent edge.
+    // Tangent length for the requested radius, clamped two ways:
+    //  - to a share of each adjacent edge, so neighbouring fillets never
+    //    overlap, and
+    //  - to the radius itself, which bounds how far the fillet retreats from a
+    //    corner. Without the second cap an acute corner (small tan(half)) would
+    //    pull the path far back from its apex, leaving a crescent of uncut
+    //    material the sharp path would have reached. Capping the tangent at the
+    //    radius keeps the smoothed path's closest approach to every apex within
+    //    ~radius (<= tool radius), so the tool still clears the corner at any
+    //    angle; 90 deg and blunter corners are unaffected (their tangent is
+    //    already <= radius).
     const desiredTangent = radius / tanHalf
-    const maxTangent = maxEdgeFraction * Math.min(prevLen, nextLen)
+    const maxTangent = Math.min(maxEdgeFraction * Math.min(prevLen, nextLen), radius)
     const tangent = Math.min(desiredTangent, maxTangent)
     const effectiveRadius = tangent * tanHalf
     if (!(effectiveRadius > EPS) || tangent <= EPS) {

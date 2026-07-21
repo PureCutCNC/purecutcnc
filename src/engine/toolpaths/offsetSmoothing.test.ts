@@ -145,11 +145,33 @@ function testShallowCornersPreserved() {
   console.log('shallow corners preserved: PASSED')
 }
 
+function testAcuteCornerRetreatBounded() {
+  console.log('Testing an acute corner rounds but never retreats past the radius...')
+  const radius = 3
+  // Thin triangle: the apex at (80, 0) is a ~12° corner.
+  const acute: Point[] = [{ x: 0, y: 0 }, { x: 80, y: 0 }, { x: 6, y: 16 }]
+  const apex = { x: 80, y: 0 }
+  const rounded = roundContourCorners(acute, radius)
+
+  // The sharp apex is rounded away...
+  assert(!rounded.some((point) => point.x === apex.x && point.y === apex.y), 'the acute apex should be rounded away')
+
+  // ...but the smoothed path must not retreat more than the fillet radius from
+  // the apex. If it did, the tool (whose radius is >= this fillet radius) would
+  // leave a crescent of uncut material at the sharp corner — the acute-corner
+  // leftover that #245 had to clean up around islands.
+  const closest = minDistanceTo(rounded, apex)
+  assert(closest <= radius + 1e-6, `acute-corner retreat ${closest.toFixed(3)} must stay within radius ${radius}`)
+  assert(closest > 0, 'the corner should still be rounded, not collapsed onto the apex')
+  console.log('acute corner retreat bounded: PASSED')
+}
+
 try {
   testIdentityWhenDisabled()
   testRoundsSquareCorners()
   testClampPreventsOverlapOnSmallSquare()
   testShallowCornersPreserved()
+  testAcuteCornerRetreatBounded()
   console.log('\nAll offsetSmoothing tests PASSED.')
 } catch (e) {
   console.error(e)
