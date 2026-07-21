@@ -154,47 +154,45 @@ const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
   w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
 
 
-test('Z-span isolation: Add island inside inner Line spanning different Z from outer Line must be discovered', () => {
-  // Outer Line: 30×30, Z 5→3 (top band only)
-  // Inner Line: 10×10 nested at same center, Z 2→0 (bottom band only)
-  // Add island: 5×5 inside inner contour, Z 5→0 (spans both bands)
-  //
-  // The outer and inner Lines are NEVER simultaneously active.  Before the
-  // fix the all-depth even-odd union created a center hole that hid the Add
-  // island from candidate discovery.  After the fix the Add island must be
-  // discovered and protected in both bands.
-  const outer = makeFeature('outer', 'line', closedProfile(30, 30, 15, 15), 5, 3)
-  const inner = makeFeature('inner', 'line', closedProfile(10, 10, 15, 15), 2, 0)
-  const addIsland = makeFeature('add1', 'add', closedProfile(5, 5, 15, 15), 5, 0)
-  const project = makeProject([outer, inner, addIsland])
-  const op = makeVCarveOp('op1', ['outer', 'inner'])
-  const result = resolvePocketRegions(project, op)
+	test('Z-span isolation: add inside line is a true island, add enclosing line is not (issue #340)', () => {
+	  // Outer Line: 30×30, Z 5→3 (top band only)
+	  // Inner Line: 10×10 nested at same center, Z 2→0 (bottom band only)
+	  // Add feature: 5×5 inside inner contour, Z 5→0 (spans both bands)
+	  //
+	  // The add (5×5) is INSIDE both lines → true island, must be
+	  // discovered and subtracted (the add does NOT enclose the lines).
+	  // Contrast with an add that ENCLOSES the line → parent material.
+	  const outer = makeFeature('outer', 'line', closedProfile(30, 30, 15, 15), 5, 3)
+	  const inner = makeFeature('inner', 'line', closedProfile(10, 10, 15, 15), 2, 0)
+	  const addIsland = makeFeature('add1', 'add', closedProfile(5, 5, 15, 15), 5, 0)
+	  const project = makeProject([outer, inner, addIsland])
+	  const op = makeVCarveOp('op1', ['outer', 'inner'])
+	  const result = resolvePocketRegions(project, op)
 
-  assert(result.bands.length === 2,
-    `expected 2 bands (5→3 and 2→0), got ${result.bands.length}`)
+	  assert(result.bands.length === 2,
+	    `expected 2 bands (5→3 and 2→0), got ${result.bands.length}`)
 
-  // Top band (5→3): only outer Line active — Add island must be discovered
-  // and protected.
-  const topBand = result.bands.find((b) => b.topZ === 5 && b.bottomZ === 3)
-  assert(topBand !== undefined, 'top band 5→3 must exist')
-  assert(topBand.islandFeatureIds.includes('add1'),
-    `top band must discover add1 as island, got islands: ${topBand.islandFeatureIds.join(', ')}`)
-  // Machinable area = 30×30 outer minus 5×5 island = 900 - 25 = 875
-  const topArea = topBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
-  assert(approx(topArea, 875),
-    `top band area should be ~875, got ${topArea}`)
+	  // Top band (5→3): only outer Line active.  add1 (5×5) is inside
+	  // outer (30×30) → true island, must be protected.
+	  const topBand = result.bands.find((b) => b.topZ === 5 && b.bottomZ === 3)
+	  assert(topBand !== undefined, 'top band 5→3 must exist')
+	  assert(topBand.islandFeatureIds.includes('add1'),
+	    `add inside line must be an island, got: ${topBand.islandFeatureIds.join(', ')}`)
+	  // Area = 30×30 outer minus 5×5 island = 900 - 25 = 875
+	  const topArea = topBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
+	  assert(approx(topArea, 875),
+	    `top band area should be ~875, got ${topArea}`)
 
-  // Bottom band (2→0): only inner Line active — Add island must also be
-  // discovered and protected.
-  const bottomBand = result.bands.find((b) => b.topZ === 2 && b.bottomZ === 0)
-  assert(bottomBand !== undefined, 'bottom band 2→0 must exist')
-  assert(bottomBand.islandFeatureIds.includes('add1'),
-    `bottom band must discover add1 as island, got islands: ${bottomBand.islandFeatureIds.join(', ')}`)
-  // Machinable area = 10×10 inner minus 5×5 island = 100 - 25 = 75
-  const bottomArea = bottomBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
-  assert(approx(bottomArea, 75),
-    `bottom band area should be ~75, got ${bottomArea}`)
-})
+	  // Bottom band (2→0): only inner Line active.  Same expectation.
+	  const bottomBand = result.bands.find((b) => b.topZ === 2 && b.bottomZ === 0)
+	  assert(bottomBand !== undefined, 'bottom band 2→0 must exist')
+	  assert(bottomBand.islandFeatureIds.includes('add1'),
+	    `add inside line must be an island, got: ${bottomBand.islandFeatureIds.join(', ')}`)
+	  // Area = 10×10 inner minus 5×5 island = 100 - 25 = 75
+	  const bottomArea = bottomBand.regions.reduce((sum, r) => sum + regionArea(r), 0)
+	  assert(approx(bottomArea, 75),
+	    `bottom band area should be ~75, got ${bottomArea}`)
+	})
 
 // ═══════════════════════════════════════════════════════════════════════
 // S2 REQUIRED: geometry area assertions for even-odd and region clipping

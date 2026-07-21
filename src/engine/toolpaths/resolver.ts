@@ -404,9 +404,19 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
 
       // Subtract add islands from line areas so islands protect material
       // from line targets as they do from subtract targets.
+      // An add that fully encloses every active line target is parent
+      // material the line carves into — it is not an island and must not
+      // be subtracted (issue #340).
       for (const island of activeIslands) {
         if (lineAreas.length > 0) {
-          lineAreas = differencePaths(lineAreas, [flattenFeatureToClipperPath(island.feature)])
+          const islandPath = flattenFeatureToClipperPath(island.feature)
+          const islandEnclosesAllLines = activeLineTargetsForBand.every(({ feature }) => {
+            const targetPath = flattenFeatureToClipperPath(feature)
+            return differencePaths([targetPath], [islandPath]).length === 0
+          })
+          if (!islandEnclosesAllLines) {
+            lineAreas = differencePaths(lineAreas, [islandPath])
+          }
         }
       }
 
