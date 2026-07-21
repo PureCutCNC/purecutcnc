@@ -85,9 +85,9 @@
   flex-direction: column;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid rgba(79, 147, 214, 0.28);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: 10px;
-  background: rgba(79, 147, 214, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .about-support-text {
@@ -114,7 +114,7 @@
 
 .about-coffee-btn:hover {
   background: var(--accent);
-  color: #1c1206;
+  color: var(--on-accent);
 }
 
 .about-copyright {
