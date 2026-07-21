@@ -25,6 +25,7 @@ import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profil
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasThemePalette } from '../../theme/palette'
+import { canvasColors } from './canvasPalette'
 
 const NODE_RADIUS = 5
 const HANDLE_RADIUS = 4
@@ -90,7 +91,7 @@ export function drawSketchControls(
       ctx.beginPath()
       ctx.moveTo(anchor.cx, anchor.cy)
       ctx.lineTo(handle.cx, handle.cy)
-      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+      ctx.strokeStyle = canvasColors().handleGuide
       ctx.lineWidth = 1
       ctx.stroke()
     }
@@ -100,7 +101,7 @@ export function drawSketchControls(
       ctx.beginPath()
       ctx.moveTo(anchor.cx, anchor.cy)
       ctx.lineTo(handle.cx, handle.cy)
-      ctx.strokeStyle = 'rgba(125, 159, 189, 0.55)'
+      ctx.strokeStyle = canvasColors().handleGuide
       ctx.lineWidth = 1
       ctx.stroke()
     }
@@ -146,7 +147,7 @@ export function drawSketchControls(
     ctx.arc(cx, cy, active ? NODE_RADIUS + 2 : NODE_RADIUS, 0, Math.PI * 2)
     ctx.fillStyle = active ? palette.active : palette.mutedGeometry
     ctx.fill()
-    ctx.strokeStyle = active ? palette.activeStrong : '#3f708f'
+    ctx.strokeStyle = active ? palette.activeStrong : canvasColors().nodeStroke
     ctx.lineWidth = 2
     ctx.stroke()
   }
@@ -161,9 +162,9 @@ export function drawSketchControls(
     const control = worldToCanvas(arcControlPoint(start, segment), vt)
     const active = activeControl?.kind === 'arc_handle' && activeControl.index === index
     drawDiamond(ctx, control.cx, control.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-    ctx.fillStyle = active ? palette.active : '#9bc0dd'
+    ctx.fillStyle = active ? palette.active : canvasColors().handleFill
     ctx.fill()
-    ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
+    ctx.strokeStyle = active ? palette.activeStrong : canvasColors().handleStroke
     ctx.lineWidth = 1.5
     ctx.stroke()
   }
@@ -181,9 +182,9 @@ export function drawSketchControls(
       const point = worldToCanvas(outgoingSegment.control1, vt)
       const active = activeControl?.kind === 'out_handle' && activeControl.index === index
       drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? palette.active : '#9bc0dd'
+      ctx.fillStyle = active ? palette.active : canvasColors().handleFill
       ctx.fill()
-      ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
+      ctx.strokeStyle = active ? palette.activeStrong : canvasColors().handleStroke
       ctx.lineWidth = 1.5
       ctx.stroke()
     }
@@ -192,9 +193,9 @@ export function drawSketchControls(
       const point = worldToCanvas(incomingSegment.control2, vt)
       const active = activeControl?.kind === 'in_handle' && activeControl.index === index
       drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
-      ctx.fillStyle = active ? palette.active : '#9bc0dd'
+      ctx.fillStyle = active ? palette.active : canvasColors().handleFill
       ctx.fill()
-      ctx.strokeStyle = active ? palette.activeStrong : '#6f8fa9'
+      ctx.strokeStyle = active ? palette.activeStrong : canvasColors().handleStroke
       ctx.lineWidth = 1.5
       ctx.stroke()
     }
@@ -210,9 +211,9 @@ export function drawSketchEditPreviewPoint(
   ctx.beginPath()
   ctx.arc(cx, cy, NODE_RADIUS + 2, 0, Math.PI * 2)
   const destructive = preview.mode === 'delete_point' || preview.mode === 'delete_segment'
-  ctx.fillStyle = destructive ? '#d66c6c' : preview.mode === 'disconnect' ? '#3bb3c4' : '#5daeea'
+  ctx.fillStyle = destructive ? canvasColors().editDeleteFill : preview.mode === 'disconnect' ? canvasColors().editDisconnectFill : canvasColors().editAddFill
   ctx.fill()
-  ctx.strokeStyle = destructive ? '#efb0b0' : preview.mode === 'disconnect' ? '#9fe0e8' : '#a9d2f5'
+  ctx.strokeStyle = destructive ? canvasColors().editDeleteStroke : preview.mode === 'disconnect' ? canvasColors().editDisconnectStroke : canvasColors().editAddStroke
   ctx.lineWidth = 2
   ctx.stroke()
 }
@@ -313,7 +314,7 @@ export function drawGrid(
 }
 
 const STOCK_LABEL_MIN_WIDTH_PX = 200
-const STOCK_EXCEEDED_STROKE = 'rgba(207, 138, 224, 0.9)'
+function stockExceededStroke(): string { return canvasColors().stockExceeded }
 
 /** A hit-testable rectangle for a stock dimension label. */
 export interface StockLabelRect {
@@ -353,7 +354,7 @@ export function drawStockOutline(
   stockLabelRects?: StockLabelRect[],
 ): void {
   traceProfilePath(ctx, stock.profile, vt)
-  ctx.strokeStyle = exceeded ? STOCK_EXCEEDED_STROKE : hexToRgba(stock.color, 0.7)
+  ctx.strokeStyle = exceeded ? stockExceededStroke() : hexToRgba(stock.color, 0.7)
   ctx.lineWidth = 2
   ctx.setLineDash([7, 4])
   ctx.stroke()
@@ -433,13 +434,14 @@ export function drawClampFootprint(
 ): void {
   const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
   traceProfilePath(ctx, profile, vt)
+  const p = canvasColors()
   ctx.fillStyle = colliding
-    ? (selected ? 'rgba(209, 118, 118, 0.28)' : 'rgba(184, 98, 98, 0.18)')
-    : (selected ? 'rgba(118, 144, 209, 0.24)' : 'rgba(86, 110, 168, 0.14)')
+    ? (selected ? p.clampCollidingSelectedFill : p.clampCollidingFill)
+    : (selected ? p.clampSelectedFill : p.clampFill)
   ctx.fill()
   ctx.strokeStyle = colliding
-    ? (selected ? '#ffb0b0' : 'rgba(235, 122, 122, 0.92)')
-    : (selected ? '#9db9ff' : 'rgba(122, 151, 224, 0.88)')
+    ? (selected ? p.clampCollidingSelectedStroke : p.clampCollidingStroke)
+    : (selected ? p.clampSelectedStroke : p.clampStroke)
   ctx.lineWidth = selected ? 2.2 : 1.6
   ctx.setLineDash([6, 4])
   ctx.stroke()
@@ -454,9 +456,10 @@ export function drawTabFootprint(
 ): void {
   const profile = rectProfile(tab.x, tab.y, tab.w, tab.h)
   traceProfilePath(ctx, profile, vt)
-  ctx.fillStyle = selected ? 'rgba(168, 208, 110, 0.24)' : 'rgba(128, 175, 82, 0.14)'
+  const p = canvasColors()
+  ctx.fillStyle = selected ? p.tabSelectedFill : p.tabFill
   ctx.fill()
-  ctx.strokeStyle = selected ? '#c7ef94' : 'rgba(156, 205, 103, 0.88)'
+  ctx.strokeStyle = selected ? p.tabSelectedStroke : p.tabStroke
   ctx.lineWidth = selected ? 2.2 : 1.6
   ctx.setLineDash([6, 4])
   ctx.stroke()
@@ -478,7 +481,7 @@ export function drawOriginMarker(
   ctx.beginPath()
   ctx.moveTo(anchor.cx, anchor.cy)
   ctx.lineTo(anchor.cx + axisLength, anchor.cy)
-  ctx.strokeStyle = '#e35b5b'
+  ctx.strokeStyle = palette.originAxisX
   ctx.lineWidth = 2
   ctx.stroke()
 
@@ -487,13 +490,13 @@ export function drawOriginMarker(
   ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy - 3)
   ctx.lineTo(anchor.cx + axisLength - 6, anchor.cy + 3)
   ctx.closePath()
-  ctx.fillStyle = '#e35b5b'
+  ctx.fillStyle = palette.originAxisX
   ctx.fill()
 
   ctx.beginPath()
   ctx.moveTo(anchor.cx, anchor.cy)
   ctx.lineTo(anchor.cx, anchor.cy - axisLength)
-  ctx.strokeStyle = '#63c07a'
+  ctx.strokeStyle = palette.originAxisY
   ctx.lineWidth = 2
   ctx.stroke()
 
@@ -502,21 +505,21 @@ export function drawOriginMarker(
   ctx.lineTo(anchor.cx - 3, anchor.cy - axisLength + 6)
   ctx.lineTo(anchor.cx + 3, anchor.cy - axisLength + 6)
   ctx.closePath()
-  ctx.fillStyle = '#63c07a'
+  ctx.fillStyle = palette.originAxisY
   ctx.fill()
 
   ctx.beginPath()
   ctx.arc(anchor.cx, anchor.cy, 4, 0, Math.PI * 2)
-  ctx.fillStyle = '#5b90e3'
+  ctx.fillStyle = palette.originCenter
   ctx.fill()
   ctx.strokeStyle = palette.labelText
   ctx.lineWidth = 1.5
   ctx.stroke()
 
   ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
-  ctx.fillStyle = '#e35b5b'
+  ctx.fillStyle = palette.originAxisX
   ctx.fillText('X', anchor.cx + axisLength + 4, anchor.cy + 3)
-  ctx.fillStyle = '#63c07a'
+  ctx.fillStyle = palette.originAxisY
   ctx.fillText('Y', anchor.cx - 3, anchor.cy - axisLength - 4)
 
   ctx.fillStyle = palette.labelText
