@@ -4,6 +4,51 @@ Reference for translators and future locales. Decide a term once here, then
 use it consistently in every catalog module. User-authored names, filenames,
 machine IDs, G-code tokens, and serialized enum values are never translated.
 
+## English ↔ French
+
+| English | Français | Notes |
+| --- | --- | --- |
+| project | projet | |
+| sketch | esquisse | CAD convention |
+| feature | entité | UI geometry; use `feature` only when referring to an internal identifier |
+| operation | opération | CAM operation |
+| toolpath | parcours d’outil | Standard CAD/CAM term |
+| tool | outil | Use `fraise` or `foret` when the cutter type matters |
+| stock | brut | CNC/machining stock |
+| machine | machine | CNC machine |
+| pocket | poche | |
+| profile / edge route | contournage | Add `intérieur` / `extérieur` where needed |
+| drill / drilling | foret / perçage | Tool / operation respectively |
+| V-carve | gravure en V | |
+| engrave | gravure | |
+| rough / roughing | ébauche | |
+| finish / finishing | finition | |
+| climb / conventional milling | en avalant / en opposition | |
+| feed / plunge feed | avance / avance de plongée | |
+| stepdown / stepover | profondeur de passe / recouvrement | |
+| stock to leave | surépaisseur | Radiale or axiale as applicable |
+| safe Z / retract height | Z de sécurité / hauteur de retrait | |
+| simulation | simulation | |
+| G-code | G-code | Keep program tokens such as G1/M3 unchanged |
+| dimension | cote | |
+| snap / snapping | accrochage | |
+| grid | grille | |
+| midpoint / intersection | milieu / intersection | |
+| region | région | Machining filter, not a cut target |
+| construction geometry | géométrie de construction | |
+| tab / clamp | attache / bride | |
+
+### French style
+
+- Keep `{placeholder}` tokens byte-for-byte unchanged; the registry test
+  enforces parity.
+- Use typographic French punctuation and spacing where the UI permits it.
+- Keep `CAD`, `CAM`, `CNC`, `STL`, `SVG`, `DXF`, `PDF`, `G-code`, unit
+  symbols, enum values, and user-authored content unchanged.
+- Prefer established workshop terms above over literal translations. French
+  product documentation uses `poche`, `parcours d’outil`, `ébauche`,
+  `finition`, and `en avalant`.
+
 ## Simplified Chinese (zh-CN)
 
 | English | 简体中文 | Notes |
@@ -54,6 +99,73 @@ machine IDs, G-code tokens, and serialized enum values are never translated.
   editor enforces it per key for custom packs.
 - Chinese has no grammatical plural: `….one`/`….other` variants share one
   string.
+
+## Spanish (es)
+
+Keep terms neutral across Spain and Latin America; avoid regional slang and
+second-person regional forms. Use European-CNC vocabulary where it differs
+(e.g. `cajera`, not literal `bolsillo`).
+
+| English | Español | Notes |
+| --- | --- | --- |
+| project | proyecto | |
+| sketch | croquis | CAD sense |
+| feature | elemento | CAD sense; avoids overloading `operación` |
+| operation | operación | CAM operation |
+| toolpath | trayectoria de herramienta | full term in UI; `toolpath` only where space is tight |
+| tool | herramienta | cutter, not software tool |
+| stock | material en bruto | |
+| machine | máquina | CNC machine in context |
+| profile (operation) | perfil | |
+| pocket (operation) | cajera | Common European-CNC term; avoid literal `bolsillo`. |
+| edge route inside / outside | fresado de borde interior / exterior | |
+| drill (operation) | taladrado | the tool bit is a `broca` |
+| V-carve | V-carve | Established product/operation name (kept in English) |
+| engrave | grabado | operation label; `tallado` = carve / V-carve depth |
+| simulation | simulación | |
+| G-code | G-code | the token "G-code"/G1/M3 etc. stays untranslated in output |
+| dimension (annotation) | cota | |
+| tape measure | cinta métrica | |
+| snap / snapping | ajuste | CAD convention: `ajustar a…` |
+| grid | cuadrícula | |
+| midpoint / center | punto medio / centro | |
+| intersection | intersección | |
+| perpendicular (snap) | perpendicular | |
+| clamp | mordaza | fixture component |
+| tab | pestaña | workholding tab |
+| region (mask) | máscara de región | machining filter, not a shape |
+| construction geometry | geometría de construcción | never machined |
+| backdrop | fondo | reference image |
+| rough / finish | desbaste / acabado | machining passes |
+| climb / conventional | en concordancia / en oposición | milling direction |
+| feed / plunge feed | avance / avance de penetración | plunge move = `penetración` |
+| stepdown / stepover | profundidad de pasada / paso lateral | |
+| stock to leave | material a dejar | radial or axial as applicable |
+| dwell | permanencia | drill dwell (G82) |
+| offset | desfase | pattern/param and the offset tool |
+| clearance | holgura | safe distance / height |
+| undo / redo | deshacer / rehacer | |
+| save / open / import / export | guardar / abrir / importar / exportar | |
+| print | imprimir | |
+| appearance | apariencia | |
+| theme | tema | |
+| dark / light | oscuro / claro | |
+| system (follow OS) | sistema | |
+| language / language pack | idioma / paquete de idioma | |
+| built-in / custom | integrado / personalizado | themes and languages |
+| placeholder | marcador de posición | the `{name}` tokens in catalog strings |
+| unsaved changes | cambios sin guardar | |
+| booklet | cuaderno de operaciones | printable operation report |
+
+### Grammar & style
+
+- **Register:** formal *usted* for sentences addressed to the user; bare
+  infinitive/imperative for buttons and commands ("Guardar", "Añadir cota").
+- **Plural:** Spanish uses the existing `.one` / `.other` variants with
+  distinct strings — singular vs. plural noun ("1 región" / "2 regiones").
+- **Accents & tokens:** preserve accents (á é í ó ú ñ ¿ ¡) and `{placeholder}`
+  tokens exactly; machine-facing tokens (G-code words, G81/G83/M6/G0, the "mm"
+  symbol, serialized enum ids) stay literal.
 
 ## German (de)
 

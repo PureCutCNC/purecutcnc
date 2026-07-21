@@ -495,7 +495,6 @@ export function instantiateProjectTemplate(template?: Project, name?: string): P
     featureFolders: [],
     featureTree: [],
     global_constraints: [],
-    tools: [],
     operations: [],
     tabs: [],
     clamps: [],

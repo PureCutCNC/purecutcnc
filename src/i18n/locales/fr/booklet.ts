@@ -1,0 +1,106 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { bookletEn } from '../en/booklet'
+
+/** French operation-booklet content. */
+export const bookletFr: Record<keyof typeof bookletEn, string> = {
+  'booklet.operation.pocket': 'Poche',
+  'booklet.operation.vCarve': 'Gravure en V',
+  'booklet.operation.vCarveMedial': 'Gravure en V médiale',
+  'booklet.operation.insideEdgeRoute': 'Contournage intérieur',
+  'booklet.operation.outsideEdgeRoute': 'Contournage extérieur',
+  'booklet.operation.surfaceClean': 'Nettoyage de surface',
+  'booklet.operation.roughSurface': 'Ébauche de surface',
+  'booklet.operation.finishSurface': 'Finition de surface',
+  'booklet.operation.finishSurfaceCleanup': 'Nettoyage de finition de surface',
+  'booklet.operation.followLine': 'Suivre une ligne',
+  'booklet.operation.drilling': 'Perçage',
+  'booklet.pass.finish': 'Finition',
+  'booklet.pass.rough': 'Ébauche',
+  'booklet.cutDirection.climb': 'En avalant',
+  'booklet.cutDirection.conventional': 'En opposition',
+  'booklet.machiningOrder.featureFirst': 'Entité d’abord',
+  'booklet.machiningOrder.levelFirst': 'Niveau d’abord',
+  'booklet.target.stock': 'Brut',
+  'booklet.target.missingFeature': 'Entité manquante {id}',
+  'booklet.units.inch': 'Pouce',
+  'booklet.units.millimeter': 'Millimètre',
+  'booklet.duration.seconds': '{seconds} s',
+  'booklet.duration.minutesSeconds': '{minutes} min {seconds} s',
+  'booklet.duration.hoursMinutesSeconds': '{hours} h {minutes} min {seconds} s',
+  'booklet.value.unavailable': 'Indisponible',
+  'booklet.value.noToolSelected': 'Aucun outil sélectionné',
+  'booklet.value.enabled': 'Activé',
+  'booklet.value.notGenerated': 'Non généré',
+  'booklet.value.slotFeed': '{percent} % de l’avance',
+  'booklet.value.unavailableInvalidFeed': 'Indisponible (avance non valide)',
+  'booklet.value.estimatedFeedTime': '{duration} (hors temps de rapides G0)',
+  'booklet.value.feedTravel': '{distance} (mouvements d’avance et de plongée)',
+  'booklet.value.rapidTravel': '{distance} (vitesse G0 définie par la machine)',
+  'booklet.label.tool': 'Outil',
+  'booklet.label.name': 'Nom',
+  'booklet.label.type': 'Type',
+  'booklet.label.diameter': 'Diamètre',
+  'booklet.label.vBitAngle': 'Angle de fraise en V',
+  'booklet.label.flutes': 'Dents',
+  'booklet.label.material': 'Matière',
+  'booklet.label.maxCutDepth': 'Profondeur de coupe max.',
+  'booklet.label.kind': 'Type',
+  'booklet.label.pass': 'Passe',
+  'booklet.label.target': 'Cible',
+  'booklet.label.feed': 'Avance',
+  'booklet.label.plungeFeed': 'Avance de plongée',
+  'booklet.label.rpm': 'tr/min',
+  'booklet.label.stepdown': 'Profondeur de passe',
+  'booklet.label.stepover': 'Recouvrement',
+  'booklet.label.cutDirection': 'Sens de coupe',
+  'booklet.label.machiningOrder': 'Ordre d’usinage',
+  'booklet.label.roundOutsideCorners': 'Arrondir les coins extérieurs',
+  'booklet.label.pattern': 'Motif',
+  'booklet.label.pocketAngle': 'Angle de poche',
+  'booklet.label.slotFeed': 'Avance de rainurage',
+  'booklet.label.drillType': 'Type de perçage',
+  'booklet.label.peckDepth': 'Profondeur de débourrage',
+  'booklet.label.dwellTime': 'Temporisation',
+  'booklet.label.retractHeight': 'Hauteur de retrait',
+  'booklet.label.carveDepth': 'Profondeur de gravure',
+  'booklet.label.stockToLeaveRadial': 'Surépaisseur radiale',
+  'booklet.label.stockToLeaveAxial': 'Surépaisseur axiale',
+  'booklet.label.toolpath': 'Parcours d’outil',
+  'booklet.label.moves': 'Mouvements',
+  'booklet.label.cutMoves': 'Mouvements de coupe',
+  'booklet.label.rapidMoves': 'Mouvements rapides',
+  'booklet.label.plungeMoves': 'Mouvements de plongée',
+  'booklet.label.estimatedFeedTime': 'Temps d’avance estimé',
+  'booklet.label.feedTravel': 'Course d’avance',
+  'booklet.label.rapidTravel': 'Course rapide',
+  'booklet.label.topZ': 'Z haut',
+  'booklet.label.bottomZ': 'Z bas',
+  'booklet.label.project': 'Projet',
+  'booklet.label.generated': 'Généré',
+  'booklet.label.units': 'Unités',
+  'booklet.label.stockSize': 'Dimensions du brut',
+  'booklet.label.originZ': 'Origine Z',
+  'booklet.pdf.title': 'Carnet des opérations',
+  'booklet.pdf.snapshot': 'Aperçu de l’opération',
+  'booklet.pdf.page': 'Page {page} sur {total}',
+  'booklet.section.overview': 'Vue d’ensemble',
+  'booklet.section.tool': 'Outil',
+  'booklet.section.operationSettings': 'Réglages de l’opération',
+  'booklet.section.toolpath': 'Parcours d’outil',
+  'booklet.section.warnings': 'Avertissements',
+}

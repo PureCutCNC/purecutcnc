@@ -1502,72 +1502,68 @@
   }
 }
 
-[data-shell-mode="tablet"] .dialog--machine-editor,
-[data-shell-mode="tablet-compact"] .dialog--machine-editor {
-  max-width: 100%;
-  max-height: 100vh;
-  border-radius: 0;
-  border: none;
-}
+/* Tablet: fullscreen + single-column for coarse-pointer devices.
+   Dialogs portaled to document.body are outside the [data-shell-mode]
+   subtree, so these use @media (pointer: coarse) to actually apply. */
+@media (pointer: coarse) {
+  .dialog--machine-editor {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
 
-[data-shell-mode="tablet"] .dialog--machine-editor .dialog-body,
-[data-shell-mode="tablet-compact"] .dialog--machine-editor .dialog-body {
-  grid-template-columns: 1fr;
-}
+  .dialog--machine-editor .dialog-body {
+    grid-template-columns: 1fr;
+  }
 
-[data-shell-mode="tablet"] .machine-editor-var,
-[data-shell-mode="tablet-compact"] .machine-editor-var {
-  font-size: 14px;
+  .machine-editor-var {
+    font-size: 14px;
+  }
 }
 
 /* Tablet: manager dialog stacks to single-column */
-[data-shell-mode="tablet"] .dialog--machine-manager,
-[data-shell-mode="tablet-compact"] .dialog--machine-manager {
-  max-width: 100%;
-  max-height: 100vh;
-  border-radius: 0;
-  border: none;
-}
+@media (pointer: coarse) {
+  .dialog--machine-manager {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
 
-[data-shell-mode="tablet"] .dialog-body--machine-manager,
-[data-shell-mode="tablet-compact"] .dialog-body--machine-manager {
-  grid-template-columns: 1fr;
-  grid-template-rows: auto 1fr;
-}
+  .dialog-body--machine-manager {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
 
-[data-shell-mode="tablet"] .machine-manager-list,
-[data-shell-mode="tablet-compact"] .machine-manager-list {
-  max-height: 30vh;
-  border-right: none;
-  border-bottom: 1px solid var(--line);
-}
+  .machine-manager-list {
+    max-height: 30vh;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
 
-[data-shell-mode="tablet"] .machine-manager-detail,
-[data-shell-mode="tablet-compact"] .machine-manager-detail {
-  max-height: none;
-}
+  .machine-manager-detail {
+    max-height: none;
+  }
 
-[data-shell-mode="tablet"] .machine-manager-actions,
-[data-shell-mode="tablet-compact"] .machine-manager-actions {
-  gap: 14px;
-}
+  .machine-manager-actions {
+    gap: 14px;
+  }
 
-[data-shell-mode="tablet"] .machine-manager-actions-row,
-[data-shell-mode="tablet-compact"] .machine-manager-actions-row {
-  gap: 10px;
-}
+  .machine-manager-actions-row {
+    gap: 10px;
+  }
 
-[data-shell-mode="tablet"] .machine-manager-actions-row .btn-secondary,
-[data-shell-mode="tablet-compact"] .machine-manager-actions-row .btn-secondary {
-  min-height: 44px;
-  font-size: 15px;
-  padding: 0 18px;
-}
+  .machine-manager-actions-row .btn-secondary {
+    min-height: 44px;
+    font-size: 15px;
+    padding: 0 18px;
+  }
 
-[data-shell-mode="tablet"] .machine-manager-action--remove,
-[data-shell-mode="tablet-compact"] .machine-manager-action--remove {
-  min-height: 44px;
-  font-size: 15px;
+  .machine-manager-action--remove {
+    min-height: 44px;
+    font-size: 15px;
+  }
 }
 
 /* ── Theme Manager ──────────────────── */

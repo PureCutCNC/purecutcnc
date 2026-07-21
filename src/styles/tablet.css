@@ -1255,7 +1255,7 @@
   .dialog {
     max-width: min(560px, 92vw);
     max-height: 88vh;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   /* Machine editor needs room for its two-column layout (form + JSON/help). */
