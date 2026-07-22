@@ -122,7 +122,7 @@ export function generateVCarveToolpath(project: Project, operation: Operation): 
     }
   }
 
-  if (isFeatureFirst(operation)) {
+  if (isFeatureFirst(operation, project)) {
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateVCarveToolpathSingle(project, subOp),
     )

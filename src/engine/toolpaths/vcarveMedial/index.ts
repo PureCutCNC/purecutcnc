@@ -104,7 +104,7 @@ export function generateVCarveMedialToolpath(project: Project, operation: Operat
     }
   }
 
-  if (isFeatureFirst(operation)) {
+  if (isFeatureFirst(operation, project)) {
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateVCarveMedialToolpathSingle(project, subOp),
     )

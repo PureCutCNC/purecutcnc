@@ -399,14 +399,33 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     const activeLineTargetsForBand = activeForBand(closedLineFeatures, topZ, bottomZ)
     let lineAreas: ClipperPath[] = []
     if (activeLineTargetsForBand.length > 0) {
-      const linePaths = activeLineTargetsForBand.map(({ feature }) => flattenFeatureToClipperPath(feature))
-      lineAreas = unionPathsEvenOdd(linePaths)
+      const lineEntries = activeLineTargetsForBand.map(({ feature }) => ({
+        feature,
+        path: flattenFeatureToClipperPath(feature),
+      }))
+      lineAreas = unionPathsEvenOdd(lineEntries.map((entry) => entry.path))
 
       // Subtract add islands from line areas so islands protect material
-      // from line targets as they do from subtract targets.
+      // from line targets as they do from subtract targets. But an add that
+      // fully encloses a line target is parent material the line carves into
+      // — it is not an island there and must not be subtracted from that
+      // line's fill (issue #340). A single add can be parent for the lines
+      // it encloses and a true island elsewhere, so subtract only the part
+      // of the add that lies outside the even-odd fill of the lines it
+      // encloses (empty when it encloses none; the whole add when it
+      // encloses all, which then removes nothing).
       for (const island of activeIslands) {
         if (lineAreas.length > 0) {
-          lineAreas = differencePaths(lineAreas, [flattenFeatureToClipperPath(island.feature)])
+          const islandPath = flattenFeatureToClipperPath(island.feature)
+          const enclosedLinePaths = lineEntries
+            .filter((entry) => differencePaths([entry.path], [islandPath]).length === 0)
+            .map((entry) => entry.path)
+          const effectiveIsland = enclosedLinePaths.length > 0
+            ? differencePaths([islandPath], unionPathsEvenOdd(enclosedLinePaths))
+            : [islandPath]
+          if (effectiveIsland.length > 0) {
+            lineAreas = differencePaths(lineAreas, effectiveIsland)
+          }
         }
       }
 

@@ -57,10 +57,25 @@ export function perFeatureOperations(operation: Operation, project?: Project): O
   }))
 }
 
-export function isFeatureFirst(operation: Operation): boolean {
+export function isFeatureFirst(operation: Operation, project?: Project): boolean {
   if ((operation.machiningOrder ?? 'level_first') !== 'feature_first') return false
   if (operation.target.source !== 'features') return false
-  return operation.target.featureIds.length > 1
+  if (operation.target.featureIds.length <= 1) return false
+  // V-carve operations that target a closed line must be processed together
+  // — line-line even-odd fill cannot survive when targets are split across
+  // separate per-feature sub-operations (issue #340). This applies only when
+  // a line target is actually present: other v-carve targets (e.g. multiple
+  // disjoint subtracts) still split per feature as usual.
+  if (operation.kind === 'v_carve' || operation.kind === 'v_carve_medial') {
+    // Without a project we cannot inspect the targets — be safe, don't split.
+    if (!project) return false
+    const featuresById = resolvedFeatureMap(project)
+    const hasLineTarget = operation.target.featureIds.some(
+      (id) => featuresById.get(id)?.operation === 'line',
+    )
+    if (hasLineTarget) return false
+  }
+  return true
 }
 
 function mergeBounds(a: ToolpathBounds | null, b: ToolpathBounds | null): ToolpathBounds | null {
