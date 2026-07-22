@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run docs:check && npm run lint && npx tsx scripts/build-icon-sprite.ts && tsc -b && npm test && vite build",
+    "build": "npm run docs:check && npm run lint && npm run check:colors && npx tsx scripts/build-icon-sprite.ts && tsc -b && npm test && vite build",
+    "check:colors": "npx tsx scripts/check-color-literals.ts",
     "docs:check": "npx tsx scripts/check-docs.test.ts && npx tsx scripts/check-docs.ts",
     "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/check-license-headers.ts scripts/docs-check-core.ts scripts/check-docs.ts scripts/check-docs.test.ts",
     "lint:scripts": "eslint scripts",

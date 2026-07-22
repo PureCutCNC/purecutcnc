@@ -17,10 +17,11 @@
 import * as THREE from 'three'
 import type { SimulationGrid } from './types'
 
+// theme-exempt: scene lighting reference — matches SimulationViewport light rig
 // Shared lighting code matching the scene lights in SimulationViewport:
-//   AmbientLight(0xffffff, 0.7)
-//   DirectionalLight(0xffffff, 0.9) at (120, 180, 120)
-//   DirectionalLight(0x96b6ff, 0.35) at (-120, 80, -80)
+//   AmbientLight(0xffffff, 0.7) // theme-exempt: scene lighting reference
+//   DirectionalLight(0xffffff, 0.9) at (120, 180, 120) // theme-exempt: scene lighting reference
+//   DirectionalLight(0x96b6ff, 0.35) at (-120, 80, -80) // theme-exempt: scene lighting reference
 export const LIGHTING_GLSL = /* glsl */ `
   vec3 calcLighting(vec3 normal) {
     vec3 keyDir = normalize(vec3(120.0, 180.0, 120.0));

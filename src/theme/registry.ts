@@ -26,7 +26,12 @@
  */
 
 import { normalizeColorValue, parseColor } from './color'
-import { THEME_PALETTES, type ThemePalette } from './palette'
+import {
+  THEME_PALETTES,
+  type CanvasThemePalette,
+  type ThemePalette,
+  type ThreeThemePalette,
+} from './palette'
 import { isThemeTokenKey, themeTokenKeys, type ThemeTokenKey } from './tokens'
 
 export type ThemeFamily = 'dark' | 'light'
@@ -53,22 +58,22 @@ function threeHex(value: number): string {
   return `#${value.toString(16).padStart(6, '0')}`
 }
 
+/**
+ * Derived from the palette shape rather than an explicit list, so adding a
+ * `CanvasThemePalette`/`ThreeThemePalette` field plus its `tokens.ts` entry is
+ * the only work needed to make a new colour themeable — the two can never
+ * silently drift apart (`completeValues` throws on a token with no value).
+ */
 function paletteValues(family: ThemeFamily): Record<string, string> {
   const palette = THEME_PALETTES[family]
-  return {
-    'canvas.background': palette.canvas.background,
-    'canvas.gridMajor': palette.canvas.gridMajor,
-    'canvas.gridMinor': palette.canvas.gridMinor,
-    'canvas.labelBackground': palette.canvas.labelBackground,
-    'canvas.labelText': palette.canvas.labelText,
-    'canvas.mutedGeometry': palette.canvas.mutedGeometry,
-    'canvas.veil': palette.canvas.veil,
-    'three.background': threeHex(palette.three.background),
-    'three.gridMinorCenter': threeHex(palette.three.gridMinorCenter),
-    'three.gridMinor': threeHex(palette.three.gridMinor),
-    'three.gridMajorCenter': threeHex(palette.three.gridMajorCenter),
-    'three.gridMajor': threeHex(palette.three.gridMajor),
+  const values: Record<string, string> = {}
+  for (const [name, value] of Object.entries(palette.canvas)) {
+    values[`canvas.${name}`] = value
   }
+  for (const [name, value] of Object.entries(palette.three)) {
+    values[`three.${name}`] = threeHex(value)
+  }
+  return values
 }
 
 /**
@@ -86,8 +91,8 @@ const DARK_CSS_VALUES: Record<string, string> = {
   'text-dim': '#94aabc',
   'status-text': '#d8e4ef',
   'status-text-muted': '#aebfcd',
-  accent: '#dca56a',
-  'accent-strong': '#eab982',
+  accent: '#4f93d6',
+  'accent-strong': '#78b0e8',
   add: '#6abb81',
   cut: '#5a8fcc',
   'surface-app': '#0a1016',
@@ -110,12 +115,16 @@ const DARK_CSS_VALUES: Record<string, string> = {
   'surface-inset': 'rgba(0, 0, 0, 0.28)',
   shadow: 'rgba(0, 0, 0, 0.35)',
   'shadow-strong': 'rgba(0, 0, 0, 0.45)',
-  'accent-soft': 'rgba(220, 165, 106, 0.12)',
+  'accent-soft': 'rgba(79, 147, 214, 0.12)',
   'surface-active-top': '#3d4f61',
   'surface-active-bottom': '#202d3a',
   'on-accent': '#fff',
   'danger-text': '#f0bbb6',
-  'warning-text': '#f7b86a',
+  'warning-text': '#cf8ae0',
+  'toolpath-cut': '#ff735c',
+  'toolpath-rapid': '#78b8de',
+  'toolpath-plunge': '#d583df',
+  'toolpath-direction': '#5ec4c4',
   'role-line': '#5a8fcc',
   'role-line-text': '#8fb6f4',
   'role-region': '#9966cc',
@@ -125,51 +134,55 @@ const DARK_CSS_VALUES: Record<string, string> = {
 }
 
 const LIGHT_CSS_VALUES: Record<string, string> = {
-  bg: '#eee8dd',
-  'bg-elev-1': '#f8f4ec',
-  'bg-elev-2': '#e5ddcf',
-  line: '#c9bdab',
-  'line-strong': '#a99a84',
-  text: '#253039',
-  'text-dim': '#657078',
-  'status-text': '#253039',
-  'status-text-muted': '#4f5a61',
-  accent: '#a66126',
-  'accent-strong': '#874717',
-  add: '#39794d',
-  cut: '#356f9d',
-  'surface-app': '#eee8dd',
-  'surface-canvas': '#f6f1e7',
-  'surface-panel': '#f9f5ed',
-  'surface-subtle': '#e9e1d4',
-  'surface-raised': 'rgba(252, 249, 242, 0.97)',
-  'surface-popover': 'rgba(252, 249, 242, 0.98)',
-  'surface-translucent': 'rgba(247, 243, 235, 0.94)',
-  'surface-input': 'rgba(255, 252, 247, 0.94)',
-  'surface-hover': 'rgba(88, 70, 46, 0.08)',
-  'surface-control-top': '#fdfaf4',
-  'surface-control-bottom': '#e5dccd',
-  'surface-button-top': '#f8f3e9',
-  'surface-button-bottom': '#ddd3c3',
+  bg: '#f4f6f9',
+  'bg-elev-1': '#ffffff',
+  'bg-elev-2': '#e8edf3',
+  line: '#e2e8f0',
+  'line-strong': '#c2cddb',
+  text: '#1e293b',
+  'text-dim': '#64748b',
+  'status-text': '#1e293b',
+  'status-text-muted': '#55637a',
+  accent: '#2b6cb0',
+  'accent-strong': '#1e4f85',
+  add: '#2f855a',
+  cut: '#2f7cb8',
+  'surface-app': '#f4f6f9',
+  'surface-canvas': '#fbfbf9',
+  'surface-panel': '#ffffff',
+  'surface-subtle': '#eef2f7',
+  'surface-raised': 'rgba(255, 255, 255, 0.98)',
+  'surface-popover': 'rgba(255, 255, 255, 0.98)',
+  'surface-translucent': 'rgba(248, 250, 252, 0.94)',
+  'surface-input': 'rgba(255, 255, 255, 0.96)',
+  'surface-hover': 'rgba(15, 23, 42, 0.05)',
+  'surface-control-top': '#ffffff',
+  'surface-control-bottom': '#eef2f7',
+  'surface-button-top': '#ffffff',
+  'surface-button-bottom': '#e8eef5',
   'surface-sheen': 'rgba(255, 255, 255, 0.54)',
   'surface-sheen-soft': 'rgba(255, 255, 255, 0.34)',
   'surface-sheen-mid': 'rgba(255, 255, 255, 0.46)',
   'surface-sheen-strong': 'rgba(255, 255, 255, 0.72)',
-  'surface-inset': 'rgba(69, 54, 36, 0.13)',
-  shadow: 'rgba(55, 43, 28, 0.18)',
-  'shadow-strong': 'rgba(55, 43, 28, 0.24)',
-  'accent-soft': 'rgba(166, 97, 38, 0.12)',
-  'surface-active-top': '#ead6bf',
-  'surface-active-bottom': '#cbb293',
-  'on-accent': '#fffaf3',
-  'danger-text': '#91443e',
-  'warning-text': '#8b4c17',
-  'role-line': '#356f9d',
-  'role-line-text': '#285d87',
+  'surface-inset': 'rgba(15, 23, 42, 0.10)',
+  shadow: 'rgba(15, 23, 42, 0.10)',
+  'shadow-strong': 'rgba(15, 23, 42, 0.16)',
+  'accent-soft': 'rgba(43, 108, 176, 0.10)',
+  'surface-active-top': '#dbeafe',
+  'surface-active-bottom': '#bfdbfe',
+  'on-accent': '#ffffff',
+  'danger-text': '#b3261e',
+  'warning-text': '#8e3a86',
+  'toolpath-cut': '#d64a34',
+  'toolpath-rapid': '#3884b8',
+  'toolpath-plunge': '#a84ab6',
+  'toolpath-direction': '#149494',
+  'role-line': '#2f7cb8',
+  'role-line-text': '#215d8f',
   'role-region': '#7947a5',
   'role-region-text': '#673b8c',
-  'role-construction': '#60778b',
-  'role-construction-text': '#4e6477',
+  'role-construction': '#64748b',
+  'role-construction-text': '#4e5c70',
 }
 
 function completeValues(family: ThemeFamily, cssValues: Record<string, string>): ThemeValues {
@@ -372,24 +385,15 @@ export function themePaletteFromValues(values: ThemeValues): ThemePalette {
     if (!parsed) return 0
     return (parsed.r << 16) | (parsed.g << 8) | parsed.b
   }
-  return {
-    canvas: {
-      background: values['canvas.background'],
-      gridMajor: values['canvas.gridMajor'],
-      gridMinor: values['canvas.gridMinor'],
-      labelBackground: values['canvas.labelBackground'],
-      labelText: values['canvas.labelText'],
-      mutedGeometry: values['canvas.mutedGeometry'],
-      veil: values['canvas.veil'],
-    },
-    three: {
-      background: threeNumber('three.background'),
-      gridMinorCenter: threeNumber('three.gridMinorCenter'),
-      gridMinor: threeNumber('three.gridMinor'),
-      gridMajorCenter: threeNumber('three.gridMajorCenter'),
-      gridMajor: threeNumber('three.gridMajor'),
-    },
+  const canvas = {} as CanvasThemePalette
+  for (const name of Object.keys(THEME_PALETTES.dark.canvas) as (keyof CanvasThemePalette)[]) {
+    canvas[name] = values[`canvas.${name}` as ThemeTokenKey]
   }
+  const three = {} as ThreeThemePalette
+  for (const name of Object.keys(THEME_PALETTES.dark.three) as (keyof ThreeThemePalette)[]) {
+    three[name] = threeNumber(`three.${name}` as ThemeTokenKey)
+  }
+  return { canvas, three }
 }
 
 /**

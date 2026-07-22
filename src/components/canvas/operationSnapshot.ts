@@ -26,6 +26,7 @@ import { computeFitViewStateForBounds, computeViewTransform } from './viewTransf
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { printPalette } from '../../engine/designPrint/printPalette'
 
 interface Bounds2D {
   minX: number
@@ -171,7 +172,7 @@ function drawSnapshotOrigin(
   ctx.lineTo(anchor.cx + arm, anchor.cy)
   ctx.moveTo(anchor.cx, anchor.cy - arm)
   ctx.lineTo(anchor.cx, anchor.cy + arm)
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.96)'
+  ctx.strokeStyle = printPalette.snapshot.originCrosshairHalo
   ctx.lineWidth = 9 * pixelRatio
   ctx.stroke()
 
@@ -180,15 +181,15 @@ function drawSnapshotOrigin(
   ctx.lineTo(anchor.cx + arm, anchor.cy)
   ctx.moveTo(anchor.cx, anchor.cy - arm)
   ctx.lineTo(anchor.cx, anchor.cy + arm)
-  ctx.strokeStyle = '#1f2937'
+  ctx.strokeStyle = printPalette.snapshot.originCrosshairStroke
   ctx.lineWidth = 5 * pixelRatio
   ctx.stroke()
 
   ctx.beginPath()
   ctx.arc(anchor.cx, anchor.cy, radius, 0, Math.PI * 2)
-  ctx.fillStyle = '#f97316'
+  ctx.fillStyle = printPalette.snapshot.originDotFill
   ctx.fill()
-  ctx.strokeStyle = '#ffffff'
+  ctx.strokeStyle = printPalette.snapshot.originDotBorder
   ctx.lineWidth = 2 * pixelRatio
   ctx.stroke()
 
@@ -213,7 +214,7 @@ export async function renderOperationSnapshotPng(
     throw new Error('Failed to create operation booklet snapshot canvas.')
   }
 
-  ctx.fillStyle = '#f6f8fb'
+  ctx.fillStyle = printPalette.snapshot.sheetBackground
   ctx.fillRect(0, 0, canvasW, canvasH)
 
   const viewState = computeFitViewStateForBounds(project.stock, snapshotBounds(project, operation, toolpath), canvasW, canvasH)
@@ -221,8 +222,8 @@ export async function renderOperationSnapshotPng(
   const targetIds = operationTargetIds(operation)
 
   drawProfile(ctx, project.stock.profile, vt, {
-    fill: '#ffffff',
-    stroke: '#9aa8b5',
+    fill: printPalette.snapshot.stockFill,
+    stroke: printPalette.snapshot.stockOutline,
     lineWidth: 2 * pixelRatio,
   })
 
@@ -232,13 +233,13 @@ export async function renderOperationSnapshotPng(
     for (const profile of profiles) {
       drawProfile(ctx, profile, vt, isTarget
         ? {
-            fill: 'rgba(245, 125, 52, 0.20)',
-            stroke: '#e25f24',
+            fill: printPalette.snapshot.targetFeatureFill,
+            stroke: printPalette.snapshot.targetFeatureStroke,
             lineWidth: 2.4 * pixelRatio,
           }
         : {
-            fill: 'rgba(124, 139, 154, 0.10)',
-            stroke: 'rgba(105, 121, 138, 0.54)',
+            fill: printPalette.snapshot.nonTargetFeatureFill,
+            stroke: printPalette.snapshot.nonTargetFeatureStroke,
             lineWidth: 1.2 * pixelRatio,
             dash: [7 * pixelRatio, 5 * pixelRatio],
           })
@@ -263,7 +264,7 @@ export async function renderOperationSnapshotPng(
 
   drawSnapshotOrigin(ctx, project, vt, pixelRatio)
 
-  ctx.fillStyle = 'rgba(20, 28, 36, 0.84)'
+  ctx.fillStyle = printPalette.snapshot.labelText
   ctx.font = `${Math.round(14 * pixelRatio)}px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace`
   ctx.fillText(operation.name, 22 * pixelRatio, 30 * pixelRatio)
 

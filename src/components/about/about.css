@@ -85,9 +85,9 @@
   flex-direction: column;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid rgba(240, 162, 74, 0.28);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: 10px;
-  background: rgba(240, 162, 74, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .about-support-text {
@@ -102,9 +102,9 @@
   gap: 8px;
   align-self: flex-start;
   padding: 8px 14px;
-  border: 1px solid #f0a24a;
+  border: 1px solid var(--accent);
   border-radius: 8px;
-  color: #f0a24a;
+  color: var(--accent);
   background: transparent;
   font-size: 13px;
   font-weight: 600;
@@ -113,8 +113,8 @@
 }
 
 .about-coffee-btn:hover {
-  background: #f0a24a;
-  color: #1c1206;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .about-copyright {

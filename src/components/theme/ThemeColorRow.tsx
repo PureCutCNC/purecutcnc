@@ -83,7 +83,7 @@ export function ThemeColorRow({ label, value, baseValue, overridden, onChange, o
         className="theme-editor-row__picker"
         type="color"
         aria-label={t('themeEditor.colorPickerAria', { label })}
-        value={parsed ? opaqueHex(parsed) : '#000000'}
+        value={parsed ? opaqueHex(parsed) : /* theme-exempt: native colour-input fallback */ '#000000'}
         onChange={(event) => pickColor(event.target.value)}
       />
       <input

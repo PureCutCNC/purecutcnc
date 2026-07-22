@@ -388,8 +388,8 @@
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 165, 0, 0.2);
-  color: orange;
+  background: color-mix(in srgb, var(--warning-text) 20%, transparent);
+  color: var(--warning-text);
   font-family: monospace;
   margin-left: auto;
 }
@@ -442,7 +442,7 @@
 }
 
 .tablet-cmd-btn--active {
-  background: rgba(220, 165, 106, 0.18);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   border-color: var(--accent);
   color: var(--accent-strong);
 }
@@ -461,9 +461,9 @@
 }
 
 .tablet-cmd-btn--cancel {
-  background: rgba(220, 60, 60, 0.12);
-  border-color: rgba(220, 60, 60, 0.35);
-  color: #df8080;
+  background: color-mix(in srgb, var(--danger-text) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger-text) 35%, transparent);
+  color: var(--danger-text);
 }
 
 .tablet-cmd-btn:disabled {
@@ -584,7 +584,7 @@
 }
 
 .top-cmd-btn--active {
-  background: rgba(220, 165, 106, 0.25);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -662,9 +662,9 @@
 }
 
 .top-cmd-tab--active {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--surface-sheen-strong);
   color: var(--text);
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1.5px var(--surface-sheen-strong);
 }
 
 /* ── Tool Rail (tablet) ────────────────────────────────── */
@@ -726,7 +726,7 @@
 }
 
 .tool-rail__btn--active {
-  background: rgba(220, 165, 106, 0.28);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -790,27 +790,27 @@
 }
 
 .tool-rail__target-btn--active {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--surface-sheen-strong);
   color: var(--text);
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 0 0 1.5px var(--surface-sheen-strong);
 }
 
 .tool-rail__target-btn--line.tool-rail__target-btn--active {
-  background: rgba(91, 144, 227, 0.2);
-  color: #8fb6f4;
-  box-shadow: inset 0 0 0 1.5px rgba(91, 144, 227, 0.4);
+  background: color-mix(in srgb, var(--role-line) 20%, transparent);
+  color: var(--role-line-text);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--role-line) 40%, transparent);
 }
 
 .tool-rail__target-btn--region.tool-rail__target-btn--active {
-  background: rgba(100, 180, 255, 0.2);
-  color: #7ec4ff;
-  box-shadow: inset 0 0 0 1.5px rgba(100, 180, 255, 0.4);
+  background: color-mix(in srgb, var(--role-region) 20%, transparent);
+  color: var(--role-region-text);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--role-region) 40%, transparent);
 }
 
 .tool-rail__target-btn--construction.tool-rail__target-btn--active {
-  background: rgba(138, 154, 171, 0.2);
-  color: #a9b6c4;
-  box-shadow: inset 0 0 0 1.5px rgba(138, 154, 171, 0.4);
+  background: color-mix(in srgb, var(--role-construction) 20%, transparent);
+  color: var(--role-construction-text);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--role-construction) 40%, transparent);
 }
 
 .tool-rail__target-btn .icon-sprite {
@@ -830,7 +830,7 @@
   border-radius: 8px;
   background: var(--bg-elev-2);
   border: 1px solid var(--line);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px var(--shadow-strong);
   z-index: 100;
 }
 
@@ -862,7 +862,7 @@
 }
 
 .tool-rail__popover button.tool-rail__popover-btn--active {
-  background: rgba(220, 165, 106, 0.22);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--accent-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
@@ -890,7 +890,7 @@
   padding: 0 3px;
   border-radius: 7px;
   background: var(--accent);
-  color: #1a1a1a;
+  color: var(--on-accent);
   font-size: 9px;
   font-weight: 700;
   line-height: 14px;
@@ -907,7 +907,7 @@
   border-radius: 10px;
   background: var(--bg-elev-2);
   border: 1px solid var(--line);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 28px var(--shadow-strong);
   z-index: 100;
   min-width: 180px;
 }
@@ -969,7 +969,7 @@
 
 .snap-popover-item--active,
 .snap-popover-item--active:hover {
-  background: rgba(220, 165, 106, 0.18);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent-strong);
 }
 
@@ -1202,7 +1202,7 @@
   height: 22px;
   padding: 0 6px;
   border-radius: 11px;
-  background: rgba(220, 165, 106, 0.2);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 700;

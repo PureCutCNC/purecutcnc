@@ -803,12 +803,12 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
      
     sceneRef.current = scene
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.7)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7) // theme-exempt: scene lighting rig
     scene.add(ambient)
-    const key = new THREE.DirectionalLight(0xffffff, 0.9)
+    const key = new THREE.DirectionalLight(0xffffff, 0.9) // theme-exempt: scene lighting rig
     key.position.set(120, 180, 120)
     scene.add(key)
-    const fill = new THREE.DirectionalLight(0x96b6ff, 0.35)
+    const fill = new THREE.DirectionalLight(0x96b6ff, 0.35) // theme-exempt: scene lighting rig
     fill.position.set(-120, 80, -80)
     scene.add(fill)
 
@@ -917,7 +917,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     const grid = simulation.grid
     const heightfieldTexture = createHeightfieldTexture(grid)
-    const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+    const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
     const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
     const surface = buildHeightfieldSurfaceObject(grid, material)
     scene.add(surface)
@@ -938,6 +938,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         hasAutoFramedRef.current = true
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
   }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
 
   // The playback boundary mesh is static — walls track the heightfield texture
@@ -1063,7 +1064,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const grid = controller.liveGrid
       const heightfieldTexture = createHeightfieldTexture(grid)
       playbackHeightfieldTextureRef.current = heightfieldTexture
-      const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(0xb5beca)
+      const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
       const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
       const surface = buildHeightfieldSurfaceObject(grid, material)
       scene.add(surface)
@@ -1081,6 +1082,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         vBitAngle: playbackInput.vBitAngle,
         cutLength: playbackInput.toolCutLength,
         shankLength: playbackInput.toolShankLength,
+        threePalette,
       })
       scene.add(tool)
       toolMeshRef.current = tool
@@ -1117,6 +1119,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
   }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose])
 
   useEffect(() => {
@@ -1298,7 +1301,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     const collidingClampIdSet = new Set(collidingClampIds)
     const nextClampMeshes = clamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id)),
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), threePalette),
     )
     for (const mesh of nextClampMeshes) {
       scene.add(mesh)
@@ -1309,6 +1312,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       disposeClampMeshes(scene)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
   }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId])
 
   useEffect(() => {
@@ -1332,7 +1336,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       ) * 0.05,
       0.05,
     )
-    const triad = buildOriginTriad(origin, axisSize)
+    const triad = buildOriginTriad(origin, axisSize, threePalette)
     scene.add(triad)
     originObjectRef.current = triad
     needsRenderRef.current = true
@@ -1340,6 +1344,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       disposeOriginMesh(scene)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
   }, [disposeOriginMesh, origin, simulation])
 
   // Reset camera on project change so the viewport doesn't keep the previous

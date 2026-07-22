@@ -19,6 +19,7 @@ import { profileVertices } from '../../types/project'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { ViewTransform } from './viewTransform'
 import { traceProfilePath } from './profilePrimitives'
+import { canvasColors } from './canvasPalette'
 
 export interface StlTopViewPlacement {
   localBounds: {
@@ -102,12 +103,12 @@ export function drawStlTopViewImage(
   ctx.save()
   traceProfilePath(ctx, feature.sketch.profile, vt)
   ctx.strokeStyle = selected
-    ? '#efbc7a'
+    ? canvasColors().active
     : hovered
-      ? '#d2a064'
+      ? canvasColors().draft
       : editing
-        ? '#f7cd87'
-        : '#bcc8d4'
+        ? canvasColors().activeStrong
+        : canvasColors().featureModelStroke
   ctx.lineWidth = selected || editing ? 2.5 : 1.8
   ctx.stroke()
   ctx.restore()

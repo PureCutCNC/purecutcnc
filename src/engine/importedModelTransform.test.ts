@@ -20,7 +20,10 @@ import * as THREE from 'three'
 import { newProject, rectProfile, type Matrix2D, type Project } from '../types/project'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { buildFeatureMesh, buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from './csg'
+import { THEME_PALETTES } from '../theme/palette'
 import { computeMeshBounds, serializeImportedMesh, type ImportedTriangleMesh } from './importedMesh'
+
+const threePalette = THEME_PALETTES.dark.three
 import { transformImportedModelPoint } from './importedModelTransform'
 
 interface Bounds2D {
@@ -150,7 +153,7 @@ for (const [name, transform] of transforms) {
   assert(approx(transformedBounds.minZ, 1) && approx(transformedBounds.maxZ, 4),
     `${name} transformed geometry should retain Z fit`)
 
-  const preview = buildFeatureMesh(project, feature)
+  const preview = buildFeatureMesh(project, feature, false, false, undefined, threePalette)
   preview.updateMatrixWorld(true)
   const previewBounds = new THREE.Box3().setFromObject(preview)
   assertBounds({

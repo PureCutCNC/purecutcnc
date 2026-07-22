@@ -20,6 +20,7 @@ import { formatLength } from '../../utils/units'
 import { arcControlPoint, anchorPointForIndex } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import { canvasColors, canvasRgba } from './canvasPalette'
 
 function lineLength(start: Point, end: Point): number {
   return Math.hypot(end.x - start.x, end.y - start.y)
@@ -46,14 +47,14 @@ export function drawMeasurementLabel(
   const metrics = ctx.measureText(text)
   const width = metrics.width + 12
   const height = 18
-  ctx.fillStyle = 'rgba(15, 21, 29, 0.92)'
-  ctx.strokeStyle = 'rgba(239, 188, 122, 0.42)'
+  ctx.fillStyle = canvasColors().measurementBackdrop
+  ctx.strokeStyle = canvasRgba('draft', 0.42)
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.roundRect(-width / 2, -height / 2, width, height, 5)
   ctx.fill()
   ctx.stroke()
-  ctx.fillStyle = 'rgba(245, 216, 183, 0.96)'
+  ctx.fillStyle = canvasColors().measurementText
   ctx.fillText(text, 0, 0)
   ctx.restore()
 }

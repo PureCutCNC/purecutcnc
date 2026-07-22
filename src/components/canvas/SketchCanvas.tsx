@@ -123,6 +123,7 @@ import {
   getFeaturesWorldBounds,
   type StockLabelRect,
 } from './scenePrimitives'
+import { setCanvasPalette, canvasRgba, canvasColors } from './canvasPalette'
 import { generateTextShapes } from '../../text'
 import {
   getProfileBounds,
@@ -883,7 +884,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const backdropImage = backdropImageRef.current
     const toolpaths = toolpathsRef.current
     const selectedOperationId = selectedOperationIdRef.current
-    const collidingClampIds = collidingClampIdsRef.current
     const copyCountDraft = copyCountDraftRef.current
     const operationHighlightKind = operationHighlightKindRef.current
     // A1.3: features the armed operation could act on (null = nothing armed).
@@ -891,14 +891,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       ? new Set(compatibleFeatureIdsForOperation(project, operationHighlightKind))
       : null
 
-    const width = canvas.width
-    const height = canvas.height
+    const { width, height } = canvas
     const vt = computeViewTransform(project.stock, width, height, viewState)
-    const collidingClampIdSet = new Set(collidingClampIds)
+    const collidingClampIdSet = new Set(collidingClampIdsRef.current)
 
     ctx.clearRect(0, 0, width, height)
     ctx.fillStyle = canvasPalette.background
     ctx.fillRect(0, 0, width, height)
+    // Canvas 2D can't read CSS vars, so publish this theme's full palette
+    // for the primitive helpers before anything is drawn this frame.
+    setCanvasPalette(canvasPalette)
 
     drawGrid(ctx, vt, width, height, project.stock, project.grid, canvasPalette, getFeaturesWorldBounds(features))
 
@@ -956,8 +958,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.save()
         if (operationHighlightIds.has(feature.id)) {
           ctx.lineWidth = 3
-          ctx.strokeStyle = 'rgba(123, 199, 246, 0.95)'
-          ctx.shadowColor = 'rgba(123, 199, 246, 0.85)'
+          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
           ctx.shadowBlur = 8
           ctx.stroke()
         } else if (feature.sketch.profile.closed) {
@@ -1005,14 +1007,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         const badgeWorld = { x: b.minX, y: b.maxY }
         const badgeC = worldToCanvas(badgeWorld, vt)
         ctx.save()
-        ctx.fillStyle = 'rgba(91, 165, 216, 0.85)'
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+        ctx.fillStyle = canvasRgba('constraint', 0.85)
+        ctx.strokeStyle = canvasColors().markerHalo
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.arc(badgeC.cx - 8, badgeC.cy - 8, 7, 0, Math.PI * 2)
         ctx.fill()
         ctx.stroke()
-        ctx.fillStyle = '#fff'
+        ctx.fillStyle = canvasColors().markerHalo
         ctx.font = 'bold 10px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
@@ -1042,8 +1044,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const anchorC = worldToCanvas(pendingConstraintDraw.anchor.point, vt)
       const constraintLineColor = lockModeGuideColor(lockModeRef.current)
       ctx.save()
-      ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
+      ctx.fillStyle = canvasRgba('activeStrong', 0.95)
+      ctx.strokeStyle = canvasColors().markerOutline
       ctx.beginPath()
       ctx.arc(anchorC.cx, anchorC.cy, 4, 0, Math.PI * 2)
       ctx.fill()
@@ -1058,7 +1060,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.lineTo(anchorC.cx, anchorC.cy)
         ctx.stroke()
         ctx.setLineDash([])
-        ctx.fillStyle = 'rgba(247, 211, 148, 0.95)'
+        ctx.fillStyle = canvasRgba('activeStrong', 0.95)
         ctx.beginPath()
         ctx.arc(refC.cx, refC.cy, 4, 0, Math.PI * 2)
         ctx.fill()
@@ -1086,9 +1088,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid
-        const lineColor = isInvalid ? 'rgba(220, 60, 60, 0.85)' : 'rgba(91, 165, 216, 0.8)'
-        const dotColor = isInvalid ? 'rgba(220, 60, 60, 0.9)' : 'rgba(91, 165, 216, 0.9)'
-        const labelColor = isInvalid ? 'rgba(255, 180, 180, 0.95)' : canvasPalette.labelText
+        const lineColor = isInvalid ? canvasRgba('constraintInvalid', 0.85) : canvasRgba('constraint', 0.8)
+        const dotColor = isInvalid ? canvasRgba('constraintInvalid', 0.9) : canvasRgba('constraint', 0.9)
+        const labelColor = isInvalid ? canvasPalette.invalidText : canvasPalette.labelText
         const aC = worldToCanvas(c.anchor_point, vt)
         const rC = worldToCanvas(c.reference_point, vt)
         ctx.save()
@@ -1119,7 +1121,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           const padY = 2
           const halfW = metrics.width / 2 + padX
           const halfH = 7 + padY
-          ctx.fillStyle = isInvalid ? 'rgba(80, 20, 20, 0.9)' : canvasPalette.labelBackground
+          ctx.fillStyle = isInvalid ? canvasPalette.invalidBackdrop : canvasPalette.labelBackground
           ctx.fillRect(midX - halfW, midY - halfH, halfW * 2, halfH * 2)
           ctx.fillStyle = labelColor
           ctx.textAlign = 'center'
@@ -1169,8 +1171,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const w = Math.abs(marqueeCurrentRef.current.cx - marqueeStartRef.current.cx)
       const h = Math.abs(marqueeCurrentRef.current.cy - marqueeStartRef.current.cy)
       ctx.save()
-      ctx.fillStyle = 'rgba(91, 165, 216, 0.16)'
-      ctx.strokeStyle = 'rgba(123, 199, 246, 0.9)'
+      ctx.fillStyle = canvasRgba('constraint', 0.16)
+      ctx.strokeStyle = canvasRgba('constraintHighlight', 0.9)
       ctx.lineWidth = 1.5
       ctx.setLineDash([6, 4])
       ctx.fillRect(x, y, w, h)
@@ -1184,8 +1186,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const w = Math.abs(zoomWindowCurrentRef.current.cx - zoomWindowStartRef.current.cx)
       const h = Math.abs(zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy)
       ctx.save()
-      ctx.fillStyle = 'rgba(242, 185, 92, 0.16)'
-      ctx.strokeStyle = 'rgba(247, 211, 148, 0.92)'
+      ctx.fillStyle = canvasRgba('active', 0.16)
+      ctx.strokeStyle = canvasRgba('activeStrong', 0.92)
       ctx.lineWidth = 1.5
       ctx.setLineDash([7, 4])
       ctx.fillRect(x, y, w, h)
@@ -1717,7 +1719,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             const growingPoint = growFromStart
               ? subjProfile.start
               : subjProfile.segments[segCount - 1].to
-            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt, 'rgba(239, 188, 122, 0.75)')
+            drawMoveGuide(ctx, growingPoint, pendingExtendHitRef.current, vt)
           }
         }
       }
@@ -1729,7 +1731,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.beginPath()
         ctx.moveTo(from.cx, from.cy)
         ctx.lineTo(to.cx, to.cy)
-        ctx.strokeStyle = 'rgba(220, 80, 60, 0.85)'
+        ctx.strokeStyle = canvasRgba('constraintInvalid', 0.85)
         ctx.lineWidth = 2.5
         ctx.setLineDash([6, 4])
         ctx.stroke()

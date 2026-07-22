@@ -20,6 +20,7 @@
  * outside itself, so it can be printed from a hidden iframe.
  */
 
+import { printPalette } from './printPalette'
 import type { DesignPrintLayout } from './types'
 
 function escapeHtml(text: string): string {
@@ -49,7 +50,7 @@ export function buildDesignPrintHtml({ svg, layout, title }: DesignPrintHtmlArgs
     `<title>${escapeHtml(title)}</title>`,
     '<style>',
     `@page { size: ${w} ${h}; margin: 0; }`,
-    'html, body { margin: 0; padding: 0; background: #ffffff; }',
+    `html, body { margin: 0; padding: 0; background: ${printPalette.sheetBackground}; }`,
     `svg { display: block; width: ${w}; height: ${h}; }`,
     '</style>',
     '</head>',

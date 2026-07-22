@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { PDFPage, PDFFont } from 'pdf-lib'
 import { translate } from '../../i18n/store'
+import { printPalette } from '../designPrint/printPalette'
 import { buildOperationBookletReport } from './report'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
@@ -33,16 +34,7 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
 const SECTION_COLUMN_WIDTH = (CONTENT_WIDTH - SECTION_COLUMN_GAP) / 2
 const LINE_HEIGHT = BODY_SIZE + 4
 
-const COLORS = {
-  accent: rgb(0.12, 0.34, 0.54),
-  accentSoft: rgb(0.9, 0.95, 0.98),
-  body: rgb(0.1, 0.13, 0.17),
-  border: rgb(0.73, 0.78, 0.83),
-  footer: rgb(0.42, 0.46, 0.5),
-  muted: rgb(0.3, 0.34, 0.39),
-  panel: rgb(0.97, 0.98, 0.99),
-  rowRule: rgb(0.88, 0.91, 0.94),
-}
+const COLORS = printPalette.pdf
 
 interface DrawState {
   pdfDoc: PDFDocument
@@ -173,7 +165,7 @@ function drawLine(state: DrawState, text: string, x: number, size = BODY_SIZE, b
     y: state.y,
     size,
     font,
-    color: COLORS.body,
+    color: COLORS.bodyText,
   })
   state.y -= size + 4
 }
@@ -195,14 +187,14 @@ function drawSection(state: DrawState, title: string): void {
     y: titleY - 1,
     width: 4,
     height: SECTION_SIZE + 3,
-    color: COLORS.accent,
+    color: COLORS.accentColor,
   })
   state.page.drawText(pdfSafeText(title.toUpperCase()), {
     x: MARGIN + 10,
     y: titleY,
     size: SECTION_SIZE,
     font: state.bold,
-    color: COLORS.accent,
+    color: COLORS.accentColor,
   })
   state.y -= SECTION_SIZE + 8
 }
@@ -233,7 +225,7 @@ function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: nu
       y: y - index * LINE_HEIGHT,
       size: BODY_SIZE,
       font: state.bold,
-      color: COLORS.muted,
+      color: COLORS.mutedText,
     })
   }
   for (let index = 0; index < cell.valueLines.length; index += 1) {
@@ -242,7 +234,7 @@ function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: nu
       y: y - index * LINE_HEIGHT,
       size: BODY_SIZE,
       font: state.regular,
-      color: COLORS.body,
+      color: COLORS.bodyText,
     })
   }
 }
@@ -281,21 +273,21 @@ function drawPageFooters(pdfDoc: PDFDocument, font: PDFFont, report: OperationBo
       start: { x: MARGIN, y: 36 },
       end: { x: PAGE_WIDTH - MARGIN, y: 36 },
       thickness: 0.35,
-      color: COLORS.rowRule,
+      color: COLORS.rowRuleStroke,
     })
     page.drawText(footerText, {
       x: MARGIN,
       y: 22,
       size,
       font,
-      color: COLORS.footer,
+      color: COLORS.footerText,
     })
     page.drawText(label, {
       x: PAGE_WIDTH - MARGIN - font.widthOfTextAtSize(label, size),
       y: 22,
       size,
       font,
-      color: COLORS.footer,
+      color: COLORS.footerText,
     })
   }
 }
@@ -306,7 +298,7 @@ function drawHeader(state: DrawState, report: OperationBookletReport): void {
     y: PAGE_HEIGHT - 16,
     width: PAGE_WIDTH,
     height: 16,
-    color: COLORS.accent,
+    color: COLORS.accentColor,
   })
 
   const titleLines = wrapText(report.operationName, state.bold, 20, 390)
@@ -317,7 +309,7 @@ function drawHeader(state: DrawState, report: OperationBookletReport): void {
       y,
       size: 20,
       font: state.bold,
-      color: COLORS.body,
+      color: COLORS.bodyText,
     })
     y -= 23
   }
@@ -327,7 +319,7 @@ function drawHeader(state: DrawState, report: OperationBookletReport): void {
     y,
     size: 10,
     font: state.regular,
-    color: COLORS.muted,
+    color: COLORS.mutedText,
   })
 
   const projectLabel = truncateToWidth(report.projectName, state.regular, 9, 160)
@@ -336,21 +328,21 @@ function drawHeader(state: DrawState, report: OperationBookletReport): void {
     y: PAGE_HEIGHT - MARGIN,
     size: 9,
     font: state.regular,
-    color: COLORS.muted,
+    color: COLORS.mutedText,
   })
   state.page.drawText(report.generatedDate, {
     x: PAGE_WIDTH - MARGIN - state.regular.widthOfTextAtSize(report.generatedDate, 8),
     y: PAGE_HEIGHT - MARGIN - 15,
     size: 8,
     font: state.regular,
-    color: COLORS.footer,
+    color: COLORS.footerText,
   })
 
   state.page.drawLine({
     start: { x: MARGIN, y: y - 12 },
     end: { x: PAGE_WIDTH - MARGIN, y: y - 12 },
     thickness: 0.75,
-    color: COLORS.border,
+    color: COLORS.borderStroke,
   })
   state.y = y - 30
 }
@@ -367,14 +359,14 @@ function drawDescriptionBlock(state: DrawState, text: string): void {
     y,
     width: CONTENT_WIDTH,
     height,
-    color: COLORS.accentSoft,
+    color: COLORS.accentBackground,
   })
   state.page.drawRectangle({
     x: MARGIN,
     y,
     width: CONTENT_WIDTH,
     height,
-    borderColor: COLORS.border,
+    borderColor: COLORS.borderStroke,
     borderWidth: 0.5,
   })
 
@@ -385,7 +377,7 @@ function drawDescriptionBlock(state: DrawState, text: string): void {
       y: lineY,
       size: 10,
       font: state.regular,
-      color: COLORS.body,
+      color: COLORS.bodyText,
     })
     lineY -= 14
   }
@@ -410,14 +402,14 @@ async function drawSnapshotFrame(state: DrawState, input: OperationBookletInput)
     y: frameY,
     width: CONTENT_WIDTH,
     height: frameHeight,
-    color: COLORS.panel,
+    color: COLORS.panelBackground,
   })
   state.page.drawRectangle({
     x: MARGIN,
     y: frameY,
     width: CONTENT_WIDTH,
     height: frameHeight,
-    borderColor: COLORS.border,
+    borderColor: COLORS.borderStroke,
     borderWidth: 0.5,
   })
   state.page.drawText(translate('booklet.pdf.snapshot'), {
@@ -425,7 +417,7 @@ async function drawSnapshotFrame(state: DrawState, input: OperationBookletInput)
     y: state.y - 16,
     size: 9,
     font: state.bold,
-    color: COLORS.muted,
+    color: COLORS.mutedText,
   })
   state.page.drawImage(image, {
     x: MARGIN + (CONTENT_WIDTH - width) / 2,

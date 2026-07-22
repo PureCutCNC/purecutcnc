@@ -26,7 +26,7 @@ import {
   type CustomThemeData,
 } from '../../theme/registry'
 import { useTheme } from '../../theme/themeContext'
-import { THEME_TOKEN_GROUPS, THEME_TOKENS, type ThemeTokenKey } from '../../theme/tokens'
+import { THEME_TOKEN_GROUPS, editableThemeTokens, type ThemeTokenKey } from '../../theme/tokens'
 import { ThemeColorRow } from './ThemeColorRow'
 import { ThemePreviewSamples } from './ThemePreviewSamples'
 
@@ -43,15 +43,15 @@ export interface ThemeEditorDialogProps {
  * never make the escape hatch itself unreadable.
  */
 const RECOVERY_BAR_STYLE: React.CSSProperties = {
-  background: '#f6f1e7',
-  color: '#253039',
-  border: '1px solid #a99a84',
+  background: '#ffffff', // theme-exempt: recovery escape hatch, must not depend on the previewed theme
+  color: '#1e293b', // theme-exempt: recovery escape hatch
+  border: '1px solid #c2cddb', // theme-exempt: recovery escape hatch
 }
 
 const RECOVERY_BUTTON_STYLE: React.CSSProperties = {
-  background: '#253039',
-  color: '#f6f1e7',
-  border: '1px solid #253039',
+  background: '#1e293b', // theme-exempt: recovery escape hatch
+  color: '#ffffff', // theme-exempt: recovery escape hatch
+  border: '1px solid #1e293b', // theme-exempt: recovery escape hatch
   borderRadius: 7,
   padding: '6px 12px',
   font: 'inherit',
@@ -192,7 +192,7 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
             </div>
 
             {THEME_TOKEN_GROUPS.map((group) => {
-              const tokens = THEME_TOKENS.filter((token) => token.group === group.id)
+              const tokens = editableThemeTokens().filter((token) => token.group === group.id)
               return (
                 <section key={group.id} className="theme-editor-group">
                   <h3 className="theme-editor-group__title">{group.label}</h3>

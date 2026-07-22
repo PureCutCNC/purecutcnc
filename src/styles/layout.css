@@ -21,7 +21,7 @@
   height: 100%;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-sheen) 50%, transparent), transparent);
 }
 
 .app-shell button,
@@ -41,7 +41,7 @@
   gap: 10px;
   border-bottom: 1px solid var(--line);
   background:
-    linear-gradient(180deg, var(--surface-sheen-soft), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, var(--surface-sheen-soft), transparent),
     color-mix(in oklab, var(--bg-elev-2) 94%, black);
   padding: 8px 10px;
 }
@@ -230,9 +230,9 @@
   gap: 4px;
   padding: 6px;
   border-radius: 8px;
-  border: 1px solid rgba(104, 129, 151, 0.6);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 60%, transparent);
   background: linear-gradient(180deg, var(--surface-control-top), var(--surface-control-bottom));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 8px 24px var(--shadow-strong);
 }
 
 /* Portaled to document.body and positioned via inline fixed coords so the
@@ -283,7 +283,7 @@
 
 .toolbar-project-name,
 .toolbar-btn {
-  border: 1px solid rgba(104, 129, 151, 0.48);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 48%, transparent);
   background: linear-gradient(180deg, var(--surface-control-top), var(--surface-control-bottom));
   color: var(--text);
   border-radius: 8px;
@@ -321,8 +321,8 @@
 }
 
 .toolbar-save-state--dirty {
-  border-color: rgba(220, 165, 106, 0.42);
-  background: rgba(220, 165, 106, 0.1);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
 }
 
@@ -332,7 +332,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(104, 129, 151, 0.44);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 44%, transparent);
   background: linear-gradient(180deg, var(--surface-control-top), var(--surface-control-bottom));
   color: var(--text);
   border-radius: 0;
@@ -426,7 +426,7 @@
   transform: translate(-50%, -4px);
   padding: 6px 8px;
   border-radius: 7px;
-  border: 1px solid rgba(94, 121, 142, 0.72);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
   background: var(--surface-popover);
   color: var(--text);
   font-size: 11px;
@@ -544,15 +544,19 @@
 }
 
 .appearance-menu__swatch--dark {
-  background: linear-gradient(135deg, #101922 0 48%, #dca56a 49% 57%, #2a3a49 58% 100%);
+  /* Previews the built-in Dark theme, so it shows that theme's own colours
+     rather than the active one. theme-exempt: keep in step with index.css. */
+  background: linear-gradient(135deg, #101821 0 48%, #4f93d6 49% 57%, #2a3a49 58% 100%);
 }
 
 .appearance-menu__swatch--light {
-  background: linear-gradient(135deg, #f6f1e7 0 48%, #a66126 49% 57%, #d8cdbc 58% 100%);
+  /* theme-exempt: previews the built-in Light theme. Keep in step with index.css. */
+  background: linear-gradient(135deg, #f4f6f9 0 48%, #2b6cb0 49% 57%, #e2e8f0 58% 100%);
 }
 
 .appearance-menu__swatch--system {
-  background: linear-gradient(135deg, #101922 0 45%, #dca56a 46% 53%, #f6f1e7 54% 100%);
+  /* theme-exempt: previews the Dark/Light system pairing. Keep in step with index.css. */
+  background: linear-gradient(135deg, #101821 0 45%, #4f93d6 46% 53%, #f4f6f9 54% 100%);
 }
 
 .appearance-menu__copy {
@@ -754,7 +758,7 @@
 .panel {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: linear-gradient(180deg, var(--surface-sheen-soft), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, var(--surface-sheen-soft), transparent);
   display: grid;
   grid-template-rows: auto 1fr;
   min-height: 0;
@@ -837,8 +841,8 @@
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(120, 170, 255, 0.08), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(255, 196, 120, 0.06), transparent 30%),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
+    radial-gradient(circle at bottom right, color-mix(in srgb, var(--accent) 6%, transparent), transparent 30%),
     var(--surface-subtle);
 }
 
@@ -858,7 +862,7 @@
   border-radius: 10px;
   background: var(--surface-raised);
   backdrop-filter: blur(8px);
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 16px 32px var(--shadow);
   overflow: auto;
 }
 
@@ -918,10 +922,10 @@
 
 .simulation-viewport__warning {
   padding: 8px 10px;
-  border: 1px solid rgba(196, 118, 106, 0.65);
+  border: 1px solid color-mix(in srgb, var(--danger-text) 65%, transparent);
   border-radius: 8px;
-  background: rgba(92, 39, 37, 0.22);
-  color: #efc0b7;
+  background: color-mix(in srgb, var(--danger-text) 22%, transparent);
+  color: var(--danger-text);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1109,12 +1113,20 @@
 }
 
 .simulation-playback-bar__btn--primary {
-  background: var(--accent, #3b82f6);
-  border-color: var(--accent, #3b82f6);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--on-accent);
 }
 
 .simulation-playback-bar__btn--primary:hover {
+  /* Re-assert the accent surface. `.simulation-playback-bar__btn:hover` is a
+     class plus a pseudo-class (0,2,0) and so outranks the `--primary` modifier
+     (0,1,0); without this the hover background falls back to the sheen wash
+     while the text stays --on-accent, which is white-on-white in the light
+     theme. */
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
   filter: brightness(1.08);
 }
 
@@ -1214,23 +1226,23 @@
 }
 
 /* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
- *   cut / lead_in / lead_out → #ff735c (red)
- *   plunge                  → #d583df (purple)
- *   rapid                   → #78b8de (blue)
+ *   cut / lead_in / lead_out → var(--toolpath-cut)
+ *   plunge                  → var(--toolpath-plunge)
+ *   rapid                   → var(--toolpath-rapid)
  *   idle                    → transparent
  */
 .simulation-playback-bar__move-kind--cut,
 .simulation-playback-bar__move-kind--lead_in,
 .simulation-playback-bar__move-kind--lead_out {
-  background: #ff735c;
+  background: var(--toolpath-cut);
 }
 
 .simulation-playback-bar__move-kind--plunge {
-  background: #d583df;
+  background: var(--toolpath-plunge);
 }
 
 .simulation-playback-bar__move-kind--rapid {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .simulation-playback-bar__move-kind--none {
@@ -1286,7 +1298,7 @@
 
 .panel-tab--active {
   color: var(--text);
-  border-color: rgba(220, 165, 106, 0.75);
+  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
   border-bottom-color: var(--surface-popover);
   background: var(--surface-popover);
   min-height: 0;
@@ -1323,7 +1335,7 @@
 
 .workspace-layout-btn--active {
   color: var(--text);
-  border-color: rgba(220, 165, 106, 0.75);
+  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
   background: var(--surface-popover);
 }
 
@@ -1392,7 +1404,7 @@
   font-size: 11px;
   letter-spacing: 0.08em;
   font-weight: 700;
-  color: #101820;
+  color: var(--on-accent);
   background: linear-gradient(180deg, var(--accent-strong), var(--accent));
 }
 
@@ -1484,7 +1496,7 @@
 
 .sketch-banner-warning {
   margin-top: 6px;
-  color: #f7b86a;
+  color: var(--warning-text);
 }
 
 
@@ -1495,11 +1507,11 @@
   z-index: 4;
   min-width: 158px;
   padding: 10px 10px 9px;
-  border: 1px solid rgba(91, 117, 138, 0.78);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 78%, transparent);
   border-radius: 10px;
   background: var(--surface-raised);
   box-shadow:
-    0 10px 24px rgba(0, 0, 0, 0.22),
+    0 10px 24px var(--shadow),
     inset 0 1px 0 var(--surface-sheen);
 }
 
@@ -1565,28 +1577,28 @@
 }
 
 .sketch-depth-legend__swatch--subtract {
-  background: #4e8dbe;
+  background: var(--cut);
 }
 
 .sketch-depth-legend__swatch--add {
-  background: #63b176;
+  background: var(--add);
 }
 
 .sketch-depth-legend__swatch--region {
-  background: #9966cc;
+  background: var(--role-region);
 }
 
 .sketch-depth-legend__swatch--region-exclude {
-  border: 1px dashed #b58adf;
-  background: rgba(153, 102, 204, 0.16);
+  border: 1px dashed var(--role-region);
+  background: color-mix(in srgb, var(--role-region) 16%, transparent);
 }
 
 .sketch-depth-legend__swatch--imported-model {
-  background: #bcc8d4;
+  background: var(--text-dim);
 }
 
 .sketch-depth-legend__swatch--selected {
-  background: #efbc7a;
+  background: var(--accent);
 }
 
 .sketch-dim-input {
@@ -1594,9 +1606,9 @@
   z-index: 5;
   font: 11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   text-align: center;
-  color: rgba(245, 216, 183, 0.96);
+  color: color-mix(in srgb, var(--accent) 96%, transparent);
   background: var(--surface-popover);
-  border: 1px solid rgba(239, 188, 122, 0.65);
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
   border-radius: 5px;
   outline: none;
   padding: 0 6px;
@@ -1606,8 +1618,8 @@
 }
 
 .sketch-dim-input:focus {
-  border-color: rgba(239, 188, 122, 0.95);
-  box-shadow: 0 0 0 2px rgba(239, 188, 122, 0.18);
+  border-color: color-mix(in srgb, var(--accent) 95%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .feature-tree-panel {
@@ -1647,7 +1659,7 @@
   bottom: 10px;
   left: 8px;
   width: 1px;
-  background: linear-gradient(180deg, var(--line-strong), rgba(60, 82, 101, 0.2));
+  background: linear-gradient(180deg, var(--line-strong), color-mix(in srgb, var(--line-strong) 20%, transparent));
 }
 
 .tree-row {
@@ -1717,8 +1729,8 @@
 }
 
 .tree-row--group-selected {
-  background: rgba(220, 165, 106, 0.18);
-  box-shadow: inset 3px 0 0 rgba(234, 170, 97, 0.55);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .tree-row--dragging {
@@ -1740,20 +1752,20 @@
 
 .tree-row--stock .tree-branch {
   border-color: var(--accent);
-  background: rgba(220, 165, 106, 0.14);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .tree-row--grid .tree-branch {
-  border-color: #6e98be;
-  background: rgba(88, 125, 158, 0.14);
+  border-color: var(--cut);
+  background: color-mix(in srgb, var(--cut) 14%, transparent);
 }
 
 .tree-row--features .tree-branch,
 .tree-row--regions .tree-branch,
 .tree-row--constructions .tree-branch,
 .tree-row--folder .tree-branch {
-  border-color: rgba(118, 144, 164, 0.7);
-  background: rgba(41, 58, 72, 0.7);
+  border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .tree-row--regions .tree-branch {
@@ -1785,14 +1797,14 @@
 }
 
 .tree-row--grid .tree-branch::before {
-  background: #7ea9d1;
+  background: var(--cut);
 }
 
 .tree-row--features .tree-branch::before,
 .tree-row--regions .tree-branch::before,
 .tree-row--constructions .tree-branch::before,
 .tree-row--folder .tree-branch::before {
-  background: rgba(214, 226, 236, 0.75);
+  background: var(--text-dim);
 }
 
 .tree-row--regions .tree-branch::before {
@@ -1828,7 +1840,7 @@
 .tree-icon--folder {
   width: 18px;
   height: 18px;
-  color: rgba(214, 226, 236, 0.78);
+  color: var(--text-dim);
 }
 
 /* ── Folder chevron collapse toggle ───────────────────────── */
@@ -1894,7 +1906,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  border: 1px solid rgba(92, 118, 138, 0.55);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 55%, transparent);
   background: var(--bg-elev-2);
   color: var(--text-dim);
   cursor: pointer;
@@ -1915,7 +1927,7 @@
 
 .tree-action-btn:hover {
   color: var(--text);
-  border-color: rgba(126, 160, 187, 0.7);
+  border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
 }
 
 .tree-action-btn--operation {
@@ -1930,20 +1942,20 @@
 }
 
 .tree-action-btn--add {
-  color: #72c386;
-  border-color: rgba(99, 177, 118, 0.45);
+  color: var(--add);
+  border-color: color-mix(in srgb, var(--add) 45%, transparent);
 }
 
 .tree-action-btn--subtract {
-  color: #7eb3de;
-  border-color: rgba(78, 141, 193, 0.45);
+  color: var(--cut);
+  border-color: color-mix(in srgb, var(--cut) 45%, transparent);
 }
 
 .tree-action-btn--grouped {
   color: var(--accent-strong);
-  border-color: rgba(220, 165, 106, 0.65);
-  background: rgba(220, 165, 106, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(220, 165, 106, 0.25);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .tree-action-btn--muted {
@@ -2176,7 +2188,7 @@
 }
 
 .ui-select__option--selected:hover {
-  background: rgba(220, 165, 106, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .properties-field textarea {
@@ -2211,7 +2223,7 @@
   align-self: center;
   width: 50px;
   height: 34px;
-  border: 1px solid rgba(200, 156, 98, 0.22);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: 6px;
   background: var(--surface-input);
   pointer-events: none;
@@ -2296,7 +2308,7 @@
 .inline-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(132, 155, 176, 0.28);
+  border: 2px solid color-mix(in srgb, var(--text-dim) 28%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: inline-spinner-spin 700ms linear infinite;
@@ -2311,9 +2323,9 @@
 .properties-warning {
   padding: 8px 10px;
   border-radius: 7px;
-  border: 1px solid rgba(255, 160, 60, 0.55);
-  background: rgba(255, 130, 30, 0.10);
-  color: #f7b86a;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 55%, transparent);
+  background: color-mix(in srgb, var(--warning-text) 10%, transparent);
+  color: var(--warning-text);
   font-size: 11.5px;
   line-height: 1.45;
 }
@@ -2369,7 +2381,7 @@
   background: linear-gradient(180deg, var(--surface-control-top) 0%, var(--surface-control-bottom) 100%);
   box-shadow:
     inset 0 1px 0 var(--surface-sheen-strong),
-    0 2px 4px rgba(0, 0, 0, 0.22);
+    0 2px 4px var(--shadow);
 }
 
 .feat-btn:active {
@@ -2379,26 +2391,26 @@
 }
 
 .feat-btn--primary {
-  border-color: rgba(220, 165, 106, 0.72);
-  background: linear-gradient(180deg, #7a5938 0%, #4c3727 100%);
-  color: #fff3de;
+  border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: var(--on-accent);
 }
 
 .feat-btn--primary:hover {
-  border-color: #e3b374;
-  background: linear-gradient(180deg, #8b6742 0%, #573f2d 100%);
-  color: #fff3de;
+  border-color: var(--accent-strong);
+  background: linear-gradient(180deg, var(--accent-strong) 0%, var(--accent) 100%);
+  color: var(--on-accent);
 }
 
 .feat-btn--active {
   color: var(--accent-strong);
   border-color: var(--accent);
-  background: rgba(37, 82, 136, 0.24);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .feat-btn--delete:hover {
-  border-color: #c96d65;
-  color: #f5b3ad;
+  border-color: var(--danger-text);
+  color: var(--danger-text);
 }
 
 .viewport-presets {
@@ -2432,8 +2444,8 @@
 
 .viewport-zoom-select-box {
   position: absolute;
-  border: 1.5px dashed rgba(247, 211, 148, 0.92);
-  background: rgba(242, 185, 92, 0.16);
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 92%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   border-radius: 4px;
   pointer-events: none;
 }
@@ -2607,23 +2619,23 @@
 }
 
 .viewport-toolpath-vis__swatch--cuts {
-  background: #ff735c;
+  background: var(--toolpath-cut);
 }
 
 .viewport-toolpath-vis__swatch--rapids {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .viewport-toolpath-vis__swatch--plunges {
-  background: #d583df;
+  background: var(--toolpath-plunge);
 }
 
 .viewport-toolpath-vis__swatch--retractions {
-  background: #78b8de;
+  background: var(--toolpath-rapid);
 }
 
 .viewport-toolpath-vis__swatch--directions {
-  background: #ffb15c;
+  background: var(--toolpath-direction);
 }
 
 .feature-context-menu {
@@ -2634,7 +2646,7 @@
   max-height: calc(100dvh - 16px);
   padding: 4px;
   border-radius: 10px;
-  border: 1px solid rgba(94, 121, 142, 0.72);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
   background: var(--surface-popover);
   box-shadow:
     0 12px 26px var(--shadow),
@@ -2647,7 +2659,7 @@
 
 .feature-context-menu__separator {
   height: 1px;
-  background: rgba(94, 121, 142, 0.3);
+  background: color-mix(in srgb, var(--line-strong) 30%, transparent);
   margin: 2px 4px;
 }
 
@@ -2706,9 +2718,9 @@
 }
 
 .feature-context-menu__item--danger:hover {
-  border-color: rgba(201, 109, 101, 0.75);
-  background: rgba(201, 109, 101, 0.12);
-  color: #f5b3ad;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 75%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 12%, transparent);
+  color: var(--danger-text);
 }
 
 .app-statusbar {
@@ -2789,7 +2801,7 @@
 }
 
 .statusbar-toggle:hover:not(:disabled) {
-  border-color: rgba(94, 121, 142, 0.48);
+  border-color: color-mix(in srgb, var(--line-strong) 48%, transparent);
   background: var(--surface-sheen);
   color: var(--text);
 }
@@ -2867,7 +2879,7 @@
 
 .cam-subtab--active {
   border-color: var(--accent);
-  background: rgba(74, 53, 27, 0.32);
+  background: var(--accent-soft);
   color: var(--text);
 }
 
@@ -2976,7 +2988,7 @@
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: linear-gradient(180deg, var(--surface-sheen-soft), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, var(--surface-sheen-soft), transparent);
   overflow: visible;
 }
 
@@ -3024,13 +3036,13 @@
 
 .cam-header-action--danger {
   color: var(--danger-text);
-  border-color: rgba(170, 92, 84, 0.6);
-  background: rgba(61, 27, 24, 0.42);
+  border-color: color-mix(in srgb, var(--danger-text) 60%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 42%, transparent);
 }
 
 /* P2: amber tint when no geometry is selected */
 .cam-header-action--warn {
-  border-color: rgba(220, 165, 106, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--accent);
 }
 
@@ -3094,8 +3106,8 @@
 .cam-field-note {
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(170, 92, 84, 0.45);
-  background: rgba(61, 27, 24, 0.24);
+  border: 1px solid color-mix(in srgb, var(--danger-text) 45%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 24%, transparent);
   color: var(--danger-text);
   font-size: 11px;
   line-height: 1.35;
@@ -3192,7 +3204,7 @@
 }
 
 .cam-operation-tree .tree-row:hover {
-  background: rgba(220, 165, 106, 0.06);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .cam-operation-tree .tree-row:focus-visible {
@@ -3229,7 +3241,7 @@
 
 .cam-operation-badge--generating {
   padding: 0 4px;
-  border-color: rgba(220, 165, 106, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   min-height: 18px;
 }
 
@@ -3237,7 +3249,7 @@
   display: block;
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(220, 165, 106, 0.25);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: cam-spin 0.8s linear infinite;
@@ -3248,7 +3260,7 @@
 }
 
 .tree-branch--generating {
-  border-color: rgba(220, 165, 106, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   animation: cam-pulse 1.2s ease-in-out infinite;
 }
 
@@ -3284,7 +3296,7 @@
 }
 
 .cam-tool-tree .tree-row:hover {
-  background: rgba(220, 165, 106, 0.06);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .cam-tool-tree .tree-row:focus-visible {
@@ -3335,8 +3347,8 @@
 
 
 .tree-action-btn--delete:hover:not(:disabled) {
-  border-color: rgba(170, 92, 84, 0.6);
-  background: rgba(61, 27, 24, 0.42);
+  border-color: color-mix(in srgb, var(--danger-text) 60%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 42%, transparent);
   color: var(--danger-text);
 }
 
@@ -3477,15 +3489,15 @@
   margin: 6px 8px;
   padding: 8px 10px;
   border-radius: 7px;
-  border: 1px solid rgba(255, 160, 60, 0.55);
-  background: rgba(255, 130, 30, 0.10);
-  color: #f7b86a;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 55%, transparent);
+  background: color-mix(in srgb, var(--warning-text) 10%, transparent);
+  color: var(--warning-text);
   font-size: 11.5px;
   line-height: 1.45;
 }
 
 .feature-tree-warning strong {
-  color: #ffd08a;
+  color: var(--warning-text);
 }
 
 /* ── Locked operation button in tree ──────────────────────── */
@@ -3576,7 +3588,7 @@
   display: inline-flex;
   align-items: center;
   margin-left: 5px;
-  color: rgba(122, 162, 247, 0.7);
+  color: color-mix(in srgb, var(--accent) 70%, transparent);
   cursor: default;
 }
 
@@ -3604,7 +3616,7 @@
   min-width: 120px;
   padding: 4px;
   border-radius: 10px;
-  border: 1px solid rgba(94, 121, 142, 0.72);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
   background: var(--surface-popover);
   box-shadow:
     0 12px 26px var(--shadow),
@@ -3635,7 +3647,7 @@
 }
 
 .tree-operation-menu__item--active {
-  border-color: rgba(94, 121, 142, 0.5);
+  border-color: color-mix(in srgb, var(--line-strong) 50%, transparent);
   background: var(--surface-hover);
 }
 
@@ -3905,7 +3917,7 @@
   display: block;
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-dim, #8899aa);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 4px;
@@ -3918,19 +3930,19 @@
   gap: 6px;
   padding: 3px 6px;
   border-radius: 4px;
-  background: rgba(91, 165, 216, 0.08);
-  border: 1px solid rgba(91, 165, 216, 0.2);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   margin-bottom: 3px;
 }
 
 .properties-constraint-row--invalid {
-  background: rgba(220, 60, 60, 0.10);
-  border-color: rgba(220, 60, 60, 0.35);
+  background: color-mix(in srgb, var(--danger-text) 10%, transparent);
+  border-color: color-mix(in srgb, var(--danger-text) 35%, transparent);
 }
 
 .properties-constraint-label {
   font-size: 11.5px;
-  color: #c8ddf0;
+  color: var(--text);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3938,7 +3950,7 @@
 }
 
 .properties-constraint-row--invalid .properties-constraint-label {
-  color: #f08080;
+  color: var(--danger-text);
 }
 
 .properties-constraint-delete {
@@ -3946,12 +3958,12 @@
   font-size: 14px;
   line-height: 1;
   padding: 0 3px;
-  color: #8899aa;
+  color: var(--text-dim);
   opacity: 0.7;
 }
 
 .properties-constraint-delete:hover {
-  color: #f08080;
+  color: var(--danger-text);
   opacity: 1;
 }
 
@@ -3961,8 +3973,8 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: rgba(91, 165, 216, 0.8);
-  background: rgba(91, 165, 216, 0.12);
+  color: color-mix(in srgb, var(--accent) 80%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   white-space: nowrap;
@@ -3970,8 +3982,8 @@
 }
 
 .properties-constraint-row--invalid .properties-constraint-type {
-  color: rgba(220, 60, 60, 0.8);
-  background: rgba(220, 60, 60, 0.12);
+  color: color-mix(in srgb, var(--danger-text) 80%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 12%, transparent);
 }
 
 /* Toolpath loading overlay */
@@ -4000,15 +4012,15 @@
   padding: 12px 22px;
   border-radius: 12px;
   background: var(--bg-elev-2);
-  border: 1px solid rgba(220, 165, 106, 0.25);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 8px 32px var(--shadow-strong);
 }
 
 .toolpath-loading-spinner {
   display: block;
   width: 18px;
   height: 18px;
-  border: 2px solid rgba(220, 165, 106, 0.2);
+  border: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: cam-spin 0.8s linear infinite;
@@ -4323,7 +4335,7 @@
   overflow-y: auto;
   padding: 24px;
   border-radius: 14px;
-  border: 1px solid rgba(94, 121, 142, 0.6);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 60%, transparent);
   background: var(--surface-popover);
   box-shadow: 0 18px 48px var(--shadow-strong);
   box-sizing: border-box;
@@ -4378,7 +4390,7 @@
   text-align: left;
   border-radius: 10px;
   border: 1px solid var(--line-strong);
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--surface-sheen) 50%, transparent);
   color: var(--text);
   cursor: pointer;
 }
@@ -4426,7 +4438,7 @@
   text-align: left;
   border-radius: 10px;
   border: 1px solid var(--line-strong);
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--surface-sheen) 50%, transparent);
   color: var(--text);
   cursor: pointer;
 }
@@ -4446,7 +4458,7 @@
   aspect-ratio: 4 / 3;
   object-fit: cover;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-inset);
 }
 
 .example-project-card__title {

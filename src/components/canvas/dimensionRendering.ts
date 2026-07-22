@@ -36,13 +36,14 @@ import type { DimensionAnnotation, DimensionAnchor } from '../../types/project'
 import { drawMeasurementLabel } from './measurements'
 import { worldToCanvas } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
+import { canvasColors, canvasRgba } from './canvasPalette'
 import type { DrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
 
-const ACTIVE_COLOR = 'rgba(239, 188, 122, 0.95)'
-const LINE_COLOR = 'rgba(180, 200, 224, 0.85)'
-const EXT_COLOR = 'rgba(180, 200, 224, 0.45)'
-const SELECTED_COLOR = 'rgba(120, 200, 255, 0.98)'
-const WARNING_COLOR = 'rgba(240, 120, 120, 0.9)'
+const activeColor = (): string => canvasRgba('active', 0.95)
+const lineColor = (): string => canvasColors().dimensionLine
+const extColor = (): string => canvasRgba('dimensionLine', 0.45)
+const selectedColor = (): string => canvasColors().dimensionHighlight
+const warningColor = (): string => canvasColors().dimensionWarning
 const ARROW_PX = 7
 
 function fmtLen(units: Units): (v: number) => string {
@@ -90,7 +91,7 @@ function drawLayout(
   const end = worldToCanvas(layout.lineEnd, vt)
 
   // Extension/witness lines
-  ctx.strokeStyle = EXT_COLOR
+  ctx.strokeStyle = extColor()
   ctx.lineWidth = 1
   for (const [from, to] of layout.extensions) {
     lineTo(ctx, worldToCanvas(from, vt), worldToCanvas(to, vt))
@@ -140,8 +141,8 @@ export function drawDimensions(
         ?? (dim.b ? resolveAnchor(dim.b, project) : null)
       if (fallback) {
         const c = worldToCanvas(fallback, vt)
-        ctx.strokeStyle = WARNING_COLOR
-        ctx.fillStyle = WARNING_COLOR
+        ctx.strokeStyle = warningColor()
+        ctx.fillStyle = warningColor()
         ctx.lineWidth = 1.5
         ctx.beginPath()
         ctx.arc(c.cx, c.cy, 5, 0, Math.PI * 2)
@@ -157,8 +158,8 @@ export function drawDimensions(
     if (value === null) continue
     const labelText = dimensionLabelText(dim, value, lenFmt, formatAngle)
     const color = dim.id === deleteHoverId
-      ? WARNING_COLOR
-      : dim.id === selectedId ? SELECTED_COLOR : LINE_COLOR
+      ? warningColor()
+      : dim.id === selectedId ? selectedColor() : lineColor()
     drawLayout(ctx, layout, vt, units, labelText, color)
   }
 }
@@ -166,9 +167,9 @@ export function drawDimensions(
 // ── Anchor dots + driving-edit highlights ──
 
 const ANCHOR_DOT_RADIUS = 3
-const ANCHOR_HELD_COLOR = 'rgba(91, 216, 165, 0.92)'
-const ANCHOR_DRIVEN_COLOR = 'rgba(239, 188, 122, 0.92)'
-const ANCHOR_NORMAL_COLOR = 'rgba(180, 200, 224, 0.50)'
+const anchorHeldColor = (): string => canvasColors().dimensionDriven
+const anchorDrivenColor = (): string => canvasRgba('active', 0.92)
+const anchorNormalColor = (): string => canvasRgba('dimensionLine', 0.50)
 
 function dimensionAnchorsEqual(a: DimensionAnchor, b: DimensionAnchor): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
@@ -188,7 +189,7 @@ function drawDimensionAnchorDot(
   ctx.arc(c.cx, c.cy, emphasize ? ANCHOR_DOT_RADIUS + 1 : ANCHOR_DOT_RADIUS, 0, Math.PI * 2)
   ctx.fill()
   if (ring) {
-    ctx.strokeStyle = ANCHOR_DRIVEN_COLOR
+    ctx.strokeStyle = anchorDrivenColor()
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, ANCHOR_DOT_RADIUS + 3, 0, Math.PI * 2)
@@ -215,7 +216,7 @@ export function drawDimensionAnchorDots(
 
     const isSelected = dim.id === selectedId
     const isDriving = drivingEdit !== null && 'annotationId' in drivingEdit && drivingEdit.annotationId === dim.id
-    const defaultColor = isSelected ? 'rgba(200, 220, 240, 0.65)' : ANCHOR_NORMAL_COLOR
+    const defaultColor = isSelected ? canvasColors().dimensionText : anchorNormalColor()
 
     for (const anchor of [dim.a, dim.b, dim.c]) {
       if (!anchor) continue
@@ -226,11 +227,11 @@ export function drawDimensionAnchorDots(
       const isDriven = isDriving && 'drivenAnchor' in drivingEdit && dimensionAnchorsEqual(anchor, drivingEdit.drivenAnchor)
       const isAngleVertex = isDriving && 'vertexAnchor' in drivingEdit && dimensionAnchorsEqual(anchor, drivingEdit.vertexAnchor)
       if (isHeld) {
-        color = ANCHOR_HELD_COLOR
+        color = anchorHeldColor()
       } else if (isAngleVertex) {
-        color = SELECTED_COLOR
+        color = selectedColor()
       } else if (isDriven) {
-        color = ANCHOR_DRIVEN_COLOR
+        color = anchorDrivenColor()
       }
       drawDimensionAnchorDot(ctx, pos, vt, color, isSelected || isDriving, isDriven)
     }
@@ -249,13 +250,13 @@ export function drawTapeMeasure(
     const ca = worldToCanvas(a, vt)
     const cb = worldToCanvas(b, vt)
     ctx.save()
-    ctx.strokeStyle = ACTIVE_COLOR
+    ctx.strokeStyle = activeColor()
     ctx.lineWidth = 1.25
     if (dashed) ctx.setLineDash([5, 4])
     lineTo(ctx, ca, cb)
     ctx.restore()
-    drawArrow(ctx, ca, cb, ACTIVE_COLOR)
-    drawArrow(ctx, cb, ca, ACTIVE_COLOR)
+    drawArrow(ctx, ca, cb, activeColor())
+    drawArrow(ctx, cb, ca, activeColor())
 
     const dx = b.x - a.x
     const dy = b.y - a.y
@@ -273,7 +274,7 @@ export function drawTapeMeasure(
     drawSpan(tape.first, livePoint, true)
   } else if (tape.first) {
     const c = worldToCanvas(tape.first, vt)
-    ctx.fillStyle = ACTIVE_COLOR
+    ctx.fillStyle = activeColor()
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, 4, 0, Math.PI * 2)
     ctx.fill()
@@ -296,7 +297,7 @@ export function drawPendingDimensionPreview(
 ): void {
   const dot = (p: Point): void => {
     const c = worldToCanvas(p, vt)
-    ctx.fillStyle = ACTIVE_COLOR
+    ctx.fillStyle = activeColor()
     ctx.beginPath()
     ctx.arc(c.cx, c.cy, 4, 0, Math.PI * 2)
     ctx.fill()
@@ -319,7 +320,7 @@ export function drawPendingDimensionPreview(
     const last = pending.type === 'angle' ? (a ?? c ?? b) : (c ?? b ?? a)
     if (last && livePoint) {
       ctx.save()
-      ctx.strokeStyle = ACTIVE_COLOR
+      ctx.strokeStyle = activeColor()
       ctx.lineWidth = 1
       ctx.setLineDash([5, 4])
       lineTo(ctx, worldToCanvas(last, vt), worldToCanvas(livePoint, vt))
@@ -347,7 +348,7 @@ export function drawPendingDimensionPreview(
   const layout = dimensionLayout(temp, project)
   const value = measureValue(temp, project)
   if (layout && value !== null) {
-    drawLayout(ctx, layout, vt, units, dimensionLabelText(temp, value, fmtLen(units), formatAngle), ACTIVE_COLOR)
+    drawLayout(ctx, layout, vt, units, dimensionLabelText(temp, value, fmtLen(units), formatAngle), activeColor())
   }
 }
 

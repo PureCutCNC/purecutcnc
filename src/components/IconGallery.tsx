@@ -35,7 +35,7 @@ const PREVIEW_SIZES = [16, 18, 24, 32]
 export function IconGallery({ iconIds }: GalleryProps) {
   const [filter, setFilter] = useState('')
   const [fg, setFg] = useState('#111')
-  const [bg, setBg] = useState('#fafafa')
+  const [bg, setBg] = useState('#fafafa') // theme-exempt: developer-only icon gallery backdrop picker
 
   const filtered = filter
     ? iconIds.filter((id) => id.toLowerCase().includes(filter.toLowerCase()))
@@ -71,7 +71,7 @@ export function IconGallery({ iconIds }: GalleryProps) {
           style={{
             padding: '6px 10px',
             fontSize: 14,
-            border: '1px solid #ccc',
+            border: '1px solid #ccc', // theme-exempt: developer-only icon gallery
             borderRadius: 4,
             minWidth: 200,
           }}
@@ -100,7 +100,7 @@ export function IconGallery({ iconIds }: GalleryProps) {
           <div
             key={id}
             style={{
-              border: '1px solid rgba(128,128,128,0.25)',
+              border: '1px solid rgba(128,128,128,0.25)', // theme-exempt: developer-only icon gallery
               borderRadius: 6,
               padding: 12,
               display: 'flex',
