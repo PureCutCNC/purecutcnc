@@ -101,3 +101,5 @@ The drawing mode answers, “What job does that geometry perform?”
 Features create the solid model and define material or removed material. Lines create machinable paths without volume. Regions control where CAM operations may or may not cut. Construction geometry supports design and measurement, but is deliberately invisible to manufacturing.
 
 Define the stock first, choose the drawing mode second, and then choose the shape. That order keeps the model easier to reason about, gives new features sensible default Z values, and makes the resulting toolpaths much more predictable.
+
+Thanks for watching. If you have questions or comments, post them below, and check this channel for more PureCutCNC videos.
