@@ -5,7 +5,7 @@
 
 ## Opening
 
-In PureCutCNC, the shape you draw and the role you give it are separate decisions.
+Welcome to PureCutCNC. In this video, we will look at drawing modes: how the shape you draw and the role you give it are separate decisions.
 
 A rectangle, circle, spline, or composite profile is just geometry. The drawing mode tells PureCutCNC what that geometry means: does it become material in the model, a cut path, a CAM boundary, or simply a construction reference?
 
