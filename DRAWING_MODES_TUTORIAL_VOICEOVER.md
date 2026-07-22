@@ -32,6 +32,10 @@ Now draw a smaller closed rectangle inside it. PureCutCNC uses the nesting of cl
 
 The important point is that Feature mode is model-aware. Closed profiles participate in the add-and-subtract solid model. Their top and bottom Z values define the vertical extent of the material. The initial top-Z value comes from the stock setup, which is why defining stock before drawing saves cleanup later. If one feature needs to start below the stock surface, or rise above it, edit that feature's Z values in the Properties panel.
 
+Feature-tree order matters as much as a feature's individual role. PureCutCNC evaluates the tree from top to bottom, applying each Add or Subtract feature to the model produced by the entries above it. Think of that order as the construction sequence for the solid, not merely as a way to organize the list.
+
+For example, put a rectangular base first, a circular subtractive pocket second, and a raised logo third. The base creates the material; the pocket removes material from that base; and the logo is added afterward. If you drag the logo above the pocket and the two overlap, the later pocket removes material from both the base and the logo. In the original order, the logo is added after the pocket and can remain intact or fill part of that area. The same geometry has a different model because the operation order changed. Toolpaths still come from the operations you create, but those operations read the model boundaries and feature geometry established by this sequence.
+
 That matters directly to CAM. A subtractive feature can provide the boundary for a Pocket operation. Its vertical span tells PureCutCNC how deep the feature is, while the profile tells the toolpath generator where the wall and floor should be. Additive geometry establishes the material that remains and the exterior boundaries used by operations such as outside edge routing.
 
 A useful rule is this: if the shape represents actual material or actual removed material, begin in Feature mode.
