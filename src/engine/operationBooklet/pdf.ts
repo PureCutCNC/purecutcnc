@@ -139,7 +139,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
     if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
       current = candidate
     } else if (current.length === 0) {
-      lines.push(...breakWord(word, font, size, maxWidth))
+      current = word
     } else {
       lines.push(current)
       current = word
@@ -159,29 +159,6 @@ function truncateToWidth(text: string, font: PDFFont, size: number, maxWidth: nu
     truncated = truncated.slice(0, -1)
   }
   return `${truncated}${ellipsis}`
-}
-
-function breakWord(word: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const lines: string[] = []
-  let start = 0
-  while (start < word.length) {
-    let lo = start + 1
-    let hi = word.length
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2)
-      if (font.widthOfTextAtSize(word.slice(start, mid), size) <= maxWidth) {
-        lo = mid
-      } else {
-        hi = mid - 1
-      }
-    }
-    if (lo <= start) {
-      lo = start + 1
-    }
-    lines.push(word.slice(start, lo))
-    start = lo
-  }
-  return lines
 }
 
 function ensureSpace(state: DrawState, required: number): void {
@@ -236,22 +213,33 @@ interface PreparedCell {
   labelLines: string[]
   valueLines: string[]
   height: number
+  stackedLabel: boolean
+}
+
+export function shouldStackRowLabel(label: string, font: PDFFont): boolean {
+  return font.widthOfTextAtSize(label, BODY_SIZE) > ROW_LABEL_WIDTH
 }
 
 function prepareRowCell(state: DrawState, row: OperationBookletRow): PreparedCell {
-  const valueWidth = SECTION_COLUMN_WIDTH - ROW_LABEL_WIDTH - ROW_LABEL_GAP
-  const labelLines = wrapText(row.label, state.bold, BODY_SIZE, ROW_LABEL_WIDTH)
+  const stackedLabel = shouldStackRowLabel(row.label, state.bold)
+  const labelWidth = stackedLabel ? SECTION_COLUMN_WIDTH : ROW_LABEL_WIDTH
+  const valueWidth = stackedLabel ? SECTION_COLUMN_WIDTH : SECTION_COLUMN_WIDTH - ROW_LABEL_WIDTH - ROW_LABEL_GAP
+  const labelLines = wrapText(row.label, state.bold, BODY_SIZE, labelWidth)
   const valueLines = wrapText(row.value, state.regular, BODY_SIZE, valueWidth)
-  const lineCount = Math.max(1, labelLines.length, valueLines.length)
+  const lineCount = stackedLabel
+    ? labelLines.length + valueLines.length
+    : Math.max(1, labelLines.length, valueLines.length)
   return {
     labelLines,
     valueLines,
     height: lineCount * LINE_HEIGHT + 6,
+    stackedLabel,
   }
 }
 
 function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: number): void {
-  const valueX = x + ROW_LABEL_WIDTH + ROW_LABEL_GAP
+  const valueX = cell.stackedLabel ? x : x + ROW_LABEL_WIDTH + ROW_LABEL_GAP
+  const valueY = cell.stackedLabel ? y - cell.labelLines.length * LINE_HEIGHT : y
   for (let index = 0; index < cell.labelLines.length; index += 1) {
     state.page.drawText(cell.labelLines[index], {
       x,
@@ -264,7 +252,7 @@ function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: nu
   for (let index = 0; index < cell.valueLines.length; index += 1) {
     state.page.drawText(cell.valueLines[index], {
       x: valueX,
-      y: y - index * LINE_HEIGHT,
+      y: valueY - index * LINE_HEIGHT,
       size: BODY_SIZE,
       font: state.regular,
       color: COLORS.body,

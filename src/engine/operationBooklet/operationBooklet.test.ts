@@ -21,13 +21,14 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathResult } from '../toolpaths/types'
-import { createOperationBookletPdf } from './pdf'
+import { createOperationBookletPdf, shouldStackRowLabel } from './pdf'
 import { buildOperationBookletReport } from './report'
 
 function assert(condition: boolean, message: string): void {
@@ -287,14 +288,13 @@ function testFeedTimeUsesScaledSlotFeed(): void {
   )
 }
 
-function testGermanLabelWrapping(): void {
-  console.log('Testing German booklet label wrapping...')
+async function testGermanLabelLayout(): Promise<void> {
+  console.log('Testing German booklet label layout...')
   const { project, operation, toolpath } = fixture()
   setActiveLocale('de')
   try {
     // A pocket operation with machiningOrder produces the longest single-word
-    // label in German: "Bearbeitungsreihenfolge" (24 chars, ~96 pt at 9 pt
-    // bold). This must not overflow the 82 pt ROW_LABEL_WIDTH.
+    // label in German. It must be stacked above its value, not character-wrapped.
     const report = buildOperationBookletReport({
       project,
       operation: {
@@ -314,6 +314,16 @@ function testGermanLabelWrapping(): void {
     assert(
       row!.value === translate('booklet.machiningOrder.featureFirst'),
       'machining order value should be localized',
+    )
+    const pdfDoc = await PDFDocument.create()
+    const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+    assert(
+      shouldStackRowLabel(row!.label, bold),
+      'the long German machining-order label should be stacked above its value',
+    )
+    assert(
+      !shouldStackRowLabel(translate('booklet.label.feed'), bold),
+      'short labels should retain the compact inline layout',
     )
   } finally {
     resetI18nStoreForTests()
@@ -348,7 +358,7 @@ testReportContent()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
 testLocalizedReportContent()
-testGermanLabelWrapping()
+await testGermanLabelLayout()
 await testPdfSmoke()
 await testGermanPdfSmoke()
 await testPdfUnicodeFontRetriesAndUsesBold()
