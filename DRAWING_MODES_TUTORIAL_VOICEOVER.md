@@ -72,7 +72,7 @@ An include region limits an operation to the area inside that boundary. This is 
 
 An exclude region does the opposite: it marks an area that the toolpath should avoid. You might use one to leave material around a fixture feature or prevent a broad clearing operation from entering a delicate section of a part.
 
-The region affects an operation when you include it in that operation's target selection. It is not a global keep-out zone and it does not automatically protect clamps or fixtures. Treat actual workholding clearance as a separate safety concern.
+The region affects an operation when you include it in that operation's target selection. It is not a global keep-out zone.
 
 In CAM terms, regions are powerful because they separate what exists in the model from where a particular cutter is allowed to travel. You can keep one clean model while creating different machining boundaries for roughing, finishing, engraving, or cleanup passes.
 
