@@ -2759,6 +2759,31 @@
   background: var(--surface-sheen-mid);
 }
 
+.statusbar-units {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--status-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.statusbar-units:hover,
+.statusbar-units:focus-visible {
+  border-color: color-mix(in srgb, var(--line-strong) 48%, transparent);
+  background: var(--surface-sheen);
+  color: var(--text);
+}
+
 .statusbar-visibility {
   display: inline-flex;
   align-items: center;

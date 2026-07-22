@@ -188,6 +188,8 @@ export const statusBar = {
   root: (page: Page) => page.locator('.app-statusbar'),
   toggle: (page: Page, label: string) =>
     statusBar.root(page).getByRole('button', { name: label, exact: true }),
+  units: (page: Page) =>
+    statusBar.root(page).getByRole('button', { name: /^Change project units from / }),
   about: (page: Page) => statusBar.root(page).locator('.statusbar-about'),
 }
 

@@ -58,6 +58,7 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
 
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': '毛坯：{width} × {height} × {thickness} {units}',
+  'appShell.status.changeUnits': '将项目单位从 {from} 更改为 {to}',
 
   // ── Status bar — expand/collapse ──
   'appShell.status.expand': '展开状态栏',

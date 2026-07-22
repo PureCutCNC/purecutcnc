@@ -41,6 +41,7 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   "appShell.drawer.tools": "Herramientas",
   "appShell.drawer.creationTools": "Herramientas de creación",
   "appShell.status.stockDim": "Material en bruto: {width} × {height} × {thickness} {units}",
+  "appShell.status.changeUnits": "Cambiar las unidades del proyecto de {from} a {to}",
   "appShell.status.expand": "Expandir la barra de estado",
   "appShell.status.collapse": "Contraer barra de estado",
   "appShell.status.viewVisibility": "Ver visibilidad",

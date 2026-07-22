@@ -1159,6 +1159,14 @@
   font-size: 12px;
 }
 
+[data-shell-mode="tablet"] .app-statusbar--tablet-expanded .statusbar-units,
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-units {
+  height: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .app-statusbar--tablet-compact .statusbar-expand-btn,
 .app-statusbar--tablet-expanded .statusbar-expand-btn {
   display: inline-flex;

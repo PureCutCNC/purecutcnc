@@ -41,6 +41,7 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.drawer.tools': 'Outils',
   'appShell.drawer.creationTools': 'Outils de création',
   'appShell.status.stockDim': 'Brut : {width} × {height} × {thickness} {units}',
+  'appShell.status.changeUnits': 'Changer les unités du projet de {from} à {to}',
   'appShell.status.expand': 'Développer la barre d’état',
   'appShell.status.collapse': 'Réduire la barre d’état',
   'appShell.status.viewVisibility': 'Visibilité de la vue',

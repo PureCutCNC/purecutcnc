@@ -19,6 +19,7 @@ import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import { getStockBounds } from '../../types/project'
+import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { platform } from '../../platform'
 import { loadVersion } from '../../utils/version'
@@ -32,6 +33,8 @@ import '../../styles/layout.css'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { UnitConversionDialog } from '../project/UnitConversionDialog'
+import { UnitConversionContext } from '../project/UnitConversionContext'
 
 
 
@@ -128,6 +131,7 @@ export function AppShell({
     [],
   )
   const [statusBarExpanded, setStatusBarExpanded] = useState(false)
+  const [pendingUnits, setPendingUnits] = useState<Project['meta']['units'] | null>(null)
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
   // Web only: surface the running version as an "About" affordance. The desktop
@@ -317,7 +321,17 @@ export function AppShell({
     setAllConstructionVisible,
     setAllTabsVisible,
     setAllClampsVisible,
+    setUnits,
   } = useProjectStore()
+  const requestUnitConversion = useCallback((toUnits: Project['meta']['units']) => {
+    if (toUnits !== project.meta.units) setPendingUnits(toUnits)
+  }, [project.meta.units])
+  const commitPendingUnits = useCallback((mode: 'convert' | 'reinterpret') => {
+    if (!pendingUnits || pendingUnits === project.meta.units) return
+    const nextUnits = pendingUnits
+    setPendingUnits(null)
+    setUnits(nextUnits, mode)
+  }, [pendingUnits, project.meta.units, setUnits])
   const resolvedFeatures = useMemo(() => resolvedProjectFeatures(project), [project])
   const stockBounds = getStockBounds(project.stock)
   const stockWidth = stockBounds.maxX - stockBounds.minX
@@ -337,8 +351,21 @@ export function AppShell({
     { id: 'cr', labelKey: 'appShell.layout.cr' },
   ]
 
+  const nextUnits = project.meta.units === 'mm' ? 'inch' : 'mm'
+  const currentUnitLabel = project.meta.units === 'mm'
+    ? t('featureTree.properties.units.mm')
+    : t('featureTree.properties.units.inch')
+  const nextUnitLabel = nextUnits === 'mm'
+    ? t('featureTree.properties.units.mm')
+    : t('featureTree.properties.units.inch')
+  const changeUnitsLabel = t('appShell.status.changeUnits', {
+    from: currentUnitLabel,
+    to: nextUnitLabel,
+  })
+
   return (
-    <ExpandedPanelContext.Provider value={expandedPanelContextValue}>
+    <UnitConversionContext.Provider value={requestUnitConversion}>
+      <ExpandedPanelContext.Provider value={expandedPanelContextValue}>
     <div className="app-shell" data-shell-mode={shellMode} data-right-open={rightDrawerOpen ? 'true' : undefined} data-left-open={leftDrawerOpen ? 'true' : undefined}>
       <div className="tablet-rotate-overlay" aria-hidden="true">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -684,7 +711,15 @@ export function AppShell({
 
       <footer className={`app-statusbar ${tabletShell ? (statusBarExpanded ? 'app-statusbar--tablet-expanded' : 'app-statusbar--tablet-compact') : ''}`}>
         <span>{project.meta.name}</span>
-        <span>{project.meta.units.toUpperCase()}</span>
+        <button
+          className="statusbar-units"
+          type="button"
+          onClick={() => requestUnitConversion(nextUnits)}
+          title={changeUnitsLabel}
+          aria-label={changeUnitsLabel}
+        >
+          {project.meta.units.toUpperCase()}
+        </button>
         <span>
           {t('appShell.status.stockDim', {
             width: formatLength(stockWidth, project.meta.units),
@@ -829,7 +864,17 @@ export function AppShell({
           </div>
         </div>
       )}
-    </div>
-    </ExpandedPanelContext.Provider>
+        </div>
+      </ExpandedPanelContext.Provider>
+      {pendingUnits && pendingUnits !== project.meta.units ? (
+        <UnitConversionDialog
+          fromUnits={project.meta.units}
+          toUnits={pendingUnits}
+          onConvert={() => commitPendingUnits('convert')}
+          onReinterpret={() => commitPendingUnits('reinterpret')}
+          onCancel={() => setPendingUnits(null)}
+        />
+      ) : null}
+    </UnitConversionContext.Provider>
   )
 }

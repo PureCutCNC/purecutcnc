@@ -29,8 +29,8 @@ import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
-import { UnitConversionDialog } from '../project/UnitConversionDialog'
-import type { FeatureOperation, Project, RegionMaskMode } from '../../types/project'
+import { useRequestUnitConversion } from '../project/UnitConversionContext'
+import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -188,7 +188,6 @@ export function PropertiesPanel() {
     setGrid,
     setStock,
     setStockSourceFeature,
-    setUnits,
     updateTab,
     updateClamp,
     updateFeatureFolder,
@@ -208,6 +207,7 @@ export function PropertiesPanel() {
   const { t } = useI18n()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
   const expandedPanelCtx = useContext(ExpandedPanelContext)
+  const requestUnitConversion = useRequestUnitConversion()
   const closeExpanded = useCallback(
     () => expandedPanelCtx?.closeExpandedPanel(),
     [expandedPanelCtx],
@@ -348,14 +348,6 @@ export function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
-  const [pendingUnits, setPendingUnits] = useState<Project['meta']['units'] | null>(null)
-
-  function commitPendingUnits(mode: 'convert' | 'reinterpret') {
-    if (!pendingUnits || pendingUnits === project.meta.units) return
-    const nextUnits = pendingUnits
-    setPendingUnits(null)
-    setUnits(nextUnits, mode)
-  }
 
   function renderContent() {
 
@@ -398,7 +390,7 @@ export function PropertiesPanel() {
                 { value: 'inch', label: t('featureTree.properties.units.inch') },
               ]}
               onChange={(value) => {
-                if (value !== project.meta.units) setPendingUnits(value)
+                requestUnitConversion(value)
               }}
             />
           </label>
@@ -1669,15 +1661,6 @@ export function PropertiesPanel() {
           onClose={() => setShowManager(false)}
         />
       )}
-      {pendingUnits && pendingUnits !== project.meta.units ? (
-        <UnitConversionDialog
-          fromUnits={project.meta.units}
-          toUnits={pendingUnits}
-          onConvert={() => commitPendingUnits('convert')}
-          onReinterpret={() => commitPendingUnits('reinterpret')}
-          onCancel={() => setPendingUnits(null)}
-        />
-      ) : null}
     </>
   )
 }
