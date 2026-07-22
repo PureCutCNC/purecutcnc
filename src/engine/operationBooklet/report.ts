@@ -73,7 +73,10 @@ function operationSupportsMachiningOrder(kind: OperationKind): boolean {
 function operationUsesRoundOutsideCorners(operation: Operation): boolean {
   return (
     operation.kind === 'edge_route_outside'
-    || (operation.kind === 'pocket' && operation.pass === 'finish' && operation.finishWalls)
+    || operation.kind === 'pocket'
+    || operation.kind === 'surface_clean'
+    || operation.kind === 'rough_surface'
+    || operation.kind === 'finish_surface_cleanup'
   )
 }
 

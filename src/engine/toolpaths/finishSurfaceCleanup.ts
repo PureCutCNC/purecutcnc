@@ -32,6 +32,7 @@ import {
   transitionToCutEntry,
   updateBounds,
 } from './pocket'
+import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
 import {
   calculateClipperArea,
   differenceClipperPaths,
@@ -661,6 +662,11 @@ export function generateFinishSurfaceCleanupToolpath(
 
   const sortedLevels = [...stepLevels].sort((a, b) => b - a)
   const moves: ToolpathMove[] = []
+  const floorSmoothRadius = cornerSmoothingRadius(
+    operation.roundOutsideCorners,
+    resolved.tool.radius,
+    resolved.effectiveStepover,
+  )
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of sortedLevels) {
@@ -739,7 +745,10 @@ export function generateFinishSurfaceCleanupToolpath(
       ? buildCleanupFloorOffsetPasses(floorRegions, resolved.effectiveStepover, suppressedWallSegments)
       : { contours: [], segments: [] }
     const floorContours = operation.pocketPattern === 'offset'
-      ? applyContourDirection(offsetFloorPasses.contours, resolved.direction)
+      ? applyContourDirection(
+        smoothClosedContours(offsetFloorPasses.contours, floorSmoothRadius),
+        resolved.direction,
+      )
       : []
     const floorSegments = operation.pocketPattern === 'parallel'
       ? buildPocketParallelSegments(floorRegions, resolved.effectiveStepover, operation.pocketAngle)

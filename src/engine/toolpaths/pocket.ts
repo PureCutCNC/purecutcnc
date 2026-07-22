@@ -38,6 +38,7 @@ import {
   toClipperPath,
 } from './geometry'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
+import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
 import { resolvePocketRegions } from './resolver'
 import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
@@ -1169,11 +1170,15 @@ interface OffsetRegionNode {
  * several step levels build the tree once and traverse it per level instead
  * of redoing the Clipper offsets at every level.
  */
-function buildOffsetRegionTree(region: ResolvedPocketRegion, stepoverDistance: number): OffsetRegionNode {
-  const childRegions = buildInsetRegions(region, stepoverDistance)
+function buildOffsetRegionTree(
+  region: ResolvedPocketRegion,
+  stepoverDistance: number,
+  islandJoinType: number = ClipperLib.JoinType.jtMiter,
+): OffsetRegionNode {
+  const childRegions = buildInsetRegions(region, stepoverDistance, ClipperLib.JoinType.jtMiter, islandJoinType)
   return {
     region,
-    children: childRegions.map((child) => buildOffsetRegionTree(child, stepoverDistance)),
+    children: childRegions.map((child) => buildOffsetRegionTree(child, stepoverDistance, islandJoinType)),
   }
 }
 
@@ -1197,6 +1202,8 @@ function cutOffsetRegionNode(
   safeLinkCheck: SafeLinkCheck | undefined,
   traversalMode: OffsetTraversalMode,
   loops: 'all' | 'outer' = 'all',
+  smoothRadius?: number,
+  depth = 0,
 ): ToolpathPoint | null {
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
@@ -1205,12 +1212,28 @@ function cutOffsetRegionNode(
         .filter((contour) => contour.length > 0)
         .map((contour) => contour[0])
       : []
-    // 'outer' cuts only the region's outer boundary loop — used by the finish
-    // floor pass, where island walls are the wall pass's job, matching the
-    // outer-contours-only coverage of buildPocketFloorContours.
-    const contours = loops === 'outer'
-      ? (node.region.outer.length >= 3 ? [node.region.outer] : [])
-      : buildContourLoops([node.region])
+    // Outer (wall-side) and island (bump-side) rings are smoothed differently
+    // because the tool relates to each corner oppositely:
+    //
+    //  - Outer ring: the tool is inside a corner it can't fully reach. Sharp is
+    //    the tightest path; rounding pulls back and leaves stock. So the root
+    //    ring (depth 0, wall-adjacent) is kept sharp and only interior rings
+    //    (depth > 0) are filleted — their rounded-corner crescents are swept by
+    //    the straight edge of the ring just outside them, so nothing is left,
+    //    and at depth no corner column can stack into a chip.
+    //  - Island rings: the tool goes around convex material it can reach. Here
+    //    the tight, smooth path is a rounded OFFSET (jtRound, applied when the
+    //    region was built) — filleting the emitted polyline would instead pull
+    //    the tool into the island and gouge it. So island loops are emitted
+    //    as-is, already rounded (or mitered when the option is off).
+    const outerContour = node.region.outer.length >= 3 ? node.region.outer : null
+    const smoothedOuter = outerContour
+      ? [smoothRadius && depth > 0 ? roundContourCorners(outerContour, smoothRadius) : outerContour]
+      : []
+    const islandContours = loops === 'outer'
+      ? []
+      : node.region.islands.filter((island) => island.length >= 3)
+    const contours = [...smoothedOuter, ...islandContours]
     const preparedContours = contours.map((contour) => rotateContourToBestEntry(
       contour,
       fromPosition ? { x: fromPosition.x, y: fromPosition.y } : null,
@@ -1252,6 +1275,8 @@ function cutOffsetRegionNode(
       safeLinkCheck,
       traversalMode,
       loops,
+      smoothRadius,
+      depth + 1,
     )
   }
 
@@ -1273,10 +1298,12 @@ export function cutOffsetRegionRecursive(
   direction: CutDirection = 'conventional',
   safeLinkCheck?: SafeLinkCheck,
   traversalMode: OffsetTraversalMode = 'outer-first',
+  smoothRadius?: number,
+  islandJoinType: number = ClipperLib.JoinType.jtMiter,
 ): ToolpathPoint | null {
   return cutOffsetRegionNode(
     moves,
-    buildOffsetRegionTree(region, stepoverDistance),
+    buildOffsetRegionTree(region, stepoverDistance, islandJoinType),
     z,
     safeZ,
     maxLinkDistance,
@@ -1284,6 +1311,8 @@ export function cutOffsetRegionRecursive(
     direction,
     safeLinkCheck,
     traversalMode,
+    'all',
+    smoothRadius,
   )
 }
 
@@ -1391,10 +1420,18 @@ function generateRoughBandMoves(
   }
 
   // The offset ring tree is identical at every step level — build it once
-  // and traverse it per level.
+  // and traverse it per level. When rounding is on, islands are offset with
+  // round joins (extends #245's island rounding to rough clearing): the tool
+  // wraps convex island corners smoothly at a true rounded offset, never
+  // gouging the island. Outer/wall rings stay mitered and are filleted at
+  // emit time (interior rings only) by cutOffsetRegionNode.
+  const islandJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
   const regionTrees = band.regions
-    .flatMap((region) => buildInsetRegions(region, initialInset))
-    .map((region) => buildOffsetRegionTree(region, effectiveStepover))
+    .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
+    .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
+  const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
 
   for (const z of stepLevels) {
     if (regionTrees.length === 0) {
@@ -1420,6 +1457,8 @@ function generateRoughBandMoves(
         direction,
         undefined,
         'inner-first',
+        'all',
+        smoothRadius,
       )
     }
 
@@ -1498,6 +1537,7 @@ function generateFinishBandMoves(
   // so the floor pass doesn't double as a wall-finish contour.
   const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
   const floorStepover = Math.max(stepoverDistance, minFloorStepover)
+  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
   const floorTrees = operation.finishFloor && !isParallelPocket
     ? finishRegions
       .flatMap((region) => buildInsetRegions(region, 0))
@@ -1550,6 +1590,7 @@ function generateFinishBandMoves(
         undefined,
         'inner-first',
         'outer',
+        floorSmoothRadius,
       )
     }
 

@@ -2084,12 +2084,151 @@ function testPocketFinishRoundsIslandWallsOnly() {
   console.log('pocket finish rounded island walls only: PASSED')
 }
 
-function testPocketFinishFloorOnlyIgnoresRoundOutsideCorners() {
-  console.log('Testing pocket finish floor-only output ignores round outside corners...')
+// ---------------------------------------------------------------------------
+// Corner smoothing (round corners) of inner clearing rings
+// ---------------------------------------------------------------------------
+
+function totalCutLength(moves: ToolpathMove[]): number {
+  return cutMoves(moves).reduce((sum, move) => sum + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
+}
+
+/** Turn angles (degrees) at junctions where two cut moves actually connect. */
+function connectedCutTurns(moves: ToolpathMove[]): number[] {
+  const cuts = cutMoves(moves)
+  const turns: number[] = []
+  for (let index = 0; index + 1 < cuts.length; index += 1) {
+    const a = cuts[index]
+    const b = cuts[index + 1]
+    if (!approx(a.to.x, b.from.x) || !approx(a.to.y, b.from.y)) continue
+    const inX = a.to.x - a.from.x
+    const inY = a.to.y - a.from.y
+    const outX = b.to.x - b.from.x
+    const outY = b.to.y - b.from.y
+    const inLen = Math.hypot(inX, inY)
+    const outLen = Math.hypot(outX, outY)
+    if (inLen < 1e-9 || outLen < 1e-9) continue
+    const cos = Math.max(-1, Math.min(1, (inX * outX + inY * outY) / (inLen * outLen)))
+    turns.push((Math.acos(cos) * 180) / Math.PI)
+  }
+  return turns
+}
+
+function sharpTurnCount(moves: ToolpathMove[], thresholdDeg = 60): number {
+  return connectedCutTurns(moves).filter((turn) => turn > thresholdDeg).length
+}
+
+function testPocketRoughRoundsInnerRings() {
+  console.log('Testing pocket rough offset rounds the inner clearing-ring corners when enabled...')
   const tool = makeFlatEndmill('t1', 4)
-  const pocket = makePocketFeature('p1', 0, 0, 40, 24, 2, 0)
-  const island = makeIslandFeature('i1', 12, 6, 16, 12, 2, 0)
+  const pocket = makePocketFeature('p1', 0, 0, 30, 30, 2, 0)
+  const project = baseProject([tool], [pocket])
+  const baseOp = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+  })
+
+  const disabled = generatePocketToolpath(project, baseOp)
+  const enabled = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
+
+  // Disabled: concentric square rings keep their sharp 90° corners.
+  assert(sharpTurnCount(disabled.moves) >= 8, `disabled rough rings should keep sharp corners, got ${sharpTurnCount(disabled.moves)}`)
+  // Enabled: the ring corners become arcs, so far fewer sharp junctions remain
+  // (only ring-to-ring links, never the ring corners themselves).
+  assert(
+    sharpTurnCount(enabled.moves) * 3 < sharpTurnCount(disabled.moves),
+    `enabling round corners should remove most sharp ring corners (disabled ${sharpTurnCount(disabled.moves)}, enabled ${sharpTurnCount(enabled.moves)})`,
+  )
+  // Arc tessellation adds points; cutting the corners shortens the path.
+  assert(cutMoves(enabled.moves).length > cutMoves(disabled.moves).length, 'rounded rings should tessellate into more cut moves')
+  assert(totalCutLength(enabled.moves) < totalCutLength(disabled.moves), 'rounded rings should shorten the total cut path')
+
+  // Disabled parity: false and undefined must be byte-identical (no-op when off).
+  const undefinedFlag = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
+  assert(movesEqual(disabled.moves, undefinedFlag.moves), 'roundOutsideCorners false vs undefined must produce identical moves')
+  console.log('pocket rough rounds inner rings: PASSED')
+}
+
+function testPocketRoughKeepsBoundaryRingSharpEveryLevel() {
+  console.log('Testing rounded rough keeps the wall-adjacent ring sharp at every Z level (no corner column)...')
+  const tool = makeFlatEndmill('t1', 4)
+  // 6 mm deep, stepdown 2 => rough levels at z = 4, 2, 0.
+  const pocket = makePocketFeature('p1', 0, 0, 40, 40, 6, 0)
+  const project = baseProject([tool], [pocket])
+  const result = generatePocketToolpath(project, makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    finishWalls: false,
+    finishFloor: false,
+    roundOutsideCorners: true,
+  }))
+
+  // The wall-adjacent ring corner sits one tool radius in from the pocket
+  // corner, at (2, 2). If the outermost ring were rounded away, no cut would
+  // reach it — and the uncut crescent would stack into a tall chip. With walls
+  // and floor finish OFF, only the rough pass runs, so reaching (2, 2) at every
+  // level proves the boundary ring stays sharp per level.
+  const corner = { x: 2, y: 2 }
+  const near = (p: { x: number; y: number }) => Math.hypot(p.x - corner.x, p.y - corner.y) < 0.3
+  for (const z of [4, 2, 0]) {
+    const reached = cutMoves(result.moves).some((move) => approx(move.to.z, z) && (near(move.to) || near(move.from)))
+    assert(reached, `rough level z=${z} must reach the wall-adjacent corner (boundary ring must not be rounded away)`)
+  }
+  console.log('pocket rough keeps boundary ring sharp every level: PASSED')
+}
+
+function testPocketRoughRoundsIslandRings() {
+  console.log('Testing pocket rough wraps islands with rounded (non-gouging) rings when enabled...')
+  const tool = makeFlatEndmill('t1', 4) // radius 2
+  const pocket = makePocketFeature('p1', 0, 0, 50, 40, 2, 0)
+  const island = makeIslandFeature('i1', 16, 12, 18, 16, 2, 0) // rect island 16..34 x 12..28
   const project = baseProject([tool], [pocket, island])
+  const baseOp = makePocketOp({ kind: 'pocket', target: { source: 'features', featureIds: ['p1'] }, toolRef: 't1' })
+
+  const off = generatePocketToolpath(project, baseOp)
+  const on = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
+
+  const distIsland = (x: number, y: number) =>
+    Math.hypot(Math.max(16 - x, 0, x - 34), Math.max(12 - y, 0, y - 28))
+  const minToolDistToIsland = (moves: ToolpathMove[]) =>
+    Math.min(...cutMoves(moves).flatMap((move) => {
+      const steps = Math.max(1, Math.ceil(Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) / 0.2))
+      const distances: number[] = []
+      for (let i = 0; i <= steps; i += 1) {
+        const t = i / steps
+        distances.push(distIsland(move.from.x + (move.to.x - move.from.x) * t, move.from.y + (move.to.y - move.from.y) * t))
+      }
+      return distances
+    }))
+
+  // Rounded island rings must never pull the tool into the island. The tool
+  // radius is 2; allow only the jtRound arc-tessellation tolerance (~0.01 mm).
+  assert(
+    minToolDistToIsland(on.moves) > 2 - 0.05,
+    `rounded island rings must not gouge the island (min tool-center distance ${minToolDistToIsland(on.moves).toFixed(3)} vs radius 2)`,
+  )
+
+  // The island-hugging ring (~2 mm off the island) is a sharp rectangle when
+  // off (corners sit at ~2.8 mm, no vertices in the band) and a tessellated
+  // rounded rectangle when on (many arc vertices land in the band).
+  const hugRingVertices = (moves: ToolpathMove[]) =>
+    cutMoves(moves).filter((move) => Math.abs(distIsland(move.to.x, move.to.y) - 2) < 0.25).length
+  assert(
+    hugRingVertices(on.moves) > hugRingVertices(off.moves) + 8,
+    `enabled island ring should be tessellated into arcs (${hugRingVertices(off.moves)} -> ${hugRingVertices(on.moves)})`,
+  )
+
+  const undefinedFlag = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
+  assert(movesEqual(off.moves, undefinedFlag.moves), 'off vs undefined must be identical around islands')
+  console.log('pocket rough rounds island rings: PASSED')
+}
+
+function testPocketFinishFloorRoundsWhenEnabled() {
+  console.log('Testing pocket finish-floor clearing rings round when enabled, exact when off...')
+  const tool = makeFlatEndmill('t1', 4)
+  const pocket = makePocketFeature('p1', 0, 0, 30, 30, 2, 0)
+  const project = baseProject([tool], [pocket])
   const baseOp = makePocketOp({
     kind: 'pocket',
     pass: 'finish',
@@ -2102,8 +2241,40 @@ function testPocketFinishFloorOnlyIgnoresRoundOutsideCorners() {
   const disabled = generatePocketToolpath(project, baseOp)
   const enabled = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: true })
 
-  assert(movesEqual(disabled.moves, enabled.moves), 'finish-floor-only moves should not change when round corners is enabled')
-  console.log('pocket finish floor-only round outside corners parity: PASSED')
+  // The floor is cleared with concentric rings; enabling rounds their corners.
+  assert(sharpTurnCount(disabled.moves) >= 4, `disabled finish floor should keep sharp corners, got ${sharpTurnCount(disabled.moves)}`)
+  assert(
+    sharpTurnCount(enabled.moves) * 2 < sharpTurnCount(disabled.moves),
+    `enabling round corners should smooth the finish-floor rings (disabled ${sharpTurnCount(disabled.moves)}, enabled ${sharpTurnCount(enabled.moves)})`,
+  )
+  assert(!movesEqual(disabled.moves, enabled.moves), 'finish-floor moves should change when round corners is enabled')
+
+  // Disabled parity holds.
+  const undefinedFlag = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
+  assert(movesEqual(disabled.moves, undefinedFlag.moves), 'finish-floor false vs undefined must produce identical moves')
+  console.log('pocket finish-floor rounds when enabled: PASSED')
+}
+
+function testSurfaceCleanRoughRoundsInnerRings() {
+  console.log('Testing surface_clean rough offset rounds inner clearing rings when enabled...')
+  const tool = makeFlatEndmill('t1', 4)
+  const boss = { ...makePocketFeature('b1', 4, 4, 30, 30, 6, 0), operation: 'add' as const }
+  const project = baseProject([tool], [boss])
+  project.stock = { ...project.stock, thickness: 8 }
+  const baseOp = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['b1'] },
+    toolRef: 't1',
+  })
+
+  const disabled = generateSurfaceCleanToolpath(project, baseOp)
+  const enabled = generateSurfaceCleanToolpath(project, { ...baseOp, roundOutsideCorners: true })
+  assert(cutMoves(disabled.moves).length > 0, 'expected surface_clean cuts')
+  assert(sharpTurnCount(enabled.moves) < sharpTurnCount(disabled.moves), 'surface_clean should smooth rings when enabled')
+
+  const undefinedFlag = generateSurfaceCleanToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
+  assert(movesEqual(disabled.moves, undefinedFlag.moves), 'surface_clean false vs undefined must produce identical moves')
+  console.log('surface_clean rough rounds inner rings: PASSED')
 }
 
 function testPocketOffsetSlotFeedSimple() {
@@ -2531,7 +2702,11 @@ try {
   testDrillingMinimizesSafeZTravelDistance()
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()
   testPocketFinishRoundsIslandWallsOnly()
-  testPocketFinishFloorOnlyIgnoresRoundOutsideCorners()
+  testPocketRoughRoundsInnerRings()
+  testPocketRoughKeepsBoundaryRingSharpEveryLevel()
+  testPocketRoughRoundsIslandRings()
+  testPocketFinishFloorRoundsWhenEnabled()
+  testSurfaceCleanRoughRoundsInnerRings()
   testPocketOffsetSlotFeedSimple()
   testPocketOffsetSlotFeedIslandSections()
   testPocketOffsetSlotFeedPerLevel()

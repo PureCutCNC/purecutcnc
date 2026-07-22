@@ -139,7 +139,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.machiningOrder': '加工顺序',
   'cam.operation.featureFirst': '按特征',
   'cam.operation.levelFirst': '按层',
-  'cam.operation.roundOutsideCorners': '圆角外拐角',
+  'cam.operation.roundOutsideCorners': '圆角拐角',
   'cam.operation.drillType': '钻孔类型',
   'cam.operation.peckDepth': '啄钻深度',
   'cam.operation.dwellTime': '暂停时间（秒）',

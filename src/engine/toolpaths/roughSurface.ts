@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
+import ClipperLib from 'clipper-lib'
 import type { Project } from '../../types/project'
 import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import { cutOffsetRegionRecursive, orderRegionsGreedy, retractToSafe, updateBounds } from './pocket'
+import { cornerSmoothingRadius } from './offsetSmoothing'
 import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 
@@ -36,6 +38,14 @@ export function generateRoughSurfaceToolpath(
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
   const warnings = [...resolved.warnings]
+  const smoothRadius = cornerSmoothingRadius(
+    operation.roundOutsideCorners,
+    resolved.tool.radius,
+    resolved.effectiveStepover,
+  )
+  const islandJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
   let currentPosition: ToolpathPoint | null = null
 
   for (const level of resolved.levels) {
@@ -64,6 +74,9 @@ export function generateRoughSurfaceToolpath(
         currentPosition,
         resolved.direction,
         safeLinkCheck,
+        'outer-first',
+        smoothRadius,
+        islandJoinType,
       )
     }
   }
