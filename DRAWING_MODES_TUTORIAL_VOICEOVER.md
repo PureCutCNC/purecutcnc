@@ -40,23 +40,23 @@ That matters directly to CAM. A subtractive feature can provide the boundary for
 
 A useful rule is this: if the shape represents actual material or actual removed material, begin in Feature mode.
 
-One caveat: an open profile cannot create a solid. If you draw an open shape, it behaves as path geometry rather than a volume. For deliberate engraving, scoring, or open-contour cutting, use Line mode instead.
+One caveat: an open profile cannot create a solid. If you draw an open shape while Feature mode is active, PureCutCNC creates it as a Line rather than as a solid feature. It is path geometry, not a volume. Choose Line mode deliberately when that is your intent.
 
 ## Line Mode
 
-Line mode creates machinable geometry without creating or removing solid volume in the 3D model.
+Line mode creates machinable geometry without creating or removing solid volume in the 3D model. It can create both open and closed shapes.
 
 Select Line mode and choose a shape, perhaps a Composite path. Click to place a few straight segments. In composite drawing, you can also switch between line, arc, and spline segments as you build a single path. Finish the profile when the path is complete.
 
-Unlike a feature, this path does not become a wall, pocket, or island in the 3D model. It is a centerline or contour that a cutter can follow.
+Unlike a feature, this path does not become a wall, pocket, or island in the 3D model. It is a centerline or contour that a cutter can follow. Even a closed Line remains path geometry; closing the loop does not turn it into a solid or an enclosed pocket area.
 
 This is the right mode for engraving text-like paths, decorative inlays represented by centerlines, score marks, layout lines you actually intend to cut, and open geometry that has no enclosed area.
 
-For CAM, Line mode is most naturally paired with a Follow Line operation. The cutter follows the geometry itself at the selected carving depth, using the operation's stepdown and tool settings. A closed line can also be followed around its contour, but it is still a path, not an enclosed pocket area. PureCutCNC will not clear the interior simply because the line happens to form a loop.
+For CAM, Line mode is most naturally paired with Follow Line, PureCutCNC's engraving operation. The cutter follows the geometry itself at the selected engraving depth, using the operation's stepdown and tool settings. A closed Line can also be followed around its contour, but PureCutCNC will not clear the interior simply because the path forms a loop.
 
 That distinction is important. If you want to remove all material inside a shape, use a subtractive Feature and a Pocket operation. If you want the cutter to trace a line, use Line mode and Follow Line.
 
-For drilling, circular machinable geometry can also provide the center information used by a Drilling operation. Again, use the mode deliberately: a line circle describes a path or center, while a subtractive feature describes actual removed cylindrical material.
+Lines also support two other useful CAM workflows. A circular Line can provide the center information for a Drilling operation. A closed Line can be selected for a V-carve operation, which cuts its enclosed geometry with a V-bit. Again, use the mode deliberately: a line circle describes a path or center, while a subtractive feature describes actual removed cylindrical material.
 
 ## Region Mode
 
