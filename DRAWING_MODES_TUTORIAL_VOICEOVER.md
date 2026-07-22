@@ -76,7 +76,7 @@ The region affects an operation when you include it in that operation's target s
 
 In CAM terms, regions are powerful because they separate what exists in the model from where a particular cutter is allowed to travel. You can keep one clean model while creating different machining boundaries for roughing, finishing, engraving, or cleanup passes.
 
-Regions are also the mechanism PureCutCNC uses for rest machining. A Pocket operation can automatically create the rest regions left behind by the first tool, then create a follow-up operation for a smaller tool. We will show that workflow in this video without unpacking its settings; the operations video will cover it in detail.
+Regions are also the mechanism PureCutCNC uses for rest machining. A Pocket operation can automatically create the rest regions left behind by the first tool, then create a follow-up operation for a smaller tool. We will show that workflow in this video without going into its settings; the operations video will cover it in detail.
 
 ## Construction Mode
 
