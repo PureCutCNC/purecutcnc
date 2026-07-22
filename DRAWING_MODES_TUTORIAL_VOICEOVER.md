@@ -54,6 +54,8 @@ This is the right mode for engraving text-like paths, decorative inlays represen
 
 For CAM, Line mode is most naturally paired with Follow Line, PureCutCNC's engraving operation. The cutter follows the geometry itself at the selected engraving depth, using the operation's stepdown and tool settings. A closed Line can also be followed around its contour, but PureCutCNC will not clear the interior simply because the path forms a loop.
 
+One Z detail is especially important for Lines: line-based CAM uses the Line's Top Z as its working reference, while its Bottom Z is ignored. Follow Line engraving is therefore generated from the Line's Top Z. If you place a Line in a pocket, set the Line's Top Z to match the pocket's Top Z; otherwise the engraving can be generated in the air rather than at the intended machining level.
+
 That distinction is important. If you want to remove all material inside a shape, use a subtractive Feature and a Pocket operation. If you want the cutter to trace a line, use Line mode and Follow Line.
 
 Lines also support two other useful CAM workflows. A circular Line can provide the center information for a Drilling operation. A closed Line can be selected for a V-carve operation, which cuts its enclosed geometry with a V-bit. Again, use the mode deliberately: a line circle describes a path or center, while a subtractive feature describes actual removed cylindrical material.
