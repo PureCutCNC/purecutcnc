@@ -254,6 +254,7 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     waterlineRefinementThreshold: operation.waterlineRefinementThreshold ?? 0,
     waterlineMaxRingsPerBand: operation.waterlineMaxRingsPerBand ?? 0,
     waterlineTipStepdown: operation.waterlineTipStepdown ?? 0,
+    arcFittingEnabled: operation.arcFittingEnabled ?? true,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {

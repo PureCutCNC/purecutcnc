@@ -163,6 +163,9 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.maxRingsTooltip': '单个带或尖端中的最大投影环数。使用 0 表示默认上限。',
   'cam.operation.tabs': '桥接',
   'cam.operation.autoPlaceTabs': '自动放置桥接',
+  'cam.operation.arcFitting': '圆弧拟合 (G2/G3)',
+  'cam.operation.arcFittingTip':
+    '仅导出：在控制器支持时将接近共线的线性移动替换为圆弧移动。不影响显示或模拟的刀路。',
 
   // ── Region note ──
   'cam.regionNote.badge': '掩膜',

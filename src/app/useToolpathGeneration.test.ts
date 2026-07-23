@@ -71,6 +71,7 @@ function makeOperation(overrides: Partial<Operation> = {}): Operation {
     waterlineRefinementThreshold: 0.01,
     waterlineMaxRingsPerBand: 4,
     waterlineTipStepdown: 0.05,
+    arcFittingEnabled: true,
     ...overrides,
   }
 }
@@ -169,6 +170,7 @@ function testOperationComputationEquals() {
     ['name', { name: 'Renamed' }],
     ['enabled', { enabled: false }],
     ['showToolpath', { showToolpath: false }],
+    ['arcFittingEnabled', { arcFittingEnabled: false }],
   ]
 
   for (const [field, change] of displayChanges) {

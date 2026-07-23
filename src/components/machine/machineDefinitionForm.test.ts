@@ -65,6 +65,7 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
       ccwArcCommand: 'G03',
       arcFormat: 'ij',
       modalMotion: true,
+      arcInterpolation: false,
     },
     feedSpeed: {
       feedCommand: 'F',

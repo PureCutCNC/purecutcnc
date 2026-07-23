@@ -138,6 +138,9 @@ export const camEs: Record<keyof typeof camEn, string> = {
   "cam.operation.maxRingsTooltip": "Máximo de anillos proyectados en una banda o punta. Use 0 para el límite predeterminado.",
   "cam.operation.tabs": "Pestañas",
   "cam.operation.autoPlaceTabs": "Colocación automática de pestañas",
+  "cam.operation.arcFitting": "Ajuste de arco (G2/G3)",
+  "cam.operation.arcFittingTip":
+    "Solo exportación: sustituye los movimientos lineales casi colineales por movimientos de arco cuando el controlador lo admite. No afecta a la trayectoria mostrada o simulada.",
   "cam.regionNote.badge": "Máscara",
   "cam.regionNote.text": "Las regiones limitan dónde puede cortar esta operación, no son formas a mecanizar.",
   "cam.target.stock": "Material en bruto",

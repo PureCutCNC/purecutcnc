@@ -71,6 +71,7 @@ export const MachineDefinitionSchema = z.object({
     ccwArcCommand: z.string(),
     arcFormat: z.enum(['ij', 'r']),
     modalMotion: z.boolean(),
+    arcInterpolation: z.boolean().default(false),
   }),
   feedSpeed: z.object({
     feedCommand: z.string(),
