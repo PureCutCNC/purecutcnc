@@ -24,6 +24,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `types.ts` — shared toolpath types (segments, passes, parameters)
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
 - `offsetSmoothing.ts` — emit-time corner fillet for the outer/wall clearing rings (`roundContourCorners`, `smoothClosedContours`, `cornerSmoothingRadius`); shared by pocket + surface clearing when `roundOutsideCorners` is enabled. Bounds the setback so acute corners leave no crescent; the offset-tree emitter keeps each region's wall-adjacent (root) outer ring sharp so no corner stock stacks into a chip (interior rings self-clean). Islands are rounded the opposite way — via `jtRound` Clipper offsets (see `buildInsetRegions` island join), so the tool wraps convex island corners smoothly without gouging.
+- `linearMoveOptimization.ts` — pure generation-stage finalizer that removes zero-length duplicate moves and merges contiguous, direction-preserving, collinear XY moves; applied after tabs but before clamp warnings
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
 - `regions.ts` — region computation (which area belongs to which op)
 - `resolver.ts` — resolves features+operations into clipper input regions; V-carve accepts closed Subtract and Line features (S2), Pocket remains Subtract-only; Line paths use even-odd fill semantics for nested contour holes
@@ -34,6 +35,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `clamps.ts` — clamp clearance / avoidance regions
 
 ## Tests
+- `linearMoveOptimization.test.ts` — zero-length removal, collinear merge, and boundary preservation
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression
