@@ -21,10 +21,11 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `test-fixtures/` — committed engine-test assets such as `.camj` regression files shared by engine tests
 - `gcode/` — G-code post-processors and emission
   - `index.ts` — public API
-  - `postprocessor.ts` — post-processor runner
+  - `postprocessor.ts` — post-processor runner (arc fitting, modal tracking, canned cycles)
+  - `arcFitting.ts` — export-stage arc fitting: Kasa circle fit, direction detection, ≤90° splitting
   - `definitions/` — bundled machine definitions (Marlin, GRBL flavors, etc.)
-  - `types.ts` — `MachineDefinition` and validation
-  - `utils.ts` — formatting helpers
+  - `types.ts` — `MachineDefinition` (with `motion.arcInterpolation` and `arcFormat`) and validation
+  - `utils.ts` — formatting helpers and `projectToMachinePoint` coordinate transform
 - `modelExport/` — model/design export (pluggable format registry: 3D mesh formats and 2D vector formats)
   - `index.ts` — public API and `MODEL_EXPORT_FORMATS` registry
   - `types.ts` — format/option interfaces (`kind: '2d' | '3d'` gates mesh assembly)
