@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: machine origin, machine definitions, postprocessing, and G-code export
-last-verified: 2026-07-15
+last-verified: 2026-07-23
 ---
 
 # G-code Export Design
@@ -97,10 +97,32 @@ The export surface must make these inputs visible before saving:
 No-operation selection and invalid machine/setup state disable export rather
 than producing an apparently valid empty or partial file.
 
+## Arc interpolation
+
+Export-stage arc fitting (`src/engine/gcode/arcFitting.ts`) runs between the
+project→machine coordinate transform and G-code emission. It does not modify
+`ToolpathResult` or affect preview/simulation.
+
+- Only constant-Z `cut` runs with consistent feed and source participate.
+- Fitting uses a Kasa algebraic circle (linear least squares) with a
+  conservative 0.01 mm (project-unit-equivalent) residual tolerance.
+- Fitted arcs are split into ≤ 90° sub-arcs. Full circles and arcs > 90° are
+  always split.
+- Direction (G2/G3) is determined from the chord turns in machine coordinates
+  so the Y-inversion boundary is correct.
+- Output uses the machine definition's `cwArcCommand` / `ccwArcCommand` and
+  `arcFormat` (`ij` or `r`). I/J are centre offsets from the arc start; R is
+  the positive radius.
+- When `operation.arcFittingEnabled` is `false` (default `true`), no fitting
+  is attempted and output is purely linear.
+- When the machine definition has `motion.arcInterpolation: false` (legacy
+  default), fitting still runs to detect circular segments; if any are found,
+  the original G1 moves are emitted alongside a `postArcNoCapability` warning.
+- Helical/ramping moves, rapids, plunges, leads, and non-circular runs remain
+  linear and never trigger the warning.
+
 ## Current limits and future work
 
-- Toolpaths are currently emitted primarily as flattened linear moves; native
-  arc output requires an explicit move contract and controller capability work.
 - Multi-setup/fixture workflows require a separate setup model rather than
   overloading one machine origin.
 - Postprocessors do not supply authoritative feeds, speeds, or machine limits.

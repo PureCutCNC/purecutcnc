@@ -20,8 +20,10 @@ import type {
 } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
-import type { ToolpathPoint } from '../toolpaths/types'
+import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
 import type { OperationTarget } from '../../types/project'
+import { fitArcsInMachineMoves } from './arcFitting'
+import type { ArcMoveDescriptor } from './arcFitting'
 
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
@@ -387,39 +389,149 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     }
 
     if (!emittedCanned) {
-      toolpath.moves.forEach(move => {
-        moveCount++
-        const mPoint = projectToMachinePoint(move.to, project.origin, definition)
-
-        // feedScale marks fully engaged (slotting) pocket cuts; the modal
-        // feed logic in emitMotionLine re-emits the F word whenever the
-        // effective feed changes, so scaled and unscaled fragments alternate
-        // cleanly. Plunges always use the plunge feed unscaled.
-        const feed = (move.kind === 'plunge')
+      // Resolve effective feed for a descriptor (linear or arc).
+      const effectiveFeed = (
+        moveKind: ToolpathMove['kind'],
+        feedScale?: number,
+      ): number =>
+        moveKind === 'plunge'
           ? (operation.plungeFeed || tool.defaultPlungeFeed)
-          : (operation.feed || tool.defaultFeed) * (move.feedScale ?? 1)
+          : (operation.feed || tool.defaultFeed) * (feedScale ?? 1)
 
-        if (move.kind === 'rapid') {
-          const current = state.currentPosition
-          const hasXYChange =
-            current === null
-            || current.x !== mPoint.x
-            || current.y !== mPoint.y
-          const hasZChange =
-            current === null
-            || current.z !== mPoint.z
+      // Emit a single rapid (G0) with per-axis splitting.
+      const emitRapid = (pt: ToolpathPoint) => {
+        const current = state.currentPosition
+        const hasXYChange =
+          current === null
+          || current.x !== pt.x
+          || current.y !== pt.y
+        const hasZChange =
+          current === null
+          || current.z !== pt.z
+        if (hasZChange) {
+          emitMotionLine(definition.motion.rapidCommand, { z: pt.z })
+        }
+        if (hasXYChange) {
+          emitMotionLine(definition.motion.rapidCommand, { x: pt.x, y: pt.y })
+        }
+      }
 
-          if (hasZChange) {
-            emitMotionLine(definition.motion.rapidCommand, { z: mPoint.z })
-          }
-          if (hasXYChange) {
-            emitMotionLine(definition.motion.rapidCommand, { x: mPoint.x, y: mPoint.y })
-          }
-          return
+      // Emit a single arc (G2/G3) with I/J or R, respecting modal state.
+      const emitArcLine = (arc: ArcMoveDescriptor, feed: number) => {
+        const lineSegments: string[] = []
+        const motionCmd = arc.clockwise
+          ? definition.motion.cwArcCommand
+          : definition.motion.ccwArcCommand
+
+        if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
+          lineSegments.push(motionCmd)
+          state.motionCommand = motionCmd
         }
 
-        emitMotionLine(definition.motion.linearCommand, mPoint, feed)
-      })
+        lineSegments.push(`X${formatGCodeNumber(arc.endPoint.x, definition, outputUnits)}`)
+        lineSegments.push(`Y${formatGCodeNumber(arc.endPoint.y, definition, outputUnits)}`)
+
+        if (definition.motion.arcFormat === 'ij') {
+          lineSegments.push(`I${formatGCodeNumber(arc.centerOffsets.i, definition, outputUnits)}`)
+          lineSegments.push(`J${formatGCodeNumber(arc.centerOffsets.j, definition, outputUnits)}`)
+        } else {
+          const radius = Math.sqrt(
+            arc.centerOffsets.i * arc.centerOffsets.i +
+            arc.centerOffsets.j * arc.centerOffsets.j,
+          )
+          lineSegments.push(`R${formatGCodeNumber(radius, definition, outputUnits)}`)
+        }
+
+        if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
+          const feedChanged = state.feedRate !== feed
+          if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
+            const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
+            if (definition.feedSpeed.inlineWithMotion) {
+              lineSegments.push(fWord)
+            } else if (feedChanged) {
+              emitLine(fWord)
+            }
+            state.feedRate = feed
+          }
+        }
+
+        if (lineSegments.length > 0) {
+          emitLine(lineSegments.join(' '))
+        }
+
+        state.currentPosition = {
+          x: arc.endPoint.x,
+          y: arc.endPoint.y,
+          z: state.currentPosition?.z ?? 0,
+        }
+      }
+
+      // ── Arc fitting (export-stage) ──
+
+      const arcEnabled = operation.arcFittingEnabled ?? true
+      const machineHasArcs = definition.motion.arcInterpolation === true
+      const tryFit = arcEnabled && machineHasArcs
+
+      // Transform every move into machine coordinates once.
+      const transformMoves = (): ToolpathMove[] =>
+        toolpath.moves.map((move) => ({
+          ...move,
+          from: projectToMachinePoint(move.from, project.origin, definition),
+          to: projectToMachinePoint(move.to, project.origin, definition),
+        }))
+
+      if (tryFit) {
+        // Fit arcs and emit the mixed sequence.
+        const machineMoves = transformMoves()
+        moveCount += machineMoves.length  // count original moves, not descriptors
+        const tolerance =
+          project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+        const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
+
+        for (const d of descriptors) {
+          if (d.kind === 'linear') {
+            const feed = effectiveFeed(d.moveKind, d.feedScale)
+            if (d.moveKind === 'rapid') {
+              emitRapid(d.point)
+              continue
+            }
+            emitMotionLine(definition.motion.linearCommand, d.point, feed)
+          } else {
+            const feed = effectiveFeed('cut', d.feedScale)
+            emitArcLine(d, feed)
+          }
+        }
+      } else {
+        // Original linear emission (with arc-capability warning when
+        // fitting is enabled but the machine does not support it).
+        if (arcEnabled && !machineHasArcs) {
+          // Check whether arcs *would* have been found.
+          const machineMoves = transformMoves()
+          const tolerance =
+            project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+          const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
+          const foundArcs = descriptors.some((d) => d.kind === 'arc')
+          if (foundArcs) {
+            warnings.push({
+              code: 'postArcNoCapability',
+              params: { operation: operation.name },
+            })
+          }
+        }
+
+        toolpath.moves.forEach((move) => {
+          moveCount++
+          const mPoint = projectToMachinePoint(move.to, project.origin, definition)
+          const feed = effectiveFeed(move.kind, move.feedScale)
+
+          if (move.kind === 'rapid') {
+            emitRapid(mPoint)
+            return
+          }
+
+          emitMotionLine(definition.motion.linearCommand, mPoint, feed)
+        })
+      }
     }
 
     // Spindle off after last move of operation if tool change follows or it's the last op

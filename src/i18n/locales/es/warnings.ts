@@ -135,6 +135,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.postToolChangesDisabled": "La operación \"{operation}\" utiliza una herramienta diferente (\"{tool}\") a la anterior, pero los cambios de herramienta están deshabilitados.",
   "warnings.postNoCoolantCommands": "Se solicitó la emisión de refrigerante, pero la definición de la máquina no tiene comandos de refrigerante.",
   "warnings.postCannedCycleUnsupported": "Operación \"{operation}\": el ciclo encapsulado {drillType} no es compatible con la máquina \"{machine}\"; se emiten movimientos expandidos.",
+  "warnings.postArcNoCapability": "La operación \"{operation}\" contiene movimientos lineales que podrían ajustarse como arcos, pero la máquina seleccionada no admite interpolación circular (G2/G3). Se emiten movimientos lineales en su lugar.",
   "warnings.replayNoTool": "No se ha asignado ninguna herramienta a la operación seleccionada.",
   "warnings.bookletNoTool": "No se ha seleccionado ninguna herramienta para esta operación.",
   "warnings.bookletNoToolpath": "No se pudo generar la trayectoria de la herramienta para esta operación.",

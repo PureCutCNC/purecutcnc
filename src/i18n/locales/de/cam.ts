@@ -161,7 +161,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.autoPlaceTabs': 'Haltestege automatisch platzieren',
   'cam.operation.arcFitting': 'Bogenanpassung (G2/G3)',
   'cam.operation.arcFittingTip':
-    'Nur Export: Ersetzt nahezu kolineare lineare Bewegungen durch Kreisbögen, wenn die Steuerung dies unterstützt. Beeinflusst nicht den angezeigten oder simulierten Werkzeugweg.',
+    'Nur Export: Fasst aufeinanderfolgende lineare Bewegungen, die einen Kreisbogen annähern, zu G2/G3-Bögen zusammen, wenn die Steuerung dies unterstützt. Beeinflusst nicht den angezeigten oder simulierten Werkzeugweg.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'Maske',

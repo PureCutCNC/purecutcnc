@@ -165,7 +165,7 @@ export const camEn = {
   'cam.operation.autoPlaceTabs': 'Auto place tabs',
   'cam.operation.arcFitting': 'Arc fitting (G2/G3)',
   'cam.operation.arcFittingTip':
-    'Export-only: replaces near-colinear linear moves with arc moves where the controller supports it. Does not affect the displayed or simulated toolpath.',
+    'Export-only: fits contiguous linear moves that approximate a circular path into G2/G3 arc moves where the controller supports it. Does not affect the displayed or simulated toolpath.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'mask',
