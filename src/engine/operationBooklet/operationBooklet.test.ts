@@ -21,13 +21,14 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathResult } from '../toolpaths/types'
-import { createOperationBookletPdf } from './pdf'
+import { createOperationBookletPdf, shouldStackRowLabel } from './pdf'
 import { buildOperationBookletReport } from './report'
 
 function assert(condition: boolean, message: string): void {
@@ -287,10 +288,78 @@ function testFeedTimeUsesScaledSlotFeed(): void {
   )
 }
 
+async function testGermanLabelLayout(): Promise<void> {
+  console.log('Testing German booklet label layout...')
+  const { project, operation, toolpath } = fixture()
+  setActiveLocale('de')
+  try {
+    // A pocket operation with machiningOrder produces the longest single-word
+    // label in German. It must be stacked above its value, not character-wrapped.
+    const report = buildOperationBookletReport({
+      project,
+      operation: {
+        ...operation,
+        kind: 'pocket',
+        machiningOrder: 'feature_first',
+      },
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+
+    const row = report.settingRows.find(
+      (r) => r.label === translate('booklet.label.machiningOrder'),
+    )
+    assert(row !== undefined, 'machining order row should exist for pocket operation')
+    assert(
+      row!.value === translate('booklet.machiningOrder.featureFirst'),
+      'machining order value should be localized',
+    )
+    const pdfDoc = await PDFDocument.create()
+    const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+    assert(
+      shouldStackRowLabel(row!.label, bold),
+      'the long German machining-order label should be stacked above its value',
+    )
+    assert(
+      !shouldStackRowLabel(translate('booklet.label.feed'), bold),
+      'short labels should retain the compact inline layout',
+    )
+  } finally {
+    resetI18nStoreForTests()
+  }
+}
+
+async function testGermanPdfSmoke(): Promise<void> {
+  console.log('Testing German booklet PDF smoke output...')
+  const { project, operation, toolpath } = fixture()
+  setActiveLocale('de')
+  try {
+    const pdfBytes = await createOperationBookletPdf({
+      project,
+      operation: {
+        ...operation,
+        kind: 'pocket',
+        machiningOrder: 'feature_first',
+        roundOutsideCorners: true,
+      },
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath,
+      generatedAt: new Date('2026-06-04T12:00:00Z'),
+    })
+    assert(pdfBytes.byteLength > 500, `expected non-empty PDF, got ${pdfBytes.byteLength} bytes`)
+    assert(new TextDecoder().decode(pdfBytes.slice(0, 5)) === '%PDF-', 'expected PDF header')
+  } finally {
+    resetI18nStoreForTests()
+  }
+}
+
 testReportContent()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
 testLocalizedReportContent()
+await testGermanLabelLayout()
 await testPdfSmoke()
+await testGermanPdfSmoke()
 await testPdfUnicodeFontRetriesAndUsesBold()
 console.log('operation booklet tests passed')

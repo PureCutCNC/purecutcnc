@@ -128,8 +128,10 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   let current = ''
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth || current.length === 0) {
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
       current = candidate
+    } else if (current.length === 0) {
+      current = word
     } else {
       lines.push(current)
       current = word
@@ -203,22 +205,33 @@ interface PreparedCell {
   labelLines: string[]
   valueLines: string[]
   height: number
+  stackedLabel: boolean
+}
+
+export function shouldStackRowLabel(label: string, font: PDFFont): boolean {
+  return font.widthOfTextAtSize(label, BODY_SIZE) > ROW_LABEL_WIDTH
 }
 
 function prepareRowCell(state: DrawState, row: OperationBookletRow): PreparedCell {
-  const valueWidth = SECTION_COLUMN_WIDTH - ROW_LABEL_WIDTH - ROW_LABEL_GAP
-  const labelLines = wrapText(row.label, state.bold, BODY_SIZE, ROW_LABEL_WIDTH)
+  const stackedLabel = shouldStackRowLabel(row.label, state.bold)
+  const labelWidth = stackedLabel ? SECTION_COLUMN_WIDTH : ROW_LABEL_WIDTH
+  const valueWidth = stackedLabel ? SECTION_COLUMN_WIDTH : SECTION_COLUMN_WIDTH - ROW_LABEL_WIDTH - ROW_LABEL_GAP
+  const labelLines = wrapText(row.label, state.bold, BODY_SIZE, labelWidth)
   const valueLines = wrapText(row.value, state.regular, BODY_SIZE, valueWidth)
-  const lineCount = Math.max(1, labelLines.length, valueLines.length)
+  const lineCount = stackedLabel
+    ? labelLines.length + valueLines.length
+    : Math.max(1, labelLines.length, valueLines.length)
   return {
     labelLines,
     valueLines,
     height: lineCount * LINE_HEIGHT + 6,
+    stackedLabel,
   }
 }
 
 function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: number): void {
-  const valueX = x + ROW_LABEL_WIDTH + ROW_LABEL_GAP
+  const valueX = cell.stackedLabel ? x : x + ROW_LABEL_WIDTH + ROW_LABEL_GAP
+  const valueY = cell.stackedLabel ? y - cell.labelLines.length * LINE_HEIGHT : y
   for (let index = 0; index < cell.labelLines.length; index += 1) {
     state.page.drawText(cell.labelLines[index], {
       x,
@@ -231,7 +244,7 @@ function drawPreparedCell(state: DrawState, cell: PreparedCell, x: number, y: nu
   for (let index = 0; index < cell.valueLines.length; index += 1) {
     state.page.drawText(cell.valueLines[index], {
       x: valueX,
-      y: y - index * LINE_HEIGHT,
+      y: valueY - index * LINE_HEIGHT,
       size: BODY_SIZE,
       font: state.regular,
       color: COLORS.bodyText,
