@@ -9,6 +9,7 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 - [planning/](planning/INDEX.md) — current durable area-specific design references. **Open `planning/INDEX.md` first**, not the folder listing. Task plans live in GitHub issues; historical plans live in `planning/archive/`.
 
 ## Top-level
+- [DRAWING_MODES_TUTORIAL_VOICEOVER.md](DRAWING_MODES_TUTORIAL_VOICEOVER.md) — editable narration source for the Drawing Modes tutorial video
 - [src/](src/INDEX.md) — application source (React + TS). **See its INDEX for the breakdown.**
 - [src-tauri/](src-tauri/) — Tauri (Rust) wrapper for desktop builds
 - [scripts/](scripts/INDEX.md) — quality gates, build/codegen tools, optional agent-dispatch harness, and one-off diagnostics
