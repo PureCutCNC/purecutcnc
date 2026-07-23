@@ -34,7 +34,7 @@ The important point is that Feature mode is model-aware. Closed profiles partici
 
 Feature-tree order matters as much as a feature's individual role. PureCutCNC evaluates the tree from top to bottom, applying each Add or Subtract feature to the model produced by the entries above it. Think of that order as the construction sequence for the solid, not merely as a way to organize the list.
 
-For example, put a rectangular base first, a circular subtractive pocket second, and a raised logo third. The base creates the material; the pocket removes material from that base; and the logo is added afterward. If you drag the logo above the pocket and the two overlap, the later pocket removes material from both the base and the logo. In the original order, the logo is added after the pocket and can remain intact or fill part of that area. The same geometry has a different model because the operation order changed. Toolpaths still come from the operations you create, but those operations read the model boundaries and feature geometry established by this sequence.
+For example, put a rectangular base first, a circular subtractive pocket second, and a raised circular feature third. The base creates the material; the pocket removes material from that base; and the island is added afterward. If you drag it above the pocket and the two overlap, the later pocket removes material from both the base and the island. In the original order, the ISLAND is added after the pocket and can remain intact or fill part of that area. The same geometry has a different model because the operation order changed. Toolpaths still come from the operations you create, but those operations read the model boundaries and feature geometry established by this sequence.
 
 That matters directly to CAM. A subtractive feature can provide the boundary for a Pocket operation. Its vertical span tells PureCutCNC how deep the feature is, while the profile tells the toolpath generator where the wall and floor should be. Additive geometry establishes the material that remains and the exterior boundaries used by operations such as outside edge routing.
 
@@ -54,7 +54,7 @@ This is the right mode for engraving text-like paths, decorative inlays represen
 
 For CAM, Line mode is most naturally paired with Engrave, PureCutCNC's line-engraving operation. The cutter follows the geometry itself at the selected engraving depth, using the operation's stepdown and tool settings. A closed Line can also be followed around its contour, but PureCutCNC will not clear the interior simply because the path forms a loop.
 
-One Z detail is especially important for Lines: line-based CAM uses the Line's Top Z as its working reference, while its Bottom Z is ignored. Engrave is therefore generated from the Line's Top Z. If you place a Line in a pocket, set the Line's Top Z to match the pocket's Top Z; otherwise the engraving can be generated in the air rather than at the intended machining level.
+One Z detail is especially important for Lines: line-based CAM uses the Line's Top Z as its working reference, while its Bottom Z is ignored. Engrave is therefore generated from the Line's Top Z. If you place a Line in a pocket, set the Line's Top Z to match the pocket's Bottom Z; otherwise the engraving can be generated in the air rather than at the intended machining level.
 
 That distinction is important. If you want to remove all material inside a shape, use a subtractive Feature and a Pocket operation. If you want the cutter to trace a line, use Line mode and Engrave.
 
@@ -93,6 +93,8 @@ That makes Construction mode ideal for centerlines, symmetry references, tempora
 The practical habit is simple: if you would be alarmed to see the cutter follow it, draw it in Construction mode.
 
 ## Wrap-Up
+
+To wrap up, let’s quickly recap what each drawing mode does and why it matters for your model and toolpaths.
 
 The shape tool answers, “What geometry am I drawing?”
 
