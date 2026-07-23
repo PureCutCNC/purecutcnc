@@ -640,7 +640,7 @@ function circularCutMoves(): ToolpathMove[] {
 function runArcFixture(
   definition: MachineDefinition,
   operationOverrides?: Partial<Operation>,
-): { gcode: string; warnings: ToolpathWarning[] } {
+): { gcode: string; warnings: ToolpathWarning[]; stats: { moveCount: number } } {
   const project = newProject('Arc Test', 'mm')
   const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
   project.tools = [toolRecord]
@@ -890,11 +890,26 @@ function testArcMixedRapidAndCut(): void {
   assert(/\bG2\b/.test(result.gcode), 'should contain G2 for the 90° arc')
 }
 
+// ── moveCount preserves original toolpath moves ─────────────────
+
+function testArcMoveCountPreserved(): void {
+  console.log('Testing moveCount preservation with arc fitting...')
+  const def = arcTestDefinition()
+  const { stats } = runArcFixture(def)
+  // circularCutMoves() creates 8 chord segments → moveCount must be 8,
+  // not the number of arc descriptors (which would be 4 for a full circle).
+  assert(
+    stats.moveCount === 8,
+    `moveCount must count original toolpath moves (8), got ${stats.moveCount}`,
+  )
+}
+
 testArcOutputIJ()
 testArcOutputR()
 testArcDisabledLinearFallback()
 testArcUnsupportedMachineWarning()
 testArcNoRegressionLinear()
 testArcMixedRapidAndCut()
+testArcMoveCountPreserved()
 
 console.log('gcode postprocessor tests passed')

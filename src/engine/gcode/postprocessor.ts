@@ -483,12 +483,12 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       if (tryFit) {
         // Fit arcs and emit the mixed sequence.
         const machineMoves = transformMoves()
+        moveCount += machineMoves.length  // count original moves, not descriptors
         const tolerance =
           project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
         const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
 
         for (const d of descriptors) {
-          moveCount++
           if (d.kind === 'linear') {
             const feed = effectiveFeed(d.moveKind, d.feedScale)
             if (d.moveKind === 'rapid') {

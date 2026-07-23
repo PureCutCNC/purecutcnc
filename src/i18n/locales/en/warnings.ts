@@ -155,7 +155,7 @@ export const warningsEn = {
   'warnings.postToolChangesDisabled': 'Operation "{operation}" uses a different tool ("{tool}") than previous, but tool changes are disabled.',
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
-  'warnings.postArcNoCapability': 'Operation "{operation}" contains circular toolpath segments but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
+  'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'No tool assigned to the selected operation.',
   'warnings.bookletNoTool': 'No tool is selected for this operation.',
